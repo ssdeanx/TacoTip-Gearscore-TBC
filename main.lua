@@ -114,6 +114,143 @@ local function setButtonEnabled(button, enabled)
     end
 end
 
+local function refreshOptionsUI()
+    if (TT and TT.RefreshOptionsUI) then
+        TT:RefreshOptionsUI()
+    end
+end
+
+local function registerSharedMediaCallbacks()
+    if (TT and not TT._sharedMediaCallbacksRegistered and LibStub) then
+        local media = LibStub("LibSharedMedia-3.0", true)
+        if (media and media.RegisterCallback) then
+            media.RegisterCallback(TT, "LibSharedMedia_Registered", function(_, mediatype)
+                if (mediatype == "font" or mediatype == "statusbar" or mediatype == "background" or mediatype == "border") then
+                    refreshOptionsUI()
+                end
+            end)
+            TT._sharedMediaCallbacksRegistered = true
+        end
+    end
+end
+
+local function getClassTint(unit)
+    if (unit and UnitIsPlayer(unit)) then
+        local _, class = UnitClass(unit)
+        local classColor = class and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
+        if (classColor) then
+            return classColor.r, classColor.g, classColor.b
+        end
+    end
+    return 1, 1, 1
+end
+
+local function ensureTooltipPortrait(tooltip)
+    if (not tooltip) then
+        return nil
+    end
+    if (not tooltip.TacoTipPortrait) then
+        tooltip.TacoTipPortrait = tooltip:CreateTexture(nil, "ARTWORK")
+        tooltip.TacoTipPortrait:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+    end
+    return tooltip.TacoTipPortrait
+end
+
+local function applyTooltipFonts(tooltip)
+    if (not tooltip or not tooltip.GetName) then
+        return
+    end
+    local tooltipName = tooltip:GetName()
+    if (not tooltipName) then
+        return
+    end
+    local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()) or TacoTipConfig.tooltip_font or "Fonts\\FRIZQT__.TTF"
+    local fontSize = TacoTipConfig.tooltip_font_size or 12
+    for i = 1, math.max(tooltip:NumLines() + 4, 20) do
+        local left = _G[tooltipName .. "TextLeft" .. i]
+        local right = _G[tooltipName .. "TextRight" .. i]
+        if (left and left.SetFont) then
+            left:SetFont(fontPath, fontSize)
+        end
+        if (right and right.SetFont) then
+            right:SetFont(fontPath, fontSize)
+        end
+    end
+end
+
+local function applyTooltipBackdrop(tooltip)
+    if (not tooltip or not tooltip.SetBackdrop) then
+        return
+    end
+
+    local backgroundTexture = (TT.GetResolvedTooltipBackground and TT:GetResolvedTooltipBackground()) or TacoTipConfig.tooltip_background_texture or "Interface\\Tooltips\\UI-Tooltip-Background"
+    local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
+    local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
+
+    tooltip:SetBackdrop({
+        bgFile = backgroundTexture,
+        edgeFile = hasBorder and borderTexture or nil,
+        tile = true,
+        tileSize = 16,
+        edgeSize = hasBorder and 16 or 0,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+end
+
+function TT:ApplyTooltipAppearance(tooltip, unit)
+    if (not tooltip) then
+        return
+    end
+
+    applyTooltipBackdrop(tooltip)
+
+    local tintR, tintG, tintB = getClassTint(unit)
+    local bgR = TacoTipConfig.tooltip_background_color_r or 0
+    local bgG = TacoTipConfig.tooltip_background_color_g or 0
+    local bgB = TacoTipConfig.tooltip_background_color_b or 0
+    local borderR = TacoTipConfig.tooltip_border_color_r or 0.5
+    local borderG = TacoTipConfig.tooltip_border_color_g or 0.5
+    local borderB = TacoTipConfig.tooltip_border_color_b or 0.5
+
+    if (TacoTipConfig.tooltip_background_use_class and unit and UnitIsPlayer(unit)) then
+        bgR, bgG, bgB = tintR, tintG, tintB
+    end
+    if (TacoTipConfig.tooltip_border_use_class and unit and UnitIsPlayer(unit)) then
+        borderR, borderG, borderB = tintR, tintG, tintB
+    end
+
+    if (tooltip.SetBackdropColor) then
+        tooltip:SetBackdropColor(bgR, bgG, bgB, TacoTipConfig.tooltip_background_alpha or 0.85)
+    end
+    if (tooltip.SetBackdropBorderColor) then
+        tooltip:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 1)
+    end
+
+    applyTooltipFonts(tooltip)
+
+    local portrait = ensureTooltipPortrait(tooltip)
+    if (portrait) then
+        if (TacoTipConfig.tooltip_portrait and unit) then
+            local portraitSize = math.floor(36 * (TacoTipConfig.tooltip_portrait_scale or 1))
+            portrait:ClearAllPoints()
+            portrait:SetSize(portraitSize, portraitSize)
+            portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
+            _G.SetPortraitTexture(portrait, unit)
+            portrait:Show()
+        else
+            portrait:Hide()
+        end
+    end
+
+    local barTexture = (TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
+    if (tooltip == GameTooltip and GameTooltipStatusBar and GameTooltipStatusBar.SetStatusBarTexture) then
+        GameTooltipStatusBar:SetStatusBarTexture(barTexture)
+    end
+    if (TacoTipPowerBar and TacoTipPowerBar.SetStatusBarTexture) then
+        TacoTipPowerBar:SetStatusBarTexture(barTexture)
+    end
+end
+
 local function startPowerBarTicker()
     if (TacoTipPowerBar and not TacoTipPowerBar.updateTicker and type(NewTicker) == "function") then
         TacoTipPowerBar.updateTicker = NewTicker(POWERBAR_UPDATE_RATE, function()
@@ -435,7 +572,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
             TacoTipPowerBar:SetSize(0, 8)
             TacoTipPowerBar:SetPoint("TOPLEFT", GameTooltip, "BOTTOMLEFT", 2, -9)
             TacoTipPowerBar:SetPoint("TOPRIGHT", GameTooltip, "BOTTOMRIGHT", -2, -9)
-            TacoTipPowerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
+            TacoTipPowerBar:SetStatusBarTexture((TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
             TacoTipPowerBar:SetStatusBarColor(0, 0, 1)
             function TacoTipPowerBar:Update(u)
                 if (TacoTipConfig.show_power_bar) then
@@ -483,6 +620,8 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
         TacoTipPowerBar:Hide()
         stopPowerBarTicker()
     end
+
+    TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
 end)
 
 local function itemToolTipHook(self)
@@ -508,12 +647,20 @@ local function itemToolTipHook(self)
             end
         end
     end
+    TT:ApplyTooltipAppearance(self)
 end
 
 GameTooltip:HookScript("OnTooltipSetItem", itemToolTipHook)
 ShoppingTooltip1:HookScript("OnTooltipSetItem", itemToolTipHook)
 ShoppingTooltip2:HookScript("OnTooltipSetItem", itemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", itemToolTipHook)
+
+GameTooltip:HookScript("OnTooltipCleared", function(tooltip)
+    local portrait = tooltip and tooltip.TacoTipPortrait
+    if (portrait) then
+        portrait:Hide()
+    end
+end)
 
 local function CreateMouseAnchor()
     TacoTipMouseAnchor = CreateFrame("Frame", nil, UIParent)
@@ -605,6 +752,7 @@ local function CreateMover(parent, topkek, bottomright, callbackFunc)
         mover:ClearAllPoints()
         mover:SetPoint("TOPLEFT",topkek,"TOPLEFT")
         mover:SetPoint("BOTTOMRIGHT",bottomright,"BOTTOMRIGHT")
+        refreshOptionsUI()
     end)
     return mover
 end
@@ -846,6 +994,7 @@ local function onEvent(self, event, ...)
         local addon = ...
         if (addon == addOnName) then
             self:UnregisterEvent("ADDON_LOADED")
+            registerSharedMediaCallbacks()
             registerFallbackSlashCommands()
             if (TT.ApplyConfigDefaults) then
                 TT:ApplyConfigDefaults(TacoTipConfig)
@@ -934,6 +1083,7 @@ function TacoTip_CustomPosEnable(show)
             self:StopMovingOrSizing()
             local from, _, to, x, y = self:GetPoint()
             TacoTipConfig.custom_pos = {from, to, x, y}
+            refreshOptionsUI()
         end)
         TacoTipDragButton:SetScript("OnClick", function(self, button, down)
             if (button == "MiddleButton") then
@@ -949,6 +1099,7 @@ function TacoTip_CustomPosEnable(show)
                     TacoTipConfig.custom_anchor = "TOPRIGHT"
                 end
                 TacoTipDragButton:ShowExample()
+                refreshOptionsUI()
             elseif (button == "RightButton") then
                 rawset(StaticPopupDialogs, "_TacoTipDragButtonConfirm_", {["whileDead"]=1,["hideOnEscape"]=1,["timeout"]=0,["exclusive"]=1,["enterClicksFirstButton"]=1,["text"]=L["TEXT_DLG_CUSTOM_POS_CONFIRM"],
                 ["button1"]=SAVE,["button2"]=CANCEL,["button3"]=RESET,["OnAccept"]=function() TacoTipDragButton:_Save() end,["OnAlt"]=function() TacoTipDragButton:_Disable() end})
@@ -1019,10 +1170,12 @@ function TacoTip_CustomPosEnable(show)
                 anchorMouseWorldCheck:SetDisabled(true)
             end
             TacoTipConfig.anchor_mouse = false
+            refreshOptionsUI()
         end
         function TacoTipDragButton:_Save()
             TacoTipDragButton:Hide()
             print("|cff59f0dcTacoTip:|r "..L["TEXT_HELP_MOVER_SAVED"])
+            refreshOptionsUI()
         end
         function TacoTipDragButton:_Disable()
             local customPositionCheck = _G.TacoTipOptCheckBoxCustomPosition
@@ -1045,6 +1198,7 @@ function TacoTip_CustomPosEnable(show)
             end
             TacoTipConfig.custom_pos = nil
             TacoTipConfig.custom_anchor = nil
+            refreshOptionsUI()
         end
         TacoTipDragButton:Hide()
     end

@@ -13,7 +13,9 @@ applyTo: '**'
 - This is YOUR Internal TOOL. NOT PART OF THE USER PROJECT ITS YOUR OWN TOOL TO HELP YOU BUILD debug.
 - It might `'read/problems'` files from the user project to help you debug issues.
 - 📝 Always update `#progress.md` with your progress.
-- 📝 Always update `#activeContext.md` with your progress.
+- 📝 Always update `#memory-bank/progress.md` with your progress.
+- 📝 Always update `#memory-bank/activeContext.md` with your progress.
+- 📝 Always update `#memory-bank/visualizationContext.md` with your progress.
 - 📝 Always update `#AGENTS.md` with your progress.
 - 📚 Always sync `#AGENTS.md` in dir your working on so we have up to date info.
 - 🔍 For research, use [#web] or [#websearch] tool and to make sure you have no knowledge gaps.

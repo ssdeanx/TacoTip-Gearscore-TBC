@@ -1,6 +1,34 @@
 # Active Context
 
+## 2026-05-27 - widget polish and color-wheel pass
+
+- Upgraded the professional options UI with stronger single-list media previews, including a wider statusbar/background/border strip shown directly in the dropdown entries and selected value text.
+- Added mouse-wheel support to the reusable scroll frames and sliders so long pages and numeric tuning controls are easier to use in-game.
+- Added dedicated tooltip border/background color controls that open the Blizzard color picker while keeping the existing alpha sliders as the intensity controls.
+- `main.lua` now applies configurable base tooltip border/background RGB values, with class-color toggles still overriding player-unit tooltips when enabled.
+- The Tooltips page now has clearer subsection structure (`Backdrop colors & textures`, `Portrait & text`, `Tooltip bars`) and more consistent hover-help coverage on labels/value widgets.
+- The options root category now uses the addon title from `TacoTip.toc`, so the Blizzard AddOns tree should show `TacoTip Gearscore TBC` instead of the shorter internal folder name.
+- Added `memory-bank/visualizationContext.md` with ASCII and Mermaid UI maps so future sessions can reason about intended page layout without guessing from code alone.
+
+## 2026-05-27 - professional options UI shipped
+
+- `options.lua` now registers TacoTip as a parent category with child pages for `Tooltips`, `Positioning`, `Character & Inspect`, and `Advanced` on both the modern `Settings` API path and the legacy `InterfaceOptions_AddCategory` path.
+- The options runtime now boots a new multi-page builder layer instead of the old single-canvas `OnShow` block, while leaving the legacy code in place but bypassed.
+- The new UI keeps the existing config keys and mover flows, adds a live tooltip preview, a custom-anchor dropdown, numeric/slider offset controls for character and inspect overlays, and a larger tooltip-style surface for portrait/font/theme/bar customization.
+- `main.lua` now notifies the options UI after mover/drag/save interactions so the new controls stay synchronized with runtime placement changes.
+- Tooltip appearance is now runtime-configurable: class-tinted border/background with adjustable alpha, optional portrait display and scale, font choice, tooltip text size, and shared statusbar textures.
+- The current media UX stays on single dropdown lists; the options widgets now use wider dropdowns, hover-help on custom controls, a clearer live-preview note, and expanded Blizzard default font/background/border/statusbar coverage.
+- The mistaken optional tooltip experiment was removed completely; there is currently no extra external-data feature left in the addon.
+- Tooltip appearance media discovery now also includes SharedMedia-backed background and border textures with Blizzard tooltip assets as the fallback when no external pack is installed.
+- New user-facing settings copy was added in `Locale/enUS.lua`; other locales will inherit English through the existing fallback merge until translated.
+
 Current focus:
+
+- Completed the populated locale pass in `Locale/deDE.lua`, `Locale/esES.lua`, `Locale/koKR.lua`, `Locale/ruRU.lua`, and `Locale/zhCN.lua` by filling the missing HunterScore entries and the blank `Always FULL` descriptions where applicable.
+- Completed first-pass full translation tables for the previously empty `Locale/esMX.lua`, `Locale/frFR.lua`, `Locale/itIT.lua`, `Locale/ptBR.lua`, and `Locale/zhTW.lua` files.
+- The new locale tables are complete and syntactically closed, but they should still be reviewed by a native speaker if you want polish beyond the first pass.
+- Localized the `HunterScore` label and description in every locale so the tooltip option no longer falls back to English.
+- Performed a final wording pass on the locale packs to smooth helper text, style labels, and other high-visibility strings so the translations read more naturally.
 
 - Keep TacoTip loading cleanly on Burning Crusade Classic Anniversary `2.5.5` / `Interface 20505`.
 - Preserve the verified Classic-era scope and the actual load order from `TacoTip.toc` while reducing bundled-lib warning noise.

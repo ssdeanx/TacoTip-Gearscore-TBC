@@ -55,6 +55,23 @@ function TT:GetDefaults()
         guild_rank_alt_style = false,
         show_hp_bar = true,
         show_power_bar = false,
+        tooltip_border_use_class = false,
+        tooltip_background_use_class = false,
+        tooltip_border_color_r = 0.5,
+        tooltip_border_color_g = 0.5,
+        tooltip_border_color_b = 0.5,
+        tooltip_border_alpha = 1,
+        tooltip_background_color_r = 0,
+        tooltip_background_color_g = 0,
+        tooltip_background_color_b = 0,
+        tooltip_background_alpha = 0.85,
+        tooltip_background_texture = "Interface\\Tooltips\\UI-Tooltip-Background",
+        tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tooltip_portrait = false,
+        tooltip_portrait_scale = 1,
+        tooltip_font = "Fonts\\FRIZQT__.TTF",
+        tooltip_font_size = 12,
+        tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
         instant_fade = false,
         anchor_mouse = false,
         anchor_mouse_world = true,
@@ -68,7 +85,8 @@ function TT:GetDefaults()
         character_ilvl_offset_x = 0,
         character_ilvl_offset_y = 0,
         unlock_info_position = false,
-        show_achievement_points = false
+        show_achievement_points = false,
+        guild_rank_style = 1
         --conf_version = addOnVersion,
         --custom_pos = nil,
         --custom_anchor = nil,
@@ -262,10 +280,31 @@ registerSlashCommands()
 
 -- main frame
 optionsFrame = CreateFrame("Frame","TacoTipOptions")
-optionsFrame.name = addOnTitle
+optionsFrame.name = addOnTitle or "TacoTip Gearscore TBC"
+local optionsPages = {
+    root = optionsFrame,
+    tooltips = CreateFrame("Frame", "TacoTipOptionsTooltips"),
+    positioning = CreateFrame("Frame", "TacoTipOptionsPositioning"),
+    characterInspect = CreateFrame("Frame", "TacoTipOptionsCharacterInspect"),
+    advanced = CreateFrame("Frame", "TacoTipOptionsAdvanced")
+}
+
+optionsPages.tooltips.name = L["OPTIONS_PAGE_TOOLTIPS"] or "Tooltips"
+optionsPages.positioning.name = L["OPTIONS_PAGE_POSITIONING"] or "Positioning"
+optionsPages.characterInspect.name = L["OPTIONS_PAGE_CHARACTER_INSPECT"] or "Character & Inspect"
+optionsPages.advanced.name = L["OPTIONS_PAGE_ADVANCED"] or "Advanced"
+
+optionsPages.tooltips.parent = optionsFrame.name
+optionsPages.positioning.parent = optionsFrame.name
+optionsPages.characterInspect.parent = optionsFrame.name
+optionsPages.advanced.parent = optionsFrame.name
+
 local addOnOptionsCategory
+local modernSubcategories = {}
 local legacyCategoryRegistered = false
+local legacyChildCategoriesRegistered = false
 local settingsCategoryRegistered = false
+local settingsSubcategoriesRegistered = false
 
 local function ensureSettingsUI()
     if (_G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory) then
@@ -276,6 +315,38 @@ local function ensureSettingsUI()
         pcall(LoadAddOn, "Blizzard_SettingsDefinitions")
     end
     return _G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory
+end
+
+local function registerSettingsSubcategories()
+    if (settingsSubcategoriesRegistered or not addOnOptionsCategory or not _G.Settings or not _G.Settings.RegisterCanvasLayoutSubcategory) then
+        return settingsSubcategoriesRegistered
+    end
+
+    local ok = pcall(function()
+        modernSubcategories.tooltips = modernSubcategories.tooltips or _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.tooltips, optionsPages.tooltips.name)
+        modernSubcategories.positioning = modernSubcategories.positioning or _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.positioning, optionsPages.positioning.name)
+        modernSubcategories.characterInspect = modernSubcategories.characterInspect or _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.characterInspect, optionsPages.characterInspect.name)
+        modernSubcategories.advanced = modernSubcategories.advanced or _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.advanced, optionsPages.advanced.name)
+    end)
+
+    settingsSubcategoriesRegistered = ok and modernSubcategories.tooltips and modernSubcategories.positioning and modernSubcategories.characterInspect and modernSubcategories.advanced and true or settingsSubcategoriesRegistered
+    return settingsSubcategoriesRegistered
+end
+
+local function registerLegacyChildCategories()
+    if (legacyChildCategoriesRegistered or not InterfaceOptions_AddCategory) then
+        return legacyChildCategoriesRegistered
+    end
+
+    local ok = pcall(function()
+        InterfaceOptions_AddCategory(optionsPages.tooltips)
+        InterfaceOptions_AddCategory(optionsPages.positioning)
+        InterfaceOptions_AddCategory(optionsPages.characterInspect)
+        InterfaceOptions_AddCategory(optionsPages.advanced)
+    end)
+
+    legacyChildCategoriesRegistered = ok and true or legacyChildCategoriesRegistered
+    return legacyChildCategoriesRegistered
 end
 
 local function registerOptionsCategory()
@@ -291,6 +362,10 @@ local function registerOptionsCategory()
             end
         end
 
+        if (settingsCategoryRegistered) then
+            registerSettingsSubcategories()
+        end
+
         if (not InterfaceOptions_AddCategory and LoadAddOn) then
             pcall(LoadAddOn, "Blizzard_OptionsUI")
             pcall(LoadAddOn, "Blizzard_InterfaceOptions")
@@ -300,6 +375,10 @@ local function registerOptionsCategory()
             InterfaceOptions_AddCategory(optionsFrame)
             legacyCategoryRegistered = true
             registeredAny = true
+        end
+
+        if (legacyCategoryRegistered) then
+            registerLegacyChildCategories()
         end
     end)
 
@@ -340,8 +419,11 @@ openOptionsPanel = function()
         return
     end
     if (legacyCategoryRegistered and InterfaceOptionsFrame_OpenToCategory) then
-        InterfaceOptionsFrame_OpenToCategory(optionsFrame)
-        InterfaceOptionsFrame_OpenToCategory(optionsFrame)
+        if (_G.InterfaceOptionsFrame_Show) then
+            pcall(_G.InterfaceOptionsFrame_Show)
+        end
+        pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
+        pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
         return
     end
     print("|cff59f0dcTacoTip:|r Options panel is unavailable on this client. Use /tacotip custom to move the tooltip.")
@@ -349,7 +431,1555 @@ end
 
 TT.OpenOptionsPanel = openOptionsPanel
 
+local MODERN_OPTION_SLIDER_MIN = -300
+local MODERN_OPTION_SLIDER_MAX = 300
+local MODERN_OPTION_SLIDER_STEP = 1
+
+local modernOptionsState = {
+    built = false,
+    controls = {},
+    pages = {},
+    rootSummary = nil,
+    preview = nil,
+    previewHealthBar = nil,
+    previewPowerBar = nil,
+    previewAnchor = nil,
+    offsetEditors = {},
+    offsetSliders = {}
+}
+
+local builtinTooltipFonts = {
+    { value = "Fonts\\ARIALN.TTF", text = "Blizzard - Arial Narrow" },
+    { value = "Fonts\\FRIZQT__.TTF", text = "Blizzard - Friz Quadrata TT" },
+    { value = "Fonts\\MORPHEUS.TTF", text = "Blizzard - Morpheus" },
+    { value = "Fonts\\SKURRI.TTF", text = "Blizzard - Skurri" }
+}
+
+local builtinStatusBarTextures = {
+    { value = "Interface\\TargetingFrame\\UI-StatusBar", text = "Blizzard - Status Bar" },
+    { value = "Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar", text = "Blizzard - Character Skills Bar" },
+    { value = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill", text = "Blizzard - Targeting Bar Fill" },
+    { value = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill", text = "Blizzard - Raid Bar" },
+    { value = "Interface\\Buttons\\WHITE8X8", text = "Blizzard - Solid" }
+}
+
+local builtinTooltipBackgrounds = {
+    { value = "Interface\\DialogFrame\\UI-DialogBox-Background", text = "Blizzard - Dialog Background" },
+    { value = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark", text = "Blizzard - Dialog Background Dark" },
+    { value = "Interface\\DialogFrame\\UI-DialogBox-Gold-Background", text = "Blizzard - Dialog Background Gold" },
+    { value = "Interface\\FullScreenTextures\\LowHealth", text = "Blizzard - Low Health" },
+    { value = "Interface\\FrameGeneral\\UI-Background-Marble", text = "Blizzard - Marble" },
+    { value = "Interface\\FullScreenTextures\\OutOfControl", text = "Blizzard - Out of Control" },
+    { value = "Interface\\AchievementFrame\\UI-Achievement-Parchment-Horizontal", text = "Blizzard - Parchment" },
+    { value = "Interface\\AchievementFrame\\UI-GuildAchievement-Parchment-Horizontal", text = "Blizzard - Parchment 2" },
+    { value = "Interface\\FrameGeneral\\UI-Background-Rock", text = "Blizzard - Rock" },
+    { value = "Interface\\TabardFrame\\TabardFrameBackground", text = "Blizzard - Tabard Background" },
+    { value = "Interface\\Tooltips\\UI-Tooltip-Background", text = "Blizzard - Tooltip Background" },
+    { value = "Interface\\Buttons\\WHITE8X8", text = "Blizzard - Solid" }
+}
+
+local builtinTooltipBorders = {
+    { value = "Interface\\None", text = "Blizzard - None" },
+    { value = "Interface\\AchievementFrame\\UI-Achievement-WoodBorder", text = "Blizzard - Achievement Wood" },
+    { value = "Interface\\Tooltips\\ChatBubble-Backdrop", text = "Blizzard - Chat Bubble" },
+    { value = "Interface\\DialogFrame\\UI-DialogBox-Border", text = "Blizzard - Dialog Border" },
+    { value = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border", text = "Blizzard - Dialog Border Gold" },
+    { value = "Interface\\CHARACTERFRAME\\UI-Party-Border", text = "Blizzard - Party Border" },
+    { value = "Interface\\Tooltips\\UI-Tooltip-Border", text = "Blizzard - Tooltip Border" }
+}
+
+local modernGetConfig
+local modernRefreshLockPositionToggle
+local modernShowExampleTooltip
+local modernWidgetId = 0
+
+local function nextModernWidgetName(prefix)
+    modernWidgetId = modernWidgetId + 1
+    return string.format("TacoTipModern%s%d", prefix, modernWidgetId)
+end
+
+local function getSharedMediaLibrary()
+    if (LibStub) then
+        return LibStub("LibSharedMedia-3.0", true)
+    end
+    return nil
+end
+
+local function sortMediaChoices(choices)
+    table.sort(choices, function(a, b)
+        return tostring(a.text) < tostring(b.text)
+    end)
+    return choices
+end
+
+local function buildTexturePreviewText(texturePath, label)
+    if (not texturePath or texturePath == "" or texturePath == "Interface\\None") then
+        return label
+    end
+    return string.format("|T%s:132:14:0:0|t %s", texturePath, label)
+end
+
+function TT:GetTooltipFontChoices()
+    local media = getSharedMediaLibrary()
+    local seen = {}
+    local choices = {}
+
+    for _, entry in ipairs(builtinTooltipFonts) do
+        seen[entry.value] = true
+        table.insert(choices, { value = entry.value, text = entry.text })
+    end
+
+    if (media and media.HashTable) then
+        local fontTable = media:HashTable("font") or {}
+        for name, path in pairs(fontTable) do
+            if (path and not seen[path]) then
+                seen[path] = true
+                table.insert(choices, { value = path, text = name })
+            end
+        end
+    end
+
+    return sortMediaChoices(choices)
+end
+
+function TT:GetTooltipStatusBarTextureChoices()
+    local media = getSharedMediaLibrary()
+    local seen = {}
+    local choices = {}
+
+    for _, entry in ipairs(builtinStatusBarTextures) do
+        seen[entry.value] = true
+        table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
+    end
+
+    if (media and media.HashTable) then
+        local textureTable = media:HashTable("statusbar") or {}
+        for name, path in pairs(textureTable) do
+            if (path and not seen[path]) then
+                seen[path] = true
+                table.insert(choices, { value = path, text = name, menuText = buildTexturePreviewText(path, name) })
+            end
+        end
+    end
+
+    return sortMediaChoices(choices)
+end
+
+function TT:GetTooltipBackgroundChoices()
+    local media = getSharedMediaLibrary()
+    local seen = {}
+    local choices = {}
+
+    for _, entry in ipairs(builtinTooltipBackgrounds) do
+        seen[entry.value] = true
+        table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
+    end
+
+    if (media and media.HashTable) then
+        local backgroundTable = media:HashTable("background") or {}
+        for name, path in pairs(backgroundTable) do
+            if (path and not seen[path]) then
+                seen[path] = true
+                table.insert(choices, { value = path, text = name, menuText = buildTexturePreviewText(path, name) })
+            end
+        end
+    end
+
+    return sortMediaChoices(choices)
+end
+
+function TT:GetTooltipBorderChoices()
+    local media = getSharedMediaLibrary()
+    local seen = {}
+    local choices = {}
+
+    for _, entry in ipairs(builtinTooltipBorders) do
+        seen[entry.value] = true
+        table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
+    end
+
+    if (media and media.HashTable) then
+        local borderTable = media:HashTable("border") or {}
+        for name, path in pairs(borderTable) do
+            if (path and not seen[path]) then
+                seen[path] = true
+                table.insert(choices, { value = path, text = name, menuText = buildTexturePreviewText(path, name) })
+            end
+        end
+    end
+
+    return sortMediaChoices(choices)
+end
+
+local function resolveConfiguredMediaValue(choices, configuredValue, fallbackValue)
+    if (configuredValue) then
+        for _, entry in ipairs(choices) do
+            if (entry.value == configuredValue) then
+                return configuredValue
+            end
+        end
+    end
+    return fallbackValue
+end
+
+function TT:GetResolvedTooltipFont()
+    return resolveConfiguredMediaValue(self:GetTooltipFontChoices(), TacoTipConfig and TacoTipConfig.tooltip_font, "Fonts\\FRIZQT__.TTF")
+end
+
+function TT:GetResolvedTooltipStatusBarTexture()
+    return resolveConfiguredMediaValue(self:GetTooltipStatusBarTextureChoices(), TacoTipConfig and TacoTipConfig.tooltip_bar_texture, "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
+end
+
+function TT:GetResolvedTooltipBackground()
+    return resolveConfiguredMediaValue(self:GetTooltipBackgroundChoices(), TacoTipConfig and TacoTipConfig.tooltip_background_texture, "Interface\\Tooltips\\UI-Tooltip-Background")
+end
+
+function TT:GetResolvedTooltipBorder()
+    return resolveConfiguredMediaValue(self:GetTooltipBorderChoices(), TacoTipConfig and TacoTipConfig.tooltip_border_texture, "Interface\\Tooltips\\UI-Tooltip-Border")
+end
+
+local function setFontState(fontString, enabled, enabledFont)
+    if (not fontString) then
+        return
+    end
+    fontString:SetFontObject(enabled and (enabledFont or "GameFontHighlight") or "GameFontDisable")
+end
+
+local function setDropDownEnabled(dropDown, enabled)
+    if (not dropDown) then
+        return
+    end
+    if (enabled) then
+        _G.UIDropDownMenu_EnableDropDown(dropDown)
+    else
+        _G.UIDropDownMenu_DisableDropDown(dropDown)
+    end
+    setFontState(dropDown.label, enabled, "GameFontNormal")
+    setFontState(dropDown.description, enabled, "GameFontHighlightSmall")
+end
+
+local function showHoverTooltip(frame, title, text)
+    if (not frame or not text or text == "") then
+        return
+    end
+    GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+    GameTooltip:ClearLines()
+    if (title and title ~= "") then
+        GameTooltip:SetText(title, 1, 0.82, 0)
+        GameTooltip:AddLine(text, 1, 1, 1, true)
+    else
+        GameTooltip:SetText(text, 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+end
+
+local function attachHoverTooltip(frame, title, text)
+    if (not frame or not text or text == "") then
+        return
+    end
+    if (frame.EnableMouse) then
+        frame:EnableMouse(true)
+    end
+    frame:SetScript("OnEnter", function(self)
+        showHoverTooltip(self, title, text)
+    end)
+    frame:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+end
+
+local function createWrappedText(parent, fontObject, width, text)
+    local label = parent:CreateFontString(nil, "ARTWORK", fontObject)
+    label:SetJustifyH("LEFT")
+    label:SetJustifyV("TOP")
+    label:SetWidth(width)
+    label:SetText(text)
+    return label
+end
+
+local function createSectionHeader(parent, text, description, width)
+    local header = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    header:SetJustifyH("LEFT")
+    header:SetText(text)
+
+    local desc
+    if (description and description ~= "") then
+        desc = createWrappedText(parent, "GameFontHighlightSmall", width, description)
+    end
+
+    return header, desc
+end
+
+local function createOptionsCheckbox(parent, globalName, label, tooltipDescription, onClick)
+    globalName = globalName or nextModernWidgetName("Check")
+    local check = CreateFrame("CheckButton", globalName, parent, "InterfaceOptionsCheckButtonTemplate")
+    check.label = _G[check:GetName() .. "Text"]
+    check.label:SetText(label)
+    if (tooltipDescription and tooltipDescription ~= "") then
+        check.tooltipText = label
+        check.tooltipRequirement = tooltipDescription
+    end
+    check:SetScript("OnClick", function(self)
+        onClick(self, self:GetChecked() and true or false)
+    end)
+    check.SetDisabled = function(self, disabled)
+        if (disabled) then
+            self:Disable()
+        else
+            self:Enable()
+        end
+        setFontState(self.label, not disabled)
+    end
+    return check
+end
+
+local function createOptionsButton(parent, globalName, text, width, height, onClick, tooltipDescription)
+    local button = CreateFrame("Button", globalName, parent, "UIPanelButtonTemplate")
+    button:SetSize(width, height)
+    button:SetText(text)
+    button:SetScript("OnClick", onClick)
+    attachHoverTooltip(button, text, tooltipDescription)
+    return button
+end
+
+local function createOptionsDropdown(parent, globalName, label, description, values, onValueChanged)
+    globalName = globalName or nextModernWidgetName("Dropdown")
+    local dropDown = CreateFrame("Frame", globalName, parent, "UIDropDownMenuTemplate")
+    dropDown.values = values or {}
+    dropDown.label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    dropDown.label:SetJustifyH("LEFT")
+    dropDown.label:SetText(label)
+    dropDown.description = description and createWrappedText(parent, "GameFontHighlightSmall", 320, description) or nil
+
+    _G.UIDropDownMenu_SetWidth(dropDown, 240)
+    _G.UIDropDownMenu_Initialize(dropDown, function(frame)
+        for _, option in ipairs(frame.values or values or {}) do
+            local info = _G.UIDropDownMenu_CreateInfo()
+            info.text = option.menuText or option.text
+            info.value = option.value
+            info.checked = (frame.selectedValue == option.value)
+            info.func = function(button)
+                frame:SetValue(button.value)
+                onValueChanged(button.value)
+            end
+            if (option.tooltip) then
+                info.tooltipTitle = option.text
+                info.tooltipText = option.tooltip
+                info.tooltipOnButton = 1
+            end
+            _G.UIDropDownMenu_AddButton(info)
+        end
+    end)
+
+    dropDown.SetValues = function(self, newValues)
+        self.values = newValues or {}
+    end
+
+    dropDown.SetValue = function(self, value)
+        self.selectedValue = value
+        _G.UIDropDownMenu_SetSelectedValue(self, value)
+        for _, option in ipairs(self.values or values or {}) do
+            if (option.value == value) then
+                _G.UIDropDownMenu_SetText(self, option.menuText or option.text)
+                return
+            end
+        end
+        local firstValue = (self.values or values or {})[1]
+        _G.UIDropDownMenu_SetText(self, firstValue and (firstValue.menuText or firstValue.text) or "")
+    end
+
+    dropDown.SetDisabled = function(self, disabled)
+        setDropDownEnabled(self, not disabled)
+    end
+
+    attachHoverTooltip(dropDown, label, description)
+    attachHoverTooltip(dropDown.label, label, description)
+    attachHoverTooltip(dropDown.description, label, description)
+
+    return dropDown
+end
+
+local function createOptionsEditBox(parent, globalName, width, onCommit, tooltipTitle, tooltipDescription)
+    local editBox = CreateFrame("EditBox", globalName, parent, "InputBoxTemplate")
+    editBox:SetAutoFocus(false)
+    editBox:SetSize(width, 24)
+    editBox:SetMaxLetters(8)
+    editBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        if (self.lastValue ~= nil) then
+            self:SetText(tostring(self.lastValue))
+        end
+    end)
+    editBox:SetScript("OnEnterPressed", function(self)
+        local value = tonumber(self:GetText())
+        if (value ~= nil) then
+            value = math.floor(value + (value < 0 and -0.5 or 0.5))
+            self.lastValue = value
+            onCommit(value)
+        else
+            self:SetText(tostring(self.lastValue or 0))
+        end
+        self:ClearFocus()
+    end)
+    editBox:SetScript("OnEditFocusLost", function(self)
+        local value = tonumber(self:GetText())
+        if (value ~= nil) then
+            value = math.floor(value + (value < 0 and -0.5 or 0.5))
+            self.lastValue = value
+            onCommit(value)
+        else
+            self:SetText(tostring(self.lastValue or 0))
+        end
+    end)
+    editBox.SetDisabled = function(self, disabled)
+        if (disabled) then
+            self:Disable()
+        else
+            self:Enable()
+        end
+    end
+    attachHoverTooltip(editBox, tooltipTitle, tooltipDescription)
+    return editBox
+end
+
+local function createOptionsSlider(parent, globalName, label, tooltipDescription, onValueChanged, minValue, maxValue, step)
+    globalName = globalName or nextModernWidgetName("Slider")
+    local slider = CreateFrame("Slider", globalName, parent, "OptionsSliderTemplate")
+    minValue = minValue or MODERN_OPTION_SLIDER_MIN
+    maxValue = maxValue or MODERN_OPTION_SLIDER_MAX
+    step = step or MODERN_OPTION_SLIDER_STEP
+    slider:SetMinMaxValues(minValue, maxValue)
+    slider:SetValueStep(step)
+    if (slider.SetObeyStepOnDrag) then
+        slider:SetObeyStepOnDrag(true)
+    end
+    slider:SetWidth(180)
+    slider:EnableMouseWheel(true)
+    slider.label = _G[slider:GetName() .. "Text"]
+    slider.low = _G[slider:GetName() .. "Low"]
+    slider.high = _G[slider:GetName() .. "High"]
+    slider.label:SetText(label)
+    slider.low:SetText(tostring(minValue))
+    slider.high:SetText(tostring(maxValue))
+    slider.valueText = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    slider:SetScript("OnValueChanged", function(self, value)
+        value = math.floor(value + (value < 0 and -0.5 or 0.5))
+        self.valueText:SetText(tostring(value))
+        if (not self._refreshing) then
+            onValueChanged(value)
+        end
+    end)
+    slider:SetScript("OnMouseWheel", function(self, delta)
+        if (not self:IsEnabled()) then
+            return
+        end
+        local currentValue = self:GetValue()
+        local stepValue = self:GetValueStep() or step or 1
+        local nextValue = currentValue + (delta * stepValue)
+        local minSliderValue, maxSliderValue = self:GetMinMaxValues()
+        if (nextValue < minSliderValue) then
+            nextValue = minSliderValue
+        elseif (nextValue > maxSliderValue) then
+            nextValue = maxSliderValue
+        end
+        self:SetValue(nextValue)
+    end)
+    slider.SetDisabled = function(self, disabled)
+        if (disabled) then
+            self:Disable()
+        else
+            self:Enable()
+        end
+        setFontState(self.label, not disabled, "GameFontNormal")
+        setFontState(self.valueText, not disabled, "GameFontHighlightSmall")
+    end
+    slider.SetValueSilently = function(self, value)
+        self._refreshing = true
+        self:SetValue(value)
+        self._refreshing = false
+        self.valueText:SetText(tostring(value))
+    end
+    attachHoverTooltip(slider, label, tooltipDescription)
+    attachHoverTooltip(slider.label, label, tooltipDescription)
+    attachHoverTooltip(slider.valueText, label, tooltipDescription)
+    return slider
+end
+
+local function openClassicColorPicker(initialR, initialG, initialB, onChanged)
+    local colorPickerFrame = _G.ColorPickerFrame
+    if (not colorPickerFrame) then
+        return
+    end
+
+    local originalR, originalG, originalB = initialR or 1, initialG or 1, initialB or 1
+    local function applyCurrentColor()
+        local r, g, b = colorPickerFrame:GetColorRGB()
+        onChanged(r, g, b)
+    end
+
+    local function cancelColor()
+        onChanged(originalR, originalG, originalB)
+    end
+
+    if (colorPickerFrame.SetupColorPickerAndShow) then
+        colorPickerFrame:SetupColorPickerAndShow({
+            r = originalR,
+            g = originalG,
+            b = originalB,
+            hasOpacity = false,
+            swatchFunc = applyCurrentColor,
+            cancelFunc = cancelColor
+        })
+        return
+    end
+
+    pcall(rawset, colorPickerFrame, "hasOpacity", false)
+    pcall(rawset, colorPickerFrame, "opacity", 1)
+    pcall(rawset, colorPickerFrame, "func", applyCurrentColor)
+    pcall(rawset, colorPickerFrame, "opacityFunc", nil)
+    pcall(rawset, colorPickerFrame, "cancelFunc", cancelColor)
+    colorPickerFrame:SetColorRGB(originalR, originalG, originalB)
+    colorPickerFrame:Hide()
+    colorPickerFrame:Show()
+end
+
+local function createColorSwatchControl(parent, globalName, label, description, onColorChanged)
+    globalName = globalName or nextModernWidgetName("Color")
+
+    local control = CreateFrame("Frame", globalName, parent)
+    control:SetSize(196, 72)
+
+    control.label = control:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    control.label:SetPoint("TOPLEFT", control, "TOPLEFT", 0, 0)
+    control.label:SetJustifyH("LEFT")
+    control.label:SetText(label)
+
+    control.button = CreateFrame("Button", nil, control, "UIPanelButtonTemplate")
+    control.button:SetSize(102, 22)
+    control.button:SetPoint("TOPLEFT", control.label, "BOTTOMLEFT", 0, -4)
+    control.button:SetText(L["OPTIONS_PICK_COLOR"] or "Choose color")
+
+    control.swatchBorder = control:CreateTexture(nil, "BORDER")
+    control.swatchBorder:SetTexture("Interface\\Buttons\\WHITE8X8")
+    control.swatchBorder:SetVertexColor(0, 0, 0, 1)
+    control.swatchBorder:SetSize(26, 26)
+    control.swatchBorder:SetPoint("LEFT", control.button, "RIGHT", 8, 0)
+
+    control.swatch = control:CreateTexture(nil, "ARTWORK")
+    control.swatch:SetTexture("Interface\\Buttons\\WHITE8X8")
+    control.swatch:SetSize(20, 20)
+    control.swatch:SetPoint("CENTER", control.swatchBorder, "CENTER", 0, 0)
+
+    control.description = createWrappedText(control, "GameFontHighlightSmall", 196, description or "")
+    control.description:SetPoint("TOPLEFT", control.button, "BOTTOMLEFT", 0, -4)
+
+    control.SetColor = function(self, r, g, b)
+        self.r, self.g, self.b = r or 1, g or 1, b or 1
+        if (self.swatch.SetColorTexture) then
+            self.swatch:SetColorTexture(self.r, self.g, self.b, 1)
+        else
+            self.swatch:SetVertexColor(self.r, self.g, self.b, 1)
+        end
+    end
+
+    control.SetDisabled = function(self, disabled)
+        if (disabled) then
+            self.button:Disable()
+        else
+            self.button:Enable()
+        end
+        setFontState(self.label, not disabled, "GameFontNormal")
+        setFontState(self.description, not disabled, "GameFontHighlightSmall")
+    end
+
+    control.button:SetScript("OnClick", function()
+        openClassicColorPicker(control.r, control.g, control.b, function(r, g, b)
+            control:SetColor(r, g, b)
+            onColorChanged(r, g, b)
+        end)
+    end)
+
+    attachHoverTooltip(control.button, label, description)
+    attachHoverTooltip(control.label, label, description)
+    attachHoverTooltip(control.description, label, description)
+
+    return control
+end
+
+local function createScrollPage(frame)
+    local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -12)
+    scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 12)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetPoint("TOPLEFT")
+    content:SetSize(1, 1)
+    scrollFrame:SetScrollChild(content)
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnSizeChanged", function(self, width)
+        content:SetWidth((width or self:GetWidth()) - 24)
+    end)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local stepValue = 32
+        local nextOffset = self:GetVerticalScroll() - (delta * stepValue)
+        local maxOffset = self:GetVerticalScrollRange() or 0
+        if (nextOffset < 0) then
+            nextOffset = 0
+        elseif (nextOffset > maxOffset) then
+            nextOffset = maxOffset
+        end
+        self:SetVerticalScroll(nextOffset)
+    end)
+
+    return scrollFrame, content
+end
+
+local function createPageBuilder(parent, startX, startY)
+    local builder = {
+        parent = parent,
+        x = startX or 16,
+        y = startY or -16,
+        maxBottom = 0
+    }
+
+    function builder:AddSpacing(amount)
+        self.y = self.y - amount
+    end
+
+    function builder:AddAnchor(frame, height, offsetX)
+        frame:SetPoint("TOPLEFT", self.parent, "TOPLEFT", self.x + (offsetX or 0), self.y)
+        self.y = self.y - height
+        if (-self.y > self.maxBottom) then
+            self.maxBottom = -self.y
+        end
+    end
+
+    function builder:Finalize(padding)
+        self.parent:SetHeight(self.maxBottom + (padding or 48))
+    end
+
+    return builder
+end
+
+local modernAnchorOptions = {
+    { value = "TOPLEFT", text = L["OPTIONS_ANCHOR_TOPLEFT"] or "Top Left", tooltip = L["OPTIONS_ANCHOR_TOPLEFT_DESC"] },
+    { value = "TOPRIGHT", text = L["OPTIONS_ANCHOR_TOPRIGHT"] or "Top Right", tooltip = L["OPTIONS_ANCHOR_TOPRIGHT_DESC"] },
+    { value = "BOTTOMLEFT", text = L["OPTIONS_ANCHOR_BOTTOMLEFT"] or "Bottom Left", tooltip = L["OPTIONS_ANCHOR_BOTTOMLEFT_DESC"] },
+    { value = "BOTTOMRIGHT", text = L["OPTIONS_ANCHOR_BOTTOMRIGHT"] or "Bottom Right", tooltip = L["OPTIONS_ANCHOR_BOTTOMRIGHT_DESC"] },
+    { value = "CENTER", text = L["OPTIONS_ANCHOR_CENTER"] or "Center", tooltip = L["OPTIONS_ANCHOR_CENTER_DESC"] }
+}
+
+local modernStyleOptions = {
+    { value = 1, text = L["FULL"], tooltip = L["Always FULL"] },
+    { value = 2, text = L["COMPACT/FULL"], tooltip = L["Default COMPACT, hold SHIFT for FULL"] },
+    { value = 3, text = L["COMPACT"], tooltip = L["Always COMPACT"] },
+    { value = 4, text = L["MINI/FULL"], tooltip = L["Default MINI, hold SHIFT for FULL"] },
+    { value = 5, text = L["MINI"], tooltip = L["Always MINI"] }
+}
+
+local function refreshOverlayPositions()
+    if (PersonalGearScore and PersonalGearScore.RefreshPosition) then PersonalGearScore:RefreshPosition() end
+    if (PersonalGearScoreText and PersonalGearScoreText.RefreshPosition) then PersonalGearScoreText:RefreshPosition() end
+    if (PersonalAvgItemLvl and PersonalAvgItemLvl.RefreshPosition) then PersonalAvgItemLvl:RefreshPosition() end
+    if (PersonalAvgItemLvlText and PersonalAvgItemLvlText.RefreshPosition) then PersonalAvgItemLvlText:RefreshPosition() end
+    if (InspectGearScore and InspectGearScore.RefreshPosition) then InspectGearScore:RefreshPosition() end
+    if (InspectGearScoreText and InspectGearScoreText.RefreshPosition) then InspectGearScoreText:RefreshPosition() end
+    if (InspectAvgItemLvl and InspectAvgItemLvl.RefreshPosition) then InspectAvgItemLvl:RefreshPosition() end
+    if (InspectAvgItemLvlText and InspectAvgItemLvlText.RefreshPosition) then InspectAvgItemLvlText:RefreshPosition() end
+    if (TT.RefreshCharacterFrame and PaperDollFrame and PaperDollFrame:IsShown()) then TT:RefreshCharacterFrame() end
+    if (TT.RefreshInspectFrame and InspectFrame and InspectFrame:IsShown()) then TT:RefreshInspectFrame() end
+end
+
+modernShowExampleTooltip = function()
+    local tooltip = modernOptionsState.preview
+    local previewAnchor = modernOptionsState.previewAnchor
+    if (not tooltip or not previewAnchor) then
+        return
+    end
+
+    tooltip:SetOwner(previewAnchor, "ANCHOR_NONE")
+    tooltip:ClearLines()
+    tooltip:ClearAllPoints()
+    tooltip:SetPoint("TOPLEFT", previewAnchor, "TOPLEFT", 0, 0)
+
+    local classc = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)["ROGUE"]
+    local name_r = TacoTipConfig.color_class and classc and classc.r or 0
+    local name_g = TacoTipConfig.color_class and classc and classc.g or 0.6
+    local name_b = TacoTipConfig.color_class and classc and classc.b or 0.1
+    local playerTitle = TacoTipConfig.show_titles and L[" the Kingslayer"] or ""
+    tooltip:AddLine(string.format("|cFF%02x%02x%02xKebabstorm%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
+
+    if (TacoTipConfig.show_guild_name) then
+        if (TacoTipConfig.show_guild_rank) then
+            if (TacoTipConfig.guild_rank_alt_style) then
+                tooltip:AddLine("|cFF40FB40<Drunken Wrath> (Officer)|r")
+            else
+                tooltip:AddLine(string.format("|cFF40FB40"..L["FORMAT_GUILD_RANK_1"].."|r", "Officer", "Drunken Wrath"))
+            end
+        else
+            tooltip:AddLine("|cFF40FB40<Drunken Wrath>|r")
+        end
+    end
+
+    if (TacoTipConfig.color_class) then
+        tooltip:AddLine(string.format("%s 80 %s |cFF%02x%02x%02x%s|r (%s)", L["Level"], L["Undead"], name_r*255, name_g*255, name_b*255, LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
+    else
+        tooltip:AddLine(string.format("%s 80 %s %s (%s)", L["Level"], L["Undead"], LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
+    end
+
+    if (not TacoTipConfig.show_pvp_icon) then
+        tooltip:AddLine("PvP", 1, 1, 1)
+    end
+
+    local wideStyle = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
+    local miniStyle = (not wideStyle and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
+
+    if (TacoTipConfig.show_target) then
+        if (wideStyle) then
+            tooltip:AddDoubleLine(L["Target"]..":", L["None"], NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
+        else
+            tooltip:AddLine(L["Target"]..": |cFF808080"..L["None"].."|r")
+        end
+    end
+
+    if (TacoTipConfig.show_talents) then
+        if (wideStyle) then
+            tooltip:AddDoubleLine(L["Talents"]..":", CI:GetSpecializationName("ROGUE", 1, true).." [51/18/2]", NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
+            tooltip:AddDoubleLine(" ", CI:GetSpecializationName("ROGUE", 3, true).." [14/3/54]", NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
+        else
+            tooltip:AddLine(L["Talents"]..":|cFFFFFFFF "..CI:GetSpecializationName("ROGUE", 1, true).." [51/18/2]")
+        end
+    end
+
+    local miniText = ""
+    if (TacoTipConfig.show_gs_player) then
+        local gs_r, gs_g, gs_b = GearScore:GetQuality(6054)
+        if (wideStyle) then
+            tooltip:AddDoubleLine("GearScore: 6054", "(iLvl: 264)", gs_r, gs_g, gs_b, gs_r, gs_g, gs_b)
+        elseif (miniStyle) then
+            miniText = string.format("|cFF%02x%02x%02xGS: 6054  L: 264|r  ", gs_r*255, gs_g*255, gs_b*255)
+        else
+            tooltip:AddLine("GearScore: 6054", gs_r, gs_g, gs_b)
+        end
+    end
+
+    if (isPawnLoaded and TacoTipConfig.show_pawn_player) then
+        local specColor = PawnGetScaleColor("\"Classic\":ROGUE1", true) or "|cffffffff"
+        if (wideStyle) then
+            tooltip:AddDoubleLine(string.format("Pawn: %s1234.56|r", specColor), string.format("%s(%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1, 1, 1, 1)
+        elseif (miniStyle) then
+            miniText = miniText .. string.format("P: %s1234.5|r", specColor)
+        else
+            tooltip:AddLine(string.format("Pawn: %s1234.56 (%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1)
+        end
+    end
+
+    if (miniText ~= "") then
+        tooltip:AddLine(miniText, 1, 1, 1)
+    end
+
+    tooltip:Show()
+
+    if (TT and TT.ApplyTooltipAppearance) then
+        TT:ApplyTooltipAppearance(tooltip, "player")
+    end
+
+    if (modernOptionsState.previewHealthBar) then
+        local barTexture = TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
+        modernOptionsState.previewHealthBar:SetStatusBarTexture(barTexture)
+        modernOptionsState.previewPowerBar:SetStatusBarTexture(barTexture)
+        if (TacoTipConfig.show_hp_bar) then
+            modernOptionsState.previewHealthBar:Show()
+            modernOptionsState.previewPowerBar:SetPoint("TOPLEFT", tooltip, "BOTTOMLEFT", 2, -9)
+            modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", tooltip, "BOTTOMRIGHT", -2, -9)
+        else
+            modernOptionsState.previewHealthBar:Hide()
+            modernOptionsState.previewPowerBar:SetPoint("TOPLEFT", tooltip, "BOTTOMLEFT", 2, -1)
+            modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", tooltip, "BOTTOMRIGHT", -2, -1)
+        end
+
+        if (TacoTipConfig.show_power_bar) then
+            modernOptionsState.previewPowerBar:Show()
+        else
+            modernOptionsState.previewPowerBar:Hide()
+        end
+    end
+end
+
+local function buildRootPage()
+    if (modernOptionsState.pages.rootBuilt) then
+        return
+    end
+
+    local panel = optionsFrame
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText(addOnTitle .. " v" .. addOnVersion)
+
+    local description = createWrappedText(panel, "GameFontHighlightSmall", 620, L["OPTIONS_ROOT_DESCRIPTION"] or L["TEXT_OPT_DESC"])
+    description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+
+    local quickActions = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    quickActions:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -18)
+    quickActions:SetText(L["OPTIONS_ROOT_QUICK_ACTIONS"] or "Quick Actions")
+
+    local openMoverButton = createOptionsButton(panel, nil, L["OPTIONS_OPEN_TOOLTIP_MOVER"] or L["Mover"], 180, 24, function()
+        showTooltipMover()
+    end, L["OPTIONS_OPEN_TOOLTIP_MOVER_DESC"] or "Show the live tooltip mover so you can drag and save a custom tooltip position.")
+    openMoverButton:SetPoint("TOPLEFT", quickActions, "BOTTOMLEFT", 0, -8)
+
+    local resetButton = createOptionsButton(panel, nil, L["Reset configuration"], 180, 24, function()
+        resetCfg()
+        if (TT.RefreshOptionsUI) then
+            TT:RefreshOptionsUI()
+        end
+    end, L["OPTIONS_RESET_CONFIGURATION_DESC"] or "Restore TacoTip settings to their defaults, including tooltip appearance and overlay positions.")
+    resetButton:SetPoint("LEFT", openMoverButton, "RIGHT", 12, 0)
+
+    modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, "")
+    modernOptionsState.rootSummary:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -20)
+
+    panel.Refresh = function()
+        local tooltipMode = TacoTipConfig.anchor_mouse and (L["OPTIONS_STATUS_MOUSE_ANCHOR"] or "Anchored to the mouse cursor") or (TacoTipConfig.custom_pos and (L["OPTIONS_STATUS_CUSTOM_POSITION"] or "Using a saved custom tooltip position") or (L["OPTIONS_STATUS_DEFAULT_POSITION"] or "Using Blizzard default tooltip placement"))
+        local lines = {
+            L["OPTIONS_ROOT_PAGE_HINT"] or "Use the child pages in the AddOns tree to configure TacoTip.",
+            "• " .. tooltipMode,
+            "• " .. (TacoTipConfig.show_gs_character and (L["OPTIONS_STATUS_CHARACTER_GS_ON"] or "Character and inspect GearScore overlays are enabled") or (L["OPTIONS_STATUS_CHARACTER_GS_OFF"] or "Character and inspect GearScore overlays are disabled")),
+            "• " .. (TacoTipConfig.show_avg_ilvl and (L["OPTIONS_STATUS_CHARACTER_ILVL_ON"] or "Average item level overlays are enabled") or (L["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] or "Average item level overlays are disabled")),
+            "• " .. (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked"))
+        }
+        modernOptionsState.rootSummary:SetText(table.concat(lines, "\n"))
+    end
+
+    modernOptionsState.pages.rootBuilt = true
+end
+
+local function buildTooltipsPage()
+    if (modernOptionsState.pages.tooltipsBuilt) then
+        return
+    end
+
+    local panel = optionsPages.tooltips
+    local scrollFrame = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -12)
+    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -250, 12)
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local stepValue = 32
+        local nextOffset = self:GetVerticalScroll() - (delta * stepValue)
+        local maxOffset = self:GetVerticalScrollRange() or 0
+        if (nextOffset < 0) then
+            nextOffset = 0
+        elseif (nextOffset > maxOffset) then
+            nextOffset = maxOffset
+        end
+        self:SetVerticalScroll(nextOffset)
+    end)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetPoint("TOPLEFT")
+    content:SetSize(420, 1)
+    scrollFrame:SetScrollChild(content)
+
+    local builder = createPageBuilder(content, 16, -16)
+    local header, headerDesc = createSectionHeader(content, L["OPTIONS_PAGE_TOOLTIPS"] or "Tooltips", L["OPTIONS_TOOLTIPS_PAGE_DESC"] or "Tune the information TacoTip adds to player and item tooltips.", 420)
+    builder:AddAnchor(header, 24)
+    if (headerDesc) then
+        builder:AddAnchor(headerDesc, headerDesc:GetStringHeight() + 8)
+    end
+
+    local controls = modernOptionsState.controls
+    controls.styleChoice = createOptionsDropdown(content, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. Hold Shift on hybrid styles to preview the expanded view.", modernStyleOptions, function(value)
+        TacoTipConfig.tip_style = value
+        modernShowExampleTooltip()
+    end)
+    controls.styleChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.styleChoice:SetPoint("TOPLEFT", controls.styleChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.styleChoice.description) then
+        controls.styleChoice.description:SetPoint("TOPLEFT", controls.styleChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 78
+
+    local unitHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    unitHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    unitHeader:SetText(L["OPTIONS_SECTION_UNIT_TOOLTIPS"] or "Unit tooltip content")
+    builder.y = builder.y - 24
+
+    controls.useClassColors = createOptionsCheckbox(content, nil, L["Class Color"], L["Color class names in tooltips"], function(_, value) TacoTipConfig.color_class = value; modernShowExampleTooltip() end)
+    controls.useClassColors:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showTitles = createOptionsCheckbox(content, nil, L["Title"], L["Show player's title in tooltips"], function(_, value) TacoTipConfig.show_titles = value; modernShowExampleTooltip() end)
+    controls.showTitles:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.showGuildNames = createOptionsCheckbox(content, nil, L["Guild Name"], L["Show guild name in tooltips"], function(_, value) TacoTipConfig.show_guild_name = value; modernGetConfig(); modernShowExampleTooltip() end)
+    controls.showGuildNames:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showGuildRanks = createOptionsCheckbox(content, nil, L["Guild Rank"], L["Show guild rank in tooltips"], function(_, value) TacoTipConfig.show_guild_rank = value; modernGetConfig(); modernShowExampleTooltip() end)
+    controls.showGuildRanks:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.guildRankStyleChoice = createOptionsDropdown(content, nil, L["Style"], L["OPTIONS_GUILD_STYLE_DESC"] or "Choose how TacoTip formats guild rank when both guild name and guild rank are shown.", {
+        { value = 1, text = string.format(L["OPTIONS_GUILD_STYLE_ONE"] or L["FORMAT_GUILD_RANK_1"], L["Rank"], L["Guild"]) },
+        { value = 2, text = L["OPTIONS_GUILD_STYLE_TWO"] or string.format("<%s> (%s)", L["Guild"], L["Rank"]) }
+    }, function(value)
+        TacoTipConfig.guild_rank_alt_style = (value == 2)
+        modernShowExampleTooltip()
+    end)
+    controls.guildRankStyleChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.guildRankStyleChoice:SetPoint("TOPLEFT", controls.guildRankStyleChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.guildRankStyleChoice.description) then
+        controls.guildRankStyleChoice.description:SetPoint("TOPLEFT", controls.guildRankStyleChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 66
+
+    controls.showTalents = createOptionsCheckbox(content, nil, L["Talents"], L["Show talents and specialization in tooltips"], function(_, value) TacoTipConfig.show_talents = value; modernShowExampleTooltip() end)
+    controls.showTalents:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showTarget = createOptionsCheckbox(content, nil, L["Target"], L["Show unit's target in tooltips"], function(_, value) TacoTipConfig.show_target = value; modernShowExampleTooltip() end)
+    controls.showTarget:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.gearScorePlayer = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_PLAYER_GS"] or "Show player GearScore", L["OPTIONS_SHOW_PLAYER_GS_DESC"] or "Adds GearScore to player tooltips. Wide and mini layouts also show average item level on that line.", function(_, value) TacoTipConfig.show_gs_player = value; modernShowExampleTooltip() end)
+    controls.gearScorePlayer:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.pawnScorePlayer = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores", L["OPTIONS_SHOW_PLAYER_PAWN_DESC"] or "Adds Pawn scores for inspected players when Pawn is installed. This may add extra item-cache work.", function(_, value) TacoTipConfig.show_pawn_player = value; modernShowExampleTooltip() end)
+    controls.pawnScorePlayer:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.showTeam = createOptionsCheckbox(content, nil, L["Faction Icon"], L["Show player's faction icon (Horde/Alliance) in tooltips"], function(_, value) TacoTipConfig.show_team = value; modernShowExampleTooltip() end)
+    controls.showTeam:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showPVPIcon = createOptionsCheckbox(content, nil, L["PVP Icon"], L["Show player's pvp flag status as icon instead of text"], function(_, value) TacoTipConfig.show_pvp_icon = value; modernShowExampleTooltip() end)
+    controls.showPVPIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.showHealthBar = createOptionsCheckbox(content, nil, L["Health Bar"], L["Show unit's health bar under tooltip"], function(_, value) TacoTipConfig.show_hp_bar = value; modernShowExampleTooltip() end)
+    controls.showHealthBar:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showPowerBar = createOptionsCheckbox(content, nil, L["Power Bar"], L["Show unit's power bar under tooltip"], function(_, value) TacoTipConfig.show_power_bar = value; modernShowExampleTooltip() end)
+    controls.showPowerBar:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 42
+
+    local itemHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    itemHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    itemHeader:SetText(L["OPTIONS_SECTION_ITEM_TOOLTIPS"] or "Item tooltip data")
+    builder.y = builder.y - 24
+
+    controls.showItemLevel = createOptionsCheckbox(content, nil, L["Show Item Level"], L["Display item level in the tooltip for certain items."], function(_, value) TacoTipConfig.show_item_level = value end)
+    controls.showItemLevel:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.gearScoreItems = createOptionsCheckbox(content, nil, L["Show Item GearScore"], L["Show GearScore in item tooltips"], function(_, value) TacoTipConfig.show_gs_items = value; modernGetConfig() end)
+    controls.gearScoreItems:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.hunterScoreItems = createOptionsCheckbox(content, nil, L["HunterScore"], L["OPTIONS_HUNTERSCORE_DESC"] or "Always show HunterScore when item GearScore is enabled. Without this, TacoTip still shows it for Hunters, when inspecting a Hunter, or while a modifier key is held.", function(_, value) TacoTipConfig.show_gs_items_hs = value end)
+    controls.hunterScoreItems:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 42
+
+    local visualHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    visualHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    visualHeader:SetText(L["OPTIONS_SECTION_VISUAL_STYLE"] or "Visual style")
+    builder.y = builder.y - 24
+
+    local backdropHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    backdropHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    backdropHeader:SetText(L["OPTIONS_SECTION_BACKDROP_MEDIA"] or "Backdrop colors & textures")
+    builder.y = builder.y - 24
+
+    controls.tooltipBorderUseClass = createOptionsCheckbox(content, nil, L["OPTIONS_BORDER_CLASS_COLOR"] or "Use class-colored border", L["OPTIONS_BORDER_CLASS_COLOR_DESC"] or "Tint the tooltip border with the player's class color when the tooltip is showing a player unit.", function(_, value)
+        TacoTipConfig.tooltip_border_use_class = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBorderUseClass:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.tooltipBackgroundUseClass = createOptionsCheckbox(content, nil, L["OPTIONS_BACKGROUND_CLASS_COLOR"] or "Use class-colored background tint", L["OPTIONS_BACKGROUND_CLASS_COLOR_DESC"] or "Adds a subtle class-colored tint behind player tooltips. Use the alpha slider to keep it understated.", function(_, value)
+        TacoTipConfig.tooltip_background_use_class = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBackgroundUseClass:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 34
+
+    controls.tooltipBorderColor = createColorSwatchControl(content, nil, L["OPTIONS_TOOLTIP_BORDER_COLOR"] or "Border color", L["OPTIONS_TOOLTIP_BORDER_COLOR_DESC"] or "Pick the base tooltip border color. If class-colored borders are enabled, that class tint overrides this on player tooltips.", function(r, g, b)
+        TacoTipConfig.tooltip_border_color_r = r
+        TacoTipConfig.tooltip_border_color_g = g
+        TacoTipConfig.tooltip_border_color_b = b
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBorderColor:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+
+    controls.tooltipBackgroundColor = createColorSwatchControl(content, nil, L["OPTIONS_TOOLTIP_BACKGROUND_COLOR"] or "Background color", L["OPTIONS_TOOLTIP_BACKGROUND_COLOR_DESC"] or "Pick the base tooltip background color. If class-colored backgrounds are enabled, that class tint overrides this on player tooltips.", function(r, g, b)
+        TacoTipConfig.tooltip_background_color_r = r
+        TacoTipConfig.tooltip_background_color_g = g
+        TacoTipConfig.tooltip_background_color_b = b
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBackgroundColor:SetPoint("TOPLEFT", content, "TOPLEFT", 236, builder.y)
+    builder.y = builder.y - 82
+
+    controls.tooltipBorderAlpha = createOptionsSlider(content, nil, L["OPTIONS_BORDER_ALPHA"] or "Border alpha", L["OPTIONS_BORDER_ALPHA_DESC"] or "Adjust how strong the tooltip border tint appears. Lower values keep class coloring subtle.", function(value)
+        TacoTipConfig.tooltip_border_alpha = value / 100
+        modernShowExampleTooltip()
+    end, 0, 100, 1)
+    controls.tooltipBorderAlpha:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.tooltipBorderAlpha.valueText:SetPoint("LEFT", controls.tooltipBorderAlpha, "RIGHT", 8, 0)
+
+    controls.tooltipBackgroundAlpha = createOptionsSlider(content, nil, L["OPTIONS_BACKGROUND_ALPHA"] or "Background alpha", L["OPTIONS_BACKGROUND_ALPHA_DESC"] or "Adjust how strong the tooltip background tint appears. Lower values keep the tooltip readable.", function(value)
+        TacoTipConfig.tooltip_background_alpha = value / 100
+        modernShowExampleTooltip()
+    end, 0, 100, 1)
+    controls.tooltipBackgroundAlpha:SetPoint("TOPLEFT", content, "TOPLEFT", 214, builder.y)
+    controls.tooltipBackgroundAlpha.valueText:SetPoint("LEFT", controls.tooltipBackgroundAlpha, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
+    controls.tooltipBackgroundTextureChoice = createOptionsDropdown(content, nil, L["OPTIONS_TOOLTIP_BACKGROUND_TEXTURE"] or "Tooltip background texture", L["OPTIONS_TOOLTIP_BACKGROUND_TEXTURE_DESC"] or "Choose the tooltip background texture. SharedMedia background packs are picked up automatically and Blizzard tooltip texture remains the fallback.", TT:GetTooltipBackgroundChoices(), function(value)
+        TacoTipConfig.tooltip_background_texture = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBackgroundTextureChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.tooltipBackgroundTextureChoice:SetPoint("TOPLEFT", controls.tooltipBackgroundTextureChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.tooltipBackgroundTextureChoice.description) then
+        controls.tooltipBackgroundTextureChoice.description:SetPoint("TOPLEFT", controls.tooltipBackgroundTextureChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 66
+
+    controls.tooltipBorderTextureChoice = createOptionsDropdown(content, nil, L["OPTIONS_TOOLTIP_BORDER_TEXTURE"] or "Tooltip border texture", L["OPTIONS_TOOLTIP_BORDER_TEXTURE_DESC"] or "Choose the tooltip border texture. SharedMedia border packs are picked up automatically and Blizzard tooltip border remains the fallback.", TT:GetTooltipBorderChoices(), function(value)
+        TacoTipConfig.tooltip_border_texture = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBorderTextureChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.tooltipBorderTextureChoice:SetPoint("TOPLEFT", controls.tooltipBorderTextureChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.tooltipBorderTextureChoice.description) then
+        controls.tooltipBorderTextureChoice.description:SetPoint("TOPLEFT", controls.tooltipBorderTextureChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 66
+
+    local portraitTextHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    portraitTextHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    portraitTextHeader:SetText(L["OPTIONS_SECTION_TEXT_AND_PORTRAIT"] or "Portrait & text")
+    builder.y = builder.y - 24
+
+    controls.tooltipPortrait = createOptionsCheckbox(content, nil, L["OPTIONS_TOOLTIP_PORTRAIT"] or "Show unit portrait", L["OPTIONS_TOOLTIP_PORTRAIT_DESC"] or "Show a small portrait texture next to player and NPC unit tooltips.", function(_, value)
+        TacoTipConfig.tooltip_portrait = value
+        modernGetConfig()
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipPortrait:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 34
+
+    controls.tooltipPortraitScale = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_PORTRAIT_SCALE"] or "Portrait scale", L["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] or "Scale the portrait shown next to unit tooltips.", function(value)
+        TacoTipConfig.tooltip_portrait_scale = value / 100
+        modernShowExampleTooltip()
+    end, 50, 200, 5)
+    controls.tooltipPortraitScale:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.tooltipPortraitScale.valueText:SetPoint("LEFT", controls.tooltipPortraitScale, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
+    controls.tooltipFontChoice = createOptionsDropdown(content, nil, L["OPTIONS_TOOLTIP_FONT"] or "Tooltip font", L["OPTIONS_TOOLTIP_FONT_DESC"] or "Choose the font used by tooltip text. SharedMedia fonts are included automatically when available.", TT:GetTooltipFontChoices(), function(value)
+        TacoTipConfig.tooltip_font = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipFontChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.tooltipFontChoice:SetPoint("TOPLEFT", controls.tooltipFontChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.tooltipFontChoice.description) then
+        controls.tooltipFontChoice.description:SetPoint("TOPLEFT", controls.tooltipFontChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 66
+
+    controls.tooltipFontSize = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_FONT_SIZE"] or "Tooltip text size", L["OPTIONS_TOOLTIP_FONT_SIZE_DESC"] or "Change the size of the tooltip text without affecting the rest of the UI.", function(value)
+        TacoTipConfig.tooltip_font_size = value
+        modernShowExampleTooltip()
+    end, 8, 20, 1)
+    controls.tooltipFontSize:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.tooltipFontSize.valueText:SetPoint("LEFT", controls.tooltipFontSize, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
+    local barHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    barHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    barHeader:SetText(L["OPTIONS_SECTION_BAR_MEDIA"] or "Tooltip bars")
+    builder.y = builder.y - 24
+
+    controls.tooltipBarTextureChoice = createOptionsDropdown(content, nil, L["OPTIONS_STATUSBAR_TEXTURE"] or "Health & power bar texture", L["OPTIONS_STATUSBAR_TEXTURE_DESC"] or "Use one texture for both the health bar and the power bar. The dropdown previews each texture as a bar instead of an icon.", TT:GetTooltipStatusBarTextureChoices(), function(value)
+        TacoTipConfig.tooltip_bar_texture = value
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipBarTextureChoice.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.tooltipBarTextureChoice:SetPoint("TOPLEFT", controls.tooltipBarTextureChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.tooltipBarTextureChoice.description) then
+        controls.tooltipBarTextureChoice.description:SetPoint("TOPLEFT", controls.tooltipBarTextureChoice, "BOTTOMLEFT", 20, -2)
+    end
+    builder.y = builder.y - 70
+
+    builder:Finalize(64)
+
+    local previewTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    previewTitle:SetPoint("TOPLEFT", panel, "TOPLEFT", -220, -20)
+    previewTitle:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -20, -20)
+    previewTitle:SetJustifyH("LEFT")
+    previewTitle:SetText(L["OPTIONS_PREVIEW_HEADER"] or "Live Preview")
+
+    local previewHelp = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    previewHelp:SetPoint("TOPLEFT", previewTitle, "BOTTOMLEFT", 0, -4)
+    previewHelp:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -20, -4)
+    previewHelp:SetJustifyH("LEFT")
+    previewHelp:SetText(L["OPTIONS_PREVIEW_HELP"] or "Hover controls for more info. Appearance changes update this preview immediately.")
+
+    modernOptionsState.previewAnchor = CreateFrame("Frame", nil, panel)
+    modernOptionsState.previewAnchor:SetPoint("TOPLEFT", previewHelp, "BOTTOMLEFT", 0, -8)
+    modernOptionsState.previewAnchor:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -20, 0)
+    modernOptionsState.previewAnchor:SetHeight(220)
+
+    modernOptionsState.preview = CreateFrame("GameTooltip", "TacoTipModernPreviewTooltip", panel, "GameTooltipTemplate")
+    modernOptionsState.previewHealthBar = CreateFrame("StatusBar", nil, modernOptionsState.preview)
+    modernOptionsState.previewHealthBar:SetSize(0, 8)
+    modernOptionsState.previewHealthBar:SetPoint("TOPLEFT", modernOptionsState.preview, "BOTTOMLEFT", 2, -1)
+    modernOptionsState.previewHealthBar:SetPoint("TOPRIGHT", modernOptionsState.preview, "BOTTOMRIGHT", -2, -1)
+    modernOptionsState.previewHealthBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
+    modernOptionsState.previewHealthBar:SetStatusBarColor(0, 1, 0)
+    modernOptionsState.previewPowerBar = CreateFrame("StatusBar", nil, modernOptionsState.preview)
+    modernOptionsState.previewPowerBar:SetSize(0, 8)
+    modernOptionsState.previewPowerBar:SetPoint("TOPLEFT", modernOptionsState.preview, "BOTTOMLEFT", 2, -9)
+    modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", modernOptionsState.preview, "BOTTOMRIGHT", -2, -9)
+    modernOptionsState.previewPowerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
+    modernOptionsState.previewPowerBar:SetStatusBarColor(1, 1, 0)
+    modernOptionsState.preview:SetScript("OnEvent", function() modernShowExampleTooltip() end)
+
+    panel.Refresh = function()
+        controls.tooltipFontChoice:SetValues(TT:GetTooltipFontChoices())
+        controls.tooltipBarTextureChoice:SetValues(TT:GetTooltipStatusBarTextureChoices())
+        controls.tooltipBackgroundTextureChoice:SetValues(TT:GetTooltipBackgroundChoices())
+        controls.tooltipBorderTextureChoice:SetValues(TT:GetTooltipBorderChoices())
+        controls.styleChoice:SetValue(TacoTipConfig.tip_style)
+        controls.useClassColors:SetChecked(TacoTipConfig.color_class)
+        controls.showTitles:SetChecked(TacoTipConfig.show_titles)
+        controls.showGuildNames:SetChecked(TacoTipConfig.show_guild_name)
+        controls.showGuildRanks:SetChecked(TacoTipConfig.show_guild_rank)
+        controls.showGuildRanks:SetDisabled(not TacoTipConfig.show_guild_name)
+        controls.guildRankStyleChoice:SetValue(TacoTipConfig.guild_rank_alt_style and 2 or 1)
+        controls.guildRankStyleChoice:SetDisabled(not (TacoTipConfig.show_guild_name and TacoTipConfig.show_guild_rank))
+        controls.showTalents:SetChecked(TacoTipConfig.show_talents)
+        controls.showTarget:SetChecked(TacoTipConfig.show_target)
+        controls.gearScorePlayer:SetChecked(TacoTipConfig.show_gs_player)
+        controls.pawnScorePlayer:SetChecked(TacoTipConfig.show_pawn_player)
+        controls.pawnScorePlayer:SetDisabled(not isPawnLoaded)
+        controls.pawnScorePlayer.label:SetText(isPawnLoaded and (L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") or ((L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores").." ("..L["requires Pawn"]..")"))
+        controls.showTeam:SetChecked(TacoTipConfig.show_team)
+        controls.showPVPIcon:SetChecked(TacoTipConfig.show_pvp_icon)
+        controls.showHealthBar:SetChecked(TacoTipConfig.show_hp_bar)
+        controls.showPowerBar:SetChecked(TacoTipConfig.show_power_bar)
+        controls.showItemLevel:SetChecked(TacoTipConfig.show_item_level)
+        controls.gearScoreItems:SetChecked(TacoTipConfig.show_gs_items)
+        controls.hunterScoreItems:SetChecked(TacoTipConfig.show_gs_items_hs)
+        controls.hunterScoreItems:SetDisabled(not TacoTipConfig.show_gs_items)
+        controls.tooltipBorderUseClass:SetChecked(TacoTipConfig.tooltip_border_use_class)
+        controls.tooltipBackgroundUseClass:SetChecked(TacoTipConfig.tooltip_background_use_class)
+        controls.tooltipBorderColor:SetColor(TacoTipConfig.tooltip_border_color_r or 0.5, TacoTipConfig.tooltip_border_color_g or 0.5, TacoTipConfig.tooltip_border_color_b or 0.5)
+        controls.tooltipBackgroundColor:SetColor(TacoTipConfig.tooltip_background_color_r or 0, TacoTipConfig.tooltip_background_color_g or 0, TacoTipConfig.tooltip_background_color_b or 0)
+        controls.tooltipBorderAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_border_alpha or 1) * 100 + 0.5))
+        controls.tooltipBackgroundAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_background_alpha or 0.85) * 100 + 0.5))
+        controls.tooltipBackgroundTextureChoice:SetValue(TT:GetResolvedTooltipBackground())
+        controls.tooltipBorderTextureChoice:SetValue(TT:GetResolvedTooltipBorder())
+        controls.tooltipPortrait:SetChecked(TacoTipConfig.tooltip_portrait)
+        controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
+        controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
+        controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
+        controls.tooltipFontSize:SetValueSilently(TacoTipConfig.tooltip_font_size or 12)
+        controls.tooltipBarTextureChoice:SetValue(TT:GetResolvedTooltipStatusBarTexture())
+        modernShowExampleTooltip()
+    end
+
+    panel:SetScript("OnShow", function()
+        if (modernOptionsState.preview) then
+            modernOptionsState.preview:RegisterEvent("MODIFIER_STATE_CHANGED")
+        end
+        if (panel.Refresh) then panel:Refresh() end
+    end)
+    panel:SetScript("OnHide", function()
+        if (modernOptionsState.preview) then
+            modernOptionsState.preview:UnregisterEvent("MODIFIER_STATE_CHANGED")
+        end
+    end)
+
+    modernOptionsState.pages.tooltipsBuilt = true
+end
+
+local function setOffsetValue(key, value)
+    TacoTipConfig[key] = value
+
+    local editBox = modernOptionsState.offsetEditors[key]
+    if (editBox) then
+        editBox.lastValue = value
+        editBox:SetText(tostring(value))
+    end
+
+    local slider = modernOptionsState.offsetSliders[key]
+    if (slider) then
+        slider:SetValueSilently(value)
+    end
+
+    refreshOverlayPositions()
+end
+
+local function setOffsetControlEnabled(key, enabled)
+    local editBox = modernOptionsState.offsetEditors[key]
+    local slider = modernOptionsState.offsetSliders[key]
+    if (editBox and editBox.SetDisabled) then editBox:SetDisabled(not enabled) end
+    if (slider and slider.SetDisabled) then slider:SetDisabled(not enabled) end
+end
+
+local function buildPositioningPage()
+    if (modernOptionsState.pages.positioningBuilt) then
+        return
+    end
+
+    local panel = optionsPages.positioning
+    local _, content = createScrollPage(panel)
+    local builder = createPageBuilder(content, 16, -16)
+    local controls = modernOptionsState.controls
+
+    local header, headerDesc = createSectionHeader(content, L["OPTIONS_PAGE_POSITIONING"] or "Positioning", L["OPTIONS_POSITIONING_PAGE_DESC"] or "Choose how TacoTip places the main tooltip and how its mover workflow behaves.", 520)
+    builder:AddAnchor(header, 24)
+    if (headerDesc) then builder:AddAnchor(headerDesc, headerDesc:GetStringHeight() + 8) end
+
+    local modeHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    modeHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    modeHeader:SetText(L["OPTIONS_SECTION_TOOLTIP_POSITION"] or "Tooltip position mode")
+    builder.y = builder.y - 24
+
+    controls.customPosition = createOptionsCheckbox(content, "TacoTipOptCheckBoxCustomPosition", L["Custom Tooltip Position"], L["OPTIONS_CUSTOM_POSITION_DESC"] or "Save and reuse a custom on-screen tooltip location.", function(_, value)
+        TacoTipConfig.custom_pos = value and (TacoTipConfig.custom_pos or {"TOPLEFT", "TOPLEFT", 0, 0}) or nil
+        if (value) then
+            TacoTipConfig.anchor_mouse = false
+            if (TacoTip_CustomPosEnable) then TacoTip_CustomPosEnable(false) end
+        else
+            TacoTipConfig.custom_anchor = nil
+            if (TacoTipDragButton) then TacoTipDragButton:_Disable() end
+        end
+        modernGetConfig()
+    end)
+    controls.customPosition:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.anchorMouse = createOptionsCheckbox(content, "TacoTipOptCheckBoxAnchorMouse", L["Anchor to Mouse"], L["Anchor tooltips to mouse cursor"], function(_, value)
+        TacoTipConfig.anchor_mouse = value
+        if (value) then
+            TacoTipConfig.custom_pos = nil
+            TacoTipConfig.custom_anchor = nil
+            if (TacoTipDragButton) then TacoTipDragButton:_Disable() end
+        end
+        modernGetConfig()
+    end)
+    controls.anchorMouse:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
+    builder.y = builder.y - 30
+
+    controls.anchorMouseWorld = createOptionsCheckbox(content, "TacoTipOptCheckBoxAnchorMouseWorld", L["Only in WorldFrame"], L["Anchor to mouse only in WorldFrame\nSkips raid / party frames"], function(_, value)
+        TacoTipConfig.anchor_mouse_world = value
+    end)
+    controls.anchorMouseWorld:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.anchorMouseSpells = createOptionsCheckbox(content, nil, L["Anchor Spells to Mouse"], L["Anchor spell tooltips to mouse cursor"], function(_, value)
+        TacoTipConfig.anchor_mouse_spells = value
+    end)
+    controls.anchorMouseSpells:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
+    builder.y = builder.y - 38
+
+    controls.customAnchor = createOptionsDropdown(content, nil, L["OPTIONS_CUSTOM_ANCHOR_LABEL"] or "Custom tooltip anchor", L["OPTIONS_CUSTOM_ANCHOR_DESC"] or "Choose which point of the saved tooltip position acts as the attachment anchor.", modernAnchorOptions, function(value)
+        TacoTipConfig.custom_anchor = value
+        if (TacoTipDragButton and TacoTipDragButton.IsShown and TacoTipDragButton:IsShown()) then
+            TacoTipDragButton:ShowExample()
+        end
+    end)
+    controls.customAnchor.label:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    controls.customAnchor:SetPoint("TOPLEFT", controls.customAnchor.label, "BOTTOMLEFT", -16, -2)
+    if (controls.customAnchor.description) then
+        controls.customAnchor.description:SetPoint("TOPLEFT", controls.customAnchor, "BOTTOMLEFT", 20, -2)
+    end
+
+    controls.moverBtn = createOptionsButton(content, "TacoTipOptButtonMover", L["OPTIONS_OPEN_TOOLTIP_MOVER"] or L["Mover"], 180, 22, function()
+        showTooltipMover()
+    end, L["OPTIONS_OPEN_TOOLTIP_MOVER_DESC"] or "Show the live tooltip mover so you can drag and save a custom tooltip position.")
+    controls.moverBtn:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y - 4)
+    builder.y = builder.y - 78
+
+    local behaviorHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    behaviorHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    behaviorHeader:SetText(L["OPTIONS_SECTION_TOOLTIP_BEHAVIOR"] or "Tooltip behavior")
+    builder.y = builder.y - 24
+
+    controls.instantFade = createOptionsCheckbox(content, nil, L["Instant Fade"], L["Fade out unit tooltips instantly"], function(_, value)
+        TacoTipConfig.instant_fade = value
+        updateInstantFadeState(value)
+    end)
+    controls.instantFade:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 38
+
+    builder:Finalize(64)
+
+    panel.Refresh = function()
+        local hasCustomPos = TacoTipConfig.custom_pos and true or false
+        controls.customPosition:SetChecked(hasCustomPos)
+        controls.anchorMouse:SetChecked(TacoTipConfig.anchor_mouse)
+        controls.anchorMouseWorld:SetChecked(TacoTipConfig.anchor_mouse_world)
+        controls.anchorMouseSpells:SetChecked(TacoTipConfig.anchor_mouse_spells)
+        controls.instantFade:SetChecked(TacoTipConfig.instant_fade)
+        controls.customAnchor:SetValue(TacoTipConfig.custom_anchor or "TOPLEFT")
+        controls.customPosition:SetDisabled(TacoTipConfig.anchor_mouse)
+        controls.anchorMouse:SetDisabled(hasCustomPos)
+        controls.anchorMouseWorld:SetDisabled(not TacoTipConfig.anchor_mouse)
+        controls.customAnchor:SetDisabled(not hasCustomPos)
+        setButtonEnabled(controls.moverBtn, hasCustomPos)
+    end
+
+    panel:SetScript("OnShow", function()
+        if (panel.Refresh) then panel:Refresh() end
+    end)
+
+    modernOptionsState.pages.positioningBuilt = true
+end
+
+local function createOffsetControlRow(parent, builder, titleText, keyX, keyY)
+    local label = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    label:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, builder.y)
+    label:SetText(titleText)
+
+    local xLabel = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    xLabel:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -8)
+    xLabel:SetText("X")
+
+    local xEdit = createOptionsEditBox(parent, nil, 52, function(value) setOffsetValue(keyX, value) end, titleText .. " X", L["OPTIONS_OFFSET_EDIT_DESC"] or "Type a precise pixel offset and press Enter to apply it.")
+    xEdit:SetPoint("LEFT", xLabel, "RIGHT", 10, 0)
+    modernOptionsState.offsetEditors[keyX] = xEdit
+
+    local xSlider = createOptionsSlider(parent, nil, titleText .. " X", L["OPTIONS_OFFSET_SLIDER_DESC"] or "Drag to fine-tune this offset. The numeric field stays synchronized.", function(value) setOffsetValue(keyX, value) end)
+    xSlider:SetPoint("TOPLEFT", xEdit, "TOPRIGHT", 18, 10)
+    xSlider.valueText:SetPoint("LEFT", xSlider, "RIGHT", 8, 0)
+    modernOptionsState.offsetSliders[keyX] = xSlider
+
+    local yLabel = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    yLabel:SetPoint("TOPLEFT", xLabel, "BOTTOMLEFT", 0, -30)
+    yLabel:SetText("Y")
+
+    local yEdit = createOptionsEditBox(parent, nil, 52, function(value) setOffsetValue(keyY, value) end, titleText .. " Y", L["OPTIONS_OFFSET_EDIT_DESC"] or "Type a precise pixel offset and press Enter to apply it.")
+    yEdit:SetPoint("LEFT", yLabel, "RIGHT", 10, 0)
+    modernOptionsState.offsetEditors[keyY] = yEdit
+
+    local ySlider = createOptionsSlider(parent, nil, titleText .. " Y", L["OPTIONS_OFFSET_SLIDER_DESC"] or "Drag to fine-tune this offset. The numeric field stays synchronized.", function(value) setOffsetValue(keyY, value) end)
+    ySlider:SetPoint("TOPLEFT", yEdit, "TOPRIGHT", 18, 10)
+    ySlider.valueText:SetPoint("LEFT", ySlider, "RIGHT", 8, 0)
+    modernOptionsState.offsetSliders[keyY] = ySlider
+
+    builder.y = builder.y - 104
+
+    return {
+        label = label,
+        xLabel = xLabel,
+        yLabel = yLabel,
+        xEdit = xEdit,
+        yEdit = yEdit,
+        xSlider = xSlider,
+        ySlider = ySlider,
+        keys = { keyX, keyY }
+    }
+end
+
+local function buildCharacterInspectPage()
+    if (modernOptionsState.pages.characterInspectBuilt) then
+        return
+    end
+
+    local panel = optionsPages.characterInspect
+    local _, content = createScrollPage(panel)
+    local builder = createPageBuilder(content, 16, -16)
+    local controls = modernOptionsState.controls
+
+    local header, headerDesc = createSectionHeader(content, L["OPTIONS_PAGE_CHARACTER_INSPECT"] or "Character & Inspect", L["OPTIONS_CHARACTER_PAGE_DESC"] or "Control the character-frame and inspect-frame overlay labels, plus their precise offsets.", 520)
+    builder:AddAnchor(header, 24)
+    if (headerDesc) then builder:AddAnchor(headerDesc, headerDesc:GetStringHeight() + 8) end
+
+    controls.gearScoreCharacter = createOptionsCheckbox(content, nil, L["OPTIONS_CHARACTER_GS_LABEL"] or "Show GearScore overlays", L["OPTIONS_CHARACTER_GS_DESC"] or "Show GearScore on both the character frame and inspect frame.", function(_, value)
+        TacoTipConfig.show_gs_character = value
+        refreshOverlayPositions()
+        modernGetConfig()
+    end)
+    controls.gearScoreCharacter:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.averageItemLevel = createOptionsCheckbox(content, nil, L["OPTIONS_CHARACTER_ILVL_LABEL"] or "Show average item level overlays", L["OPTIONS_CHARACTER_ILVL_DESC"] or "Show average item level on both the character frame and inspect frame.", function(_, value)
+        TacoTipConfig.show_avg_ilvl = value
+        refreshOverlayPositions()
+        modernGetConfig()
+    end)
+    controls.averageItemLevel:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
+    builder.y = builder.y - 30
+
+    controls.unlockInfoPosition = createOptionsCheckbox(content, nil, L["OPTIONS_UNLOCK_OVERLAYS_LABEL"] or "Enable manual overlay movers", L["OPTIONS_UNLOCK_OVERLAYS_DESC"] or "Show drag handles on the frame overlays so you can position them manually in addition to using the numeric offsets below.", function(_, value)
+        TacoTipConfig.unlock_info_position = value
+        refreshOverlayPositions()
+        modernGetConfig()
+    end)
+    controls.unlockInfoPosition:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 42
+
+    modernOptionsState.characterGsRow = createOffsetControlRow(content, builder, L["OPTIONS_CHARACTER_GS_OFFSETS"] or "Character GearScore offsets", "character_gs_offset_x", "character_gs_offset_y")
+    modernOptionsState.characterIlvlRow = createOffsetControlRow(content, builder, L["OPTIONS_CHARACTER_ILVL_OFFSETS"] or "Character iLvl offsets", "character_ilvl_offset_x", "character_ilvl_offset_y")
+    modernOptionsState.inspectGsRow = createOffsetControlRow(content, builder, L["OPTIONS_INSPECT_GS_OFFSETS"] or "Inspect GearScore offsets", "inspect_gs_offset_x", "inspect_gs_offset_y")
+    modernOptionsState.inspectIlvlRow = createOffsetControlRow(content, builder, L["OPTIONS_INSPECT_ILVL_OFFSETS"] or "Inspect iLvl offsets", "inspect_ilvl_offset_x", "inspect_ilvl_offset_y")
+
+    builder:Finalize(80)
+
+    modernRefreshLockPositionToggle = function()
+        if (controls.unlockInfoPosition) then
+            controls.unlockInfoPosition:SetDisabled(not (TacoTipConfig.show_gs_character or TacoTipConfig.show_avg_ilvl))
+        end
+
+        setOffsetControlEnabled("character_gs_offset_x", TacoTipConfig.show_gs_character)
+        setOffsetControlEnabled("character_gs_offset_y", TacoTipConfig.show_gs_character)
+        setOffsetControlEnabled("inspect_gs_offset_x", TacoTipConfig.show_gs_character)
+        setOffsetControlEnabled("inspect_gs_offset_y", TacoTipConfig.show_gs_character)
+        setOffsetControlEnabled("character_ilvl_offset_x", TacoTipConfig.show_avg_ilvl)
+        setOffsetControlEnabled("character_ilvl_offset_y", TacoTipConfig.show_avg_ilvl)
+        setOffsetControlEnabled("inspect_ilvl_offset_x", TacoTipConfig.show_avg_ilvl)
+        setOffsetControlEnabled("inspect_ilvl_offset_y", TacoTipConfig.show_avg_ilvl)
+    end
+
+    panel.Refresh = function()
+        controls.gearScoreCharacter:SetChecked(TacoTipConfig.show_gs_character)
+        controls.averageItemLevel:SetChecked(TacoTipConfig.show_avg_ilvl)
+        controls.unlockInfoPosition:SetChecked(TacoTipConfig.unlock_info_position)
+
+        setOffsetValue("character_gs_offset_x", TacoTipConfig.character_gs_offset_x or 0)
+        setOffsetValue("character_gs_offset_y", TacoTipConfig.character_gs_offset_y or 0)
+        setOffsetValue("character_ilvl_offset_x", TacoTipConfig.character_ilvl_offset_x or 0)
+        setOffsetValue("character_ilvl_offset_y", TacoTipConfig.character_ilvl_offset_y or 0)
+        setOffsetValue("inspect_gs_offset_x", TacoTipConfig.inspect_gs_offset_x or 0)
+        setOffsetValue("inspect_gs_offset_y", TacoTipConfig.inspect_gs_offset_y or 0)
+        setOffsetValue("inspect_ilvl_offset_x", TacoTipConfig.inspect_ilvl_offset_x or 0)
+        setOffsetValue("inspect_ilvl_offset_y", TacoTipConfig.inspect_ilvl_offset_y or 0)
+
+        modernRefreshLockPositionToggle()
+    end
+
+    panel:SetScript("OnShow", function()
+        if (panel.Refresh) then panel:Refresh() end
+    end)
+
+    modernOptionsState.pages.characterInspectBuilt = true
+end
+
+local function buildAdvancedPage()
+    if (modernOptionsState.pages.advancedBuilt) then
+        return
+    end
+
+    local panel = optionsPages.advanced
+    local _, content = createScrollPage(panel)
+    local builder = createPageBuilder(content, 16, -16)
+    local controls = modernOptionsState.controls
+
+    local header, headerDesc = createSectionHeader(content, L["OPTIONS_PAGE_ADVANCED"] or "Advanced", L["OPTIONS_ADVANCED_PAGE_DESC"] or "Lower-priority behavior toggles and client CVars that TacoTip can manage for you.", 520)
+    builder:AddAnchor(header, 24)
+    if (headerDesc) then builder:AddAnchor(headerDesc, headerDesc:GetStringHeight() + 8) end
+
+    controls.hideInCombat = createOptionsCheckbox(content, nil, L["OPTIONS_HIDE_IN_COMBAT_LABEL"] or "Suppress inspection details in combat", L["OPTIONS_HIDE_IN_COMBAT_DESC"] or "Skips TacoTip's talents and GearScore-style player additions while you are in combat.", function(_, value)
+        TacoTipConfig.hide_in_combat = value
+    end)
+    controls.hideInCombat:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.uberTips = createOptionsCheckbox(content, nil, L["Enhanced Tooltips"], L["TEXT_OPT_UBERTIPS"], function(_, value)
+        SetCVar("UberTooltips", value and "1" or "0")
+    end)
+    controls.uberTips:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
+    builder.y = builder.y - 30
+
+    controls.chatClassColors = createOptionsCheckbox(content, nil, L["Chat Class Colors"], L["Color names by class in chat windows"], function(_, value)
+        SetCVar("chatClassColorOverride", value and "0" or "1")
+    end)
+    controls.chatClassColors:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.showAchievementPoints = createOptionsCheckbox(content, nil, L["Show Achievement Points"], L["OPTIONS_ACHIEVEMENT_DESC"] or "Only available on Wrath Classic clients where achievement data exists.", function(_, value)
+        TacoTipConfig.show_achievement_points = value
+    end)
+    controls.showAchievementPoints:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
+    builder.y = builder.y - 42
+
+    builder:Finalize(64)
+
+    panel.Refresh = function()
+        controls.hideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
+        controls.uberTips:SetChecked(GetCVar("UberTooltips") == "1")
+        controls.chatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
+        if (CI:IsWotlk()) then
+            controls.showAchievementPoints:SetChecked(TacoTipConfig.show_achievement_points)
+            controls.showAchievementPoints:SetDisabled(false)
+        else
+            TacoTipConfig.show_achievement_points = false
+            controls.showAchievementPoints:SetChecked(false)
+            controls.showAchievementPoints:SetDisabled(true)
+        end
+    end
+
+    panel:SetScript("OnShow", function()
+        if (panel.Refresh) then panel:Refresh() end
+    end)
+
+    modernOptionsState.pages.advancedBuilt = true
+end
+
+modernGetConfig = function()
+    if (modernOptionsState.pages.rootBuilt and optionsFrame.Refresh) then
+        optionsFrame:Refresh()
+    end
+    if (modernOptionsState.pages.tooltipsBuilt and optionsPages.tooltips.Refresh) then
+        optionsPages.tooltips:Refresh()
+    end
+    if (modernOptionsState.pages.positioningBuilt and optionsPages.positioning.Refresh) then
+        optionsPages.positioning:Refresh()
+    end
+    if (modernOptionsState.pages.characterInspectBuilt and optionsPages.characterInspect.Refresh) then
+        optionsPages.characterInspect:Refresh()
+    end
+    if (modernOptionsState.pages.advancedBuilt and optionsPages.advanced.Refresh) then
+        optionsPages.advanced:Refresh()
+    end
+end
+
+local function ensureModernOptionsBuilt()
+    if (modernOptionsState.built) then
+        return
+    end
+    buildRootPage()
+    buildTooltipsPage()
+    buildPositioningPage()
+    buildCharacterInspectPage()
+    buildAdvancedPage()
+    modernOptionsState.built = true
+end
+
+TT.RefreshOptionsUI = function(self)
+    ensureModernOptionsBuilt()
+    modernGetConfig()
+    modernShowExampleTooltip()
+end
+
+optionsPages.tooltips:SetScript("OnShow", function(panel)
+    ensureModernOptionsBuilt()
+    if (panel.Refresh) then panel:Refresh() end
+end)
+
+optionsPages.positioning:SetScript("OnShow", function(panel)
+    ensureModernOptionsBuilt()
+    if (panel.Refresh) then panel:Refresh() end
+end)
+
+optionsPages.characterInspect:SetScript("OnShow", function(panel)
+    ensureModernOptionsBuilt()
+    if (panel.Refresh) then panel:Refresh() end
+end)
+
+optionsPages.advanced:SetScript("OnShow", function(panel)
+    ensureModernOptionsBuilt()
+    if (panel.Refresh) then panel:Refresh() end
+end)
+
 optionsFrame:SetScript("OnShow", function(panel)
+    if (panel and not panel._UseLegacyCanvas) then
+        ensureModernOptionsBuilt()
+        modernGetConfig()
+        modernShowExampleTooltip()
+        return
+    end
+
     local options = {}
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
