@@ -1,0 +1,9 @@
+## Interface: 11508, 20505, 30405
+## Version: 18
+## Title: Lib: ClassicInspector
+## Notes: Lib: ClassicInspector
+## Author: AcidBomb
+## X-Category: Library
+## Dependencies: LibStub, CallbackHandler-1.0, LibDetours-1.0
+
+LibClassicInspector.lua

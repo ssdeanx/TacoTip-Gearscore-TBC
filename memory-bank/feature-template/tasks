@@ -1,0 +1,15 @@
+# Tasks
+
+## Task list
+
+- Make sure all tasks are listed with as much detail as possible, because this will help ensure nothing is overlooked.
+- Also so we have a clear understanding of the overall progress and any dependencies between tasks.
+- Assign tasks based on 'context.md', 'design.md', 'prd.md' files, use the information provided in these documents to ensure accurate task allocation.
+
+## Implementation checklist
+
+- [ ] List all affected files as necessary
+
+## Acceptance criteria
+
+- [ ] Behavior matches the PRD, and all edge cases are handled

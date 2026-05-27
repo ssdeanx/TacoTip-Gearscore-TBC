@@ -1,0 +1,16 @@
+# Tasks
+
+## Implementation checklist
+
+- [ ] Review current bundled library versions and manifests.
+- [ ] Confirm `TacoTip.toc` load order still matches the dependency graph.
+- [ ] Update any library files or metadata that need refreshing.
+- [ ] Test the addon on a supported Classic client.
+- [ ] Verify tooltips, inspect frames, and options UI still work.
+- [ ] Confirm optional Pawn behavior is unchanged.
+
+## Acceptance criteria
+
+- [ ] Behavior matches the PRD.
+- [ ] No Lua errors in chat or console.
+- [ ] Memory bank updated with the final decisions.
