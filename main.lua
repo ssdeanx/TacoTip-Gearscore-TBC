@@ -39,6 +39,9 @@ local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local CAfter = _G.C_Timer and _G.C_Timer.After
 local GetBestMapForUnit = _G.C_Map and _G.C_Map.GetBestMapForUnit
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
+local UnitCanAttack = _G.UnitCanAttack
+local UnitLevel = _G.UnitLevel
+local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
 
 local playerClass = select(2, UnitClass("player"))
 
@@ -75,11 +78,10 @@ local function registerFallbackSlashCommands()
             end
         elseif (cmd == "default") then
             if (TacoTipDragButton) then
-                TacoTipDragButton:_Disable()
+                TacoTipDragButton:_Disable(true)
             end
             if (TacoTipConfig) then
                 TacoTipConfig.custom_pos = nil
-                TacoTipConfig.custom_anchor = nil
             end
             print("|cff59f0dcTacoTip:|r "..L["Custom tooltip position disabled."])
         elseif (TT.OpenOptionsPanel) then
@@ -143,6 +145,106 @@ local function getClassTint(unit)
         end
     end
     return 1, 1, 1
+end
+
+local specializationIconCache = {}
+
+local function makeColorCode(r, g, b)
+    return string.format("|cFF%02x%02x%02x", (r or 1) * 255, (g or 1) * 255, (b or 1) * 255)
+end
+
+local function colorizeText(text, r, g, b)
+    if (not text or text == "") then
+        return text or ""
+    end
+    return string.format("%s%s|r", makeColorCode(r, g, b), text)
+end
+
+local function getClassColor(class)
+    return class and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class] or nil
+end
+
+local function getHostileDifficultyColor(unit)
+    if (not unit or UnitIsPlayer(unit) or not UnitCanAttack("player", unit) or not GetQuestDifficultyColor) then
+        return nil
+    end
+
+    local level = UnitLevel(unit)
+    if (level and level > 0) then
+        return GetQuestDifficultyColor(level)
+    end
+
+    return GetQuestDifficultyColor((UnitLevel("player") or 1) + 10)
+end
+
+local function colorizeUnitLevelLine(unit, textLine)
+    if (not textLine or textLine == "") then
+        return textLine
+    end
+
+    local color = getHostileDifficultyColor(unit)
+    if (not color) then
+        return textLine
+    end
+
+    local level = UnitLevel(unit)
+    local levelToken = (level and level > 0) and tostring(level) or "??"
+    local coloredLevel = colorizeText(levelToken, color.r, color.g, color.b)
+
+    if (level and level > 0) then
+        return string.gsub(textLine, levelToken, coloredLevel, 1)
+    end
+
+    return string.gsub(textLine, "%?%?", coloredLevel, 1)
+end
+
+local function getSpecializationIcon(class, specIndex)
+    if (not class or not specIndex) then
+        return nil
+    end
+
+    local cacheKey = class .. ":" .. tostring(specIndex)
+    if (specializationIconCache[cacheKey] ~= nil) then
+        return specializationIconCache[cacheKey] or nil
+    end
+
+    local bestTexture, bestTier = nil, -1
+    for talentIndex = 1, 40 do
+        local ok, name, iconTexture, tier, _, _, _, isExceptional = pcall(CI.GetTalentInfoByClass, CI, class, specIndex, talentIndex)
+        if (not ok) then
+            break
+        end
+        if (name and iconTexture) then
+            if (isExceptional) then
+                specializationIconCache[cacheKey] = iconTexture
+                return iconTexture
+            end
+            if ((tier or 0) >= bestTier) then
+                bestTexture = iconTexture
+                bestTier = tier or 0
+            end
+        end
+    end
+
+    specializationIconCache[cacheKey] = bestTexture or false
+    return bestTexture
+end
+
+local function formatSpecializationText(class, specIndex, p1, p2, p3)
+    local specName = class and specIndex and CI:GetSpecializationName(class, specIndex, true) or nil
+    if (not specName) then
+        return nil
+    end
+
+    local iconTexture = getSpecializationIcon(class, specIndex)
+    local iconText = iconTexture and string.format("|T%s:14:14:0:0:64:64:4:60:4:60|t ", tostring(iconTexture)) or ""
+    local classColor = getClassColor(class)
+    local coloredName = classColor and colorizeText(specName, classColor.r, classColor.g, classColor.b) or specName
+    return string.format("%s%s [%d/%d/%d]", iconText, coloredName, p1 or 0, p2 or 0, p3 or 0)
+end
+
+TT.GetFormattedSpecializationText = function(self, class, specIndex, p1, p2, p3)
+    return formatSpecializationText(class, specIndex, p1, p2, p3)
 end
 
 local function ensureTooltipPortrait(tooltip)
@@ -297,6 +399,8 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
     if (not text[1] or text[1] == "") then return end
     if (not text[2] or text[2] == "") then return end
 
+    text[2] = colorizeUnitLevelLine(tooltipUnit, text[2])
+
     if (TacoTipConfig.show_target and UnitIsConnected(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
         local unitTarget = tooltipUnit .. "target"
         local targetName = UnitName(unitTarget)
@@ -427,32 +531,36 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
 
                 if (active == 2) then
                     if (spec2) then
+                        local specText = formatSpecializationText(class, spec2, y1, y2, y3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {L["Talents"]..":", string.format("%s [%d/%d/%d]", CI:GetSpecializationName(class, spec2, true), y1, y2, y3), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b})
+                            tinsert(linesToAdd, {L["Talents"]..":", specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
                         else
-                            tinsert(linesToAdd, {string.format("%s:|cFFFFFFFF %s [%d/%d/%d]|r", L["Talents"], CI:GetSpecializationName(class, spec2, true), y1, y2, y3)})
+                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
                     if (spec1) then
+                        local specText = formatSpecializationText(class, spec1, x1, x2, x3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec2 and " " or L["Talents"]..":"), string.format("%s [%d/%d/%d]", CI:GetSpecializationName(class, spec1, true), x1, x2, x3), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                            tinsert(linesToAdd, {(spec2 and " " or L["Talents"]..":"), specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
                         elseif (not spec2) then
-                            tinsert(linesToAdd, {string.format("%s:|cFF808080 %s [%d/%d/%d]|r", L["Talents"], CI:GetSpecializationName(class, spec1, true), x1, x2, x3)})
+                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
                 elseif (active == 1) then
                     if (spec1) then
+                        local specText = formatSpecializationText(class, spec1, x1, x2, x3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {L["Talents"]..":", string.format("%s [%d/%d/%d]", CI:GetSpecializationName(class, spec1, true), x1, x2, x3), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b})
+                            tinsert(linesToAdd, {L["Talents"]..":", specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
                         else
-                            tinsert(linesToAdd, {string.format("%s:|cFFFFFFFF %s [%d/%d/%d]|r", L["Talents"], CI:GetSpecializationName(class, spec1, true), x1, x2, x3)})
+                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
                     if (spec2) then
+                        local specText = formatSpecializationText(class, spec2, y1, y2, y3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec1 and " " or L["Talents"]..":"), string.format("%s [%d/%d/%d]", CI:GetSpecializationName(class, spec2, true), y1, y2, y3), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                            tinsert(linesToAdd, {(spec1 and " " or L["Talents"]..":"), specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
                         elseif (not spec1) then
-                            tinsert(linesToAdd, {string.format("%s:|cFF808080 %s [%d/%d/%d]|r", L["Talents"], CI:GetSpecializationName(class, spec2, true), y1, y2, y3)})
+                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
                 end
@@ -479,6 +587,9 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                             tinsert(linesToAdd, {"|cFFFFFFFFGearScore:|r "..gearscore, r, g, b})
                         else
                             tinsert(linesToAdd, {"GearScore: "..gearscore, r, g, b})
+                        end
+                        if (avg_ilvl and avg_ilvl > 0) then
+                            tinsert(linesToAdd, {"iLvl: "..avg_ilvl, r, g, b})
                         end
                     end
                 end
@@ -708,7 +819,8 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
             if (TacoTipDragButton) then
                 tooltip:SetOwner(TacoTipDragButton,"ANCHOR_NONE")
                 tooltip:ClearAllPoints()
-                tooltip:SetPoint(TacoTipConfig.custom_anchor or "TOPLEFT", TacoTipDragButton, "CENTER")
+                local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
+                tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
@@ -716,6 +828,29 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
         end
     end
 end)
+
+local function getDefaultTooltipMoverPosition()
+    local anchorPoint = (TacoTipConfig and TacoTipConfig.custom_anchor) or "TOPLEFT"
+    return {anchorPoint, anchorPoint, 0, 0}
+end
+
+local function syncTooltipMoverPosition(showExample)
+    if (not TacoTipDragButton) then
+        return
+    end
+
+    local pos = (TacoTipConfig and TacoTipConfig.custom_pos) or getDefaultTooltipMoverPosition()
+    TacoTipDragButton:ClearAllPoints()
+    TacoTipDragButton:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+
+    if (showExample and TacoTipDragButton:IsShown() and TacoTipDragButton.ShowExample) then
+        TacoTipDragButton:ShowExample()
+    end
+end
+
+TT.SyncTooltipMover = function(self, showExample)
+    syncTooltipMoverPosition(showExample)
+end
 
 if (GameTooltipStatusBar) then
     GameTooltipStatusBar:HookScript("OnHide", function()
@@ -1074,7 +1209,7 @@ function TacoTip_CustomPosEnable(show)
         TacoTipDragButton:SetClampedToScreen(true)
         TacoTipDragButton:SetSize(32,32)
         TacoTipDragButton:SetNormalTexture("Interface\\MINIMAP\\TempleofKotmogu_ball_green")
-        local pos = TacoTipConfig.custom_pos or {"TOPLEFT","TOPLEFT",0,0}
+        local pos = TacoTipConfig.custom_pos or getDefaultTooltipMoverPosition()
         TacoTipDragButton:SetPoint(pos[1],UIParent,pos[2],pos[3],pos[4])
         TacoTipDragButton:RegisterForDrag("LeftButton")
         TacoTipDragButton:RegisterForClicks("MiddleButtonUp", "RightButtonUp")
@@ -1083,6 +1218,7 @@ function TacoTip_CustomPosEnable(show)
             self:StopMovingOrSizing()
             local from, _, to, x, y = self:GetPoint()
             TacoTipConfig.custom_pos = {from, to, x, y}
+            syncTooltipMoverPosition(true)
             refreshOptionsUI()
         end)
         TacoTipDragButton:SetScript("OnClick", function(self, button, down)
@@ -1102,7 +1238,7 @@ function TacoTip_CustomPosEnable(show)
                 refreshOptionsUI()
             elseif (button == "RightButton") then
                 rawset(StaticPopupDialogs, "_TacoTipDragButtonConfirm_", {["whileDead"]=1,["hideOnEscape"]=1,["timeout"]=0,["exclusive"]=1,["enterClicksFirstButton"]=1,["text"]=L["TEXT_DLG_CUSTOM_POS_CONFIRM"],
-                ["button1"]=SAVE,["button2"]=CANCEL,["button3"]=RESET,["OnAccept"]=function() TacoTipDragButton:_Save() end,["OnAlt"]=function() TacoTipDragButton:_Disable() end})
+                ["button1"]=SAVE,["button2"]=CANCEL,["button3"]=RESET,["OnAccept"]=function() TacoTipDragButton:_Save() end,["OnAlt"]=function() TacoTipDragButton:_ResetPosition() end})
                 StaticPopup_Show("_TacoTipDragButtonConfirm_")
             end
         end)
@@ -1152,10 +1288,10 @@ function TacoTip_CustomPosEnable(show)
             local anchorMouseCheck = _G.TacoTipOptCheckBoxAnchorMouse
             local anchorMouseWorldCheck = _G.TacoTipOptCheckBoxAnchorMouseWorld
             if (not TacoTipConfig.custom_pos) then
-                local from, _, to, x, y = TacoTipDragButton:GetPoint()
-                TacoTipConfig.custom_pos = {from, to, x, y}
+                TacoTipConfig.custom_pos = getDefaultTooltipMoverPosition()
                 print("|cff59f0dcTacoTip:|r "..L["Custom tooltip position enabled."])
             end
+            syncTooltipMoverPosition(false)
             if (customPositionCheck) then
                 customPositionCheck:SetChecked(true)
             end
@@ -1173,11 +1309,17 @@ function TacoTip_CustomPosEnable(show)
             refreshOptionsUI()
         end
         function TacoTipDragButton:_Save()
+            syncTooltipMoverPosition(false)
             TacoTipDragButton:Hide()
             print("|cff59f0dcTacoTip:|r "..L["TEXT_HELP_MOVER_SAVED"])
             refreshOptionsUI()
         end
-        function TacoTipDragButton:_Disable()
+        function TacoTipDragButton:_ResetPosition()
+            TacoTipConfig.custom_pos = getDefaultTooltipMoverPosition()
+            syncTooltipMoverPosition(true)
+            refreshOptionsUI()
+        end
+        function TacoTipDragButton:_Disable(preserveAnchor)
             local customPositionCheck = _G.TacoTipOptCheckBoxCustomPosition
             local moverButton = _G.TacoTipOptButtonMover
             local anchorMouseCheck = _G.TacoTipOptCheckBoxAnchorMouse
@@ -1197,7 +1339,9 @@ function TacoTip_CustomPosEnable(show)
                 anchorMouseCheck:SetDisabled(false)
             end
             TacoTipConfig.custom_pos = nil
-            TacoTipConfig.custom_anchor = nil
+            if (not preserveAnchor) then
+                TacoTipConfig.custom_anchor = nil
+            end
             refreshOptionsUI()
         end
         TacoTipDragButton:Hide()

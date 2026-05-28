@@ -1,5 +1,31 @@
 # Progress
 
+## 2026-05-28 - scroll/layout and compact ilvl follow-up
+
+- Fixed the page-builder scroll-height bug in `options.lua` so manual layout spacing contributes to content height and long settings pages no longer cut off early.
+- Added mouse-wheel proxying for the reusable scroll-page builder and the Tooltips page so scrolling works from the page area instead of only the scrollbar thumb.
+- Cleaned the Character & Inspect offset rows by hiding the redundant slider-template labels and increasing row spacing.
+- Expanded the built-in Blizzard font choices and forced tooltip media/font dropdown callbacks through a full options refresh before redrawing the preview.
+- Added a standalone compact `iLvl` line under GearScore in `main.lua` and updated the modern preview sample to match.
+- Re-ran targeted diagnostics on `options.lua` and `main.lua`; both are clean.
+
+## 2026-05-28 - hostile level colors and spec icons
+
+- Researched WoW mob difficulty coloring on warcraft.wiki.gg and confirmed TacoTip should rely on `GetQuestDifficultyColor(level)` for hostile target level coloring.
+- Patched `main.lua` so hostile non-player unit levels are recolored in-place on the tooltip's level line instead of staying white.
+- Added cached specialization icon lookup in `main.lua` using `LibClassicInspector` talent data and applied the new icon + class-colored spec-name formatting to player talent lines.
+- Updated the modern options preview in `options.lua` so the talents sample matches the live tooltip formatting.
+- Re-ran targeted diagnostics on `main.lua` and `options.lua`; both are clean.
+
+## 2026-05-28 - options stability follow-up
+
+- Removed the active `Advanced` child page registration and moved its small behavior/client toggles onto the root/general page.
+- Reworked the Tooltips page shell so the live preview sits in a dedicated right-side pane instead of floating over the settings column.
+- Switched collapsed dropdown text back to clean selected labels while keeping Blizzard popup menu previews for the long media lists.
+- Added dynamic width sizing to the Tooltips scroll content and replaced several fixed dropdown spacing blocks with measured spacing.
+- Added mover sync/reset helpers in `main.lua` so anchor changes and reset-position flows keep the green mover aligned with the saved custom anchor.
+- Re-ran targeted diagnostics on `options.lua`, `main.lua`, and `Locale/enUS.lua`; all are clean.
+
 ## 2026-05-27 - widget polish and color-wheel pass
 
 - Widened the single media dropdown previews so statusbar/background/border choices read more like real texture strips instead of icon-sized samples.

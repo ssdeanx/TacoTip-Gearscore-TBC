@@ -26,6 +26,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 - Added tooltip visual customization controls for class-tinted border/background styling, alpha, portrait display/scale, tooltip fonts, tooltip text size, and shared health/power bar textures with optional SharedMedia integration.
 - Extended SharedMedia integration so tooltip background and border textures are discovered automatically from media packs and fall back to Blizzard tooltip assets when unavailable.
 - Added Blizzard color-picker-backed border/background swatches, mouse-wheel support on scroll pages and sliders, clearer titled visual subsections, and stronger single-dropdown texture strip previews.
+- Followed up with stability polish by moving the sparse Advanced toggles onto the root page, relocating the live preview into a dedicated right-side column, using clean collapsed dropdown titles, and keeping the custom tooltip anchor when resetting the mover position.
 
 ## [0.0.1] - 2026-05-18
 

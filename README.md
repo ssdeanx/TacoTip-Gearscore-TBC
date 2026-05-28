@@ -68,11 +68,10 @@ The AddOns list entry uses the addon title from `TacoTip.toc`, so it appears as 
 
 | Page | What lives there |
 | --- | --- |
-| `TacoTip` | Landing page, quick actions, and a status summary |
+| `TacoTip` | Landing page, quick actions, status summary, and compact behavior/client toggles |
 | `Tooltips` | Tooltip style, unit-tooltip content, item-tooltip data, live preview |
 | `Positioning` | Mouse anchoring, saved custom position, custom anchor dropdown, mover workflow |
 | `Character & Inspect` | Character/inspect overlay toggles, unlock movers, numeric offset fields, sliders |
-| `Advanced` | Combat suppression, UberTooltips, chat class colors, Wrath-only achievement toggle |
 
 The `Tooltips` page also includes:
 
@@ -92,6 +91,7 @@ The `Tooltips` page also includes:
 - Use the **Positioning** page to choose between Blizzard default placement, mouse anchoring, or a saved custom tooltip position.
 - When custom positioning is enabled, the **Open Tooltip Mover** button shows the live mover.
 - Use the custom anchor dropdown to choose `TOPLEFT`, `TOPRIGHT`, `BOTTOMLEFT`, `BOTTOMRIGHT`, or `CENTER`.
+- Resetting the mover position now snaps back to the selected anchor corner instead of silently clearing the chosen anchor.
 - Use the **Character & Inspect** page to fine-tune overlay offsets with numeric fields and sliders, or unlock the overlay movers for manual drag placement.
 
 ## Installation

@@ -1,5 +1,27 @@
 # Active Context
 
+## 2026-05-28 - scroll/layout and compact ilvl follow-up
+
+- Fixed the active options-page scroll math by making the page builder count manual `builder.y` spacing in the final content height, which restores real scrollbar ranges on long pages.
+- `createScrollPage()` and the modern Tooltips page now proxy mouse-wheel input from the page frame/content to the scroll frame so users do not need to grab the scrollbar thumb to move long settings pages.
+- Hid the duplicate slider-template titles in the Character & Inspect offset rows and increased row spacing so the X/Y offset controls stop overlapping their own labels.
+- Expanded the built-in Blizzard font list for the tooltip-font dropdown and forced the media/font dropdown callbacks through a full modern refresh so resolved selections update immediately.
+- Compact player tooltips now add a standalone `iLvl` line below GearScore, and the modern preview mirrors that compact layout.
+
+## 2026-05-28 - hostile level colors and spec icons
+
+- Web research confirmed the correct Classic/TBC/Wrath-safe way to color hostile mob levels is to use Blizzard's own `GetQuestDifficultyColor(level)` behavior, which follows the familiar gray/green/yellow/orange/red difficulty system relative to the player's level.
+- `main.lua` now recolors the hostile NPC level token in the existing unit tooltip line so enemy mobs no longer stay white when they should indicate XP/difficulty.
+- `main.lua` now formats specialization lines with class-colored spec names and per-spec icons derived from `LibClassicInspector:GetTalentInfoByClass()` data, with the same richer formatting exposed to the modern options preview.
+
+## 2026-05-28 - options stability follow-up
+
+- Trimmed the active AddOns tree back to `Tooltips`, `Positioning`, and `Character & Inspect`; the lightweight Advanced/client toggles now live on the root/general page instead of a separate child page.
+- Tightened the Tooltips page layout by shrinking the left scroll area, moving the preview into a dedicated right-side column, and switching collapsed dropdown labels back to plain selected titles instead of texture-strip text.
+- Added dynamic width handling to the Tooltips scroll content and replaced the worst fixed dropdown spacing with measured spacing so wrapped descriptions stop colliding with later controls.
+- The mover runtime now exposes `TT:SyncTooltipMover()`, uses the selected anchor when re-pointing the tooltip, and keeps the chosen anchor when resetting the saved custom position.
+- Right-click reset on the green mover now snaps back to the selected anchor corner instead of disabling custom positioning, and `/tacotip default` now clears only the saved position while preserving the chosen custom anchor.
+
 ## 2026-05-27 - widget polish and color-wheel pass
 
 - Upgraded the professional options UI with stronger single-list media previews, including a wider statusbar/background/border strip shown directly in the dropdown entries and selected value text.

@@ -21,8 +21,7 @@ Blizzard Options
     └── TacoTip Gearscore TBC
         ├── Tooltips
         ├── Positioning
-        ├── Character & Inspect
-        └── Advanced
+    └── Character & Inspect
 ```
 
 ## Root page intent
@@ -39,6 +38,11 @@ Blizzard Options
 | • Current tooltip mode summary                                      |
 | • Character/inspect overlay summary                                 |
 | • Reminder to use the child pages in the AddOns tree                |
+|                                                                     |
+| Behavior & client settings                                          |
+| [x] Suppress inspection details in combat                           |
+| [x] Enhanced Tooltips           [x] Chat Class Colors               |
+| [ ] Show Achievement Points (Wrath only)                            |
 +---------------------------------------------------------------------+
 ```
 
@@ -48,10 +52,10 @@ Blizzard Options
 +----------------------------------------------------------------------------------+
 | Tooltips                                                                         |
 | Tune the extra data TacoTip adds to tooltips.                                    |
-|                                                                 [ Live Preview ]  |
+|                                                      [ Live Preview ]             |
 | Tooltip Style                                                                    |
-| [ FULL / COMPACT / MINI ▼ ]                                  [ sample tooltip ]  |
-|                                                                 [ hp/power bars ] |
+| [ FULL / COMPACT / MINI ▼ ]                             [ sample tooltip ]        |
+|                                                         [ hp/power bars ]         |
 | Unit tooltip content                                                              |
 | [x] Class Color                  [x] Title                                        |
 | [x] Guild Name                   [x] Guild Rank                                   |
@@ -139,20 +143,6 @@ Blizzard Options
 +---------------------------------------------------------------------+
 ```
 
-## Advanced page — intended visual structure
-
-```ascii
-+---------------------------------------------------------------------+
-| Advanced                                                             |
-| Lower-priority client and behavior toggles.                          |
-|                                                                     |
-| [x] Suppress inspection details in combat                            |
-| [x] Enhanced Tooltips                                                |
-| [x] Chat Class Colors                                                |
-| [ ] Show Achievement Points (Wrath only)                             |
-+---------------------------------------------------------------------+
-```
-
 ## Interaction map
 
 ```mermaid
@@ -161,7 +151,6 @@ flowchart TD
     B --> C[Tooltips]
     B --> D[Positioning]
     B --> E[Character & Inspect]
-    B --> F[Advanced]
 
     C --> C1[Unit tooltip content]
     C --> C2[Item tooltip data]
@@ -179,10 +168,11 @@ flowchart TD
     E --> E2[X/Y edit boxes]
     E --> E3[X/Y sliders]
 
-    F --> F1[Combat suppression]
-    F --> F2[UberTooltips]
-    F --> F3[Chat class colors]
-    F --> F4[Wrath-only achievement toggle]
+    B --> G[Root behavior toggles]
+    G --> G1[Combat suppression]
+    G --> G2[UberTooltips]
+    G --> G3[Chat class colors]
+    G --> G4[Wrath-only achievement toggle]
 ```
 
 ## Appearance data flow
