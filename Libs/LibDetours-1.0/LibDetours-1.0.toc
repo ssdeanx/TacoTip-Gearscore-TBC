@@ -1,4 +1,4 @@
-## Interface: 11508, 20505, 30405
+## Interface: 11508, 20505, 30405, 38001
 ## Version: 1
 ## Title: Lib: Detours-1.0
 ## Notes: Lib: Detours-1.0

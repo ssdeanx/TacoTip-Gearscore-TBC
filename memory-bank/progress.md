@@ -1,5 +1,35 @@
 # Progress
 
+## 2026-05-28 - 0.4.9 release prep finalized
+
+- Updated `TacoTip.toc`, `main.lua`, and `options.lua` to `0.4.9` for the release build.
+- Refreshed `README.md` with the new public version, supported-client wording, language-dropdown notes, and a table of all available locales.
+- Added the `0.4.9` release section to `CHANGELOG.md` and corrected the localization note so it reflects translated per-locale welcome strings instead of an English-only sentence.
+- Updated the tooltip preview placeholder name in `options.lua` from `Kebabstorm` to `AcidBomb`.
+- Updated `TEXT_HELP_WELCOME` in every shipped locale file so the text stays localized while using `AcidBomb (Pilsung)` as the maintainer name.
+- Re-ran targeted diagnostics on the release docs, manifest, runtime files, and all locale files; every checked file is clean.
+
+## 2026-05-28 - full locale coverage and language selector verification
+
+- Replaced the placeholder modern settings strings with translated `OPTIONS_*` blocks in `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, and `zhTW`.
+- Confirmed every locale file now contains the language-selector strings, so the root-page language dropdown has localized labels/help text across the full shipped locale set.
+- Updated the README supported-clients summary to explicitly include Titanforge.
+- Re-ran targeted diagnostics on the edited locale files, `README.md`, and `options.lua`; all checked files are clean.
+- Verified from `options.lua` that the saved language dropdown exists and that mouse-wheel scroll proxy hooks are present for the relevant options pages.
+
+## 2026-05-28 - TOC interface metadata sync
+
+- Re-checked the `Locale/` directory contents while auditing the repo state for the user's follow-up.
+- Verified from Warcraft Wiki TOC documentation that the target client versions map to `11508`, `20505`, `30405`, and `38001`, and that comma-delimited interface values are valid.
+- Updated all four `.toc` files in the repo (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) to use the same interface list: `11508, 20505, 30405, 38001`.
+
+## 2026-05-28 - Titanforge locale support
+
+- Verified the existing build-family gate already covers `3.80.1`-style Wrath-family Titanforge clients.
+- Added an explicit Titanforge compatibility note to `README.md` and `CHANGELOG.md` so the first upload documentation matches the supported target audience.
+- Expanded `Locale/zhCN.lua` and `Locale/zhTW.lua` with the newest options UI labels/help text for the modern settings pages.
+- Re-checked the Chinese locale file tails to confirm they now close cleanly after the added strings.
+
 ## 2026-05-28 - scroll/layout and compact ilvl follow-up
 
 - Fixed the page-builder scroll-height bug in `options.lua` so manual layout spacing contributes to content height and long settings pages no longer cut off early.

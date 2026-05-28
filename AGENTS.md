@@ -1,5 +1,10 @@
 # AGENTS
 
+## Recent manifest note
+
+- As of 2026-05-28, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
+- The current public release target is `0.4.9`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
+
 ## Repo overview
 
 - WoW Classic-family addon only (`11508`, `20505`, `30405`); retail is unsupported.
@@ -20,6 +25,7 @@
 - The root options category now uses the addon's display title from `TacoTip.toc`, so the Blizzard AddOns tree entry should read `TacoTip Gearscore TBC`.
 - The Tooltips page now uses a real right-side preview column, narrower left-side scroll content, and plain selected dropdown titles while keeping Blizzard popup menus for long media lists.
 - Scrollable child pages now proxy mouse-wheel input through their parent/content frames, and the page builder now counts manual spacing when computing scroll height so long pages actually scroll instead of cutting off.
+- The root/general page includes a saved addon-language dropdown that defaults to the client locale but can override it via `TacoTipConfig.locale_override` on reload.
 
 ## Runtime sync notes
 
@@ -44,4 +50,8 @@
 
 - New settings copy ships in `Locale/enUS.lua` first.
 - Other locales inherit English through the existing fallback merge until translated.
+- All shipped locale files now include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
+- `TEXT_HELP_WELCOME` now keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)` across the full locale set.
 - Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
+- `README.md` now includes a release-facing available-languages table and the `0.4.9` public version metadata.
+- The Chinese locale files (`zhCN.lua`, `zhTW.lua`) now include the newest options UI labels and help text used by the updated settings pages.

@@ -1,4 +1,4 @@
-## Interface: 11508, 20505, 30405
+## Interface: 11508, 20505, 30405, 38001
 ## Title: Lib: LibStub
 ## Notes: Universal Library Stub
 ## Credits: Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel

@@ -1,4 +1,4 @@
-## Interface: 11508, 20505, 30405
+## Interface: 11508, 20505, 30405, 38001
 ## Version: 18
 ## Title: Lib: ClassicInspector
 ## Notes: Lib: ClassicInspector

@@ -1,5 +1,33 @@
 # Active Context
 
+## 2026-05-28 - 0.4.9 release prep finalized
+
+- Bumped the packaged/public addon version to `0.4.9` in `TacoTip.toc` plus the Lua fallback metadata in `main.lua` and `options.lua`.
+- Updated `README.md` with the `0.4.9` public version, a release-ready summary, an explicit available-languages table, and clearer language-dropdown / fallback behavior notes.
+- Added a `0.4.9` changelog entry covering release polish, locale sync, maintainer-name cleanup, and the supported-version documentation refresh.
+- Updated the tooltip preview placeholder name from `Kebabstorm` to `AcidBomb` for consistency with the current packaged addon metadata.
+- Corrected `TEXT_HELP_WELCOME` in every shipped locale so each locale keeps its own language while using the new maintainer name `AcidBomb (Pilsung)`.
+- Re-verified that `options.lua` still uses a single Blizzard dropdown for the root language selector and keeps mouse-wheel-enabled scroll hooks on the long options pages.
+
+## 2026-05-28 - full locale coverage and language selector verification
+
+- Synced every shipped locale file in `Locale/` with the current modern options UI key set from `Locale/enUS.lua`, using translated `OPTIONS_*` strings instead of placeholder English copies.
+- Confirmed all non-English locale gates still respect `TacoTipConfig.locale_override` first and then fall back to `GetLocale()`, so the saved addon-language dropdown can override the client locale on the next reload.
+- Verified `options.lua` already contains the root-page language dropdown (`buildLocaleDropdownChoices`, `controls.rootLanguage`) and mouse-wheel scroll hooks for the reusable scroll pages and the Tooltips page.
+- Updated `README.md` so the main supported-clients summary explicitly mentions Titanforge alongside the other supported Classic-family clients.
+
+## 2026-05-28 - TOC interface metadata sync
+
+- Audited the addon manifests after re-checking the `Locale/` folder contents and confirmed there are four `.toc` files in the repo that need matching interface metadata.
+- Verified via Warcraft Wiki TOC docs that multi-value `## Interface:` entries support the requested Classic-family targets, including Titan Reforged `38001` alongside `11508`, `20505`, and `30405`.
+- Updated `TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, and `LibDetours-1.0.toc` so every manifest now advertises `11508, 20505, 30405, 38001` consistently.
+
+## 2026-05-28 - Titanforge locale support
+
+- Confirmed the addon runtime already accepts Wrath-family build major `3`, so Chinese Titanforge `3.80.1` clients are covered without changing the supported Classic-family runtime gate.
+- Documented the Titanforge compatibility note in `README.md` and the changelog so the first public upload reflects the intended Chinese-server support.
+- Added the newest options UI strings to `Locale/zhCN.lua` and `Locale/zhTW.lua` so the Chinese settings pages show localized labels/help text instead of falling back to English for the updated controls.
+
 ## 2026-05-28 - scroll/layout and compact ilvl follow-up
 
 - Fixed the active options-page scroll math by making the page builder count manual `builder.y` spacing in the final content height, which restores real scrollbar ranges on long pages.

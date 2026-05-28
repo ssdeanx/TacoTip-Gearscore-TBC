@@ -2,7 +2,7 @@
 
 ## Last updated
 
-- 2026-05-27
+- 2026-05-28
 
 This file is the durable UI snapshot for future sessions.
 It records how the professional Blizzard options UI is intended to look, how the pages are grouped, and where the current polish targets live.
@@ -28,7 +28,7 @@ Blizzard Options
 
 ```ascii
 +---------------------------------------------------------------------+
-| TacoTip Gearscore TBC v0.4.8                                        |
+| TacoTip Gearscore TBC v0.4.9                                        |
 | Better player tooltips with GearScore, talents, positioning, and UI |
 | polish for Classic-era clients.                                     |
 |                                                                     |
@@ -36,8 +36,13 @@ Blizzard Options
 | [ Open Tooltip Mover ] [ Reset configuration ]                      |
 |                                                                     |
 | • Current tooltip mode summary                                      |
+| • Current addon language summary                                    |
 | • Character/inspect overlay summary                                 |
 | • Reminder to use the child pages in the AddOns tree                |
+|                                                                     |
+| Addon language                                                      |
+| [ Client default (English) ▼ ]                                      |
+| Reload UI after changing the saved addon language.                  |
 |                                                                     |
 | Behavior & client settings                                          |
 | [x] Suppress inspection details in combat                           |

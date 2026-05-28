@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.4.8"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.4.9"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -84,6 +84,7 @@ function TT:GetDefaults()
         character_gs_offset_y = 0,
         character_ilvl_offset_x = 0,
         character_ilvl_offset_y = 0,
+        locale_override = nil,
         unlock_info_position = false,
         show_achievement_points = false,
         guild_rank_style = 1
@@ -494,10 +495,65 @@ local modernGetConfig
 local modernRefreshLockPositionToggle
 local modernShowExampleTooltip
 local modernWidgetId = 0
+local CLIENT_DEFAULT_LOCALE_VALUE = "__client__"
+
+local supportedLocaleEntries = {
+    { code = "enUS", text = "English" },
+    { code = "deDE", text = "Deutsch" },
+    { code = "esES", text = "Español (España)" },
+    { code = "esMX", text = "Español (Latinoamérica)" },
+    { code = "frFR", text = "Français" },
+    { code = "itIT", text = "Italiano" },
+    { code = "koKR", text = "한국어" },
+    { code = "ptBR", text = "Português (Brasil)" },
+    { code = "ruRU", text = "Русский" },
+    { code = "zhCN", text = "简体中文" },
+    { code = "zhTW", text = "繁體中文" }
+}
 
 local function nextModernWidgetName(prefix)
     modernWidgetId = modernWidgetId + 1
     return string.format("TacoTipModern%s%d", prefix, modernWidgetId)
+end
+
+local function getSavedLocaleOverride()
+    if (TacoTipConfig and TacoTipConfig.locale_override and TacoTipConfig.locale_override ~= "") then
+        return TacoTipConfig.locale_override
+    end
+    return nil
+end
+
+local function getLocaleDisplayName(localeCode)
+    for _, entry in ipairs(supportedLocaleEntries) do
+        if (entry.code == localeCode) then
+            return entry.text
+        end
+    end
+    if (localeCode == "enGB") then
+        return "English"
+    end
+    return localeCode or "English"
+end
+
+local function buildLocaleDropdownChoices()
+    local clientLocaleName = getLocaleDisplayName(GetLocale() or "enUS")
+    local choices = {
+        {
+            value = CLIENT_DEFAULT_LOCALE_VALUE,
+            text = string.format(L["OPTIONS_LANGUAGE_CLIENT_DEFAULT"] or "Client default (%s)", clientLocaleName),
+            selectedText = string.format(L["OPTIONS_LANGUAGE_CLIENT_DEFAULT"] or "Client default (%s)", clientLocaleName)
+        }
+    }
+
+    for _, entry in ipairs(supportedLocaleEntries) do
+        table.insert(choices, {
+            value = entry.code,
+            text = entry.text,
+            selectedText = entry.text
+        })
+    end
+
+    return choices
 end
 
 local function getSharedMediaLibrary()
@@ -1132,7 +1188,7 @@ modernShowExampleTooltip = function()
     local name_g = TacoTipConfig.color_class and classc and classc.g or 0.6
     local name_b = TacoTipConfig.color_class and classc and classc.b or 0.1
     local playerTitle = TacoTipConfig.show_titles and L[" the Kingslayer"] or ""
-    tooltip:AddLine(string.format("|cFF%02x%02x%02xKebabstorm%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
+    tooltip:AddLine(string.format("|cFF%02x%02x%02xAcidBomb%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
 
     if (TacoTipConfig.show_guild_name) then
         if (TacoTipConfig.show_guild_rank) then
@@ -1268,8 +1324,30 @@ local function buildRootPage()
     modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, "")
     modernOptionsState.rootSummary:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -20)
 
+    controls.rootLanguage = createOptionsDropdown(panel, nil, L["OPTIONS_LANGUAGE_LABEL"] or "Addon language", L["OPTIONS_LANGUAGE_DESC"] or "Use your game client's locale by default, or choose another supported TacoTip locale. Reload the UI after changing this setting.", buildLocaleDropdownChoices(), function(value)
+        if (value == CLIENT_DEFAULT_LOCALE_VALUE) then
+            TacoTipConfig.locale_override = nil
+        else
+            TacoTipConfig.locale_override = value
+        end
+        print("|cff59f0dcTacoTip:|r " .. (L["OPTIONS_LANGUAGE_RELOAD_HINT"] or "Language preference saved. Reload the UI to apply it."))
+        if (TT.RefreshOptionsUI) then
+            TT:RefreshOptionsUI()
+        end
+    end)
+    controls.rootLanguage.label:SetPoint("TOPLEFT", modernOptionsState.rootSummary, "BOTTOMLEFT", 0, -18)
+    controls.rootLanguage:SetPoint("TOPLEFT", controls.rootLanguage.label, "BOTTOMLEFT", -16, -2)
+    if (controls.rootLanguage.description) then
+        controls.rootLanguage.description:ClearAllPoints()
+        controls.rootLanguage.description:SetPoint("TOPLEFT", controls.rootLanguage.label, "BOTTOMLEFT", 0, -44)
+    end
+
     local behaviorHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    behaviorHeader:SetPoint("TOPLEFT", modernOptionsState.rootSummary, "BOTTOMLEFT", 0, -18)
+    if (controls.rootLanguage.description) then
+        behaviorHeader:SetPoint("TOPLEFT", controls.rootLanguage.description, "BOTTOMLEFT", 0, -14)
+    else
+        behaviorHeader:SetPoint("TOPLEFT", controls.rootLanguage, "BOTTOMLEFT", 16, -14)
+    end
     behaviorHeader:SetText(L["OPTIONS_ROOT_BEHAVIOR_HEADER"] or "Behavior & client settings")
 
     controls.rootHideInCombat = createOptionsCheckbox(panel, nil, L["OPTIONS_HIDE_IN_COMBAT_LABEL"] or "Suppress inspection details in combat", L["OPTIONS_HIDE_IN_COMBAT_DESC"] or "Skips TacoTip's talents and GearScore-style player additions while you are in combat.", function(_, value)
@@ -1294,14 +1372,18 @@ local function buildRootPage()
 
     panel.Refresh = function()
         local tooltipMode = TacoTipConfig.anchor_mouse and (L["OPTIONS_STATUS_MOUSE_ANCHOR"] or "Anchored to the mouse cursor") or (TacoTipConfig.custom_pos and (L["OPTIONS_STATUS_CUSTOM_POSITION"] or "Using a saved custom tooltip position") or (L["OPTIONS_STATUS_DEFAULT_POSITION"] or "Using Blizzard default tooltip placement"))
+        local localeSummary = getSavedLocaleOverride() and getLocaleDisplayName(getSavedLocaleOverride()) or string.format(L["OPTIONS_LANGUAGE_CLIENT_DEFAULT"] or "Client default (%s)", getLocaleDisplayName(GetLocale() or "enUS"))
         local lines = {
             L["OPTIONS_ROOT_PAGE_HINT"] or "Use the child pages in the AddOns tree to configure TacoTip.",
+            "• " .. string.format(L["OPTIONS_STATUS_LANGUAGE"] or "Addon language: %s.", localeSummary),
             "• " .. tooltipMode,
             "• " .. (TacoTipConfig.show_gs_character and (L["OPTIONS_STATUS_CHARACTER_GS_ON"] or "Character and inspect GearScore overlays are enabled") or (L["OPTIONS_STATUS_CHARACTER_GS_OFF"] or "Character and inspect GearScore overlays are disabled")),
             "• " .. (TacoTipConfig.show_avg_ilvl and (L["OPTIONS_STATUS_CHARACTER_ILVL_ON"] or "Average item level overlays are enabled") or (L["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] or "Average item level overlays are disabled")),
             "• " .. (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked"))
         }
         modernOptionsState.rootSummary:SetText(table.concat(lines, "\n"))
+        controls.rootLanguage:SetValues(buildLocaleDropdownChoices())
+        controls.rootLanguage:SetValue(getSavedLocaleOverride() or CLIENT_DEFAULT_LOCALE_VALUE)
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
@@ -2080,7 +2162,7 @@ optionsFrame:SetScript("OnShow", function(panel)
         local name_g = TacoTipConfig.color_class and classc and classc.g or 0.6
         local name_b = TacoTipConfig.color_class and classc and classc.b or 0.1
         local playerTitle = TacoTipConfig.show_titles and L[" the Kingslayer"] or ""
-        options.exampleTooltip:AddLine(string.format("|cFF%02x%02x%02xKebabstorm%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
+        options.exampleTooltip:AddLine(string.format("|cFF%02x%02x%02xAcidBomb%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
         if (TacoTipConfig.show_guild_name) then
             if (TacoTipConfig.show_guild_rank) then
                 if (TacoTipConfig.guild_rank_alt_style) then
