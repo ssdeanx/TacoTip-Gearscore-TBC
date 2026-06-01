@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.4.9` |
+| Public version | `v0.5.0` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -45,6 +45,10 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 
 ## Current feature highlights
 
+- Tooltip borders now render correctly: class-colored borders use Blizzard's native backdrop system instead of a stretched overlay, so the `UI-Tooltip-Border` texture displays as a proper sliced corner/edge border.
+- Dual-spec players now see both specializations in compact tooltip styles, with the inactive spec dimmed to 60% opacity.
+- Class icon moved from inline text to a positioned badge at the top-right corner of the tooltip, with configurable size (8–32px) in the options panel.
+- PVP icon now only appears on player units that are actually flagged for PVP, not on PVP-flagged NPCs.
 - Hostile NPC levels in tooltips now use Blizzard difficulty coloring again, so gray / green / yellow / orange / red difficulty is visible at a glance.
 - Specialization lines now use class-colored spec names and per-spec icons derived from `LibClassicInspector` talent data.
 - Compact player tooltips now show a separate `iLvl` line under GearScore so users can see both values without switching to the wide layout.
@@ -230,7 +234,7 @@ Current localization work included in this build:
 | Optional Pawn support | Enabled automatically when Pawn is installed |
 | Optional SharedMedia support | Used automatically when compatible fonts/textures are registered |
 | Saved settings | Stored through `TacoTipConfig` |
-| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.4.9` |
+| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.0` |
 | Feedback | Use project comments or the issue tracker |
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.

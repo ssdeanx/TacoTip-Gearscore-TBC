@@ -4,9 +4,37 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.5.0` | `2026-05-31` | Tooltip border fix, dual-spec display, positioned class icon, PVP icon fix, default toggles |
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.0] - 2026-05-31
+
+### Fixed - 0.5.0
+
+- Fixed tooltip border rendering: replaced broken stretched overlay with native backdrop `edgeFile`/`edgeSize` so the `UI-Tooltip-Border` texture renders as a proper sliced corner/edge border instead of stretching across the entire tooltip surface.
+- Fixed class-colored borders: borders now tint correctly via `SetBackdropBorderColor` on the properly rendered sliced border instead of `SetVertexColor` on a stretched overlay.
+- Fixed dual-spec display in compact/narrow tooltip style: the inactive specialization was being skipped entirely due to incorrect `elseif` conditions. Both specs now always display.
+- Fixed PVP icon: now only shows on player units that are actually PVP-flagged, not on PVP-flagged NPCs.
+- Fixed `ensureTooltipBorderOverlay` memory: removed orphaned overlay texture code.
+
+### Added - 0.5.0
+
+- Positioned class icon badge: moved from inline text (first line) to a dedicated atlas texture at the top-right corner of the tooltip with configurable size.
+- New `Class icon size` slider in the Tooltips → Portrait & text options section (range 8–32px, default 16px).
+- Inactive specialization now displays with 60% alpha fade (`|c99ffffff`) to visually distinguish it from the active spec.
+
+### Changed - 0.5.0
+
+- Class icon is now **enabled by default** (`show_class_icon = true`).
+- Pawn score display is now **enabled by default** (`show_pawn_player = true`).
+- Bumped packaged addon version to `0.5.0`.
+
+### Notes - 0.5.0
+
+- The options preview tooltip now reflects the positioned class icon and dual-spec display.
+- Border render path is now aligned with standard Blizzard backdrop practices.
 
 ## [0.4.9] - 2026-05-28
 

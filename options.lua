@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.4.9"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.0"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -32,6 +32,18 @@ end
 
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
 local PVP_FLAG_ICON = "|TInterface\\GossipFrame\\BattleMasterGossipIcon:0|t"
+local GetClassAtlas = _G.GetClassAtlas
+
+local function getClassIconMarkup(class)
+    if (not class or not GetClassAtlas) then
+        return ""
+    end
+    local atlas = GetClassAtlas(class)
+    if (atlas and atlas ~= "") then
+        return string.format("|A:%s:14:14|a", atlas)
+    end
+    return ""
+end
 
 function TT:GetDefaults()
     return {
@@ -49,13 +61,15 @@ function TT:GetDefaults()
         show_item_level = true,
         tip_style = 2,
         show_target = true,
-        show_pawn_player = false,
+        show_pawn_player = true,
         show_team = false,
+        show_class_icon = true,
+        class_icon_size = 16,
         show_pvp_icon = false,
         guild_rank_alt_style = false,
         show_hp_bar = true,
         show_power_bar = false,
-        tooltip_border_use_class = false,
+        tooltip_border_use_class = true,
         tooltip_background_use_class = false,
         tooltip_border_color_r = 0.5,
         tooltip_border_color_g = 0.5,
@@ -446,51 +460,6 @@ local modernOptionsState = {
     offsetSliders = {}
 }
 
-local builtinTooltipFonts = {
-    { value = "Fonts\\2002.TTF", text = "Blizzard - 2002" },
-    { value = "Fonts\\2002B.TTF", text = "Blizzard - 2002 Bold" },
-    { value = "Fonts\\ARIALN.TTF", text = "Blizzard - Arial Narrow" },
-    { value = "Fonts\\BLEI00D.TTF", text = "Blizzard - Blei" },
-    { value = "Fonts\\FRIZQT__.TTF", text = "Blizzard - Friz Quadrata TT" },
-    { value = "Fonts\\K_Damage.TTF", text = "Blizzard - Damage" },
-    { value = "Fonts\\K_Pagetext.TTF", text = "Blizzard - Page Text" },
-    { value = "Fonts\\MORPHEUS.TTF", text = "Blizzard - Morpheus" },
-    { value = "Fonts\\SKURRI.TTF", text = "Blizzard - Skurri" }
-}
-
-local builtinStatusBarTextures = {
-    { value = "Interface\\TargetingFrame\\UI-StatusBar", text = "Blizzard - Status Bar" },
-    { value = "Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar", text = "Blizzard - Character Skills Bar" },
-    { value = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill", text = "Blizzard - Targeting Bar Fill" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill", text = "Blizzard - Raid Bar" },
-    { value = "Interface\\Buttons\\WHITE8X8", text = "Blizzard - Solid" }
-}
-
-local builtinTooltipBackgrounds = {
-    { value = "Interface\\DialogFrame\\UI-DialogBox-Background", text = "Blizzard - Dialog Background" },
-    { value = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark", text = "Blizzard - Dialog Background Dark" },
-    { value = "Interface\\DialogFrame\\UI-DialogBox-Gold-Background", text = "Blizzard - Dialog Background Gold" },
-    { value = "Interface\\FullScreenTextures\\LowHealth", text = "Blizzard - Low Health" },
-    { value = "Interface\\FrameGeneral\\UI-Background-Marble", text = "Blizzard - Marble" },
-    { value = "Interface\\FullScreenTextures\\OutOfControl", text = "Blizzard - Out of Control" },
-    { value = "Interface\\AchievementFrame\\UI-Achievement-Parchment-Horizontal", text = "Blizzard - Parchment" },
-    { value = "Interface\\AchievementFrame\\UI-GuildAchievement-Parchment-Horizontal", text = "Blizzard - Parchment 2" },
-    { value = "Interface\\FrameGeneral\\UI-Background-Rock", text = "Blizzard - Rock" },
-    { value = "Interface\\TabardFrame\\TabardFrameBackground", text = "Blizzard - Tabard Background" },
-    { value = "Interface\\Tooltips\\UI-Tooltip-Background", text = "Blizzard - Tooltip Background" },
-    { value = "Interface\\Buttons\\WHITE8X8", text = "Blizzard - Solid" }
-}
-
-local builtinTooltipBorders = {
-    { value = "Interface\\None", text = "Blizzard - None" },
-    { value = "Interface\\AchievementFrame\\UI-Achievement-WoodBorder", text = "Blizzard - Achievement Wood" },
-    { value = "Interface\\Tooltips\\ChatBubble-Backdrop", text = "Blizzard - Chat Bubble" },
-    { value = "Interface\\DialogFrame\\UI-DialogBox-Border", text = "Blizzard - Dialog Border" },
-    { value = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border", text = "Blizzard - Dialog Border Gold" },
-    { value = "Interface\\CHARACTERFRAME\\UI-Party-Border", text = "Blizzard - Party Border" },
-    { value = "Interface\\Tooltips\\UI-Tooltip-Border", text = "Blizzard - Tooltip Border" }
-}
-
 local modernGetConfig
 local modernRefreshLockPositionToggle
 local modernShowExampleTooltip
@@ -582,7 +551,7 @@ function TT:GetTooltipFontChoices()
     local seen = {}
     local choices = {}
 
-    for _, entry in ipairs(builtinTooltipFonts) do
+    for _, entry in ipairs(TT.builtinTooltipFonts) do
         seen[entry.value] = true
         table.insert(choices, { value = entry.value, text = entry.text })
     end
@@ -595,6 +564,15 @@ function TT:GetTooltipFontChoices()
                 table.insert(choices, { value = path, text = name })
             end
         end
+    elseif (media and media.List and media.Fetch) then
+        local fontList = media:List("font") or {}
+        for _, handle in ipairs(fontList) do
+            local path = media:Fetch("font", handle, true)
+            if (path and not seen[path]) then
+                seen[path] = true
+                table.insert(choices, { value = path, text = handle })
+            end
+        end
     end
 
     return sortMediaChoices(choices)
@@ -605,7 +583,7 @@ function TT:GetTooltipStatusBarTextureChoices()
     local seen = {}
     local choices = {}
 
-    for _, entry in ipairs(builtinStatusBarTextures) do
+    for _, entry in ipairs(TT.builtinStatusBarTextures) do
         seen[entry.value] = true
         table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
     end
@@ -628,7 +606,7 @@ function TT:GetTooltipBackgroundChoices()
     local seen = {}
     local choices = {}
 
-    for _, entry in ipairs(builtinTooltipBackgrounds) do
+    for _, entry in ipairs(TT.builtinTooltipBackgrounds) do
         seen[entry.value] = true
         table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
     end
@@ -651,7 +629,7 @@ function TT:GetTooltipBorderChoices()
     local seen = {}
     local choices = {}
 
-    for _, entry in ipairs(builtinTooltipBorders) do
+    for _, entry in ipairs(TT.builtinTooltipBorders) do
         seen[entry.value] = true
         table.insert(choices, { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
     end
@@ -803,6 +781,11 @@ end
 local function createOptionsDropdown(parent, globalName, label, description, values, onValueChanged)
     globalName = globalName or nextModernWidgetName("Dropdown")
     local dropDown = CreateFrame("Frame", globalName, parent, "UIDropDownMenuTemplate")
+    dropDown:SetFrameStrata(parent:GetFrameStrata())
+    dropDown:SetFrameLevel((parent:GetFrameLevel() or 0) + 8)
+    if (dropDown.EnableMouse) then
+        dropDown:EnableMouse(true)
+    end
     dropDown.values = values or {}
     dropDown.label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     dropDown.label:SetJustifyH("LEFT")
@@ -1133,7 +1116,7 @@ local function layoutDropdownControl(parent, control, topY, widthPadding)
     control.label:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, topY)
     control:SetPoint("TOPLEFT", control.label, "BOTTOMLEFT", -16, -2)
 
-    local consumedHeight = 40
+    local consumedHeight = 46
     if (control.description) then
         control.description:SetPoint("TOPLEFT", control, "BOTTOMLEFT", 20, -2)
         consumedHeight = consumedHeight + control.description:GetStringHeight() + 8
@@ -1188,7 +1171,14 @@ modernShowExampleTooltip = function()
     local name_g = TacoTipConfig.color_class and classc and classc.g or 0.6
     local name_b = TacoTipConfig.color_class and classc and classc.b or 0.1
     local playerTitle = TacoTipConfig.show_titles and L[" the Kingslayer"] or ""
-    tooltip:AddLine(string.format("|cFF%02x%02x%02xAcidBomb%s %s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, (TacoTipConfig.show_team and (HORDE_ICON.." ") or ""), (TacoTipConfig.show_pvp_icon and PVP_FLAG_ICON or "")))
+    local iconSuffix = ""
+    if (TacoTipConfig.show_team) then
+        iconSuffix = iconSuffix .. " " .. HORDE_ICON
+    end
+    if (TacoTipConfig.show_pvp_icon) then
+        iconSuffix = iconSuffix .. " " .. PVP_FLAG_ICON
+    end
+    tooltip:AddLine(string.format("|cFF%02x%02x%02xAcidBomb%s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, iconSuffix))
 
     if (TacoTipConfig.show_guild_name) then
         if (TacoTipConfig.show_guild_rank) then
@@ -1321,8 +1311,21 @@ local function buildRootPage()
     end, L["OPTIONS_RESET_CONFIGURATION_DESC"] or "Restore TacoTip settings to their defaults, including tooltip appearance and overlay positions.")
     resetButton:SetPoint("LEFT", openMoverButton, "RIGHT", 12, 0)
 
+    controls.rootStyleChoice = createOptionsDropdown(panel, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. Hold Shift on hybrid styles to preview the expanded view.", modernStyleOptions, function(value)
+        TacoTipConfig.tip_style = value
+        if (TT and TT.RefreshOptionsUI) then
+            TT:RefreshOptionsUI()
+        end
+    end)
+    controls.rootStyleChoice.label:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -18)
+    controls.rootStyleChoice:SetPoint("TOPLEFT", controls.rootStyleChoice.label, "BOTTOMLEFT", -16, -2)
+    if (controls.rootStyleChoice.description) then
+        controls.rootStyleChoice.description:ClearAllPoints()
+        controls.rootStyleChoice.description:SetPoint("TOPLEFT", controls.rootStyleChoice.label, "BOTTOMLEFT", 0, -44)
+    end
+
     modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, "")
-    modernOptionsState.rootSummary:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -20)
+    modernOptionsState.rootSummary:SetPoint("TOPLEFT", controls.rootStyleChoice, "BOTTOMLEFT", 16, -12)
 
     controls.rootLanguage = createOptionsDropdown(panel, nil, L["OPTIONS_LANGUAGE_LABEL"] or "Addon language", L["OPTIONS_LANGUAGE_DESC"] or "Use your game client's locale by default, or choose another supported TacoTip locale. Reload the UI after changing this setting.", buildLocaleDropdownChoices(), function(value)
         if (value == CLIENT_DEFAULT_LOCALE_VALUE) then
@@ -1384,6 +1387,7 @@ local function buildRootPage()
         modernOptionsState.rootSummary:SetText(table.concat(lines, "\n"))
         controls.rootLanguage:SetValues(buildLocaleDropdownChoices())
         controls.rootLanguage:SetValue(getSavedLocaleOverride() or CLIENT_DEFAULT_LOCALE_VALUE)
+        controls.rootStyleChoice:SetValue(TacoTipConfig.tip_style or 2)
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
@@ -1493,14 +1497,18 @@ local function buildTooltipsPage()
 
     controls.showTeam = createOptionsCheckbox(content, nil, L["Faction Icon"], L["Show player's faction icon (Horde/Alliance) in tooltips"], function(_, value) TacoTipConfig.show_team = value; modernShowExampleTooltip() end)
     controls.showTeam:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
-    controls.showPVPIcon = createOptionsCheckbox(content, nil, L["PVP Icon"], L["Show player's pvp flag status as icon instead of text"], function(_, value) TacoTipConfig.show_pvp_icon = value; modernShowExampleTooltip() end)
-    controls.showPVPIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    controls.showClassIcon = createOptionsCheckbox(content, nil, L["Class Icon"] or "Class Icon", "Show class icon badge at the top-right corner of player tooltips.", function(_, value) TacoTipConfig.show_class_icon = value; modernShowExampleTooltip() end)
+    controls.showClassIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
     builder.y = builder.y - 30
 
+    controls.showPVPIcon = createOptionsCheckbox(content, nil, L["PVP Icon"], L["Show player's pvp flag status as icon instead of text"], function(_, value) TacoTipConfig.show_pvp_icon = value; modernShowExampleTooltip() end)
+    controls.showPVPIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     controls.showHealthBar = createOptionsCheckbox(content, nil, L["Health Bar"], L["Show unit's health bar under tooltip"], function(_, value) TacoTipConfig.show_hp_bar = value; modernShowExampleTooltip() end)
-    controls.showHealthBar:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showHealthBar:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
     controls.showPowerBar = createOptionsCheckbox(content, nil, L["Power Bar"], L["Show unit's power bar under tooltip"], function(_, value) TacoTipConfig.show_power_bar = value; modernShowExampleTooltip() end)
-    controls.showPowerBar:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    controls.showPowerBar:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 42
 
     local itemHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -1608,6 +1616,14 @@ local function buildTooltipsPage()
     controls.tooltipPortraitScale.valueText:SetPoint("LEFT", controls.tooltipPortraitScale, "RIGHT", 8, 0)
     builder.y = builder.y - 56
 
+    controls.classIconSize = createOptionsSlider(content, nil, "Class icon size", "Size of the class icon badge shown at the top-right corner of player tooltips.", function(value)
+        TacoTipConfig.class_icon_size = value
+        modernShowExampleTooltip()
+    end, 8, 32, 1)
+    controls.classIconSize:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.classIconSize.valueText:SetPoint("LEFT", controls.classIconSize, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
     controls.tooltipFontChoice = createOptionsDropdown(content, nil, L["OPTIONS_TOOLTIP_FONT"] or "Tooltip font", L["OPTIONS_TOOLTIP_FONT_DESC"] or "Choose the font used by tooltip text. SharedMedia fonts are included automatically when available.", TT:GetTooltipFontChoices(), function(value)
         TacoTipConfig.tooltip_font = value
         modernGetConfig()
@@ -1694,6 +1710,7 @@ local function buildTooltipsPage()
         controls.pawnScorePlayer:SetDisabled(not isPawnLoaded)
         controls.pawnScorePlayer.label:SetText(isPawnLoaded and (L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") or ((L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores").." ("..L["requires Pawn"]..")"))
         controls.showTeam:SetChecked(TacoTipConfig.show_team)
+        controls.showClassIcon:SetChecked(TacoTipConfig.show_class_icon)
         controls.showPVPIcon:SetChecked(TacoTipConfig.show_pvp_icon)
         controls.showHealthBar:SetChecked(TacoTipConfig.show_hp_bar)
         controls.showPowerBar:SetChecked(TacoTipConfig.show_power_bar)
@@ -1712,6 +1729,7 @@ local function buildTooltipsPage()
         controls.tooltipPortrait:SetChecked(TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
         controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
+        controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 16)
         controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
         controls.tooltipFontSize:SetValueSilently(TacoTipConfig.tooltip_font_size or 12)
         controls.tooltipBarTextureChoice:SetValue(TT:GetResolvedTooltipStatusBarTexture())
@@ -2197,9 +2215,10 @@ optionsFrame:SetScript("OnShow", function(panel)
         if (TacoTipConfig.show_talents) then
             if (wide_style) then
                 options.exampleTooltip:AddDoubleLine(L["Talents"]..":", CI:GetSpecializationName("ROGUE", 1, true).." [51/18/2]", NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
-                options.exampleTooltip:AddDoubleLine(" ", CI:GetSpecializationName("ROGUE", 3, true).." [14/3/54]", NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
+                options.exampleTooltip:AddDoubleLine(" ", CI:GetSpecializationName("ROGUE", 3, true).." [14/3/54]", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
             else
                 options.exampleTooltip:AddLine(L["Talents"]..":|cFFFFFFFF "..CI:GetSpecializationName("ROGUE", 1, true).." [51/18/2]")
+                options.exampleTooltip:AddLine("      |c99ffffff"..CI:GetSpecializationName("ROGUE", 3, true).." [14/3/54]|r")
             end
         end
         local miniText = ""
@@ -2380,6 +2399,16 @@ optionsFrame:SetScript("OnShow", function(panel)
         end)
     options.showTeam:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", -2, -116)
 
+    options.showClassIcon = newCheckbox(
+        "ShowClassIcon",
+        L["Class Icon"] or "Class Icon",
+        "Show class icon badge at the top-right corner of player tooltips.",
+        function(self, value)
+            TacoTipConfig.show_class_icon = value
+            showExampleTooltip()
+        end)
+    options.showClassIcon:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", 140, -116)
+
     options.showPVPIcon = newCheckbox(
         "ShowPVPIcon",
         L["PVP Icon"],
@@ -2388,7 +2417,7 @@ optionsFrame:SetScript("OnShow", function(panel)
             TacoTipConfig.show_pvp_icon = value
             showExampleTooltip()
         end)
-    options.showPVPIcon:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", 140, -116)
+    options.showPVPIcon:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", -2, -144)
 
     options.showHealthBar = newCheckbox(
         "ShowHealthBar",
@@ -2398,7 +2427,7 @@ optionsFrame:SetScript("OnShow", function(panel)
             TacoTipConfig.show_hp_bar = value
             showExampleTooltip()
         end)
-    options.showHealthBar:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", -2, -144)
+    options.showHealthBar:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", 140, -144)
 
     options.showPowerBar = newCheckbox(
         "ShowPowerBar",
@@ -2417,7 +2446,7 @@ optionsFrame:SetScript("OnShow", function(panel)
             end
             showExampleTooltip()
         end)
-    options.showPowerBar:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", 140, -144)
+    options.showPowerBar:SetPoint("TOPLEFT", generalText, "BOTTOMLEFT", -2, -172)
 
 
     local characterFrameText = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -2689,6 +2718,7 @@ optionsFrame:SetScript("OnShow", function(panel)
         options.pawnScorePlayer:SetChecked(TacoTipConfig.show_pawn_player)
         options.pawnScorePlayer.label:SetText(isPawnLoaded and "PawnScore" or "PawnScore ("..L["requires Pawn"]..")")
         options.showTeam:SetChecked(TacoTipConfig.show_team)
+        options.showClassIcon:SetChecked(TacoTipConfig.show_class_icon)
         options.showPVPIcon:SetChecked(TacoTipConfig.show_pvp_icon)
         options.guildRankStyle1:SetChecked(not TacoTipConfig.guild_rank_alt_style)
         options.guildRankStyle2:SetChecked(TacoTipConfig.guild_rank_alt_style)

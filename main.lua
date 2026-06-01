@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.4.9"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.0"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -32,6 +32,7 @@ local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0
 local ALLIANCE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-ALLIANCE:16:16:-2:0:64:64:0:38:0:38|t"
 local PVP_FLAG_ICON = "|TInterface\\GossipFrame\\BattleMasterGossipIcon:0|t"
 local ACHIEVEMENT_ICON = "|TInterface\\AchievementFrame\\UI-Achievement-TinyShield:18:18:0:0:20:20:0:12.5:0:12.5|t"
+local GetClassAtlas = _G.GetClassAtlas
 
 local POWERBAR_UPDATE_RATE = 0.2
 
@@ -41,6 +42,7 @@ local GetBestMapForUnit = _G.C_Map and _G.C_Map.GetBestMapForUnit
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitCanAttack = _G.UnitCanAttack
 local UnitLevel = _G.UnitLevel
+local UnitRace = _G.UnitRace
 local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
 
 local playerClass = select(2, UnitClass("player"))
@@ -158,6 +160,36 @@ local function colorizeText(text, r, g, b)
         return text or ""
     end
     return string.format("%s%s|r", makeColorCode(r, g, b), text)
+end
+
+local function escapePattern(text)
+    if (not text or text == "") then
+        return nil
+    end
+    return (text:gsub("(%W)", "%%%1"))
+end
+
+local function replaceFirstExact(text, needle, replacement)
+    local pattern = escapePattern(needle)
+    if (not text or not pattern or not replacement) then
+        return text
+    end
+    return string.gsub(text, pattern, replacement, 1)
+end
+
+local function getClassIconMarkup(class)
+    if (not class or not GetClassAtlas) then
+        return ""
+    end
+    local atlas = GetClassAtlas(class)
+    if (atlas and atlas ~= "") then
+        return string.format("|A:%s:14:14|a", atlas)
+    end
+    return ""
+end
+
+TT.GetClassIconMarkup = function(self, class)
+    return getClassIconMarkup(class)
 end
 
 local function getClassColor(class)
@@ -299,6 +331,19 @@ local function applyTooltipBackdrop(tooltip)
     })
 end
 
+local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, borderB)
+    if (not tooltip) then
+        return
+    end
+
+    local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
+    local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
+
+    if (hasBorder and tooltip.SetBackdropBorderColor) then
+        tooltip:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 1)
+    end
+end
+
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
         return
@@ -317,16 +362,14 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     if (TacoTipConfig.tooltip_background_use_class and unit and UnitIsPlayer(unit)) then
         bgR, bgG, bgB = tintR, tintG, tintB
     end
-    if (TacoTipConfig.tooltip_border_use_class and unit and UnitIsPlayer(unit)) then
+    if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and unit and UnitIsPlayer(unit)) then
         borderR, borderG, borderB = tintR, tintG, tintB
     end
 
     if (tooltip.SetBackdropColor) then
         tooltip:SetBackdropColor(bgR, bgG, bgB, TacoTipConfig.tooltip_background_alpha or 0.85)
     end
-    if (tooltip.SetBackdropBorderColor) then
-        tooltip:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 1)
-    end
+    applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, borderB)
 
     applyTooltipFonts(tooltip)
 
@@ -342,6 +385,32 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
         else
             portrait:Hide()
         end
+    end
+
+    local classIcon = tooltip.TacoTipClassIcon
+    if (not classIcon) then
+        classIcon = tooltip:CreateTexture(nil, "OVERLAY")
+        tooltip.TacoTipClassIcon = classIcon
+    end
+    if (TacoTipConfig.show_class_icon and unit and UnitIsPlayer(unit) and GetClassAtlas) then
+        local class = select(2, UnitClass(unit))
+        if (class) then
+            local atlas = GetClassAtlas(class)
+            if (atlas and atlas ~= "") then
+                classIcon:SetAtlas(atlas)
+                local size = TacoTipConfig.class_icon_size or 16
+                classIcon:SetSize(size, size)
+                classIcon:ClearAllPoints()
+                classIcon:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -4, -2)
+                classIcon:Show()
+            else
+                classIcon:Hide()
+            end
+        else
+            classIcon:Hide()
+        end
+    else
+        classIcon:Hide()
     end
 
     local barTexture = (TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
@@ -476,6 +545,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
 
     if (UnitIsPlayer(tooltipUnit)) then
         local localizedClass, class = UnitClass(tooltipUnit)
+        local localizedRace = UnitRace(tooltipUnit)
 
         if (not TacoTipConfig.show_titles and string.find(text[1], name)) then
             text[1] = name
@@ -485,10 +555,15 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                 local classc = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
                 if (classc) then
                     --GameTooltipTextLeft1:SetTextColor(classc.r, classc.g, classc.b)
-                    text[1] = string.format("|cFF%02x%02x%02x%s|r", classc.r*255, classc.g*255, classc.b*255, text[1])
+                    text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
+                    local classColoredName = colorizeText(localizedClass, classc.r, classc.g, classc.b)
+                    local raceColoredName = localizedRace and colorizeText(localizedRace, classc.r, classc.g, classc.b) or nil
                     for i=2,3 do
                         if (text[i]) then
-                            text[i] = string.gsub(text[i], localizedClass, string.format("|cFF%02x%02x%02x%s|r", classc.r*255, classc.g*255, classc.b*255, localizedClass), 1)
+                            if (localizedRace and raceColoredName) then
+                                text[i] = replaceFirstExact(text[i], localizedRace, raceColoredName)
+                            end
+                            text[i] = replaceFirstExact(text[i], localizedClass, classColoredName)
                         end
                     end
                 end
@@ -513,7 +588,6 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
         if (TacoTipConfig.show_team) then
             text[1] = text[1].." "..(UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
         end
-
         if (not TacoTipConfig.hide_in_combat or not InCombatLockdown()) then
             if (TacoTipConfig.show_talents) then
                 local x1, x2, x3 = 0,0,0
@@ -541,9 +615,9 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                     if (spec1) then
                         local specText = formatSpecializationText(class, spec1, x1, x2, x3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec2 and " " or L["Talents"]..":"), specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
-                        elseif (not spec2) then
-                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
+                            tinsert(linesToAdd, {(spec2 and " " or L["Talents"]..":"), string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                        else
+                            tinsert(linesToAdd, {string.format("      |c99ffffff%s|r", specText)})
                         end
                     end
                 elseif (active == 1) then
@@ -558,9 +632,9 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                     if (spec2) then
                         local specText = formatSpecializationText(class, spec2, y1, y2, y3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec1 and " " or L["Talents"]..":"), specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1})
-                        elseif (not spec1) then
-                            tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
+                            tinsert(linesToAdd, {(spec1 and " " or L["Talents"]..":"), string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                        else
+                            tinsert(linesToAdd, {string.format("      |c99ffffff%s|r", specText)})
                         end
                     end
                 end
@@ -622,7 +696,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
         end
     end
 
-    if (TacoTipConfig.show_pvp_icon and UnitIsPVP(tooltipUnit)) then
+    if (TacoTipConfig.show_pvp_icon and UnitIsPlayer(tooltipUnit) and UnitIsPVP(tooltipUnit)) then
         text[1] = text[1].." "..PVP_FLAG_ICON
         for i=2,numLines do
             if (text[i]) then
