@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.0"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.1"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -40,61 +40,16 @@ local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local CAfter = _G.C_Timer and _G.C_Timer.After
 local GetBestMapForUnit = _G.C_Map and _G.C_Map.GetBestMapForUnit
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
+local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
+local UnitExists = _G.UnitExists
+local UnitIsPlayer = _G.UnitIsPlayer
+local UnitIsUnit = _G.UnitIsUnit
 local UnitLevel = _G.UnitLevel
 local UnitRace = _G.UnitRace
 local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
 
 local playerClass = select(2, UnitClass("player"))
-
-local function registerFallbackSlashCommands()
-    local slashCmdList = rawget(_G, "SlashCmdList")
-    if (not slashCmdList) then
-        slashCmdList = {}
-        rawset(_G, "SlashCmdList", slashCmdList)
-    end
-    if (slashCmdList and slashCmdList.TACOTIP) then
-        return
-    end
-
-    SLASH_TACOTIP1 = "/tacotip"
-    SLASH_TACOTIP2 = "/tooltip"
-    SLASH_TACOTIP3 = "/tip"
-    SLASH_TACOTIP4 = "/tt"
-    SLASH_TACOTIP5 = "/gs"
-    SLASH_TACOTIP6 = "/gearscore"
-    SLASH_TACOTIP7 = "/taco"
-
-    rawset(slashCmdList, "TACOTIP", function(msg)
-        local cmd = strlower((msg or "")):gsub("^%s+", ""):gsub("%s+$", "")
-
-        if (cmd == "custom" or cmd == "unlock" or cmd == "move" or cmd == "mover") then
-            if (TacoTip_CustomPosEnable) then
-                TacoTip_CustomPosEnable(true)
-            else
-                print("|cff59f0dcTacoTip:|r Tooltip mover is not ready yet. Try /reload.")
-            end
-        elseif (cmd == "save") then
-            if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
-                TacoTipDragButton:_Save()
-            end
-        elseif (cmd == "default") then
-            if (TacoTipDragButton) then
-                TacoTipDragButton:_Disable(true)
-            end
-            if (TacoTipConfig) then
-                TacoTipConfig.custom_pos = nil
-            end
-            print("|cff59f0dcTacoTip:|r "..L["Custom tooltip position disabled."])
-        elseif (TT.OpenOptionsPanel) then
-            TT.OpenOptionsPanel()
-        else
-            print("|cff59f0dcTacoTip:|r /tacotip custom - show the tooltip mover")
-            print("|cff59f0dcTacoTip:|r /tacotip default - clear the custom tooltip position")
-            print("|cff59f0dcTacoTip:|r /tacotip save - save the current tooltip position")
-        end
-    end)
-end
 
 local function isOtherPlayersPet(unit)
     return _G.UnitIsOtherPlayersPet and _G.UnitIsOtherPlayersPet(unit)
@@ -136,17 +91,6 @@ local function registerSharedMediaCallbacks()
             TT._sharedMediaCallbacksRegistered = true
         end
     end
-end
-
-local function getClassTint(unit)
-    if (unit and UnitIsPlayer(unit)) then
-        local _, class = UnitClass(unit)
-        local classColor = class and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
-        if (classColor) then
-            return classColor.r, classColor.g, classColor.b
-        end
-    end
-    return 1, 1, 1
 end
 
 local specializationIconCache = {}
@@ -194,6 +138,45 @@ end
 
 local function getClassColor(class)
     return class and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class] or nil
+end
+
+local function clearTooltipPlayerClassColor(tooltip)
+    if (tooltip) then
+        tooltip.TacoTipPlayerClassColor = nil
+    end
+end
+
+local function storeTooltipPlayerClassColor(tooltip, unit)
+    if (not tooltip) then
+        return nil
+    end
+    if (not unit) then
+        return tooltip.TacoTipPlayerClassColor
+    end
+    if (not UnitExists or not UnitExists(unit) or not UnitIsPlayer or not UnitIsPlayer(unit)) then
+        clearTooltipPlayerClassColor(tooltip)
+        return nil
+    end
+
+    local _, class = UnitClass(unit)
+    local classColor = getClassColor(class)
+    if (not classColor) then
+        clearTooltipPlayerClassColor(tooltip)
+        return nil
+    end
+
+    local cachedColor = tooltip.TacoTipPlayerClassColor or {}
+    cachedColor.r, cachedColor.g, cachedColor.b = classColor.r, classColor.g, classColor.b
+    tooltip.TacoTipPlayerClassColor = cachedColor
+    return cachedColor
+end
+
+local function getTooltipPlayerClassColor(tooltip, unit)
+    local cachedColor = storeTooltipPlayerClassColor(tooltip, unit)
+    if (cachedColor) then
+        return cachedColor.r, cachedColor.g, cachedColor.b, true
+    end
+    return 1, 1, 1, false
 end
 
 local function getHostileDifficultyColor(unit)
@@ -344,14 +327,29 @@ local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, border
     end
 end
 
+local function resolveTooltipUnit(tooltip, unit)
+    if (unit and UnitExists and UnitExists(unit)) then
+        return unit
+    end
+    if (tooltip and tooltip.GetUnit) then
+        local _, tooltipUnit = tooltip:GetUnit()
+        if (tooltipUnit and UnitExists and UnitExists(tooltipUnit)) then
+            return tooltipUnit
+        end
+    end
+    return nil
+end
+
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
         return
     end
 
+    unit = resolveTooltipUnit(tooltip, unit)
+
     applyTooltipBackdrop(tooltip)
 
-    local tintR, tintG, tintB = getClassTint(unit)
+    local tintR, tintG, tintB, isPlayerTooltip = getTooltipPlayerClassColor(tooltip, unit)
     local bgR = TacoTipConfig.tooltip_background_color_r or 0
     local bgG = TacoTipConfig.tooltip_background_color_g or 0
     local bgB = TacoTipConfig.tooltip_background_color_b or 0
@@ -359,10 +357,10 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     local borderG = TacoTipConfig.tooltip_border_color_g or 0.5
     local borderB = TacoTipConfig.tooltip_border_color_b or 0.5
 
-    if (TacoTipConfig.tooltip_background_use_class and unit and UnitIsPlayer(unit)) then
+    if (TacoTipConfig.tooltip_background_use_class and isPlayerTooltip) then
         bgR, bgG, bgB = tintR, tintG, tintB
     end
-    if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and unit and UnitIsPlayer(unit)) then
+    if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and isPlayerTooltip) then
         borderR, borderG, borderB = tintR, tintG, tintB
     end
 
@@ -392,7 +390,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
         classIcon = tooltip:CreateTexture(nil, "OVERLAY")
         tooltip.TacoTipClassIcon = classIcon
     end
-    if (TacoTipConfig.show_class_icon and unit and UnitIsPlayer(unit) and GetClassAtlas) then
+    if (TacoTipConfig.show_class_icon and isPlayerTooltip and GetClassAtlas) then
         local class = select(2, UnitClass(unit))
         if (class) then
             local atlas = GetClassAtlas(class)
@@ -433,7 +431,7 @@ local function startPowerBarTicker()
 end
 
 function TacoTip_GSCallback(guid)
-    local _, ttUnit = GameTooltip:GetUnit()
+    local ttUnit = resolveTooltipUnit(GameTooltip)
     if (ttUnit and UnitGUID(ttUnit) == guid) then
         GameTooltip:SetUnit(ttUnit)
     end
@@ -441,9 +439,13 @@ end
 
 GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
+    tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit) then
+        clearTooltipPlayerClassColor(tooltip)
         return
     end
+
+    storeTooltipPlayerClassColor(tooltip, tooltipUnit)
 
     if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
         if (not UnitIsUnit(tooltipUnit, "player")) then
@@ -761,7 +763,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
             TacoTipPowerBar:SetStatusBarColor(0, 0, 1)
             function TacoTipPowerBar:Update(u)
                 if (TacoTipConfig.show_power_bar) then
-                    local unit = u or select(2, GameTooltip:GetUnit())
+                    local unit = u or resolveTooltipUnit(GameTooltip)
                     if (unit) then
                         local _, power = UnitPowerType(unit)
                         local color = power and PowerBarColor[power] or {}
@@ -775,7 +777,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                 end
             end
             TacoTipPowerBar:SetScript("OnEvent", function(self, event, unit)
-                local _, ttUnit = GameTooltip:GetUnit()
+                local ttUnit = resolveTooltipUnit(GameTooltip)
                 if (unit and ttUnit and UnitIsUnit(unit, ttUnit)) then
                     self:Update(unit)
                 end
@@ -810,6 +812,8 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
 end)
 
 local function itemToolTipHook(self)
+    clearTooltipPlayerClassColor(self)
+
     local _, itemLink = self:GetItem()
     if (itemLink and IsEquippableItem(itemLink)) then
         if (TacoTipConfig.show_item_level) then
@@ -841,6 +845,8 @@ ShoppingTooltip2:HookScript("OnTooltipSetItem", itemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", itemToolTipHook)
 
 GameTooltip:HookScript("OnTooltipCleared", function(tooltip)
+    clearTooltipPlayerClassColor(tooltip)
+
     local portrait = tooltip and tooltip.TacoTipPortrait
     if (portrait) then
         portrait:Hide()
@@ -1187,15 +1193,15 @@ local function onEvent(self, event, ...)
             TT:RefreshCharacterFrame()
         end
     elseif (event == "MODIFIER_STATE_CHANGED") then
-        local _, unit = GameTooltip:GetUnit()
+        local unit = resolveTooltipUnit(GameTooltip)
         if (unit and UnitIsPlayer(unit)) then
             GameTooltip:SetUnit(unit)
         end
     elseif (event == "UNIT_TARGET") then
         local unit = ...
         if (unit) then
-            local _, ttUnit = GameTooltip:GetUnit()
-            if (ttUnit and UnitIsUnit(unit, ttUnit)) then
+            local ttUnit = resolveTooltipUnit(GameTooltip)
+            if (UnitExists(unit) and ttUnit and UnitIsUnit(unit, ttUnit)) then
                 GameTooltip:SetUnit(unit)
             end
         end
@@ -1204,7 +1210,6 @@ local function onEvent(self, event, ...)
         if (addon == addOnName) then
             self:UnregisterEvent("ADDON_LOADED")
             registerSharedMediaCallbacks()
-            registerFallbackSlashCommands()
             if (TT.ApplyConfigDefaults) then
                 TT:ApplyConfigDefaults(TacoTipConfig)
             end
@@ -1232,7 +1237,7 @@ local function onEvent(self, event, ...)
             end)
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
-        if (GameTooltip:GetUnit()) then
+        if (resolveTooltipUnit(GameTooltip)) then
             CAfter(0, function()
                 if (not UnitExists("mouseover")) then
                     GameTooltip:Hide()
@@ -1246,7 +1251,7 @@ local function onEvent(self, event, ...)
         end
         local guid = ...
         if (guid) then
-            local _, ttUnit = GameTooltip:GetUnit()
+            local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and UnitGUID(ttUnit) == guid) then
                 GameTooltip:SetUnit(ttUnit)
             end
@@ -1325,7 +1330,7 @@ function TacoTip_CustomPosEnable(show)
             end)
             Detours:ScriptHook(TT, GameTooltip, "OnShow", function(tooltipFrame)
                 if (TacoTipDragButton:IsShown()) then
-                    local _, shownUnit = tooltipFrame:GetUnit()
+                    local shownUnit = resolveTooltipUnit(tooltipFrame)
                     if (not shownUnit or not UnitIsUnit(shownUnit, "player")) then
                         TacoTipDragButton:ShowExample()
                     end

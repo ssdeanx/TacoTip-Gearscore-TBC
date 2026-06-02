@@ -3,7 +3,7 @@
 ## Recent manifest note
 
 - As of 2026-05-28, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
-- The current public release target is `0.4.9`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
+- The current release target is `0.5.1`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
 
 ## Repo overview
 
@@ -17,7 +17,7 @@
   - `Tooltips`
   - `Positioning`
   - `Character & Inspect`
-- The sparse `Advanced` child page is no longer registered in the active UI; its small set of behavior/client toggles now lives on the root/general page instead.
+- The sparse `Advanced` child page is no longer registered in the active UI; its small set of behavior/client toggles now lives on the root/general page instead, and the old unused local Advanced-page stub has been removed.
 - Registration supports both:
   - modern `Settings.RegisterCanvasLayoutCategory` + `RegisterCanvasLayoutSubcategory`
   - legacy `InterfaceOptions_AddCategory` with `childFrame.parent = rootFrame.name`
@@ -31,6 +31,7 @@
 
 - `main.lua` calls `TT.RefreshOptionsUI()` after tooltip mover and overlay drag/save actions so the options controls stay synchronized.
 - `main.lua` now also exposes `TT:SyncTooltipMover()` so the options panel can re-anchor the green mover handle after custom-anchor changes and position resets.
+- `TT:ApplyTooltipAppearance()` now resolves the current tooltip unit from the live tooltip when callers omit the unit token, which prevents class-colored player borders from reverting to gray during later appearance refreshes.
 - The tooltip mover reset flow now keeps the selected custom anchor and resets the saved position back to that anchor's screen corner instead of silently clearing the anchor.
 - Hostile NPC level numbers now use Blizzard difficulty coloring via `GetQuestDifficultyColor(level)` so gray/green/yellow/orange/red difficulty is visible directly in TacoTip tooltips again.
 - Specialization lines now render with class-colored spec names plus per-spec icons derived from `LibClassicInspector` talent data instead of plain white text.
@@ -53,5 +54,5 @@
 - All shipped locale files now include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
 - `TEXT_HELP_WELCOME` now keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)` across the full locale set.
 - Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
-- `README.md` now includes a release-facing available-languages table and the `0.4.9` public version metadata.
+- `README.md` now includes a release-facing available-languages table and the `0.5.1` public version metadata.
 - The Chinese locale files (`zhCN.lua`, `zhTW.lua`) now include the newest options UI labels and help text used by the updated settings pages.

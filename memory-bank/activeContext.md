@@ -1,5 +1,13 @@
 # Active Context
 
+## 2026-06-01 - 0.5.1 production audit follow-up
+
+- `main.lua` now resolves the live tooltip unit inside `TT:ApplyTooltipAppearance()` before applying class-tinted backdrop colors, which fixes the reported player-border regression where later refreshes could revert the border back to gray.
+- `options.lua` no longer carries the unused duplicate `getClassIconMarkup` helper or the inert local `Advanced` page frame stub; the active options UI remains the root page plus `Tooltips`, `Positioning`, and `Character & Inspect`.
+- The current slash-command structure was re-audited and intentionally left intact for safety: bootstrap aliases in `gearscore.lua`, the full user-facing handler in `options.lua`, and a defensive fallback registration in `main.lua`.
+- The active widget path still uses Blizzard `UIDropDownMenuTemplate` dropdowns, `UIPanelScrollFrameTemplate` scroll frames, measured page-height finalization, and mouse-wheel proxy hooks; no extra dropdown/scrollbar rewrites were justified from code inspection alone.
+- Packaged/release metadata and docs are now aligned on `0.5.1`.
+
 ## 2026-05-28 - 0.4.9 release prep finalized
 
 - Bumped the packaged/public addon version to `0.4.9` in `TacoTip.toc` plus the Lua fallback metadata in `main.lua` and `options.lua`.

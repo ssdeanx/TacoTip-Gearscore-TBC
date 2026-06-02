@@ -2,7 +2,7 @@
 
 ## Last updated
 
-- 2026-05-28
+- 2026-06-01
 
 This file is the durable UI snapshot for future sessions.
 It records how the professional Blizzard options UI is intended to look, how the pages are grouped, and where the current polish targets live.
@@ -28,7 +28,7 @@ Blizzard Options
 
 ```ascii
 +---------------------------------------------------------------------+
-| TacoTip Gearscore TBC v0.4.9                                        |
+| TacoTip Gearscore TBC v0.5.1                                        |
 | Better player tooltips with GearScore, talents, positioning, and UI |
 | polish for Classic-era clients.                                     |
 |                                                                     |

@@ -4,10 +4,32 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.5.1` | `2026-06-01` | Live class-border tint fix, dead-code cleanup, and production audit pass |
 | `0.5.0` | `2026-05-31` | Tooltip border fix, dual-spec display, positioned class icon, PVP icon fix, default toggles |
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.1] - 2026-06-01
+
+### Fixed - 0.5.1
+
+- Fixed a late tooltip appearance repaint path in `main.lua` by resolving the live tooltip unit inside `TT:ApplyTooltipAppearance()`, so player tooltips no longer fall back to the configured gray border when a later refresh omits the unit token.
+
+### Changed - 0.5.1
+
+- Bumped packaged addon version metadata to `0.5.1` in `TacoTip.toc`, `main.lua`, and `options.lua`.
+- Audited the active modern options UI paths and confirmed the current pages still rely on Blizzard `UIPanelScrollFrameTemplate` scroll frames and `UIDropDownMenuTemplate` dropdowns.
+- Audited slash-command ownership and intentionally left the current low-risk three-stage structure in place: bootstrap aliases in `gearscore.lua`, the full `/tacotip` handler in `options.lua`, and a defensive fallback in `main.lua`.
+
+### Cleaned Up - 0.5.1
+
+- Removed the unused duplicate `getClassIconMarkup` helper from `options.lua`.
+- Removed the inert local `Advanced` page frame stub from `options.lua`; the active UI still consists of the root page plus `Tooltips`, `Positioning`, and `Character & Inspect`.
+
+### Notes - 0.5.1
+
+- No dropdown or scrollbar behavior rewrites were applied in this pass because the active code paths already use Blizzard's standard menu/scroll templates; widget interaction still needs final in-game smoke validation on the target client.
 
 ## [0.5.0] - 2026-05-31
 

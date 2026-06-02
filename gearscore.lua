@@ -24,6 +24,7 @@ assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-
 
 local CI = LibStub("LibClassicInspector")
 local TT = _G[addOnName]
+local L = _G.TACOTIP_LOCALE
 
 if (not TT) then
     TT = {}
@@ -65,13 +66,12 @@ local function registerBootstrapSlash()
             end
         elseif (cmd == "default") then
             if (TacoTipDragButton and TacoTipDragButton._Disable) then
-                TacoTipDragButton:_Disable()
+                TacoTipDragButton:_Disable(true)
             end
             if (TacoTipConfig) then
                 TacoTipConfig.custom_pos = nil
-                TacoTipConfig.custom_anchor = nil
             end
-            print("|cff59f0dcTacoTip:|r Custom tooltip position cleared.")
+            print("|cff59f0dcTacoTip:|r "..((L and L["Custom tooltip position disabled."]) or "Custom tooltip position disabled."))
         elseif (TT and TT.OpenOptionsPanel) then
             TT.OpenOptionsPanel()
         else
