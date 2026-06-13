@@ -1,0 +1,227 @@
+# Tasks — v0.5.3
+
+## Dependencies
+- Feature B (page consolidation) should be done first to avoid rework on control placement
+- Feature A (mover real-time) is independent — can be done in parallel
+- Feature C (3D portrait) depends on Feature D's portrait section in options
+- Feature D quick-wins can be done in any order, but classification (D.1) + fade (D.3) are highest user value
+
+---
+
+## Task List
+
+### TASK-001: Settings UI Consolidation (4 pages → 3 pages)
+**Priority:** High — structural change should come first
+**Files:** `options.lua`, `Locale/enUS.lua`
+
+- [ ] Rename `buildRootPage` → `buildGeneralPage` in `options.lua`
+- [ ] Remove redundant `tip_style` dropdown from General (keep only on Tooltips page)
+- [ ] Migrate `hide_in_combat`, `instant_fade` (convert to `fade_delay`), `UberTooltips` CVar, `chatClassColorOverride` CVar, `show_achievement_points` from Root to Tooltips page header section
+- [ ] Keep Quick Actions (Mover + Reset buttons) on General page
+- [ ] Keep Language dropdown + Status summary on General page
+- [ ] Merge `buildPositioningPage` + `buildCharacterInspectPage` into single `buildOverlaysAndPositioningPage`
+- [ ] Update page registration in `ensureModernOptionsBuilt()` to reflect 3 pages
+- [ ] Update `registerSettingsSubcategories()` / `registerLegacyChildCategories()` for new page count
+- [ ] Update `onOptionsFrameShow` / `onPageShow` handlers to include new merged page
+- [ ] Add `OPTIONS_SECTION_OVERLAYS_AND_POSITIONING` to `Locale/enUS.lua`
+- [ ] Update options page `OnShow` → `Refresh` in `modernGetConfig()` to include merged controls
+- [ ] Verify all controls render and save correctly in the 3-page layout
+- [ ] Verify live preview still works on Tooltips page
+
+---
+
+### TASK-002: Real-Time Mover Follow During Drag
+**Priority:** High
+**Files:** `main.lua`
+
+- [ ] Modify `TacoTipDragButton.OnDragStart` (currently line ~1524):
+  - Keep `self:StartMoving()`
+  - Add `self:SetScript("OnUpdate", ...)` that re-applies `GameTooltip:SetPoint()` to follow the button
+- [ ] Modify `onDragButtonDragStop` (currently line ~1457):
+  - Add `self:SetScript("OnUpdate", nil)` to clear per-frame binding
+- [ ] The `OnUpdate` handler should:
+  - Check `GameTooltip:IsShown()` and `TacoTipConfig.custom_pos` before re-pointing
+  - Call `GameTooltip:ClearAllPoints()` + `GameTooltip:SetPoint(anchor, TacoTipDragButton, anchor)`
+  - NOT call `GameTooltip:SetOwner()` — owner relationship is already established
+- [ ] Test on 2.5.5: drag mover button, verify tooltip follows smoothly without flicker
+- [ ] Test edge case: tooltip disappears mid-drag (user hovers a world unit) → OnUpdate should skip
+- [ ] Verify 1-second ticker still re-shows example tooltip when it vanishes
+
+**References:**
+- `CreateMover` OnUpdate pattern: `main.lua:1101-1130`
+- Current mover OnDragStart: `main.lua:1524`
+- `GameTooltip_SetDefaultAnchor` hook: `main.lua:1029-1067`
+
+---
+
+### TASK-003: NPC Classification on Unit Tooltips
+**Priority:** High
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `show_classification = true` to config defaults in `options.lua`
+- [ ] In `main.lua`: `onTooltipSetUnit`, find where the level line is built (~line 650-700)
+- [ ] After difficulty coloring is applied, check `UnitClassification(unit)`
+- [ ] If classification is `rare`, `elite`, `rareelite`: prepend colored prefix to level line text
+- [ ] Handle `worldboss` classification separately (red "++Boss" prefix)
+- [ ] Skip `normal` classification (no marker needed)
+- [ ] Add checkbox in `options.lua` Tooltips page → "Show NPC classification"
+- [ ] Add locale strings to `Locale/enUS.lua`
+- [ ] Test on all classification types (normal, elite, rare, rareelite, worldboss)
+
+**References:**
+- `UnitClassification(unit)` API
+- TipTac Reborn prefix pattern: colored `+Rare`, `++Elite`, `++Boss`
+
+---
+
+### TASK-004: Creature Type on Unit Tooltips
+**Priority:** Medium
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `show_creature_type = true` to config defaults in `options.lua`
+- [ ] In `main.lua`: `onTooltipSetUnit`, after level/classification line, add optional creature type line
+- [ ] Only for non-player units: `UnitCreatureType(unit)`
+- [ ] Format: subtitle-style color (e.g., `GRAY_FONT_COLOR`)
+- [ ] Add checkbox in `options.lua` Tooltips page
+- [ ] Add locale strings
+
+---
+
+### TASK-005: Fade Delay Slider
+**Priority:** High
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `fade_delay = 0` to config defaults in `options.lua`
+- [ ] In `main.lua` event handler, replace binary `instant_fade` section:
+  - If `fade_delay > 0`, set `GameTooltip:SetFadeDuration(fade_delay)`
+  - If `fade_delay == 0`, use existing `Detours:DetourHook(GameTooltip, "FadeOut", hideFn)` pattern (instant)
+- [ ] Add slider in `options.lua` (General or Tooltips page): range 0-2000ms, step 50
+- [ ] Migrate existing `instant_fade` config: if user had `instant_fade = true`, set `fade_delay = 0`; if `instant_fade = false`, import to `fade_delay = 400` (Blizzard default ~400ms)
+- [ ] Add locale strings
+- [ ] Test fade behavior on tooltip show/hide cycle
+
+**References:**
+- `GameTooltip:SetFadeDuration(seconds)` API
+- Current instant_fade code: `main.lua` event handler
+
+---
+
+### TASK-006: X/Y Mouse Anchor Offset Sliders
+**Priority:** Medium
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `anchor_mouse_offset_x = 0` and `anchor_mouse_offset_y = 0` to config defaults
+- [ ] In `main.lua`: `CreateMouseAnchor()`, modify the OnUpdate handler to apply offsets:
+  ```lua
+  local ox = TacoTipConfig.anchor_mouse_offset_x or 0
+  local oy = TacoTipConfig.anchor_mouse_offset_y or 0
+  tooltip:SetPoint("ANCHOR_CURSOR", uiX + ox, uiY + oy)
+  ```
+- [ ] Add two sliders in `options.lua` (Overlays & Positioning page): X offset (-200 to 200) and Y offset (-200 to 200)
+- [ ] Add locale strings
+- [ ] Test with both `anchor_mouse` and `anchor_mouse_world` modes
+
+---
+
+### TASK-007: Item Sell Price on Item Tooltips
+**Priority:** Medium
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `show_sell_price = true` to config defaults
+- [ ] In `main.lua`: `itemToolTipHook`, after existing item level/GearScore lines:
+  ```lua
+  if (TacoTipConfig.show_sell_price) then
+      local _, itemLink = self:GetItem()
+      if (itemLink) then
+          local price = select(11, GetItemInfo(itemLink))
+          if (price and price > 0) then
+              self:AddLine("Sell Price: " .. GetCoinText(price), 1, 1, 0)
+          end
+      end
+  end
+  ```
+- [ ] Handle uncached items: gate with `GetItemInfoInstant` or skip if nil
+- [ ] Add checkbox in Tooltips → Item tooltip data section
+- [ ] Add locale strings
+
+---
+
+### TASK-008: Item ID on Item Tooltips
+**Priority:** Low
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `show_item_id = false` to config defaults
+- [ ] In `main.lua`: `itemToolTipHook`, add optional gray item ID line:
+  ```lua
+  if (TacoTipConfig.show_item_id) then
+      local _, itemLink = self:GetItem()
+      if (itemLink) then
+          local itemID = GetItemInfoFromHyperlink(itemLink) or itemLink:match("item:(%d+)")
+          if (itemID) then
+              self:AddLine("Item ID: " .. itemID, 0.5, 0.5, 0.5)
+          end
+      end
+  end
+  ```
+- [ ] Add checkbox in Tooltips → Item tooltip data section
+- [ ] Add locale strings
+
+---
+
+### TASK-009: Tooltip Scale Slider
+**Priority:** Medium
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `tooltip_scale = 1.0` to config defaults
+- [ ] In `main.lua`: `TT:ApplyTooltipAppearance`, apply scale:
+  ```lua
+  tooltip:SetScale(TacoTipConfig.tooltip_scale or 1)
+  ```
+- [ ] Guard: clamp between 0.5 and 1.5
+- [ ] Add slider in `options.lua` (Overlays & Positioning page): range 50-150, step 5
+- [ ] Add locale strings
+- [ ] Test scale on tooltip with various content densities
+
+---
+
+### TASK-010: Opt-in 3D Portrait via PlayerModel
+**Priority:** Low (experimental)
+**Files:** `main.lua`, `options.lua`, `Locale/enUS.lua`
+
+- [ ] Add `tooltip_portrait_3d = false` to config defaults
+- [ ] In `main.lua`: `ApplyTooltipAppearance`, modify the portrait creation block (~line 472):
+  - If `tooltip_portrait_3d` and `unit` is valid:
+    - Create `PlayerModel` frame instead of `Texture`
+    - Call `model:SetUnit(unit)` and `model:SetPortraitZoom(1)`
+    - Set `model:EnableMouse(false)` to prevent click-through
+    - Set frame level below text (same as current portrait level)
+  - If `tooltip_portrait_3d` is false or API fails: fall back to existing `SetPortraitTexture()` path
+- [ ] Add checkbox in Tooltips → Portrait & text section
+- [ ] Add locale strings
+- [ ] Test on player, NPC, and pet units
+- [ ] Test graceful fallback when `PlayerModel` is unavailable
+
+**References:**
+- warcraft.wiki.gg/wiki/API_PlayerModel:SetUnit
+- Current portrait code: `main.lua:472-471`
+- `SetPortraitZoom(1)`
+
+---
+
+### TASK-011: Verify Border Thickness in Options Preview
+**Priority:** Medium (verification)
+**Files:** `main.lua`, `options.lua`
+
+- [ ] Verify `modernShowExampleTooltip()` calls `TT:ApplyTooltipAppearance(tooltip, "player")` — already confirmed true
+- [ ] Verify `ApplyTooltipAppearance` → `applyTooltipBackdrop` → reads `TacoTipConfig.tooltip_border_edge_size` — already confirmed true
+- [ ] Test in-game: open options → Tooltips page → drag Border Thickness slider → verify preview border width changes in real-time
+- [ ] If preview doesn't update: check that `applyTooltipBackdrop` is called after config change (it is — `modernShowExampleTooltip` runs the full appearance pipeline)
+
+---
+
+### TASK-012: Locale Coverage for All New Strings
+**Files:** `Locale/enUS.lua` (primary), other locale stubs (fallback)
+
+- [ ] Add all v0.5.3 locale keys to `Locale/enUS.lua`
+- [ ] Update `memory-bank/v0.5.3/context.md` with final locale key list for translator reference
+- [ ] Other locales inherit English through existing fallback merge — no translation pass required for v0.5.3

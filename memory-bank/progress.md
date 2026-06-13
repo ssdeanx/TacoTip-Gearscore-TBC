@@ -1,12 +1,19 @@
 # Progress
 
-## 2026-06-01 - 0.5.1 production audit follow-up
+## 2026-06-12 - v0.5.2: NineSlice class-border overlay fix, production hardening, border thickness slider
 
-- Fixed the live class-colored tooltip border regression in `main.lua` by resolving the current tooltip unit inside `TT:ApplyTooltipAppearance()`, which keeps later appearance refreshes from repainting player borders gray.
-- Removed the unused duplicate `getClassIconMarkup` helper and the inert local `Advanced` page stub from `options.lua`; targeted diagnostics on `main.lua` and `options.lua` are clean.
-- Audited slash-command ownership and left the current low-risk structure in place: `gearscore.lua` still provides the bootstrap aliases, `options.lua` owns the full `/tacotip` handler, and `main.lua` keeps a defensive fallback on `ADDON_LOADED`.
-- Audited the active modern options UI code paths and confirmed the current dropdown/scroll behavior still routes through Blizzard `UIDropDownMenuTemplate`, `UIPanelScrollFrameTemplate`, builder height finalization, and mouse-wheel scroll proxy hooks.
-- Bumped packaged/public version metadata and release docs to `0.5.1`.
+- **Root cause of grey border fixed:** Replaced all speculative `NineSlice:SetBorderColor()` / `NineSlice:SetCenterColor()` / `BackdropTemplateMixin`-on-NineSlice calls with a proven `BackdropTemplate` child-frame overlay approach. Added `getOrCreateBackdropFrame` — on 2.5.3+ NineSlice stays visible for the default background; a separate overlay frame sits at `FrameLevel(2)` and draws only the colored border edge via `SetBackdrop({edgeFile = ...})` + `SetBackdropBorderColor`. Pre-2.5.3 fallback path is unchanged.
+- **`getClassColor` safe-pattern:** guards both `CUSTOM_CLASS_COLORS` and `RAID_CLASS_COLORS` against nil before indexing.
+- **`resolveTooltipUnit` pcall guard:** wraps `tooltip:GetUnit()` in `pcall` so a single `GetUnit` error cannot crash the tooltip render path.
+- **`safeCall` error capture:** all GameTooltip hooks, event handlers, and callback shims now routed through `xpcall(..., geterrorhandler(), ...)`.
+- **Defensive border re-apply:** `C_Timer.After(0.05)` follow-up + `OnShow` hook with deferred re-tint so class-colored borders survive Blizzard backdrop refreshes.
+- **Dual-spec dedup:** inactive spec line only rendered when `spec1 ~= spec2`.
+- **Class icon reposition:** anchor `(-10, -8)`, default size 20.
+- **Default border backup:** changed from gray `0.5/0.5/0.5` to white `1/1/1` at alpha 0.85.
+- **Border thickness slider:** added `createOptionsSlider` for `tooltip_border_edge_size` (4–48px, default 16) in the Tooltips page, wired into both backdrop paths.
+- **New config key:** `TacoTipConfig.tooltip_border_edge_size` (default `16`)
+- **Locale:** added `OPTIONS_TOOLTIP_BORDER_THICKNESS` + `OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC` to `Locale/enUS.lua`.
+- **All version metadata bumped to `0.5.2`** in `TacoTip.toc`, `main.lua`, `options.lua`, `README.md`, `CHANGELOG.md`.
 
 ## 2026-05-28 - 0.4.9 release prep finalized
 

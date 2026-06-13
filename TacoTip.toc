@@ -1,5 +1,5 @@
 ## Interface: 11508, 20505, 30405, 38001
-## Version: 0.5.1
+## Version: 0.5.2
 ## Title: TacoTip Gearscore TBC
 ## Notes: TacoTip (GearScore & Talents)
 ## IconTexture: Interface\Icons\INV_Misc_Spyglass_01

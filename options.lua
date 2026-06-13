@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.0"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.2"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -33,6 +33,44 @@ end
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
 local PVP_FLAG_ICON = "|TInterface\\GossipFrame\\BattleMasterGossipIcon:0|t"
 
+-- Safe-call wrapper. Routes errors through Blizzard's geterrorhandler()
+-- global so they are captured by error display addons (BugSack, !Swatter,
+-- BugGrabber, etc.) instead of silently breaking the options panel.
+local function safeCall(fn, ...)
+    return xpcall(fn, geterrorhandler(), ...)
+end
+
+-- Clamp a frame level to the documented WoW range [0, 100]. 0 is the
+-- lowest visible level within a strata, 100 is comfortably above the
+-- deepest Blizzard panel we ever sit under.
+local function clampFrameLevel(level)
+    level = tonumber(level) or 0
+    if (level < 0) then
+        return 0
+    end
+    if (level > 100) then
+        return 100
+    end
+    return math.floor(level + 0.5)
+end
+
+-- Clamp a SetAlpha value to the documented WoW range [0, 1]. Values
+-- outside this range are silently ignored by the client and indicate
+-- a bad computation upstream.
+local function clampAlpha(value)
+    value = tonumber(value)
+    if (not value) then
+        return 1
+    end
+    if (value < 0) then
+        return 0
+    end
+    if (value > 1) then
+        return 1
+    end
+    return value
+end
+
 function TT:GetDefaults()
     return {
         color_class = true,
@@ -52,23 +90,24 @@ function TT:GetDefaults()
         show_pawn_player = true,
         show_team = false,
         show_class_icon = true,
-        class_icon_size = 16,
+        class_icon_size = 20,
         show_pvp_icon = false,
         guild_rank_alt_style = false,
         show_hp_bar = true,
         show_power_bar = false,
         tooltip_border_use_class = true,
         tooltip_background_use_class = false,
-        tooltip_border_color_r = 0.5,
-        tooltip_border_color_g = 0.5,
-        tooltip_border_color_b = 0.5,
-        tooltip_border_alpha = 1,
+        tooltip_border_color_r = 1,
+        tooltip_border_color_g = 1,
+        tooltip_border_color_b = 1,
+        tooltip_border_alpha = 0.85,
         tooltip_background_color_r = 0,
         tooltip_background_color_g = 0,
         tooltip_background_color_b = 0,
         tooltip_background_alpha = 0.85,
         tooltip_background_texture = "Interface\\Tooltips\\UI-Tooltip-Background",
         tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tooltip_border_edge_size = 16,
         tooltip_portrait = false,
         tooltip_portrait_scale = 1,
         tooltip_font = "Fonts\\FRIZQT__.TTF",
@@ -385,7 +424,7 @@ end
 local optionsBootstrapFrame = CreateFrame("Frame")
 optionsBootstrapFrame:RegisterEvent("PLAYER_LOGIN")
 optionsBootstrapFrame:RegisterEvent("ADDON_LOADED")
-optionsBootstrapFrame:SetScript("OnEvent", function(self, event)
+local function onOptionsBootstrap(self, event)
     registerOptionsCategory()
 
     if (event == "PLAYER_LOGIN") then
@@ -396,6 +435,9 @@ optionsBootstrapFrame:SetScript("OnEvent", function(self, event)
         self:UnregisterEvent("ADDON_LOADED")
         self:SetScript("OnEvent", nil)
     end
+end
+optionsBootstrapFrame:SetScript("OnEvent", function(self, event, ...)
+    return safeCall(onOptionsBootstrap, self, event, ...)
 end)
 
 registerOptionsCategory()
@@ -766,35 +808,44 @@ end
 local function createOptionsDropdown(parent, globalName, label, description, values, onValueChanged)
     globalName = globalName or nextModernWidgetName("Dropdown")
     local dropDown = CreateFrame("Frame", globalName, parent, "UIDropDownMenuTemplate")
-    dropDown:SetFrameStrata(parent:GetFrameStrata())
-    dropDown:SetFrameLevel((parent:GetFrameLevel() or 0) + 8)
+    local parentStrata = (parent and parent.GetFrameStrata and parent:GetFrameStrata()) or "MEDIUM"
+    dropDown:SetFrameStrata(parentStrata)
+    dropDown:SetFrameLevel(clampFrameLevel((parent and parent.GetFrameLevel and parent:GetFrameLevel() or 0) + 8))
     if (dropDown.EnableMouse) then
         dropDown:EnableMouse(true)
     end
     dropDown.values = values or {}
     dropDown.label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     dropDown.label:SetJustifyH("LEFT")
-    dropDown.label:SetText(label)
+    dropDown.label:SetText(label or "")
     dropDown.description = description and createWrappedText(parent, "GameFontHighlightSmall", 280, description) or nil
 
     _G.UIDropDownMenu_SetWidth(dropDown, 240)
-    _G.UIDropDownMenu_Initialize(dropDown, function(frame)
-        for _, option in ipairs(frame.values or values or {}) do
-            local info = _G.UIDropDownMenu_CreateInfo()
-            info.text = option.menuText or option.text
-            info.value = option.value
-            info.checked = (frame.selectedValue == option.value)
-            info.func = function(button)
-                frame:SetValue(button.value)
-                onValueChanged(button.value)
+    _G.UIDropDownMenu_Initialize(dropDown, function(frame, level, menuList)
+        local function buildItems()
+            for _, option in ipairs(frame.values or values or {}) do
+                local info = _G.UIDropDownMenu_CreateInfo()
+                info.text = option.menuText or option.text or ""
+                info.value = option.value
+                info.checked = (frame.selectedValue == option.value)
+                info.func = function(button)
+                    local function applyChoice()
+                        frame:SetValue(button.value)
+                        if (onValueChanged) then
+                            onValueChanged(button.value)
+                        end
+                    end
+                    safeCall(applyChoice)
+                end
+                if (option.tooltip) then
+                    info.tooltipTitle = option.text
+                    info.tooltipText = option.tooltip
+                    info.tooltipOnButton = 1
+                end
+                _G.UIDropDownMenu_AddButton(info)
             end
-            if (option.tooltip) then
-                info.tooltipTitle = option.text
-                info.tooltipText = option.tooltip
-                info.tooltipOnButton = 1
-            end
-            _G.UIDropDownMenu_AddButton(info)
         end
+        safeCall(buildItems)
     end)
 
     dropDown.SetValues = function(self, newValues)
@@ -806,7 +857,7 @@ local function createOptionsDropdown(parent, globalName, label, description, val
         _G.UIDropDownMenu_SetSelectedValue(self, value)
         for _, option in ipairs(self.values or values or {}) do
             if (option.value == value) then
-                _G.UIDropDownMenu_SetText(self, option.selectedText or option.text or option.menuText)
+                _G.UIDropDownMenu_SetText(self, option.selectedText or option.text or option.menuText or "")
                 return
             end
         end
@@ -1151,7 +1202,7 @@ modernShowExampleTooltip = function()
     tooltip:ClearAllPoints()
     tooltip:SetPoint("TOPLEFT", previewAnchor, "TOPLEFT", 0, 0)
 
-    local classc = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)["ROGUE"]
+    local classc = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS["ROGUE"] or RAID_CLASS_COLORS["ROGUE"]
     local name_r = TacoTipConfig.color_class and classc and classc.r or 0
     local name_g = TacoTipConfig.color_class and classc and classc.g or 0.6
     local name_b = TacoTipConfig.color_class and classc and classc.b or 0.1
@@ -1486,6 +1537,13 @@ local function buildTooltipsPage()
     controls.showClassIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
     builder.y = builder.y - 30
 
+    controls.classColoredBorderToggle = createOptionsCheckbox(content, nil, L["OPTIONS_BORDER_CLASS_COLOR"] or "Use class-colored border", L["OPTIONS_BORDER_CLASS_COLOR_DESC"] or "Tint the tooltip border with the player's class color when the tooltip is showing a player unit.", function(_, value)
+        TacoTipConfig.tooltip_border_use_class = value
+        modernShowExampleTooltip()
+    end)
+    controls.classColoredBorderToggle:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 30
+
     controls.showPVPIcon = createOptionsCheckbox(content, nil, L["PVP Icon"], L["Show player's pvp flag status as icon instead of text"], function(_, value) TacoTipConfig.show_pvp_icon = value; modernShowExampleTooltip() end)
     controls.showPVPIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     controls.showHealthBar = createOptionsCheckbox(content, nil, L["Health Bar"], L["Show unit's health bar under tooltip"], function(_, value) TacoTipConfig.show_hp_bar = value; modernShowExampleTooltip() end)
@@ -1521,12 +1579,6 @@ local function buildTooltipsPage()
     backdropHeader:SetText(L["OPTIONS_SECTION_BACKDROP_MEDIA"] or "Backdrop colors & textures")
     builder.y = builder.y - 24
 
-    controls.tooltipBorderUseClass = createOptionsCheckbox(content, nil, L["OPTIONS_BORDER_CLASS_COLOR"] or "Use class-colored border", L["OPTIONS_BORDER_CLASS_COLOR_DESC"] or "Tint the tooltip border with the player's class color when the tooltip is showing a player unit.", function(_, value)
-        TacoTipConfig.tooltip_border_use_class = value
-        modernShowExampleTooltip()
-    end)
-    controls.tooltipBorderUseClass:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
-
     controls.tooltipBackgroundUseClass = createOptionsCheckbox(content, nil, L["OPTIONS_BACKGROUND_CLASS_COLOR"] or "Use class-colored background tint", L["OPTIONS_BACKGROUND_CLASS_COLOR_DESC"] or "Adds a subtle class-colored tint behind player tooltips. Use the alpha slider to keep it understated.", function(_, value)
         TacoTipConfig.tooltip_background_use_class = value
         modernShowExampleTooltip()
@@ -1558,11 +1610,19 @@ local function buildTooltipsPage()
     controls.tooltipBorderAlpha:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
     controls.tooltipBorderAlpha.valueText:SetPoint("LEFT", controls.tooltipBorderAlpha, "RIGHT", 8, 0)
 
+    controls.tooltipBorderEdgeSize = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_BORDER_THICKNESS"] or "Border thickness", L["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] or "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 16px.", function(value)
+        TacoTipConfig.tooltip_border_edge_size = value
+        modernShowExampleTooltip()
+    end, 4, 48, 1)
+    controls.tooltipBorderEdgeSize:SetPoint("TOPLEFT", content, "TOPLEFT", 214, builder.y)
+    controls.tooltipBorderEdgeSize.valueText:SetPoint("LEFT", controls.tooltipBorderEdgeSize, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
     controls.tooltipBackgroundAlpha = createOptionsSlider(content, nil, L["OPTIONS_BACKGROUND_ALPHA"] or "Background alpha", L["OPTIONS_BACKGROUND_ALPHA_DESC"] or "Adjust how strong the tooltip background tint appears. Lower values keep the tooltip readable.", function(value)
         TacoTipConfig.tooltip_background_alpha = value / 100
         modernShowExampleTooltip()
     end, 0, 100, 1)
-    controls.tooltipBackgroundAlpha:SetPoint("TOPLEFT", content, "TOPLEFT", 214, builder.y)
+    controls.tooltipBackgroundAlpha:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
     controls.tooltipBackgroundAlpha.valueText:SetPoint("LEFT", controls.tooltipBackgroundAlpha, "RIGHT", 8, 0)
     builder.y = builder.y - 56
 
@@ -1696,6 +1756,7 @@ local function buildTooltipsPage()
         controls.pawnScorePlayer.label:SetText(isPawnLoaded and (L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") or ((L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores").." ("..L["requires Pawn"]..")"))
         controls.showTeam:SetChecked(TacoTipConfig.show_team)
         controls.showClassIcon:SetChecked(TacoTipConfig.show_class_icon)
+        controls.classColoredBorderToggle:SetChecked(TacoTipConfig.tooltip_border_use_class)
         controls.showPVPIcon:SetChecked(TacoTipConfig.show_pvp_icon)
         controls.showHealthBar:SetChecked(TacoTipConfig.show_hp_bar)
         controls.showPowerBar:SetChecked(TacoTipConfig.show_power_bar)
@@ -1703,18 +1764,18 @@ local function buildTooltipsPage()
         controls.gearScoreItems:SetChecked(TacoTipConfig.show_gs_items)
         controls.hunterScoreItems:SetChecked(TacoTipConfig.show_gs_items_hs)
         controls.hunterScoreItems:SetDisabled(not TacoTipConfig.show_gs_items)
-        controls.tooltipBorderUseClass:SetChecked(TacoTipConfig.tooltip_border_use_class)
         controls.tooltipBackgroundUseClass:SetChecked(TacoTipConfig.tooltip_background_use_class)
-        controls.tooltipBorderColor:SetColor(TacoTipConfig.tooltip_border_color_r or 0.5, TacoTipConfig.tooltip_border_color_g or 0.5, TacoTipConfig.tooltip_border_color_b or 0.5)
+        controls.tooltipBorderColor:SetColor(TacoTipConfig.tooltip_border_color_r or 1, TacoTipConfig.tooltip_border_color_g or 1, TacoTipConfig.tooltip_border_color_b or 1)
         controls.tooltipBackgroundColor:SetColor(TacoTipConfig.tooltip_background_color_r or 0, TacoTipConfig.tooltip_background_color_g or 0, TacoTipConfig.tooltip_background_color_b or 0)
         controls.tooltipBorderAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_border_alpha or 1) * 100 + 0.5))
+        controls.tooltipBorderEdgeSize:SetValueSilently(TacoTipConfig.tooltip_border_edge_size or 16)
         controls.tooltipBackgroundAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_background_alpha or 0.85) * 100 + 0.5))
         controls.tooltipBackgroundTextureChoice:SetValue(TT:GetResolvedTooltipBackground())
         controls.tooltipBorderTextureChoice:SetValue(TT:GetResolvedTooltipBorder())
         controls.tooltipPortrait:SetChecked(TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
         controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
-        controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 16)
+        controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 20)
         controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
         controls.tooltipFontSize:SetValueSilently(TacoTipConfig.tooltip_font_size or 12)
         controls.tooltipBarTextureChoice:SetValue(TT:GetResolvedTooltipStatusBarTexture())
@@ -2032,24 +2093,25 @@ TT.RefreshOptionsUI = function(self)
     modernShowExampleTooltip()
 end
 
-optionsPages.tooltips:SetScript("OnShow", function(panel)
+local function onPageShow(panel)
     ensureModernOptionsBuilt()
-    if (panel.Refresh) then panel:Refresh() end
-end)
-
-optionsPages.positioning:SetScript("OnShow", function(panel)
-    ensureModernOptionsBuilt()
-    if (panel.Refresh) then panel:Refresh() end
-end)
-
-optionsPages.characterInspect:SetScript("OnShow", function(panel)
-    ensureModernOptionsBuilt()
-    if (panel.Refresh) then panel:Refresh() end
-end)
-
-optionsFrame:SetScript("OnShow", function(panel)
+    if (panel and panel.Refresh) then panel:Refresh() end
+end
+local function onOptionsFrameShow(panel)
     ensureModernOptionsBuilt()
     modernGetConfig()
     modernShowExampleTooltip()
+end
+optionsPages.tooltips:SetScript("OnShow", function(panel, ...)
+    return safeCall(onPageShow, panel, ...)
+end)
+optionsPages.positioning:SetScript("OnShow", function(panel, ...)
+    return safeCall(onPageShow, panel, ...)
+end)
+optionsPages.characterInspect:SetScript("OnShow", function(panel, ...)
+    return safeCall(onPageShow, panel, ...)
+end)
+optionsFrame:SetScript("OnShow", function(panel, ...)
+    return safeCall(onOptionsFrameShow, panel, ...)
 end)
 

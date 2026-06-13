@@ -62,6 +62,7 @@ Defaults returned by `TT:GetDefaults()`:
 - `character_ilvl_offset_y = 0`
 - `unlock_info_position = false`
 - `show_achievement_points = false`
+- `tooltip_border_edge_size = 16`
 
 ## APIs used
 

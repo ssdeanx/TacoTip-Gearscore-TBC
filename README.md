@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.5.1` |
+| Public version | `v0.5.2` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -74,6 +74,10 @@ The current public build includes all of the following work:
 - full locale coverage alignment for the modern options UI
 - maintainer/welcome-text cleanup for all shipped locale files
 - root-page language selection with client-default fallback and English backup behavior
+- **TBC Anniversary 2.5.5 border fix:** NineSlicePanel tooltip backdrops now use a separate `BackdropTemplate` child-frame overlay so class-colored borders render correctly on the 9.x engine. The default grey NineSlice border is overlaid with a `SetBackdrop` edge-only frame at `FrameLevel(2)`, preserving the default background while applying per-class border colors via `SetBackdropBorderColor`.
+- **`getClassColor` safe-pattern rewrite:** guards both `CUSTOM_CLASS_COLORS` and `RAID_CLASS_COLORS` against nil before indexing, preventing taint errors in script environments where one or both globals may be missing.
+- **`resolveTooltipUnit` pcall guard:** wraps `tooltip:GetUnit()` in `pcall` so a single GetUnit error cannot crash the entire tooltip render path.
+- **`safeCall` error capture on all hooks:** all GameTooltip script hooks, event handlers, and callback shims are wrapped in `xpcall(..., geterrorhandler(), ...)` so errors are captured by BugSack/!Swatter instead of silently breaking tooltips.
 
 ## Tooltip details
 
@@ -234,7 +238,7 @@ Current localization work included in this build:
 | Optional Pawn support | Enabled automatically when Pawn is installed |
 | Optional SharedMedia support | Used automatically when compatible fonts/textures are registered |
 | Saved settings | Stored through `TacoTipConfig` |
-| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.1` |
+| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.2` |
 | Feedback | Use project comments or the issue tracker |
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.

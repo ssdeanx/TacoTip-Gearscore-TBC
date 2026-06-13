@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.1"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.2"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -50,6 +50,28 @@ local UnitRace = _G.UnitRace
 local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
 
 local playerClass = select(2, UnitClass("player"))
+
+-- Safe-call wrapper. Routes errors through Blizzard's geterrorhandler()
+-- global so they are captured by error display addons (BugSack, !Swatter,
+-- BugGrabber, etc.) instead of silently breaking the GameTooltip.
+-- Usage: safeCall(myHandler, arg1, arg2, ...)
+local function safeCall(fn, ...)
+    return xpcall(fn, geterrorhandler(), ...)
+end
+
+-- TBC Anniversary 2.5.3+ (retail 9.x engine) moved tooltip backdrops from
+-- GameTooltip to a NineSlice sub-frame (SharedTooltipTemplates.lua per
+-- warcraft.wiki.gg/wiki/2.5.3-Consolidated-UI-Changes).
+-- SetBackdrop/SetBackdropBorderColor on the parent has NO visual effect;
+-- NineSlice renders the actual backdrop. The apply-backdrop functions below
+-- detect NineSlice and use NineSlice:SetBorderColor/SetCenterColor directly.
+-- This early Mixin provides a fallback for pre-2.5.3 clients.
+do
+    local needsMixin = _G.GameTooltip and _G.BackdropTemplateMixin and not _G.GameTooltip.SetBackdrop
+    if (needsMixin and _G.Mixin) then
+        Mixin(_G.GameTooltip, _G.BackdropTemplateMixin)
+    end
+end
 
 local function isOtherPlayersPet(unit)
     return _G.UnitIsOtherPlayersPet and _G.UnitIsOtherPlayersPet(unit)
@@ -137,7 +159,14 @@ TT.GetClassIconMarkup = function(self, class)
 end
 
 local function getClassColor(class)
-    return class and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class] or nil
+    if (not class) then
+        return nil
+    end
+    local color = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class]
+    if (not color and RAID_CLASS_COLORS) then
+        color = RAID_CLASS_COLORS[class]
+    end
+    return color
 end
 
 local function clearTooltipPlayerClassColor(tooltip)
@@ -295,8 +324,41 @@ local function applyTooltipFonts(tooltip)
     end
 end
 
+local function getOrCreateBackdropFrame(tooltip)
+    if (not tooltip) then
+        return nil, false
+    end
+    if (tooltip.TacoTipBackdropFrame) then
+        return tooltip.TacoTipBackdropFrame, tooltip.TacoTipBackdropFrame.isCustom
+    end
+
+    -- 2.5.3+ (NineSlice layout): create a border-only overlay frame.
+    -- NineSlice stays visible and provides the default tooltip background.
+    -- Our frame only draws the border edge (edgeFile) on top of NineSlice's
+    -- own border at frame level 2 — above NineSlice (0), below text (3+).
+    if (tooltip.NineSlice) then
+        local template = BackdropTemplateMixin and "BackdropTemplate" or nil
+        local bf = CreateFrame("Frame", nil, tooltip, template)
+        bf:SetAllPoints()
+        bf:SetFrameLevel(2)
+        bf.isCustom = true
+        bf.isBorderOnly = true
+        -- Keep NineSlice visible — it provides the default background
+        tooltip.TacoTipBackdropFrame = bf
+        return bf, true
+    end
+
+    -- Pre-2.5.3: ensure the tooltip has SetBackdrop and use it directly
+    if (not tooltip.SetBackdrop and BackdropTemplateMixin and Mixin) then
+        Mixin(tooltip, BackdropTemplateMixin)
+    end
+    tooltip.TacoTipBackdropFrame = tooltip
+    return tooltip, false
+end
+
 local function applyTooltipBackdrop(tooltip)
-    if (not tooltip or not tooltip.SetBackdrop) then
+    local backdrop, isCustom = getOrCreateBackdropFrame(tooltip)
+    if (not backdrop or not backdrop.SetBackdrop) then
         return
     end
 
@@ -304,27 +366,40 @@ local function applyTooltipBackdrop(tooltip)
     local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
     local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
 
-    tooltip:SetBackdrop({
-        bgFile = backgroundTexture,
-        edgeFile = hasBorder and borderTexture or nil,
-        tile = true,
-        tileSize = 16,
-        edgeSize = hasBorder and 16 or 0,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
+    if (backdrop.isBorderOnly) then
+        -- 2.5.3+: border overlay only. NineSlice provides the default
+        -- background — we only draw the colored border on top.
+        backdrop:SetBackdrop({
+            edgeFile = hasBorder and borderTexture or nil,
+            edgeSize = hasBorder and (TacoTipConfig.tooltip_border_edge_size or 16) or 0,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+    else
+        -- Pre-2.5.3: full backdrop with background + border on the tooltip
+        backdrop:SetBackdrop({
+            bgFile = backgroundTexture,
+            edgeFile = hasBorder and borderTexture or nil,
+            tile = true,
+            tileSize = 16,
+            edgeSize = hasBorder and (TacoTipConfig.tooltip_border_edge_size or 16) or 0,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+    end
 end
 
 local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, borderB)
-    if (not tooltip) then
+    local backdrop = tooltip and tooltip.TacoTipBackdropFrame
+    if (not backdrop or not backdrop.SetBackdropBorderColor) then
         return
     end
 
     local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
     local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
-
-    if (hasBorder and tooltip.SetBackdropBorderColor) then
-        tooltip:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 1)
+    if (not hasBorder) then
+        return
     end
+
+    backdrop:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 0.85)
 end
 
 local function resolveTooltipUnit(tooltip, unit)
@@ -332,8 +407,8 @@ local function resolveTooltipUnit(tooltip, unit)
         return unit
     end
     if (tooltip and tooltip.GetUnit) then
-        local _, tooltipUnit = tooltip:GetUnit()
-        if (tooltipUnit and UnitExists and UnitExists(tooltipUnit)) then
+        local ok, _, tooltipUnit = pcall(tooltip.GetUnit, tooltip)
+        if (ok and tooltipUnit and UnitExists and UnitExists(tooltipUnit)) then
             return tooltipUnit
         end
     end
@@ -353,9 +428,9 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     local bgR = TacoTipConfig.tooltip_background_color_r or 0
     local bgG = TacoTipConfig.tooltip_background_color_g or 0
     local bgB = TacoTipConfig.tooltip_background_color_b or 0
-    local borderR = TacoTipConfig.tooltip_border_color_r or 0.5
-    local borderG = TacoTipConfig.tooltip_border_color_g or 0.5
-    local borderB = TacoTipConfig.tooltip_border_color_b or 0.5
+    local borderR = TacoTipConfig.tooltip_border_color_r or 1
+    local borderG = TacoTipConfig.tooltip_border_color_g or 1
+    local borderB = TacoTipConfig.tooltip_border_color_b or 1
 
     if (TacoTipConfig.tooltip_background_use_class and isPlayerTooltip) then
         bgR, bgG, bgB = tintR, tintG, tintB
@@ -364,10 +439,36 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
         borderR, borderG, borderB = tintR, tintG, tintB
     end
 
-    if (tooltip.SetBackdropColor) then
-        tooltip:SetBackdropColor(bgR, bgG, bgB, TacoTipConfig.tooltip_background_alpha or 0.85)
+    -- Background color: only apply for pre-2.5.3 (full backdrop mode).
+    -- On 2.5.3+ (border-only overlay), NineSlice provides the default
+    -- background — tinting the overlay frame does nothing useful.
+    local backdrop = tooltip and tooltip.TacoTipBackdropFrame
+    if (backdrop and backdrop.SetBackdropColor and not backdrop.isBorderOnly) then
+        backdrop:SetBackdropColor(bgR, bgG, bgB, TacoTipConfig.tooltip_background_alpha or 0.85)
     end
     applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, borderB)
+
+    -- Defensive follow-up: re-apply the class-tinted border a short tick
+    -- later in case Blizzard or another addon re-sets the backdrop after
+    -- this function returns (TBC Anniversary 2026 can refresh the tooltip
+    -- frame after OnTooltipSetUnit completes).
+    if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and isPlayerTooltip) then
+        CAfter(0.05, function()
+            return safeCall(function()
+                if (not tooltip or not tooltip:IsShown()) then
+                    return
+                end
+                local refreshed = tooltip.TacoTipPlayerClassColor
+                if (not refreshed) then
+                    return
+                end
+                if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+                    return
+                end
+                applyTooltipBorderOverlay(tooltip, nil, refreshed.r, refreshed.g, refreshed.b)
+            end)
+        end)
+    end
 
     applyTooltipFonts(tooltip)
 
@@ -396,10 +497,10 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             local atlas = GetClassAtlas(class)
             if (atlas and atlas ~= "") then
                 classIcon:SetAtlas(atlas)
-                local size = TacoTipConfig.class_icon_size or 16
+                local size = TacoTipConfig.class_icon_size or 20
                 classIcon:SetSize(size, size)
                 classIcon:ClearAllPoints()
-                classIcon:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -4, -2)
+                classIcon:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -10, -8)
                 classIcon:Show()
             else
                 classIcon:Hide()
@@ -437,7 +538,7 @@ function TacoTip_GSCallback(guid)
     end
 end
 
-GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
+local function onTooltipSetUnit(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit) then
@@ -494,7 +595,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                 if (TacoTipConfig.color_class) then
                     local _, targetClass = UnitClass(unitTarget)
                     if (targetClass) then
-                        classc = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[targetClass]
+                        classc = getClassColor(targetClass)
                     end
                 end
                 if (classc) then
@@ -554,7 +655,7 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
         end
         if (TacoTipConfig.color_class) then
             if (localizedClass and class) then
-                local classc = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
+                local classc = getClassColor(class)
                 if (classc) then
                     --GameTooltipTextLeft1:SetTextColor(classc.r, classc.g, classc.b)
                     text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
@@ -614,10 +715,15 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                             tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
-                    if (spec1) then
+                    -- Only render the inactive spec when it is a genuinely
+                    -- different tree. Prevents the same spec being printed
+                    -- twice when both dual-spec slots match (e.g. TBC
+                    -- Anniversary 2026 inspect data, or the player picked
+                    -- the same tree in both slots).
+                    if (spec1 and spec1 ~= spec2) then
                         local specText = formatSpecializationText(class, spec1, x1, x2, x3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec2 and " " or L["Talents"]..":"), string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                            tinsert(linesToAdd, {" ", string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
                         else
                             tinsert(linesToAdd, {string.format("      |c99ffffff%s|r", specText)})
                         end
@@ -631,10 +737,13 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
                             tinsert(linesToAdd, {string.format("%s: %s", L["Talents"], specText)})
                         end
                     end
-                    if (spec2) then
+                    -- Only render the inactive spec when it is a genuinely
+                    -- different tree. Prevents the same spec being printed
+                    -- twice when both dual-spec slots match.
+                    if (spec2 and spec2 ~= spec1) then
                         local specText = formatSpecializationText(class, spec2, y1, y2, y3)
                         if (wide_style) then
-                            tinsert(linesToAdd, {(spec1 and " " or L["Talents"]..":"), string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                            tinsert(linesToAdd, {" ", string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
                         else
                             tinsert(linesToAdd, {string.format("      |c99ffffff%s|r", specText)})
                         end
@@ -809,6 +918,10 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip)
     end
 
     TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
+end
+
+GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip, ...)
+    return safeCall(onTooltipSetUnit, tooltip, ...)
 end)
 
 local function itemToolTipHook(self)
@@ -839,18 +952,62 @@ local function itemToolTipHook(self)
     TT:ApplyTooltipAppearance(self)
 end
 
-GameTooltip:HookScript("OnTooltipSetItem", itemToolTipHook)
-ShoppingTooltip1:HookScript("OnTooltipSetItem", itemToolTipHook)
-ShoppingTooltip2:HookScript("OnTooltipSetItem", itemToolTipHook)
-ItemRefTooltip:HookScript("OnTooltipSetItem", itemToolTipHook)
+local function safeItemToolTipHook(self, ...)
+    return safeCall(itemToolTipHook, self, ...)
+end
 
-GameTooltip:HookScript("OnTooltipCleared", function(tooltip)
+GameTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
+ShoppingTooltip1:HookScript("OnTooltipSetItem", safeItemToolTipHook)
+ShoppingTooltip2:HookScript("OnTooltipSetItem", safeItemToolTipHook)
+ItemRefTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
+
+local function onTooltipCleared(tooltip)
     clearTooltipPlayerClassColor(tooltip)
 
     local portrait = tooltip and tooltip.TacoTipPortrait
     if (portrait) then
         portrait:Hide()
     end
+end
+
+GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
+    return safeCall(onTooltipCleared, tooltip, ...)
+end)
+
+-- Re-apply the class-tinted border whenever the tooltip shows, in case a
+-- re-show skipped OnTooltipSetUnit (e.g. anchor re-fire with cached text)
+-- and left SetBackdrop's default 0.5/0.5/0.5 gray border in place. Deferred
+-- to the next frame so it runs AFTER Blizzard finishes its own internal
+-- OnShow/backdrop setup - otherwise Blizzard's subsequent SetBackdrop on
+-- the same frame resets the border back to default gray.
+local function onTooltipShow(tooltip)
+    local cached = tooltip and tooltip.TacoTipPlayerClassColor
+    if (not cached) then
+        return
+    end
+    if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+        return
+    end
+
+    CAfter(0, function()
+        return safeCall(function()
+            if (not tooltip or not tooltip:IsShown()) then
+                return
+            end
+            local refreshed = tooltip.TacoTipPlayerClassColor
+            if (not refreshed) then
+                return
+            end
+            if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+                return
+            end
+            applyTooltipBorderOverlay(tooltip, nil, refreshed.r, refreshed.g, refreshed.b)
+        end)
+    end)
+end
+
+GameTooltip:HookScript("OnShow", function(tooltip, ...)
+    return safeCall(onTooltipShow, tooltip, ...)
 end)
 
 local function CreateMouseAnchor()
@@ -1222,8 +1379,11 @@ local function onEvent(self, event, ...)
             end
             if (TacoTipConfig.instant_fade) then
                 self:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-                Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
+                local function safeFadeOut(tooltipFrame)
                     tooltipFrame:Hide()
+                end
+                Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame, ...)
+                    return safeCall(safeFadeOut, tooltipFrame, ...)
                 end)
             end
             if (CharacterModelFrame and PaperDollFrame) then
@@ -1266,13 +1426,15 @@ end
 
 do
     local f = CreateFrame("Frame")
-    f:SetScript("OnEvent", onEvent)
+    f:SetScript("OnEvent", function(self, event, ...)
+        return safeCall(onEvent, self, event, ...)
+    end)
     f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
     f:RegisterEvent("MODIFIER_STATE_CHANGED")
     f:RegisterEvent("UNIT_TARGET")
     f:RegisterEvent("ADDON_LOADED")
-    CI.RegisterCallback(addOnName, "INVENTORY_READY", function(...) onEvent(f, ...) end)
-    CI.RegisterCallback(addOnName, "TALENTS_READY", function(...) onEvent(f, ...) end)
+    CI.RegisterCallback(addOnName, "INVENTORY_READY", function(...) return safeCall(onEvent, f, ...) end)
+    CI.RegisterCallback(addOnName, "TALENTS_READY", function(...) return safeCall(onEvent, f, ...) end)
     TT.frame = f
 end
 
@@ -1292,15 +1454,14 @@ function TacoTip_CustomPosEnable(show)
         TacoTipDragButton:SetPoint(pos[1],UIParent,pos[2],pos[3],pos[4])
         TacoTipDragButton:RegisterForDrag("LeftButton")
         TacoTipDragButton:RegisterForClicks("MiddleButtonUp", "RightButtonUp")
-        TacoTipDragButton:SetScript("OnDragStart", TacoTipDragButton.StartMoving)
-        TacoTipDragButton:SetScript("OnDragStop", function(self)
+        local function onDragButtonDragStop(self)
             self:StopMovingOrSizing()
             local from, _, to, x, y = self:GetPoint()
             TacoTipConfig.custom_pos = {from, to, x, y}
             syncTooltipMoverPosition(true)
             refreshOptionsUI()
-        end)
-        TacoTipDragButton:SetScript("OnClick", function(self, button, down)
+        end
+        local function onDragButtonClick(self, button, down)
             if (button == "MiddleButton") then
                 if (TacoTipConfig.custom_anchor == "TOPRIGHT") then
                     TacoTipConfig.custom_anchor = "BOTTOMRIGHT"
@@ -1320,36 +1481,58 @@ function TacoTip_CustomPosEnable(show)
                 ["button1"]=SAVE,["button2"]=CANCEL,["button3"]=RESET,["OnAccept"]=function() TacoTipDragButton:_Save() end,["OnAlt"]=function() TacoTipDragButton:_ResetPosition() end})
                 StaticPopup_Show("_TacoTipDragButtonConfirm_")
             end
-        end)
-        TacoTipDragButton:SetScript("OnShow", function(self)
+        end
+        local function onDragButtonShow(self)
             if (self.ticker) then
                 self.ticker:Cancel()
             end
-            self.ticker = NewTicker(1, function()
+            local function onMoverTick()
                 TacoTipDragButton:ShowExample()
+            end
+            self.ticker = NewTicker(1, function(...)
+                return safeCall(onMoverTick, ...)
             end)
-            Detours:ScriptHook(TT, GameTooltip, "OnShow", function(tooltipFrame)
+            local function onMoverGameTooltipShow(tooltipFrame)
                 if (TacoTipDragButton:IsShown()) then
                     local shownUnit = resolveTooltipUnit(tooltipFrame)
                     if (not shownUnit or not UnitIsUnit(shownUnit, "player")) then
                         TacoTipDragButton:ShowExample()
                     end
                 end
-            end)
-            Detours:ScriptHook(TT, GameTooltip, "OnHide", function(tooltipFrame)
+            end
+            local function onMoverGameTooltipHide(tooltipFrame)
                 if (TacoTipDragButton:IsShown()) then
                     TacoTipDragButton:ShowExample()
                 end
+            end
+            Detours:ScriptHook(TT, GameTooltip, "OnShow", function(tooltipFrame, ...)
+                return safeCall(onMoverGameTooltipShow, tooltipFrame, ...)
+            end)
+            Detours:ScriptHook(TT, GameTooltip, "OnHide", function(tooltipFrame, ...)
+                return safeCall(onMoverGameTooltipHide, tooltipFrame, ...)
             end)
             TacoTipDragButton:ShowExample()
             print("|cff59f0dcTacoTip:|r "..L["TEXT_HELP_MOVER_SHOWN"])
-        end)
-        TacoTipDragButton:SetScript("OnHide", function(self)
+        end
+        local function onDragButtonHide(self)
             if (self.ticker) then
                 self.ticker:Cancel()
             end
             Detours:ScriptUnhook(TT, GameTooltip, "OnShow")
             Detours:ScriptUnhook(TT, GameTooltip, "OnHide")
+        end
+        TacoTipDragButton:SetScript("OnDragStart", TacoTipDragButton.StartMoving)
+        TacoTipDragButton:SetScript("OnDragStop", function(self, ...)
+            return safeCall(onDragButtonDragStop, self, ...)
+        end)
+        TacoTipDragButton:SetScript("OnClick", function(self, button, down, ...)
+            return safeCall(onDragButtonClick, self, button, down, ...)
+        end)
+        TacoTipDragButton:SetScript("OnShow", function(self, ...)
+            return safeCall(onDragButtonShow, self, ...)
+        end)
+        TacoTipDragButton:SetScript("OnHide", function(self, ...)
+            return safeCall(onDragButtonHide, self, ...)
         end)
         function TacoTipDragButton:ShowExample()
             if (GameTooltip_SetDefaultAnchor) then

@@ -18,6 +18,8 @@
 - Anchor override: `hooksecurefunc("GameTooltip_SetDefaultAnchor", ...)`.
 - Late-refresh pattern: repaint after cached item data or Pawn data becomes available.
 - Slash command bootstrap: `gearscore.lua` seeds the shared `/tacotip` handler early; later modules respect the existing `SlashCmdList.TACOTIP` guard.
+- **Backdrop child-frame overlay (2.5.3+):** On TBC Anniversary 2.5.3+, GameTooltip uses a NineSlicePanel sub-frame for its backdrop. Direct `SetBackdrop`/`SetBackdropBorderColor` on the tooltip parent has no visual effect because NineSlice renders on top. The pattern is `getOrCreateBackdropFrame` in `main.lua`, which creates a separate `BackdropTemplate` child frame at `FrameLevel(2)` (above NineSlice, below text content). NineSlice stays visible for the default background; the overlay draws only the colored border edge via `SetBackdrop({edgeFile = ...})` + `SetBackdropBorderColor`. Border thickness is configurable via `TacoTipConfig.tooltip_border_edge_size` (default 16, range 4–48). Pre-2.5.3 clients use the original full-backdrop path unchanged.
+- **`safeCall` error capture:** All GameTooltip script hooks, event handlers, and callback shims are wrapped in `xpcall(..., geterrorhandler(), ...)` so errors flow through Blizzard's error handler to BugSack/!Swatter instead of silently breaking tooltips.
 
 ## Wiring map
 
