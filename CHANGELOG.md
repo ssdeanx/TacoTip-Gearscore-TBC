@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.5.5` | `2026-06-24` | Hotfix: `clearTooltipVisuals` forward-reference crash when triggered by other addons (BugSack error on Bartender4/LoonBestInSlot tooltip events) |
 | `0.5.4` | `2026-06-24` | Tooltip contamination fix (class border on non-player tooltips), settings-leak fix (item tooltips no longer get portrait/class icon), minimap flicker fix, options UI sizing fix, floating preview pane, config corruption sanitizer, class-borders only for player units |
 | `0.5.3` | `2026-06-14` | Real-time mover, 3D PlayerModel portrait, elite/rare/boss atlas portrait overlay, right-click camera passthrough |
 | `0.5.2` | `2026-06-02` | NineSlice class-border overlay fix (separate BackdropTemplate child frame), getClassColor/GetUnit hardening, spec dedup guard, safeCall error capture, dropdown audit |
@@ -12,6 +13,16 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.5] - 2026-06-24
+
+### Fixed - 0.5.5
+
+- **`clearTooltipVisuals` forward-reference crash (BugSack):** The `itemToolTipHook` function at line 1070 attempted to call `clearTooltipVisuals(self)` before the local function was defined later in the file. Lua locales are not hoisted, so when other addons (Bartender4, LoonBestInSlot) triggered the item-tooltip hook via their own tooltip interactions, the nil reference crashed with "attempt to call global 'clearTooltipVisuals' (a nil value)". The function definition now precedes its call site.
+
+### Notes - 0.5.5
+
+- Version metadata bumped to `0.5.5` in `TacoTip.toc`, `main.lua`, and `options.lua`.
 
 ## [0.5.4] - 2026-06-24
 

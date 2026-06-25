@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.4"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.5"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -1066,6 +1066,22 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip, ...)
     end
 end)
 
+local function clearTooltipVisuals(tooltip)
+    if (not tooltip) then
+        return
+    end
+    clearTooltipPlayerClassColor(tooltip)
+    if (tooltip.TacoTipPortrait) then
+        tooltip.TacoTipPortrait:Hide()
+    end
+    if (tooltip.TacoTipPortrait3D) then
+        tooltip.TacoTipPortrait3D:Hide()
+    end
+    if (tooltip.TacoTipEliteFrame) then
+        tooltip.TacoTipEliteFrame:Hide()
+    end
+end
+
 local function itemToolTipHook(self)
     clearTooltipVisuals(self)
 
@@ -1122,22 +1138,6 @@ GameTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ShoppingTooltip1:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ShoppingTooltip2:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
-
-local function clearTooltipVisuals(tooltip)
-    if (not tooltip) then
-        return
-    end
-    clearTooltipPlayerClassColor(tooltip)
-    if (tooltip.TacoTipPortrait) then
-        tooltip.TacoTipPortrait:Hide()
-    end
-    if (tooltip.TacoTipPortrait3D) then
-        tooltip.TacoTipPortrait3D:Hide()
-    end
-    if (tooltip.TacoTipEliteFrame) then
-        tooltip.TacoTipEliteFrame:Hide()
-    end
-end
 
 
 GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
