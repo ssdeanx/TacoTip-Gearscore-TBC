@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.2"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.4"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -19,6 +19,8 @@ local CI = LibStub("LibClassicInspector")
 local Detours = LibStub("LibDetours-1.0")
 local GearScore = _G.TT_GS
 local L = _G.TACOTIP_LOCALE
+
+TacoTipGSHistory = TacoTipGSHistory or {}
 local TT = _G[addOnName]
 
 if (not TT) then
@@ -295,9 +297,31 @@ local function ensureTooltipPortrait(tooltip)
     if (not tooltip) then
         return nil
     end
+    local use3D = TacoTipConfig.tooltip_portrait_3d
+    if (use3D) then
+        if (not tooltip.TacoTipPortrait3D) then
+            local ok, model = pcall(CreateFrame, "PlayerModel", nil, tooltip)
+            if (not ok or not model) then
+                use3D = false
+            else
+                tooltip.TacoTipPortrait3D = model
+                tooltip.TacoTipPortrait3D:SetFrameLevel(tooltip:GetFrameLevel() + 1)
+                tooltip.TacoTipPortrait3D:EnableMouse(false)
+            end
+        end
+        if (tooltip.TacoTipPortrait3D) then
+            if (tooltip.TacoTipPortrait) then
+                tooltip.TacoTipPortrait:Hide()
+            end
+            return tooltip.TacoTipPortrait3D
+        end
+    end
     if (not tooltip.TacoTipPortrait) then
         tooltip.TacoTipPortrait = tooltip:CreateTexture(nil, "ARTWORK")
         tooltip.TacoTipPortrait:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+    end
+    if (tooltip.TacoTipPortrait3D) then
+        tooltip.TacoTipPortrait3D:Hide()
     end
     return tooltip.TacoTipPortrait
 end
@@ -473,43 +497,62 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     applyTooltipFonts(tooltip)
 
     local portrait = ensureTooltipPortrait(tooltip)
+    local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
+    local portraitW = math.floor(38 * portraitScale)
+    local portraitH = math.floor(52 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
-            local portraitSize = math.floor(36 * (TacoTipConfig.tooltip_portrait_scale or 1))
             portrait:ClearAllPoints()
-            portrait:SetSize(portraitSize, portraitSize)
+            portrait:SetSize(portraitW, portraitH)
             portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
-            _G.SetPortraitTexture(portrait, unit)
+            local is3D = TacoTipConfig.tooltip_portrait_3d
+            if (is3D and portrait.SetUnit) then
+                pcall(portrait.SetUnit, portrait, unit)
+                pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
+            else
+                _G.SetPortraitTexture(portrait, unit)
+            end
             portrait:Show()
         else
             portrait:Hide()
+            if (tooltip.TacoTipEliteFrame) then
+                tooltip.TacoTipEliteFrame:Hide()
+            end
         end
     end
 
-    local classIcon = tooltip.TacoTipClassIcon
-    if (not classIcon) then
-        classIcon = tooltip:CreateTexture(nil, "OVERLAY")
-        tooltip.TacoTipClassIcon = classIcon
-    end
-    if (TacoTipConfig.show_class_icon and isPlayerTooltip and GetClassAtlas) then
-        local class = select(2, UnitClass(unit))
-        if (class) then
-            local atlas = GetClassAtlas(class)
-            if (atlas and atlas ~= "") then
-                classIcon:SetAtlas(atlas)
-                local size = TacoTipConfig.class_icon_size or 20
-                classIcon:SetSize(size, size)
-                classIcon:ClearAllPoints()
-                classIcon:SetPoint("TOPRIGHT", tooltip, "TOPRIGHT", -10, -8)
-                classIcon:Show()
-            else
-                classIcon:Hide()
+    if (TacoTipConfig.show_elite_frame and unit and TacoTipConfig.tooltip_portrait and not UnitIsPlayer(unit)) then
+        local classification = UnitClassification(unit)
+        if (classification and classification ~= "normal" and classification ~= "") then
+            local eliteFrame = tooltip.TacoTipEliteFrame
+            if (not eliteFrame) then
+                eliteFrame = tooltip:CreateTexture(nil, "OVERLAY")
+                tooltip.TacoTipEliteFrame = eliteFrame
             end
-        else
-            classIcon:Hide()
+            local portraitSize = portraitW
+            eliteFrame:ClearAllPoints()
+            if (classification == "worldboss") then
+                pcall(eliteFrame.SetAtlas, eliteFrame, "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged", false)
+                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
+                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
+            elseif (classification == "rareelite") then
+                pcall(eliteFrame.SetAtlas, eliteFrame, "ui-hud-unitframe-target-portraiton-boss-rare-silver", false)
+                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
+                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
+            elseif (classification == "elite") then
+                pcall(eliteFrame.SetAtlas, eliteFrame, "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold", false)
+                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
+                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
+            elseif (classification == "rare") then
+                pcall(eliteFrame.SetAtlas, eliteFrame, "UnitFrame-Target-PortraitOn-Boss-Rare-Star", false)
+                eliteFrame:SetSize(16, 16)
+                eliteFrame:SetPoint("BOTTOMRIGHT", portrait, "BOTTOMRIGHT", 2, 2)
+            end
+            eliteFrame:Show()
         end
-    else
-        classIcon:Hide()
+    end
+    if (tooltip.TacoTipEliteFrame and not (TacoTipConfig.show_elite_frame and unit and TacoTipConfig.tooltip_portrait and not UnitIsPlayer(unit))) then
+        tooltip.TacoTipEliteFrame:Hide()
     end
 
     local barTexture = (TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
@@ -538,6 +581,14 @@ function TacoTip_GSCallback(guid)
     end
 end
 
+local delayedTooltipTimer = nil
+local function cancelDelayedTooltip()
+    if (delayedTooltipTimer) then
+        delayedTooltipTimer:Cancel()
+        delayedTooltipTimer = nil
+    end
+end
+
 local function onTooltipSetUnit(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
@@ -550,6 +601,10 @@ local function onTooltipSetUnit(tooltip)
 
     if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
         if (not UnitIsUnit(tooltipUnit, "player")) then
+            -- Apply appearance for the non-player unit even in mover mode
+            -- so the backdrop/border/font from a previous player hover
+            -- does not persist on the current tooltip.
+            TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
             TacoTipDragButton:ShowExample()
             return
         end
@@ -688,10 +743,69 @@ local function onTooltipSetUnit(tooltip)
                 text[2] = string.gsub(text[2], guildName, "", 1)
             end
         end
+        if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit) and not UnitIsSameServer(tooltipUnit, "player")) then
+            local _, realm = UnitName(tooltipUnit)
+            if (realm and realm ~= "") then
+                if (wide_style) then
+                    tinsert(linesToAdd, {(L["Realm"] or "Realm")..":", realm, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b})
+                else
+                    tinsert(linesToAdd, {string.format("%s: |cFFFFFFFF%s|r", L["Realm"] or "Realm", realm)})
+                end
+            end
+        end
+        if (TacoTipConfig.show_honor_rank) then
+            local pvpName = UnitPVPName(tooltipUnit)
+            if (pvpName and pvpName ~= "" and pvpName ~= name) then
+                if (wide_style) then
+                    tinsert(linesToAdd, {(L["Honor Rank"] or "Honor Rank")..":", pvpName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b})
+                else
+                    tinsert(linesToAdd, {string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName)})
+                end
+            end
+        end
+        local nameLineIcons = ""
+        if (TacoTipConfig.show_pvp_icon and UnitIsPlayer(tooltipUnit) and UnitIsPVP(tooltipUnit)) then
+            nameLineIcons = nameLineIcons .. " " .. PVP_FLAG_ICON
+            for i=2,numLines do
+                if (text[i]) then
+                    text[i] = string.gsub(text[i], "PvP", "", 1)
+                end
+            end
+        end
         if (TacoTipConfig.show_team) then
-            text[1] = text[1].." "..(UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
+            nameLineIcons = nameLineIcons .. " " .. (UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
+        end
+        if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
+            local _, class = UnitClass(tooltipUnit)
+            if (class) then
+                nameLineIcons = nameLineIcons .. " " .. getClassIconMarkup(class)
+            end
+        end
+        if (TacoTipConfig.show_role_icon and UnitIsPlayer(tooltipUnit) and IsInGroup()) then
+            local role = UnitGroupRolesAssigned(tooltipUnit)
+            if (role and role ~= "NONE") then
+                local roleIcon
+                if (role == "TANK") then
+                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-TankIcon:18:18:0:0:16:16:0:16:0:16|t"
+                elseif (role == "HEALER") then
+                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-HealerIcon:18:18:0:0:16:16:0:16:0:16|t"
+                else
+                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-DPSIcon:18:18:0:0:16:16:0:16:0:16|t"
+                end
+                nameLineIcons = nameLineIcons .. " " .. roleIcon
+            end
+        end
+        if (nameLineIcons ~= "") then
+            text[1] = text[1] .. nameLineIcons
         end
         if (not TacoTipConfig.hide_in_combat or not InCombatLockdown()) then
+            if (TacoTipConfig.show_separators) then
+                if (wide_style) then
+                    tinsert(linesToAdd, {" ", " ", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                else
+                    tinsert(linesToAdd, {"|cFF444444" .. string.rep("-", 30) .. "|r", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                end
+            end
             if (TacoTipConfig.show_talents) then
                 local x1, x2, x3 = 0,0,0
                 local y1, y2, y3 = 0,0,0
@@ -750,31 +864,55 @@ local function onTooltipSetUnit(tooltip)
                     end
                 end
             end
+            if (TacoTipConfig.show_separators) then
+                if (wide_style) then
+                    tinsert(linesToAdd, {" ", " ", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                else
+                    tinsert(linesToAdd, {"|cFF444444" .. string.rep("-", 30) .. "|r", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b})
+                end
+            end
             local miniText = ""
             if (TacoTipConfig.show_gs_player) then
                 local gearscore, avg_ilvl = GearScore:GetScore(guid, true)
                 if (gearscore > 0) then
                     local r, g, b = GearScore:GetQuality(gearscore)
+                    local gsDelta = ""
+                    if (TacoTipConfig.show_gs_delta and guid and gearscore > 0) then
+                        local lastGS = TacoTipGSHistory[guid]
+                        if (lastGS and lastGS > 0) then
+                            local diff = gearscore - lastGS
+                            if (diff > 0) then
+                                gsDelta = string.format(" |cFF00FF00▲%d|r", diff)
+                            elseif (diff < 0) then
+                                gsDelta = string.format(" |cFFFF0000▼%d|r", math.abs(diff))
+                            end
+                        end
+                        TacoTipGSHistory[guid] = gearscore
+                    end
                     if (wide_style) then
                         if (r == b and r == g) then
-                            tinsert(linesToAdd, {"|cFFFFFFFFGearScore:|r "..gearscore, "|cFFFFFFFF(iLvl:|r "..avg_ilvl.."|cFFFFFFFF)|r", r, g, b, r, g, b})
+                            tinsert(linesToAdd, {"|cFFFFFFFFGearScore:|r "..gearscore..gsDelta, "|cFFFFFFFF(iLvl:|r "..avg_ilvl.."|cFFFFFFFF)|r", r, g, b, r, g, b})
                         else
-                            tinsert(linesToAdd, {"GearScore: "..gearscore, "(iLvl: "..avg_ilvl..")", r, g, b, r, g, b})
+                            tinsert(linesToAdd, {"GearScore: "..gearscore..gsDelta, "(iLvl: "..avg_ilvl..")", r, g, b, r, g, b})
                         end
                     elseif (mini_style) then
                         if (r == b and r == g) then
-                            miniText = string.format("GS: |cFF%02x%02x%02x%s|r  L: |cFF%02x%02x%02x%s|r  ", r*255, g*255, b*255, gearscore, r*255, g*255, b*255, avg_ilvl)
+                            miniText = string.format("GS: |cFF%02x%02x%02x%s|r%s  L: |cFF%02x%02x%02x%s|r  ", r*255, g*255, b*255, gearscore, gsDelta, r*255, g*255, b*255, avg_ilvl)
                         else
-                            miniText = string.format("|cFF%02x%02x%02xGS: %s  L: %s|r  ", r*255, g*255, b*255, gearscore, avg_ilvl)
+                            miniText = string.format("|cFF%02x%02x%02xGS: %s%s  L: %s|r  ", r*255, g*255, b*255, gearscore, gsDelta, avg_ilvl)
                         end
                     else
                         if (r == b and r == g) then
-                            tinsert(linesToAdd, {"|cFFFFFFFFGearScore:|r "..gearscore, r, g, b})
+                            tinsert(linesToAdd, {"|cFFFFFFFFGearScore:|r "..gearscore..gsDelta, r, g, b})
                         else
-                            tinsert(linesToAdd, {"GearScore: "..gearscore, r, g, b})
+                            tinsert(linesToAdd, {"GearScore: "..gearscore..gsDelta, r, g, b})
                         end
                         if (avg_ilvl and avg_ilvl > 0) then
-                            tinsert(linesToAdd, {"iLvl: "..avg_ilvl, r, g, b})
+                            if (TacoTipConfig.show_ilvl_inline) then
+                                text[1] = text[1] .. string.format(" |cFF%02x%02x%02x[%s]|r", r*255, g*255, b*255, avg_ilvl)
+                            else
+                                tinsert(linesToAdd, {"iLvl: "..avg_ilvl, r, g, b})
+                            end
                         end
                     end
                 end
@@ -803,15 +941,6 @@ local function onTooltipSetUnit(tooltip)
                         tinsert(linesToAdd, {ACHIEVEMENT_ICON.." "..achi_pts, 1, 1, 1})
                     end
                 end
-            end
-        end
-    end
-
-    if (TacoTipConfig.show_pvp_icon and UnitIsPlayer(tooltipUnit) and UnitIsPVP(tooltipUnit)) then
-        text[1] = text[1].." "..PVP_FLAG_ICON
-        for i=2,numLines do
-            if (text[i]) then
-                text[i] = string.gsub(text[i], "PvP", "", 1)
             end
         end
     end
@@ -917,15 +1046,28 @@ local function onTooltipSetUnit(tooltip)
         stopPowerBarTicker()
     end
 
+    if (TacoTipConfig.tooltip_max_width and TacoTipConfig.tooltip_max_width > 0) then
+        tooltip:SetMinimumWidth(0)
+        tooltip:SetMaximumWidth(TacoTipConfig.tooltip_max_width)
+    end
+
     TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
 end
 
 GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip, ...)
-    return safeCall(onTooltipSetUnit, tooltip, ...)
+    cancelDelayedTooltip()
+    local delay = TacoTipConfig.tooltip_delay or 0
+    if (delay > 0 and tooltip == GameTooltip and not InCombatLockdown()) then
+        delayedTooltipTimer = C_Timer.NewTimer(delay, function()
+            return safeCall(onTooltipSetUnit, tooltip)
+        end)
+    else
+        return safeCall(onTooltipSetUnit, tooltip, ...)
+    end
 end)
 
 local function itemToolTipHook(self)
-    clearTooltipPlayerClassColor(self)
+    clearTooltipVisuals(self)
 
     local _, itemLink = self:GetItem()
     if (itemLink and IsEquippableItem(itemLink)) then
@@ -949,7 +1091,27 @@ local function itemToolTipHook(self)
             end
         end
     end
-    TT:ApplyTooltipAppearance(self)
+
+    -- Apply cosmetic appearance (font, backdrop texture, border texture) to
+    -- item tooltips so user-selected visual style carries through.  Skip
+    -- unit-specific effects (class color, portrait, elite frame, bar texture)
+    -- since there is no player unit on an item tooltip.
+    applyTooltipFonts(self)
+    applyTooltipBackdrop(self)
+    local backdrop = self and self.TacoTipBackdropFrame
+    if (backdrop and backdrop.SetBackdropColor and not backdrop.isBorderOnly) then
+        backdrop:SetBackdropColor(
+            TacoTipConfig.tooltip_background_color_r or 0,
+            TacoTipConfig.tooltip_background_color_g or 0,
+            TacoTipConfig.tooltip_background_color_b or 0,
+            TacoTipConfig.tooltip_background_alpha or 0.85
+        )
+    end
+    applyTooltipBorderOverlay(self, nil,
+        TacoTipConfig.tooltip_border_color_r or 1,
+        TacoTipConfig.tooltip_border_color_g or 1,
+        TacoTipConfig.tooltip_border_color_b or 1
+    )
 end
 
 local function safeItemToolTipHook(self, ...)
@@ -961,17 +1123,38 @@ ShoppingTooltip1:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ShoppingTooltip2:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 
-local function onTooltipCleared(tooltip)
+local function clearTooltipVisuals(tooltip)
+    if (not tooltip) then
+        return
+    end
     clearTooltipPlayerClassColor(tooltip)
-
-    local portrait = tooltip and tooltip.TacoTipPortrait
-    if (portrait) then
-        portrait:Hide()
+    if (tooltip.TacoTipPortrait) then
+        tooltip.TacoTipPortrait:Hide()
+    end
+    if (tooltip.TacoTipPortrait3D) then
+        tooltip.TacoTipPortrait3D:Hide()
+    end
+    if (tooltip.TacoTipEliteFrame) then
+        tooltip.TacoTipEliteFrame:Hide()
     end
 end
 
+
 GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
-    return safeCall(onTooltipCleared, tooltip, ...)
+    cancelDelayedTooltip()
+    return safeCall(clearTooltipVisuals, tooltip, ...)
+end)
+
+ShoppingTooltip1:HookScript("OnTooltipCleared", function(tooltip, ...)
+    return safeCall(clearTooltipVisuals, tooltip, ...)
+end)
+
+ShoppingTooltip2:HookScript("OnTooltipCleared", function(tooltip, ...)
+    return safeCall(clearTooltipVisuals, tooltip, ...)
+end)
+
+ItemRefTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
+    return safeCall(clearTooltipVisuals, tooltip, ...)
 end)
 
 -- Re-apply the class-tinted border whenever the tooltip shows, in case a
@@ -986,6 +1169,14 @@ local function onTooltipShow(tooltip)
         return
     end
     if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+        return
+    end
+
+    -- Only apply class-tinted borders when the tooltip actually shows a
+    -- player unit.  Map icons, items, and other non-unit tooltips should
+    -- never inherit a stale class border.
+    local unit = resolveTooltipUnit(tooltip)
+    if (not unit or not UnitIsPlayer(unit)) then
         return
     end
 
@@ -1008,6 +1199,10 @@ end
 
 GameTooltip:HookScript("OnShow", function(tooltip, ...)
     return safeCall(onTooltipShow, tooltip, ...)
+end)
+
+GameTooltip:HookScript("OnHide", function()
+    cancelDelayedTooltip()
 end)
 
 local function CreateMouseAnchor()
@@ -1035,6 +1230,7 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
             else
                 tooltip:SetOwner(parent, "ANCHOR_RIGHT")
             end
+            tooltip:EnableMouse(true)
             return
         end
     end
@@ -1047,6 +1243,9 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
             tooltip:SetOwner(TacoTipMouseAnchor,"ANCHOR_NONE")
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMLEFT", TacoTipMouseAnchor, "CENTER", 10, 10)
+            tooltip:EnableMouse(true)
+        else
+            tooltip:EnableMouse(true)
         end
     else
         if (TacoTipConfig.custom_pos) then
@@ -1058,10 +1257,18 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
                 tooltip:ClearAllPoints()
                 local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
                 tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
+                if (TacoTipDragButton:IsShown()) then
+                    tooltip:EnableMouse(true)
+                else
+                    tooltip:EnableMouse(false)
+                end
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X-13, CONTAINER_OFFSET_Y+9)
+            tooltip:EnableMouse(true)
+        else
+            tooltip:EnableMouse(true)
         end
     end
 end)
@@ -1455,6 +1662,7 @@ function TacoTip_CustomPosEnable(show)
         TacoTipDragButton:RegisterForDrag("LeftButton")
         TacoTipDragButton:RegisterForClicks("MiddleButtonUp", "RightButtonUp")
         local function onDragButtonDragStop(self)
+            self:SetScript("OnUpdate", nil)
             self:StopMovingOrSizing()
             local from, _, to, x, y = self:GetPoint()
             TacoTipConfig.custom_pos = {from, to, x, y}
@@ -1521,7 +1729,19 @@ function TacoTip_CustomPosEnable(show)
             Detours:ScriptUnhook(TT, GameTooltip, "OnShow")
             Detours:ScriptUnhook(TT, GameTooltip, "OnHide")
         end
-        TacoTipDragButton:SetScript("OnDragStart", TacoTipDragButton.StartMoving)
+        TacoTipDragButton:SetScript("OnDragStart", function(self, ...)
+            return safeCall(function()
+                self:StartMoving()
+                self:SetScript("OnUpdate", function()
+                    if (not GameTooltip:IsShown() or not TacoTipConfig.custom_pos) then
+                        return
+                    end
+                    local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
+                    GameTooltip:ClearAllPoints()
+                    GameTooltip:SetPoint(anchorPoint, self, anchorPoint)
+                end)
+            end, ...)
+        end)
         TacoTipDragButton:SetScript("OnDragStop", function(self, ...)
             return safeCall(onDragButtonDragStop, self, ...)
         end)
@@ -1572,6 +1792,7 @@ function TacoTip_CustomPosEnable(show)
         end
         function TacoTipDragButton:_Save()
             syncTooltipMoverPosition(false)
+            GameTooltip:EnableMouse(false)
             TacoTipDragButton:Hide()
             print("|cff59f0dcTacoTip:|r "..L["TEXT_HELP_MOVER_SAVED"])
             refreshOptionsUI()

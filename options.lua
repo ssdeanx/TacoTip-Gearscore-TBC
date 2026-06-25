@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.2"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.4"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -108,8 +108,11 @@ function TT:GetDefaults()
         tooltip_background_texture = "Interface\\Tooltips\\UI-Tooltip-Background",
         tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border",
         tooltip_border_edge_size = 16,
-        tooltip_portrait = false,
+        tooltip_portrait = true,
         tooltip_portrait_scale = 1,
+        tooltip_portrait_3d = true,
+        tooltip_portrait_zoom = 0.7,
+        show_elite_frame = true,
         tooltip_font = "Fonts\\FRIZQT__.TTF",
         tooltip_font_size = 12,
         tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
@@ -128,7 +131,15 @@ function TT:GetDefaults()
         locale_override = nil,
         unlock_info_position = false,
         show_achievement_points = false,
-        guild_rank_style = 1
+        guild_rank_style = 1,
+        show_gs_delta = false,
+        show_honor_rank = false,
+        show_ilvl_inline = false,
+        show_realm = false,
+        show_role_icon = false,
+        show_separators = false,
+        tooltip_delay = 0,
+        tooltip_max_width = 0,
         --conf_version = addOnVersion,
         --custom_pos = nil,
         --custom_anchor = nil,
@@ -136,13 +147,85 @@ function TT:GetDefaults()
 end
 
 function TT:ApplyConfigDefaults(config)
-    if (not config) then
+    if (not config or type(config) ~= "table") then
         return
     end
     for k, v in pairs(self:GetDefaults()) do
         if (config[k] == nil) then
             config[k] = v
         end
+    end
+    self:SafeSanitizeConfig(config)
+end
+
+-- Validates and repairs common saved-variable corruption patterns that can
+-- cause the tooltip to break silently (wrong types, out-of-range values).
+-- Called after defaults are applied every load, so even partially-corrupt
+-- configs are repaired without requiring the user to delete SavedVariables.
+function TT:SafeSanitizeConfig(config)
+    if (not config or type(config) ~= "table") then
+        return
+    end
+
+    local defaults = self:GetDefaults()
+
+    -- Type-check known boolean keys and reset to default if they are not
+    -- actually a boolean.  WoW's saved-variable system sometimes serialises
+    -- "true"/"false" strings instead of real booleans.
+    local booleanKeys = {
+        "color_class", "show_titles", "show_guild_name", "show_guild_rank",
+        "show_talents", "show_gs_player", "show_gs_character", "show_gs_items",
+        "show_gs_items_hs", "show_avg_ilvl", "hide_in_combat", "show_item_level",
+        "tip_style", "show_target", "show_pawn_player", "show_team",
+        "show_class_icon", "show_pvp_icon", "guild_rank_alt_style",
+        "show_hp_bar", "show_power_bar", "tooltip_border_use_class",
+        "tooltip_background_use_class", "tooltip_portrait", "tooltip_portrait_3d",
+        "show_elite_frame", "instant_fade", "anchor_mouse", "anchor_mouse_world",
+        "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
+        "show_gs_delta", "show_honor_rank", "show_ilvl_inline", "show_realm",
+        "show_role_icon", "show_separators"
+    }
+    for _, key in ipairs(booleanKeys) do
+        local val = config[key]
+        if (val ~= nil and type(val) ~= "boolean") then
+            config[key] = defaults[key]
+        end
+    end
+
+    -- Sanitise numeric slider/range keys so out-of-bounds values from
+    -- corruption or old versions do not cause layout or logic issues.
+    if (type(config.class_icon_size) ~= "number" or config.class_icon_size < 8 or config.class_icon_size > 32) then
+        config.class_icon_size = defaults.class_icon_size
+    end
+    if (type(config.tooltip_portrait_scale) ~= "number" or config.tooltip_portrait_scale < 0.5 or config.tooltip_portrait_scale > 2) then
+        config.tooltip_portrait_scale = defaults.tooltip_portrait_scale
+    end
+    if (type(config.tooltip_portrait_zoom) ~= "number" or config.tooltip_portrait_zoom < 0.3 or config.tooltip_portrait_zoom > 1) then
+        config.tooltip_portrait_zoom = defaults.tooltip_portrait_zoom
+    end
+    if (type(config.tooltip_font_size) ~= "number" or config.tooltip_font_size < 8 or config.tooltip_font_size > 20) then
+        config.tooltip_font_size = defaults.tooltip_font_size
+    end
+    if (type(config.tooltip_border_edge_size) ~= "number" or config.tooltip_border_edge_size < 4 or config.tooltip_border_edge_size > 48) then
+        config.tooltip_border_edge_size = defaults.tooltip_border_edge_size
+    end
+    if (type(config.tooltip_border_alpha) ~= "number" or config.tooltip_border_alpha < 0 or config.tooltip_border_alpha > 1) then
+        config.tooltip_border_alpha = defaults.tooltip_border_alpha
+    end
+    if (type(config.tooltip_background_alpha) ~= "number" or config.tooltip_background_alpha < 0 or config.tooltip_background_alpha > 1) then
+        config.tooltip_background_alpha = defaults.tooltip_background_alpha
+    end
+    if (type(config.tip_style) ~= "number" or config.tip_style < 1 or config.tip_style > 5) then
+        config.tip_style = defaults.tip_style
+    end
+    if (type(config.tooltip_delay) ~= "number" or config.tooltip_delay < 0 or config.tooltip_delay > 5) then
+        config.tooltip_delay = defaults.tooltip_delay
+    end
+    if (type(config.tooltip_max_width) ~= "number" or config.tooltip_max_width < 0 or config.tooltip_max_width > 500) then
+        config.tooltip_max_width = defaults.tooltip_max_width
+    end
+    if (type(config.guild_rank_style) ~= "number" or config.guild_rank_style < 1 or config.guild_rank_style > 2) then
+        config.guild_rank_style = defaults.guild_rank_style
     end
 end
 
@@ -226,7 +309,7 @@ local function resetCfg()
     --SetCVar("showItemLevel", "1")
 end
 
-if not TacoTipConfig then
+if not TacoTipConfig or type(TacoTipConfig) ~= "table" then
     resetCfg()
 else
     TT:ApplyConfigDefaults(TacoTipConfig)
@@ -322,6 +405,7 @@ registerSlashCommands()
 -- main frame
 optionsFrame = CreateFrame("Frame","TacoTipOptions")
 optionsFrame.name = addOnTitle or "TacoTip Gearscore TBC"
+optionsFrame:SetSize(640, 400)
 local optionsPages = {
     root = optionsFrame,
     tooltips = CreateFrame("Frame", "TacoTipOptionsTooltips"),
@@ -1448,7 +1532,7 @@ local function buildTooltipsPage()
     local panel = optionsPages.tooltips
     local scrollFrame = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -12)
-    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -320, 12)
+    scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -30, 12)
     scrollFrame:EnableMouseWheel(true)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
         local stepValue = 32
@@ -1550,6 +1634,37 @@ local function buildTooltipsPage()
     controls.showHealthBar:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
     builder.y = builder.y - 30
 
+    controls.showHonorRank = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_HONOR_RANK"] or "Show honor rank", L["OPTIONS_SHOW_HONOR_RANK_DESC"] or "Show the player's PvP rank title (Knight, Centurion, etc.) on the tooltip.", function(_, value)
+        TacoTipConfig.show_honor_rank = value
+        modernShowExampleTooltip()
+    end)
+    controls.showHonorRank:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showRoleIcon = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ROLE_ICON"] or "Show group role icon", L["OPTIONS_SHOW_ROLE_ICON_DESC"] or "Show Tank/Healer/DPS role icons on the name line for party and raid members.", function(_, value)
+        TacoTipConfig.show_role_icon = value
+        modernShowExampleTooltip()
+    end)
+    controls.showRoleIcon:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.showRealm = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_REALM"] or "Show realm", L["OPTIONS_SHOW_REALM_DESC"] or "Show the realm name for players from other servers (cross-realm).", function(_, value)
+        TacoTipConfig.show_realm = value
+        modernShowExampleTooltip()
+    end)
+    controls.showRealm:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    controls.showIlvlInline = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ILVL_INLINE"] or "iLvl on name line", L["OPTIONS_SHOW_ILVL_INLINE_DESC"] or "Show average item level next to the player's name instead of on a separate line.", function(_, value)
+        TacoTipConfig.show_ilvl_inline = value
+        modernShowExampleTooltip()
+    end)
+    controls.showIlvlInline:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
+    builder.y = builder.y - 30
+
+    controls.showGSDelta = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_GS_DELTA"] or "GearScore change indicator", L["OPTIONS_SHOW_GS_DELTA_DESC"] or "Show a delta indicator (▲/▼) next to GearScore when it changed since the last time you saw that player.", function(_, value)
+        TacoTipConfig.show_gs_delta = value
+        modernShowExampleTooltip()
+    end)
+    controls.showGSDelta:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 30
+
     controls.showPowerBar = createOptionsCheckbox(content, nil, L["Power Bar"], L["Show unit's power bar under tooltip"], function(_, value) TacoTipConfig.show_power_bar = value; modernShowExampleTooltip() end)
     controls.showPowerBar:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 42
@@ -1640,6 +1755,20 @@ local function buildTooltipsPage()
     end)
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipBorderTextureChoice, builder.y)
 
+    controls.showSeparators = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_SEPARATORS"] or "Show section separators", L["OPTIONS_SHOW_SEPARATORS_DESC"] or "Add thin horizontal lines between logical sections of the tooltip for visual clarity.", function(_, value)
+        TacoTipConfig.show_separators = value
+        modernShowExampleTooltip()
+    end)
+    controls.showSeparators:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.tooltipMaxWidth = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_MAX_WIDTH"] or "Tooltip max width", L["OPTIONS_TOOLTIP_MAX_WIDTH_DESC"] or "Set a maximum width for the tooltip to prevent it from becoming too wide with long names or guild titles. Set to 0 for no limit.", function(value)
+        TacoTipConfig.tooltip_max_width = value
+        modernShowExampleTooltip()
+    end, 0, 500, 10)
+    controls.tooltipMaxWidth:SetPoint("TOPLEFT", content, "TOPLEFT", 214, builder.y)
+    controls.tooltipMaxWidth.valueText:SetPoint("LEFT", controls.tooltipMaxWidth, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
     local portraitTextHeader = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     portraitTextHeader:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
     portraitTextHeader:SetText(L["OPTIONS_SECTION_TEXT_AND_PORTRAIT"] or "Portrait & text")
@@ -1660,6 +1789,29 @@ local function buildTooltipsPage()
     controls.tooltipPortraitScale:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
     controls.tooltipPortraitScale.valueText:SetPoint("LEFT", controls.tooltipPortraitScale, "RIGHT", 8, 0)
     builder.y = builder.y - 56
+
+    controls.tooltipPortrait3D = createOptionsCheckbox(content, nil, L["OPTIONS_TOOLTIP_PORTRAIT_3D"] or "Show 3D portrait", L["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] or "Use a live 3D model instead of a 2D portrait texture.", function(_, value)
+        TacoTipConfig.tooltip_portrait_3d = value
+        modernGetConfig()
+        modernShowExampleTooltip()
+    end)
+    controls.tooltipPortrait3D:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 34
+
+    controls.tooltipPortraitZoom = createOptionsSlider(content, nil, L["OPTIONS_PORTRAIT_ZOOM"] or "Portrait zoom", L["OPTIONS_PORTRAIT_ZOOM_DESC"] or "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face.", function(value)
+        TacoTipConfig.tooltip_portrait_zoom = value / 100
+        modernShowExampleTooltip()
+    end, 30, 100, 5)
+    controls.tooltipPortraitZoom:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.tooltipPortraitZoom.valueText:SetPoint("LEFT", controls.tooltipPortraitZoom, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
+    controls.showEliteFrame = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ELITE_FRAME"] or "Show elite indicator", L["OPTIONS_SHOW_ELITE_FRAME_DESC"] or "Show the Elite, Rare, or Boss dragon border overlay on the portrait for non-player NPCs.", function(_, value)
+        TacoTipConfig.show_elite_frame = value
+        modernShowExampleTooltip()
+    end)
+    controls.showEliteFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 34
 
     controls.classIconSize = createOptionsSlider(content, nil, "Class icon size", "Size of the class icon badge shown at the top-right corner of player tooltips.", function(value)
         TacoTipConfig.class_icon_size = value
@@ -1698,10 +1850,26 @@ local function buildTooltipsPage()
 
     builder:Finalize(128)
 
-    local previewPane = CreateFrame("Frame", nil, panel)
-    previewPane:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -20, -20)
-    previewPane:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -20, 20)
+    -- Preview pane floats to the right of the Blizzard Settings panel.
+    -- Parented to UIParent so it is never clipped by the Settings frame
+    -- hierarchy; strata FULLSCREEN_DIALOG ensures it renders above.
+    local previewPane = CreateFrame("Frame", nil, UIParent)
+    previewPane:SetFrameStrata("FULLSCREEN_DIALOG")
+    previewPane:SetFrameLevel(100)
     previewPane:SetWidth(250)
+    previewPane:Hide()
+
+    -- Position the preview to the right of the tooltips page on first build.
+    -- The preview is not shown here — it only appears via OnShow/OnHide on
+    -- the tooltips page, so it's never visible on other pages.
+    do
+        local panelW = panel:GetWidth() or 640
+        local panelH = panel:GetHeight() or 400
+        previewPane:ClearAllPoints()
+        previewPane:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
+        previewPane:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
+    end
+    modernOptionsState.previewPane = previewPane
 
     local previewTitle = previewPane:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     previewTitle:SetPoint("TOPLEFT", previewPane, "TOPLEFT", 0, 0)
@@ -1720,7 +1888,7 @@ local function buildTooltipsPage()
     modernOptionsState.previewAnchor:SetPoint("TOPRIGHT", previewPane, "TOPRIGHT", 0, 0)
     modernOptionsState.previewAnchor:SetHeight(220)
 
-    modernOptionsState.preview = CreateFrame("GameTooltip", "TacoTipModernPreviewTooltip", panel, "GameTooltipTemplate")
+    modernOptionsState.preview = CreateFrame("GameTooltip", "TacoTipModernPreviewTooltip", previewPane, "GameTooltipTemplate")
     modernOptionsState.previewHealthBar = CreateFrame("StatusBar", nil, modernOptionsState.preview)
     modernOptionsState.previewHealthBar:SetSize(0, 8)
     modernOptionsState.previewHealthBar:SetPoint("TOPLEFT", modernOptionsState.preview, "BOTTOMLEFT", 2, -1)
@@ -1734,6 +1902,33 @@ local function buildTooltipsPage()
     modernOptionsState.previewPowerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
     modernOptionsState.previewPowerBar:SetStatusBarColor(1, 1, 0)
     modernOptionsState.preview:SetScript("OnEvent", function() modernShowExampleTooltip() end)
+
+    panel:SetScript("OnShow", function()
+        -- Reposition the floating preview to the right of the panel
+        -- each time the page is shown (panel may have been resized).
+        local pp = modernOptionsState.previewPane
+        if (pp) then
+            local panelW = panel:GetWidth() or 640
+            local panelH = panel:GetHeight() or 400
+            pp:ClearAllPoints()
+            pp:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
+            pp:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
+            pp:Show()
+        end
+        if (modernOptionsState.preview) then
+            modernOptionsState.preview:RegisterEvent("MODIFIER_STATE_CHANGED")
+        end
+        if (panel.Refresh) then panel:Refresh() end
+    end)
+    panel:SetScript("OnHide", function()
+        local pp = modernOptionsState.previewPane
+        if (pp) then
+            pp:Hide()
+        end
+        if (modernOptionsState.preview) then
+            modernOptionsState.preview:UnregisterEvent("MODIFIER_STATE_CHANGED")
+        end
+    end)
 
     panel.Refresh = function()
         controls.tooltipFontChoice:SetValues(TT:GetTooltipFontChoices())
@@ -1775,24 +1970,25 @@ local function buildTooltipsPage()
         controls.tooltipPortrait:SetChecked(TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
         controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
+        controls.tooltipPortrait3D:SetChecked(TacoTipConfig.tooltip_portrait_3d)
+        controls.tooltipPortrait3D:SetDisabled(not TacoTipConfig.tooltip_portrait)
+        controls.tooltipPortraitZoom:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_zoom or 0.7) * 100 + 0.5))
+        controls.tooltipPortraitZoom:SetDisabled(not TacoTipConfig.tooltip_portrait)
+        controls.showEliteFrame:SetChecked(TacoTipConfig.show_elite_frame)
+        controls.showEliteFrame:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 20)
         controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
         controls.tooltipFontSize:SetValueSilently(TacoTipConfig.tooltip_font_size or 12)
         controls.tooltipBarTextureChoice:SetValue(TT:GetResolvedTooltipStatusBarTexture())
+        controls.showHonorRank:SetChecked(TacoTipConfig.show_honor_rank)
+        controls.showRoleIcon:SetChecked(TacoTipConfig.show_role_icon)
+        controls.showRealm:SetChecked(TacoTipConfig.show_realm)
+        controls.showIlvlInline:SetChecked(TacoTipConfig.show_ilvl_inline)
+        controls.showGSDelta:SetChecked(TacoTipConfig.show_gs_delta)
+        controls.showSeparators:SetChecked(TacoTipConfig.show_separators)
+        controls.tooltipMaxWidth:SetValueSilently(TacoTipConfig.tooltip_max_width or 0)
         modernShowExampleTooltip()
     end
-
-    panel:SetScript("OnShow", function()
-        if (modernOptionsState.preview) then
-            modernOptionsState.preview:RegisterEvent("MODIFIER_STATE_CHANGED")
-        end
-        if (panel.Refresh) then panel:Refresh() end
-    end)
-    panel:SetScript("OnHide", function()
-        if (modernOptionsState.preview) then
-            modernOptionsState.preview:UnregisterEvent("MODIFIER_STATE_CHANGED")
-        end
-    end)
 
     modernOptionsState.pages.tooltipsBuilt = true
 end
@@ -1907,6 +2103,13 @@ local function buildPositioningPage()
     controls.instantFade:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 38
 
+    controls.tooltipDelay = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_DELAY"] or "Tooltip delay (ms)", L["OPTIONS_TOOLTIP_DELAY_DESC"] or "Add a short delay before the tooltip appears to prevent flicker when quickly moving the mouse. 0 = no delay.", function(value)
+        TacoTipConfig.tooltip_delay = value / 1000
+    end, 0, 1000, 50)
+    controls.tooltipDelay:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
+    controls.tooltipDelay.valueText:SetPoint("LEFT", controls.tooltipDelay, "RIGHT", 8, 0)
+    builder.y = builder.y - 56
+
     builder:Finalize(64)
 
     panel.Refresh = function()
@@ -1922,6 +2125,7 @@ local function buildPositioningPage()
         controls.anchorMouseWorld:SetDisabled(not TacoTipConfig.anchor_mouse)
         controls.customAnchor:SetDisabled(not hasCustomPos)
         setButtonEnabled(controls.moverBtn, hasCustomPos)
+        controls.tooltipDelay:SetValueSilently(math.floor((TacoTipConfig.tooltip_delay or 0) * 1000 + 0.5))
     end
 
     panel:SetScript("OnShow", function()
@@ -2080,6 +2284,12 @@ local function ensureModernOptionsBuilt()
     if (modernOptionsState.built) then
         return
     end
+    -- Set a minimum content size for child pages so they display
+    -- correctly even in narrow Blizzard Settings canvases.
+    optionsPages.tooltips:SetSize(640, 400)
+    optionsPages.positioning:SetSize(640, 400)
+    optionsPages.characterInspect:SetSize(640, 400)
+
     buildRootPage()
     buildTooltipsPage()
     buildPositioningPage()
@@ -2095,6 +2305,19 @@ end
 
 local function onPageShow(panel)
     ensureModernOptionsBuilt()
+    -- Show the floating preview pane when the tooltips page is opened.
+    -- Other child pages (positioning, characterInspect) do not show it.
+    if (panel == optionsPages.tooltips) then
+        local pp = modernOptionsState.previewPane
+        if (pp and not pp:IsShown()) then
+            local panelW = panel:GetWidth() or 640
+            local panelH = panel:GetHeight() or 400
+            pp:ClearAllPoints()
+            pp:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
+            pp:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
+            pp:Show()
+        end
+    end
     if (panel and panel.Refresh) then panel:Refresh() end
 end
 local function onOptionsFrameShow(panel)

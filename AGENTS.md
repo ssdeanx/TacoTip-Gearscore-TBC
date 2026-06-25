@@ -2,8 +2,8 @@
 
 ## Recent manifest note
 
-- As of 2026-05-28, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
-- The current release target is `0.5.1`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
+- As of 2026-06-24, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
+- The current release target is `0.5.4`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
 
 ## Repo overview
 
