@@ -1139,6 +1139,18 @@ ShoppingTooltip1:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ShoppingTooltip2:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 
+-- Spell tooltips: clear stale unit visuals (portrait, elite frame, class color)
+-- when the tooltip is re-purposed from a unit to a spell. GameTooltip is a
+-- singleton and SetSpell does not always call Clear() first, so a portrait
+-- from a previous unit hover would otherwise persist on the spell tooltip.
+local function safeClearTooltipVisuals(tooltip, ...)
+    return safeCall(clearTooltipVisuals, tooltip, ...)
+end
+
+GameTooltip:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
+ShoppingTooltip1:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
+ShoppingTooltip2:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
+ItemRefTooltip:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
 
 GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
     cancelDelayedTooltip()
@@ -1203,6 +1215,7 @@ end)
 
 GameTooltip:HookScript("OnHide", function()
     cancelDelayedTooltip()
+    clearTooltipVisuals(GameTooltip)
 end)
 
 local function CreateMouseAnchor()
