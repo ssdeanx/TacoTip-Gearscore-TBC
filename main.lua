@@ -498,8 +498,8 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
 
     local portrait = ensureTooltipPortrait(tooltip)
     local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
-    local portraitW = math.floor(38 * portraitScale)
-    local portraitH = math.floor(52 * portraitScale)
+    local portraitW = math.floor(40 * portraitScale)
+    local portraitH = math.floor(56 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
             portrait:ClearAllPoints()
@@ -1152,6 +1152,22 @@ ShoppingTooltip1:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
 ShoppingTooltip2:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
 ItemRefTooltip:HookScript("OnTooltipSetSpell", safeClearTooltipVisuals)
 
+-- Catch every remaining OnTooltipSet* event so stale unit visuals
+-- (portrait, elite frame, class color) are cleared when the tooltip is
+-- repurposed for non-unit content.  Belt-and-suspenders alongside the
+-- onTooltipShow safety net — covers the frame where Clear() is not called.
+-- OnTooltipSetItem and OnTooltipSetSpell are already hooked above.
+local nonUnitSetEvents = {
+    "OnTooltipSetAchievement",
+    "OnTooltipSetQuest",
+    "OnTooltipSetSkill",
+    "OnTooltipSetToy",
+    "OnTooltipSetRecipeRank",
+}
+for _, event in ipairs(nonUnitSetEvents) do
+    GameTooltip:HookScript(event, safeClearTooltipVisuals)
+end
+
 GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
     cancelDelayedTooltip()
     return safeCall(clearTooltipVisuals, tooltip, ...)
@@ -1169,44 +1185,51 @@ ItemRefTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
     return safeCall(clearTooltipVisuals, tooltip, ...)
 end)
 
--- Re-apply the class-tinted border whenever the tooltip shows, in case a
--- re-show skipped OnTooltipSetUnit (e.g. anchor re-fire with cached text)
--- and left SetBackdrop's default 0.5/0.5/0.5 gray border in place. Deferred
--- to the next frame so it runs AFTER Blizzard finishes its own internal
--- OnShow/backdrop setup - otherwise Blizzard's subsequent SetBackdrop on
--- the same frame resets the border back to default gray.
+-- Safety net: whenever the tooltip is shown, check whether it actually
+-- shows a unit of any kind.  If it does NOT (character panel buttons,
+-- flight points, world map pins, raw text tooltips, etc.), proactively
+-- clear any stale unit visuals (portrait, elite frame, class color) that
+-- might have lingered from a previous OnTooltipSetUnit.
+-- This catches every case where OnTooltipCleared doesn't fire because
+-- the content was changed in-place without an explicit Clear() call.
 local function onTooltipShow(tooltip)
-    local cached = tooltip and tooltip.TacoTipPlayerClassColor
-    if (not cached) then
-        return
-    end
-    if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
-        return
-    end
-
-    -- Only apply class-tinted borders when the tooltip actually shows a
-    -- player unit.  Map icons, items, and other non-unit tooltips should
-    -- never inherit a stale class border.
     local unit = resolveTooltipUnit(tooltip)
-    if (not unit or not UnitIsPlayer(unit)) then
+    if (not unit) then
+        -- No unit at all — clear stale unit visuals.
+        clearTooltipVisuals(tooltip)
         return
     end
 
-    CAfter(0, function()
-        return safeCall(function()
-            if (not tooltip or not tooltip:IsShown()) then
-                return
-            end
-            local refreshed = tooltip.TacoTipPlayerClassColor
-            if (not refreshed) then
-                return
-            end
-            if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
-                return
-            end
-            applyTooltipBorderOverlay(tooltip, nil, refreshed.r, refreshed.g, refreshed.b)
+    -- Player-unit tooltip: re-apply the class-tinted border if another
+    -- addon or Blizzard re-set the backdrop after OnTooltipSetUnit.
+    -- Deferred to the next frame so it runs AFTER Blizzard's own
+    -- OnShow/backdrop setup — otherwise Blizzard's subsequent
+    -- SetBackdrop resets the border back to default gray.
+    if (UnitIsPlayer(unit)) then
+        local cached = tooltip and tooltip.TacoTipPlayerClassColor
+        if (not cached) then
+            return
+        end
+        if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+            return
+        end
+
+        CAfter(0, function()
+            return safeCall(function()
+                if (not tooltip or not tooltip:IsShown()) then
+                    return
+                end
+                local refreshed = tooltip.TacoTipPlayerClassColor
+                if (not refreshed) then
+                    return
+                end
+                if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
+                    return
+                end
+                applyTooltipBorderOverlay(tooltip, nil, refreshed.r, refreshed.g, refreshed.b)
+            end)
         end)
-    end)
+    end
 end
 
 GameTooltip:HookScript("OnShow", function(tooltip, ...)
@@ -1217,6 +1240,29 @@ GameTooltip:HookScript("OnHide", function()
     cancelDelayedTooltip()
     clearTooltipVisuals(GameTooltip)
 end)
+
+-- Broad catch-all: every time ANY code adds a text line to GameTooltip,
+-- check whether the tooltip is currently showing a unit.  If it is NOT,
+-- clear any stale unit visuals (portrait, elite frame, class color).
+-- This is the most reliable safety net because AddLine is the single
+-- lowest-level content method called by virtually every code path that
+-- populates GameTooltip, including SetText, SetHyperlink, SetAction,
+-- SetMerchantItem, and all other Set* methods.  Unit tooltips also go
+-- through AddLine, but at that point GetUnit() already returns the unit
+-- so we skip the clear.
+local function safeCheckClearOnAddLine(self, ...)
+    return safeCall(function()
+        local unit = resolveTooltipUnit(self)
+        if (not unit) then
+            clearTooltipVisuals(self)
+        end
+    end)
+end
+
+-- AddLine is safe to hook via hooksecurefunc on all supported clients.
+-- If it is not available on a particular client, the pcall silently
+-- skips the hook.
+pcall(hooksecurefunc, GameTooltip, "AddLine", safeCheckClearOnAddLine)
 
 local function CreateMouseAnchor()
     TacoTipMouseAnchor = CreateFrame("Frame", nil, UIParent)
@@ -1251,7 +1297,8 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
             if (not TacoTipMouseAnchor) then
                 CreateMouseAnchor()
-                CreateMouseAnchor = nil
+                ---@diagnostic disable-next-line: cast-local-type
+                CreateMouseAnchor = nil  -- self-cleanup: prevent re-creation
             end
             tooltip:SetOwner(TacoTipMouseAnchor,"ANCHOR_NONE")
             tooltip:ClearAllPoints()
