@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.5.6` | `2026-07-11` | Fix: portrait bleed-through on non-unit tooltips (items, buffs, UI menus, options hover-help) |
 | `0.5.5` | `2026-06-24` | Hotfix: `clearTooltipVisuals` forward-reference crash when triggered by other addons (BugSack error on Bartender4/LoonBestInSlot tooltip events) |
 | `0.5.4` | `2026-06-24` | Tooltip contamination fix (class border on non-player tooltips), settings-leak fix (item tooltips no longer get portrait/class icon), minimap flicker fix, options UI sizing fix, floating preview pane, config corruption sanitizer, class-borders only for player units |
 | `0.5.3` | `2026-06-14` | Real-time mover, 3D PlayerModel portrait, elite/rare/boss atlas portrait overlay, right-click camera passthrough |
@@ -13,6 +14,19 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.6] - 2026-07-11
+
+### Fixed - 0.5.6
+
+- **Portrait bleed-through on non-unit tooltips (F1/F2/F3):** When a unit was targeted and the user hovered over other Blizzard UI elements (character pane items, buffs, action bars, UI menus, options hover-help), the unit's portrait persisted on GameTooltip. Root cause: the portrait was only hidden via `OnTooltipCleared`, but the TBC Anniversary client can transition tooltip content through paths that skip this event (`OnShow` without a preceding `Clear()`, `OnTooltipSetUnit` with an invalid unit, `ClearLines()` + `Show()` in addon code). Three defensive layers added:
+  - `onTooltipShow` now calls `clearTooltipVisuals(tooltip)` in its early-return path (when no class color is cached), covering all Show-based transitions including `showHoverTooltip` in the options panel.
+  - `onTooltipSetUnit`'s invalid-unit branch now also calls `clearTooltipVisuals(tooltip)` alongside the existing `clearTooltipPlayerClassColor`.
+  - A new `GameTooltip:HookScript("OnTooltipSetSpell", ...)` handler calls `clearTooltipVisuals` when buff/spell content is displayed, catching the direct spell-tooltip path.
+
+### Notes - 0.5.6
+
+- Version metadata bumped to `0.5.6` in `TacoTip.toc`, `main.lua`, and `options.lua`.
 
 ## [0.5.5] - 2026-06-24
 

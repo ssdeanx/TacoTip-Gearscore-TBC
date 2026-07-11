@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.5"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.6"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -597,7 +597,11 @@ local function onTooltipSetUnit(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit) then
+        -- F2: OnTooltipSetUnit can fire with a stale/invalid unit during
+        -- content transitions. Clear both class color and portrait visuals
+        -- here so the portrait from the previous unit does not persist.
         clearTooltipPlayerClassColor(tooltip)
+        clearTooltipVisuals(tooltip)
         return
     end
 
@@ -1170,6 +1174,11 @@ end)
 local function onTooltipShow(tooltip)
     local cached = tooltip and tooltip.TacoTipPlayerClassColor
     if (not cached) then
+        -- F1: When the tooltip shows for non-unit content (items, spells, UI
+        -- elements, options hover-help), the portrait from a previous unit
+        -- display must be cleared.  OnTooltipCleared may not have fired on
+        -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
+        clearTooltipVisuals(tooltip)
         return
     end
     if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
@@ -1203,6 +1212,13 @@ end
 
 GameTooltip:HookScript("OnShow", function(tooltip, ...)
     return safeCall(onTooltipShow, tooltip, ...)
+end)
+
+-- F3: Ensure portrait is hidden when the tooltip shows spell/buff content
+-- (OnTooltipCleared is not guaranteed to fire before OnTooltipSetSpell in the
+-- TBC Anniversary client, leaving a stale portrait visible).
+GameTooltip:HookScript("OnTooltipSetSpell", function(tooltip, ...)
+    return safeCall(clearTooltipVisuals, tooltip, ...)
 end)
 
 GameTooltip:HookScript("OnHide", function()

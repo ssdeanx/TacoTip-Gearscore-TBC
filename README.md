@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.5.4` |
+| Public version | `v0.5.6` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -80,6 +80,7 @@ The current public build includes all of the following work:
 - **`safeCall` error capture on all hooks:** all GameTooltip script hooks, event handlers, and callback shims are wrapped in `xpcall(..., geterrorhandler(), ...)` so errors are captured by BugSack/!Swatter instead of silently breaking tooltips.
 - **Class-colored borders now apply to player units only.** Item, spell, buff, NPC, and map-icon tooltips use base colours exclusively — no class-border bleed.
 - **Tooltip contamination fixed.** Player portraits (2D + 3D PlayerModel), elite frames, and class colors are cleaned from every tooltip frame on clear or item-switch, so hovering a player then an item never shows a lingering player model.
+- **Portrait bleed-through eliminated (v0.5.6).** The unit portrait on GameTooltip is now hidden on every tooltip-content transition path — OnShow, OnTooltipSetSpell, OnTooltipSetUnit with invalid unit — not only on OnTooltipCleared. This prevents the player's portrait from persisting when hovering buffs, items, action bars, UI menus, or character-pane equipment after targeting a unit.
 - **Config corruption protection.** `SafeSanitizeConfig` validates every boolean and numeric key on load, repairing corrupt values (string `"true"`/`"false"`, out-of-range numbers) without requiring the user to delete SavedVariables.
 - **Minimap/map-icon flicker eliminated.** Class-border follow-up only fires on player-unit tooltips, preventing the one-frame-delay border change that caused visible stutter on map icons.
 - **Options preview moved outside the settings panel.** The live preview floats to the right of the Blizzard Settings window so the scroll content takes the full panel width.
@@ -243,7 +244,7 @@ Current localization work included in this build:
 | Optional Pawn support | Enabled automatically when Pawn is installed |
 | Optional SharedMedia support | Used automatically when compatible fonts/textures are registered |
 | Saved settings | Stored through `TacoTipConfig` (auto-repaired on load if corrupt) |
-| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.4` |
+| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.6` |
 | Feedback | Use project comments or the issue tracker |
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.
