@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.6"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.7"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -1358,7 +1358,8 @@ modernShowExampleTooltip = function()
     end
 
     if (isPawnLoaded and TacoTipConfig.show_pawn_player) then
-        local specColor = PawnGetScaleColor("\"Classic\":ROGUE1", true) or "|cffffffff"
+        local pcOk, pcResult = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
+        local specColor = pcOk and pcResult or "|cffffffff"
         if (wideStyle) then
             tooltip:AddDoubleLine(string.format("Pawn: %s1234.56|r", specColor), string.format("%s(%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1, 1, 1, 1)
         elseif (miniStyle) then

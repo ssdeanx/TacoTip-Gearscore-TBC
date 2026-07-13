@@ -4,7 +4,8 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
-| `0.5.6` | `2026-07-11` | Fix: portrait bleed-through on non-unit tooltips (items, buffs, UI menus, options hover-help) |
+| `0.5.7` | `2026-07-12` | Cross-client hardening: pcall guards on PawnGetScaleColor + SetPortraitTexture, LibClassicInspector nameplate field fix |
+| `0.5.6` | `2026-07-11` | Fix: portrait bleed-through on non-unit tooltips |
 | `0.5.5` | `2026-06-24` | Hotfix: `clearTooltipVisuals` forward-reference crash when triggered by other addons (BugSack error on Bartender4/LoonBestInSlot tooltip events) |
 | `0.5.4` | `2026-06-24` | Tooltip contamination fix (class border on non-player tooltips), settings-leak fix (item tooltips no longer get portrait/class icon), minimap flicker fix, options UI sizing fix, floating preview pane, config corruption sanitizer, class-borders only for player units |
 | `0.5.3` | `2026-06-14` | Real-time mover, 3D PlayerModel portrait, elite/rare/boss atlas portrait overlay, right-click camera passthrough |
@@ -14,6 +15,18 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.7] - 2026-07-12
+
+### Fixed - 0.5.7
+
+- **Pawn "scale colors" error on Season of Discovery (SoD):** `PawnGetScaleColor` throws "can't get scale colors until pawn is initialized" when called before Pawn's scale data is ready — the Classic Era client (SoD) fires tooltip events before Pawn finishes initializing. Wrapped the call in `pcall` so the error is caught silently and the tooltip renders without interruption. No behavioral change on TBC/Wrath where Pawn is always initialized before the first tooltip event.
+- **SetPortraitTexture crash on non-player units with 3D portrait mode:** When 3D portrait mode was enabled but the target was an NPC/mob, `SetPortraitTexture` received a `PlayerModel` frame instead of a `Texture` and threw. Wrapped in `pcall` — portrait silently skips for non-player units when 3D mode is on. Fixes SoD crash; TBC/Wrath silently tolerated the mismatch.
+- **LibClassicInspector nameplate GUID lookup crash (TBC Anniversary):** `PlayerGUIDToUnitToken` used `nameplate.namePlateUnitToken` but the TBC Anniversary API exposes `nameplate.unitToken`. The nil field caused `UnitGUID(nil)` to throw ~5000 times per session. Fixed to read `nameplate.unitToken or nameplate.namePlateUnitToken` with a `GetNamePlates()` existence guard. SoD Classic Era also benefits from the guard.
+
+### Notes - 0.5.7
+
+- Version metadata bumped to `0.5.7` in `TacoTip.toc`, `main.lua`, and `options.lua`.
 
 ## [0.5.6] - 2026-07-11
 

@@ -3872,10 +3872,13 @@ function lib:PlayerGUIDToUnitToken(guid)
         return "mouseover"
     end
     if (GetCVar("nameplateShowFriends") == "1" or GetCVar("nameplateShowEnemies") == "1") then
-        local nameplatesArray = GetNamePlates()
-        for i, nameplate in ipairs(nameplatesArray) do
-            if (UnitGUID(nameplate.namePlateUnitToken) == guid) then
-                return nameplate.namePlateUnitToken
+        local nameplatesArray = type(GetNamePlates) == "function" and GetNamePlates() or nil
+        if (nameplatesArray) then
+            for i, nameplate in ipairs(nameplatesArray) do
+                local token = nameplate.unitToken or nameplate.namePlateUnitToken
+                if (token and UnitGUID(token) == guid) then
+                    return token
+                end
             end
         end
     end

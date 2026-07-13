@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.6"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.7"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -514,7 +514,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 pcall(portrait.SetUnit, portrait, unit)
                 pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
             else
-                _G.SetPortraitTexture(portrait, unit)
+                pcall(_G.SetPortraitTexture, portrait, unit)
             end
             portrait:Show()
         else
@@ -1294,8 +1294,11 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
 end)
 
 local function getDefaultTooltipMoverPosition()
-    local anchorPoint = (TacoTipConfig and TacoTipConfig.custom_anchor) or "TOPLEFT"
-    return {anchorPoint, anchorPoint, 0, 0}
+    -- BOTTOMRIGHT = bottom-right corner of the screen.
+    -- This is the STARTING position of the green dot ONLY.
+    -- It is independent of custom_anchor (which controls where the
+    -- tooltip appears relative to the dot, not where the dot sits).
+    return {"BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0}
 end
 
 local function syncTooltipMoverPosition(showExample)
@@ -1669,7 +1672,7 @@ end
 function TacoTip_CustomPosEnable(show)
     if (not TacoTipDragButton) then
         TacoTipDragButton = CreateFrame("Button", nil, UIParent)
-        TacoTipDragButton:SetFrameStrata("TOOLTIP")
+        TacoTipDragButton:SetFrameStrata("DIALOG")
         TacoTipDragButton:SetFrameLevel(999)
         TacoTipDragButton:EnableMouse(true)
         TacoTipDragButton:SetMovable(true)
