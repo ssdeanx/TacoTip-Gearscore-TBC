@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.7"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.8"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -1275,16 +1275,20 @@ local function refreshOverlayPositions()
 end
 
 modernShowExampleTooltip = function()
-    local tooltip = modernOptionsState.preview
-    local previewAnchor = modernOptionsState.previewAnchor
-    if (not tooltip or not previewAnchor) then
-        return
-    end
+    local ok, err = xpcall(function()
+        local tooltip = modernOptionsState.preview
+        local previewAnchor = modernOptionsState.previewAnchor
+        if (not tooltip or not previewAnchor) then
+            return
+        end
 
-    tooltip:SetOwner(previewAnchor, "ANCHOR_NONE")
-    tooltip:ClearLines()
-    tooltip:ClearAllPoints()
-    tooltip:SetPoint("TOPLEFT", previewAnchor, "TOPLEFT", 0, 0)
+        -- Hide + SetOwner + ClearAllPoints ensures a clean layout state
+        -- before re-populating.  Re-layout happens on the next Show().
+        tooltip:Hide()
+        tooltip:SetOwner(previewAnchor, "ANCHOR_NONE")
+        tooltip:ClearLines()
+        tooltip:ClearAllPoints()
+        tooltip:SetPoint("TOPLEFT", previewAnchor, "TOPLEFT", 0, 0)
 
     local classc = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS["ROGUE"] or RAID_CLASS_COLORS["ROGUE"]
     local name_r = TacoTipConfig.color_class and classc and classc.r or 0
@@ -1297,6 +1301,12 @@ modernShowExampleTooltip = function()
     end
     if (TacoTipConfig.show_pvp_icon) then
         iconSuffix = iconSuffix .. " " .. PVP_FLAG_ICON
+    end
+    if (TacoTipConfig.show_class_icon) then
+        iconSuffix = iconSuffix .. " " .. (TT and TT.GetClassIconMarkup and TT:GetClassIconMarkup("ROGUE") or "")
+    end
+    if (TacoTipConfig.show_role_icon) then
+        iconSuffix = iconSuffix .. " |TInterface\\GroupFrame\\UI-Group-DPSIcon:18:18:0:0:16:16:0:16:0:16|t"
     end
     tooltip:AddLine(string.format("|cFF%02x%02x%02xAcidBomb%s%s|r", name_r*255, name_g*255, name_b*255, playerTitle, iconSuffix))
 
@@ -1313,17 +1323,29 @@ modernShowExampleTooltip = function()
     end
 
     if (TacoTipConfig.color_class) then
-        tooltip:AddLine(string.format("%s 80 %s |cFF%02x%02x%02x%s|r (%s)", L["Level"], L["Undead"], name_r*255, name_g*255, name_b*255, LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
+        tooltip:AddLine(string.format("%s 60 %s |cFF%02x%02x%02x%s|r (%s)", L["Level"], L["Undead"], name_r*255, name_g*255, name_b*255, LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
     else
-        tooltip:AddLine(string.format("%s 80 %s %s (%s)", L["Level"], L["Undead"], LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
+        tooltip:AddLine(string.format("%s 60 %s %s (%s)", L["Level"], L["Undead"], LOCALIZED_CLASS_NAMES_MALE["ROGUE"], L["Player"]), 1, 1, 1)
+    end
+
+    if (TacoTipConfig.show_realm) then
+        tooltip:AddLine("|cFF808080" .. (L["REALM"] or "Realm") .. ": " .. GetRealmName() .. "|r", 1, 1, 1)
     end
 
     if (not TacoTipConfig.show_pvp_icon) then
         tooltip:AddLine("PvP", 1, 1, 1)
     end
 
+    if (TacoTipConfig.show_honor_rank) then
+        tooltip:AddLine((L["Honor Rank"] or "Honor Rank: ") .. (L["RANK_TITLE"] or "Champion"), 1, 1, 1)
+    end
+
     local wideStyle = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
     local miniStyle = (not wideStyle and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
+
+    if (TacoTipConfig.show_separators) then
+        tooltip:AddLine(" ")
+    end
 
     if (TacoTipConfig.show_target) then
         if (wideStyle) then
@@ -1334,8 +1356,8 @@ modernShowExampleTooltip = function()
     end
 
     if (TacoTipConfig.show_talents) then
-        local primarySpecText = (TT.GetFormattedSpecializationText and TT:GetFormattedSpecializationText("ROGUE", 1, 51, 18, 2)) or (CI:GetSpecializationName("ROGUE", 1, true).." [51/18/2]")
-        local secondarySpecText = (TT.GetFormattedSpecializationText and TT:GetFormattedSpecializationText("ROGUE", 3, 14, 3, 54)) or (CI:GetSpecializationName("ROGUE", 3, true).." [14/3/54]")
+        local primarySpecText = (TT.GetFormattedSpecializationText and TT:GetFormattedSpecializationText("ROGUE", 1, 20, 31, 0)) or (CI:GetSpecializationName("ROGUE", 1, true).." [20/31/0]")
+        local secondarySpecText = (TT.GetFormattedSpecializationText and TT:GetFormattedSpecializationText("ROGUE", 3, 5, 0, 46)) or (CI:GetSpecializationName("ROGUE", 3, true).." [5/0/46]")
         if (wideStyle) then
             tooltip:AddDoubleLine(L["Talents"]..":", primarySpecText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1)
             tooltip:AddDoubleLine(" ", secondarySpecText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1)
@@ -1346,14 +1368,16 @@ modernShowExampleTooltip = function()
 
     local miniText = ""
     if (TacoTipConfig.show_gs_player) then
-        local gs_r, gs_g, gs_b = GearScore:GetQuality(6054)
+        local gs_r, gs_g, gs_b = GearScore:GetQuality(2517)
         if (wideStyle) then
-            tooltip:AddDoubleLine("GearScore: 6054", "(iLvl: 264)", gs_r, gs_g, gs_b, gs_r, gs_g, gs_b)
+            tooltip:AddDoubleLine("GearScore: 2517", "(iLvl: 79)", gs_r, gs_g, gs_b, gs_r, gs_g, gs_b)
         elseif (miniStyle) then
-            miniText = string.format("|cFF%02x%02x%02xGS: 6054  L: 264|r  ", gs_r*255, gs_g*255, gs_b*255)
+            miniText = string.format("|cFF%02x%02x%02xGS: 2517  L: 79|r  ", gs_r*255, gs_g*255, gs_b*255)
         else
-            tooltip:AddLine("GearScore: 6054", gs_r, gs_g, gs_b)
-            tooltip:AddLine("iLvl: 264", gs_r, gs_g, gs_b)
+            tooltip:AddLine("GearScore: 2517", gs_r, gs_g, gs_b)
+            if (not TacoTipConfig.show_ilvl_inline) then
+                tooltip:AddLine("iLvl: 79", gs_r, gs_g, gs_b)
+            end
         end
     end
 
@@ -1361,16 +1385,23 @@ modernShowExampleTooltip = function()
         local pcOk, pcResult = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
         local specColor = pcOk and pcResult or "|cffffffff"
         if (wideStyle) then
-            tooltip:AddDoubleLine(string.format("Pawn: %s1234.56|r", specColor), string.format("%s(%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1, 1, 1, 1)
+            tooltip:AddDoubleLine(string.format("Pawn: %s456.78|r", specColor), string.format("%s(%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1, 1, 1, 1)
         elseif (miniStyle) then
-            miniText = miniText .. string.format("P: %s1234.5|r", specColor)
+            miniText = miniText .. string.format("P: %s456.8|r", specColor)
         else
-            tooltip:AddLine(string.format("Pawn: %s1234.56 (%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1)
+            tooltip:AddLine(string.format("Pawn: %s456.78 (%s)|r", specColor, CI:GetSpecializationName("ROGUE", 1, true)), 1, 1, 1)
         end
     end
 
     if (miniText ~= "") then
         tooltip:AddLine(miniText, 1, 1, 1)
+    end
+
+    local maxW = TacoTipConfig.tooltip_max_width or 0
+    if (maxW > 0 and tooltip.SetMaxWidth) then
+        tooltip:SetMaxWidth(maxW)
+    elseif (tooltip.SetMaxWidth) then
+        tooltip:SetMaxWidth(0)
     end
 
     tooltip:Show()
@@ -1399,6 +1430,7 @@ modernShowExampleTooltip = function()
             modernOptionsState.previewPowerBar:Hide()
         end
     end
+    end, geterrorhandler()) -- xpcall
 end
 
 local function buildRootPage()

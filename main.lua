@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.7"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.8"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -151,7 +151,8 @@ local function getClassIconMarkup(class)
     end
     local atlas = GetClassAtlas(class)
     if (atlas and atlas ~= "") then
-        return string.format("|A:%s:14:14|a", atlas)
+        local size = TacoTipConfig.class_icon_size or 20
+        return string.format("|A:%s:%d:%d|a", atlas, size, size)
     end
     return ""
 end
@@ -613,7 +614,9 @@ local function onTooltipSetUnit(tooltip)
             -- so the backdrop/border/font from a previous player hover
             -- does not persist on the current tooltip.
             TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
-            TacoTipDragButton:ShowExample()
+            if (TacoTipDragButton.ShowExample) then
+                TacoTipDragButton:ShowExample()
+            end
             return
         end
     end
@@ -1603,6 +1606,26 @@ local function onEvent(self, event, ...)
             local first_login = (TacoTipConfig.conf_version ~= addOnVersion)
             if (first_login) then
                 TacoTipConfig.conf_version = addOnVersion
+                -- Migrate the old default dot position (TOPLEFT, TOPLEFT, 0, 0)
+                -- to the new default (BOTTOMRIGHT) on version upgrade so the
+                -- green dot moves to the bottom-right corner of the screen.
+                if (TacoTipConfig.custom_pos
+                    and TacoTipConfig.custom_pos[1] == "TOPLEFT"
+                    and TacoTipConfig.custom_pos[2] == "TOPLEFT"
+                    and TacoTipConfig.custom_pos[3] == 0
+                    and TacoTipConfig.custom_pos[4] == 0) then
+                    TacoTipConfig.custom_pos = nil
+                end
+            end
+            -- Sanitize custom_pos: the old GetPoint()-after-drag-stop bug
+            -- could have stored {nil, nil, nil, nil} which passes the
+            -- "table is not nil" check below but has nil entries that
+            -- crash SetPoint.  Clear it if any entry is invalid.
+            if (TacoTipConfig.custom_pos) then
+                local p = TacoTipConfig.custom_pos
+                if (type(p[1]) ~= "string" or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
+                    TacoTipConfig.custom_pos = nil
+                end
             end
             if (TacoTipConfig.custom_pos) then
                 TacoTip_CustomPosEnable(false)
@@ -1672,7 +1695,7 @@ end
 function TacoTip_CustomPosEnable(show)
     if (not TacoTipDragButton) then
         TacoTipDragButton = CreateFrame("Button", nil, UIParent)
-        TacoTipDragButton:SetFrameStrata("DIALOG")
+        TacoTipDragButton:SetFrameStrata("TOOLTIP")
         TacoTipDragButton:SetFrameLevel(999)
         TacoTipDragButton:EnableMouse(true)
         TacoTipDragButton:SetMovable(true)
@@ -1681,14 +1704,29 @@ function TacoTip_CustomPosEnable(show)
         TacoTipDragButton:SetSize(32,32)
         TacoTipDragButton:SetNormalTexture("Interface\\MINIMAP\\TempleofKotmogu_ball_green")
         local pos = TacoTipConfig.custom_pos or getDefaultTooltipMoverPosition()
+        -- Safety: corrupted custom_pos (nil entries from old GetPoint bug)
+        -- would crash SetPoint.  Fall back to default if invalid.
+        if (type(pos[1]) ~= "string" or type(pos[2]) ~= "string") then
+            pos = getDefaultTooltipMoverPosition()
+        end
         TacoTipDragButton:SetPoint(pos[1],UIParent,pos[2],pos[3],pos[4])
         TacoTipDragButton:RegisterForDrag("LeftButton")
         TacoTipDragButton:RegisterForClicks("MiddleButtonUp", "RightButtonUp")
         local function onDragButtonDragStop(self)
             self:SetScript("OnUpdate", nil)
             self:StopMovingOrSizing()
-            local from, _, to, x, y = self:GetPoint()
-            TacoTipConfig.custom_pos = {from, to, x, y}
+            -- GetPoint() is unreliable after StopMovingOrSizing() — WoW's
+            -- drag system leaves the frame's anchor state in an intermediate
+            -- state where GetPoint() can return nil anchor values.  Use
+            -- pixel-position getters relative to UIParent's BOTTOMLEFT origin
+            -- (the WoW screen coordinate origin) instead.
+            local left = self:GetLeft()
+            local bottom = self:GetBottom()
+            if (left and bottom) then
+                TacoTipConfig.custom_pos = {"BOTTOMLEFT", "BOTTOMLEFT", left, bottom}
+            else
+                TacoTipConfig.custom_pos = getDefaultTooltipMoverPosition()
+            end
             syncTooltipMoverPosition(true)
             refreshOptionsUI()
         end
@@ -1778,7 +1816,20 @@ function TacoTip_CustomPosEnable(show)
             return safeCall(onDragButtonHide, self, ...)
         end)
         function TacoTipDragButton:ShowExample()
-            if (GameTooltip_SetDefaultAnchor) then
+            -- When custom_pos is set, the GameTooltip is already anchored
+            -- to TacoTipDragButton (a UIParent child) via the hook at
+            -- line 1244.  Calling GameTooltip_SetDefaultAnchor here to
+            -- re-anchor to UIParent creates a circular anchor family
+            -- (GameTooltip → TacoTipDragButton → UIParent tries to
+            -- become GameTooltip → UIParent while still in the drag
+            -- button's tree), which Blizzard rejects as a family cycle.
+            -- Anchor directly to the drag button instead.
+            if (TacoTipConfig.custom_pos) then
+                GameTooltip:SetOwner(TacoTipDragButton, "ANCHOR_NONE")
+                GameTooltip:ClearAllPoints()
+                local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
+                GameTooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
+            elseif (GameTooltip_SetDefaultAnchor) then
                 GameTooltip_SetDefaultAnchor(GameTooltip, UIParent)
             end
             GameTooltip:SetUnit("player")

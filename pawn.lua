@@ -117,10 +117,34 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
                 pawnScore = 0
             end
             local pawnColor
-            local pcOk, pcResult = pcall(PawnGetScaleColor, scaleName, true)
-            pawnColor = pcOk and pcResult or nil
+            if (_G._TacoTipPawnReady) then
+                local pcOk, pcResult = pcall(PawnGetScaleColor, scaleName, true)
+                pawnColor = pcOk and pcResult or nil
+            else
+                pawnColor = nil
+            end
             return pawnScore, CI:GetSpecializationName(class, spec, true), pawnColor or "|cffffffff"
         end
     end
     return 0, "", "|cffffffff"
+end
+
+-- Deferred Pawn readiness check.  On SoD (Classic Era) Pawn's scale data is
+-- not available until a few ticks after ADDON_LOADED.  Probing too early
+-- triggers Pawn's internal error which prints to chat even through pcall.
+-- We wait 3 seconds, then probe once.  Until this probe succeeds every
+-- tooltip show returns a nil colour — no call to PawnGetScaleColor, no error.
+if (C_Timer and C_Timer.After) then
+    _G._TacoTipPawnReady = false
+    C_Timer.After(3, function()
+        local pcOk = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
+        _G._TacoTipPawnReady = pcOk
+        if (not pcOk) then
+            -- One more chance in 5 more seconds (very slow client / Pawn version)
+            C_Timer.After(5, function()
+                local pcOk2 = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
+                _G._TacoTipPawnReady = pcOk2
+            end)
+        end
+    end)
 end

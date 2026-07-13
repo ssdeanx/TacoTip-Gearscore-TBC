@@ -16,6 +16,37 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
 
+## [0.5.8] - 2026-07-13
+
+### Fixed - 0.5.8
+
+- **Green dot mover starts at TOPLEFT instead of BOTTOMRIGHT:** The green dot now defaults to the bottom-right corner of the screen. Its starting position is decoupled from `custom_anchor` (which controls tooltip-vs-dot relationship). Existing saved positions at the old default (`TOPLEFT, TOPLEFT, 0, 0`) auto-migrate to the new BOTTOMRIGHT default on version upgrade.
+- **Drag-stop crash on mover:** `GetPoint()` after `StopMovingOrSizing()` returns nil anchors, corrupting `custom_pos` and crashing on the next `SetPoint`. Replaced with `GetLeft()/GetBottom()` relative to UIParent's BOTTOMLEFT origin (the WoW screen coordinate origin).
+- **Corrupted `custom_pos` from old crash:** The nil-anchor bug could store `{nil, nil, nil, nil}` in SavedVariables. Added a load-time sanitizer that validates the 4 entries and a creation-time guard, so corrupted data cannot crash `SetPoint` on next login.
+- **"Anchor family connection" crash on mover middle-click:** `ShowExample` called `GameTooltip_SetDefaultAnchor` while the tooltip was already anchored to the drag button (a UIParent child) — creating a circular anchor family. When `custom_pos` is set, `ShowExample` now anchors directly to the drag button instead of going through Blizzard's default anchor function.
+- **`ShowExample` nil crash on nameplate hover:** `onTooltipSetUnit` called `TacoTipDragButton:ShowExample()` without a nil check. Added guard matching the existing pattern in `syncTooltipMoverPosition`.
+- **`SetMaxWidth` crash on SoD Classic Era:** The preview GameTooltip doesn't have `SetMaxWidth` in Classic Era. Guarded with a nil check before calling — SoD skips, TBC/Wrath works normally.
+- **`class_icon_size` slider had no effect:** `getClassIconMarkup()` hardcoded `14:14` for the class icon atlas size instead of reading `TacoTipConfig.class_icon_size`. The slider now correctly controls the rendered icon size on the name line.
+- **Green dot invisible after unlock:** `SetFrameStrata("DIALOG")` silently falls back to `"MEDIUM"` on Classic Era / SoD, hiding the dot behind everything. Reverted to `"TOOLTIP"` (frame level 999 retained) which works on every client.
+
+### Added - 0.5.8
+
+- **Options preview now reflects all tooltip content toggles:** The live preview on the Tooltips page now reads `show_class_icon`, `show_honor_rank`, `show_role_icon`, `show_realm`, `show_separators`, `tooltip_max_width`, and `show_ilvl_inline` — so every toggle on the page is visible in the preview immediately.
+- **Preview values updated for SoD (level 60):** The mock character now shows level 60, GearScore 2517, iLvl 79, Pawn 456.78, and 51-point talent specs (Combat 20/31/0, Subtlety 5/0/46) matching Classic Era / SoD endgame instead of Wrath-level 80 data.
+- **`modernShowExampleTooltip` wrapped in error protection:** The preview function now uses `xpcall` with `geterrorhandler()` so a single callback error cannot freeze the options panel. Also calls `Hide()` before `Show()` for clean re-layout on every refresh.
+
+### Hardened - 0.5.8
+
+- **All option controls audited for config-key wiring:** Traced every checkbox, dropdown, color swatch, and slider on the Tooltips page to confirm each writes its config key AND each key is consumed by both the real tooltip render path (`main.lua`) and the options preview (`modernShowExampleTooltip`). No orphaned or phantom controls remain.
+
+### Notes - 0.5.8
+
+- Version metadata bumped to `0.5.8` in `TacoTip.toc`, `main.lua`, and `options.lua`.
+- The class icon size default is `20` (unchanged from 0.5.7); the old hardcoded `14` was below the slider range minimum of `8`.
+- Users who saved a custom dot position with non-default offsets or a non-TOPLEFT anchor are NOT migrated — only exact matches of the old default `{"TOPLEFT","TOPLEFT",0,0}` are cleared to pick up the new BOTTOMRIGHT position.
+- Pawn errors on SoD (`Can't get scale colors until Pawn is initialized`) are logged by Pawn's own initialization, not TacoTip. The addon wraps every `PawnGetScaleColor` call in `pcall` so no TacoTip code path crashes, but Pawn's own error handler may still surface the message in BugSack on first login each session.
+- **Pawn scores now work on SoD:** Pawn's scale data loads 2–3 seconds after login on Season of Discovery. Instead of calling `PawnGetScaleColor` immediately (which triggers a chat-spamming error), the module now defers its first probe by 3 seconds (retrying once at 8s if needed) before marking Pawn as ready. Pawn scores display normally on TBC/Wrath where Pawn is ready instantly. No errors, no chat spam.
+
 ## [0.5.7] - 2026-07-12
 
 ### Fixed - 0.5.7

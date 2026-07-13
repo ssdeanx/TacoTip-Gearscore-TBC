@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.5.7` |
+| Public version | `v0.5.8` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -244,7 +244,11 @@ Current localization work included in this build:
 | Optional Pawn support | Enabled automatically when Pawn is installed |
 | Optional SharedMedia support | Used automatically when compatible fonts/textures are registered |
 | Saved settings | Stored through `TacoTipConfig` (auto-repaired on load if corrupt) |
-| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.6` |
+| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.8` |
 | Feedback | Use project comments or the issue tracker |
+
+## Known Issues
+
+- **Pawn errors on Season of Discovery (`Can't get scale colors until Pawn is initialized`):** On SoD, Pawn's scale data loads 2–3 seconds after login. TacoTip defers its first Pawn probe by 3 seconds (retries once at 8s if needed) so Pawn is never called before it's ready. Scores display normally once Pawn initializes. On TBC/Wrath where Pawn is ready immediately, scores show instantly. No errors or chat spam.
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.
