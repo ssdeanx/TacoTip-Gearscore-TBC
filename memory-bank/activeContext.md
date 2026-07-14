@@ -22,6 +22,14 @@
 - Corrected `TEXT_HELP_WELCOME` in every shipped locale so each locale keeps its own language while using the new maintainer name `AcidBomb (Pilsung)`.
 - Re-verified that `options.lua` still uses a single Blizzard dropdown for the root language selector and keeps mouse-wheel-enabled scroll hooks on the long options pages.
 
+## 2026-07-14 - 0.5.9 preview/settings reactivity pass
+
+- Removed the `IsShiftKeyDown()` dependency from the Tooltips-page preview's *base* layout (`options.lua`): the preview now reflects the selected `tip_style` exactly like the live tooltip — hybrid styles (2/4) show their compact default and expand to full on Shift via a `MODIFIER_STATE_CHANGED` handler on the Tooltips page `OnShow` (unregistered `OnHide`). All other settings drive both the preview and the live tooltip with no keypress. The preview is a FIXED ROGUE mannequin (named AcidBomb) and shows on the Tooltips child page `OnShow`, hides on `OnHide`.
+- Verified mechanically that all 43 preview-affecting controls write their `TacoTipConfig.*` key and immediately call `modernShowExampleTooltip()`; the live tooltip applies the same keys via `onTooltipSetUnit` → `TT:ApplyTooltipAppearance`. So every setting feeds BOTH tooltips.
+- Added `TT:ApplyPreviewClassOverride(tooltip, "ROGUE")` (main.lua) so the preview's class-tinted border/background match the ROGUE mannequin instead of the real player's class.
+- Added `clearPreviewVisuals()` (options.lua) on page `OnHide` to release the 3D portrait model; fixed power-bar geometry when the HP bar is hidden.
+- Docs updated: CHANGELOG `0.5.9`, README, AGENTS runtime notes, memory-bank techContext/activeContext. Locale files already carried the preview keys; no new strings introduced.
+
 ## 2026-05-28 - full locale coverage and language selector verification
 
 - Synced every shipped locale file in `Locale/` with the current modern options UI key set from `Locale/enUS.lua`, using translated `OPTIONS_*` strings instead of placeholder English copies.
@@ -98,10 +106,10 @@ Current focus:
 
 What has been confirmed:
 
-- The addon supports Classic Era / TBC Classic Anniversary / Wrath Classic only (`Interface` 11508 / 20505 / 30405).
+- The addon supports Classic Era / TBC Classic Anniversary / Wrath Classic only (`Interface` 11508 / 20505 / 30405). `30405` is carried forward unverified (no WotLK reference branch to validate against).
 - `TacoTip.toc` loads bundled libs first, then `gearscore.lua`, `pawn.lua`, `options.lua`, and `main.lua`.
 - Core runtime modules share globals: `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, and `TACOTIP_LOCALE`.
-- Pawn support is optional and gated by `PawnClassicLastUpdatedVersion >= 2.0538`.
+- Pawn support is optional and gated by `PawnClassicLastUpdatedVersion >= 2.0538` **OR** presence of Pawn's public API (`PawnGetItemData` / `PawnGetSingleValueFromItem` / `PawnGetScaleColor`). SoD-era Pawn lacks the version global, so the API-presence fallback is what enables Pawn on SoD.
 - The public patch reference for Burning Crusade Classic Anniversary `2.5.5` confirms `Interface .toc = 20505`.
 - `options.lua` now intentionally overrides the bootstrap slash handler so the final `/tacotip` command set is owned by the options module.
 - `LibClassicInspector.lua` now guards its load-time tickers and detours so missing client globals do not abort addon startup.

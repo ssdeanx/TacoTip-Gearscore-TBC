@@ -3,12 +3,12 @@
 ## Recent manifest note
 
 - As of 2026-06-24, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
-- The current release target is `0.5.6`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
+- The current release target is `0.5.9`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
 
 ## Repo overview
 
 - WoW Classic-family addon only (`11508`, `20505`, `30405`); retail is unsupported.
-- Core runtime files load in this order: `gearscore.lua`, `pawn.lua`, `options.lua`, `main.lua` after bundled libs.
+- Core runtime files load in this order: `gearscore.lua`, `pawn.lua`, `textures.lua`, `options.lua`, `main.lua` after bundled libs.
 - Shared globals: `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, `TACOTIP_LOCALE`.
 
 ## Current options UI architecture
@@ -36,12 +36,12 @@
 - Hostile NPC level numbers now use Blizzard difficulty coloring via `GetQuestDifficultyColor(level)` so gray/green/yellow/orange/red difficulty is visible directly in TacoTip tooltips again.
 - Specialization lines now render with class-colored spec names plus per-spec icons derived from `LibClassicInspector` talent data instead of plain white text.
 - Tooltip preview and positioning controls intentionally reuse the existing config keys instead of introducing a new settings model.
-- Optional SharedMedia integration is now supported for tooltip fonts and statusbar textures when `LibSharedMedia-3.0` is present.
-- Optional SharedMedia integration is now supported for tooltip fonts, statusbar textures, background textures, and border textures when `LibSharedMedia-3.0` is present.
+- Optional SharedMedia integration is supported for tooltip fonts, statusbar textures, background textures, and border textures when `LibSharedMedia-3.0` is present.
 - Tooltip appearance settings now include portrait display, font choice/size, shared health+power bar textures, selectable tooltip background/border media, and class-tinted border/background styling with adjustable alpha.
 - Media selectors currently stay as single dropdown lists with expanded Blizzard default choices, wider in-list texture strip previews, hover-help on custom widgets, and a live preview note rather than nested menus.
 - The Tooltips page also includes Blizzard color-picker-backed border/background swatches plus mouse-wheel support on reusable scroll frames and sliders.
 - Compact player tooltips now add a separate `iLvl` line under GearScore so average item level is visible even outside the wide layout.
+- The Tooltips-page preview (`modernShowExampleTooltip`) and the live tooltip (`onTooltipSetUnit` → `TT:ApplyTooltipAppearance`) both read the same `TacoTipConfig.*` keys, so every setting change updates BOTH. The preview shows on the Tooltips child page `OnShow` and hides on `OnHide`; hybrid styles expand on Shift in both the preview (via a `MODIFIER_STATE_CHANGED` handler on the Tooltips page) and the live tooltip (`main.lua`). `TT:ApplyPreviewClassOverride(tooltip, "ROGUE")` pins the preview's class color to the fixed ROGUE mannequin identity, and `clearPreviewVisuals()` runs on page hide to release the 3D portrait model.
 
 ## UI visualization context
 
@@ -54,5 +54,5 @@
 - All shipped locale files now include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
 - `TEXT_HELP_WELCOME` now keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)` across the full locale set.
 - Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
-- `README.md` now includes a release-facing available-languages table and the `0.5.1` public version metadata.
+- `README.md` now includes a release-facing available-languages table and the `0.5.9` public version metadata.
 - The Chinese locale files (`zhCN.lua`, `zhTW.lua`) now include the newest options UI labels and help text used by the updated settings pages.

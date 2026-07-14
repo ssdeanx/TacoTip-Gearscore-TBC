@@ -7,7 +7,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 
 ## 简体中文 / 繁體中文
 
-- 支持客户端 / 支援用戶端：`1.15.8`、`2.5.5`、`3.4.5`、`3.80.1 (Titanforge)`
+- 支持客户端 / 支援用戶端：`1.15.8`、`2.5.5 (20505)`、`3.4.5 (30405)`、`3.80.1 (Titanforge)`
 - 主要功能 / 主要功能：提示增强、GearScore、平均装等 / 平均物品等級、天赋 / 專精、角色与观察面板信息
 - 打开设置 / 開啟設定：`/tacotip` 或 `/taco`
 - 语言 / 語言：默认跟随客户端语言，未翻译内容会自动回退到英文；主页面也提供语言下拉选单 / 下拉選單。
@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.5.8` |
+| Public version | `v0.5.9` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -56,34 +56,27 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
 
-## What changed in this release build
+## What's new in v0.5.9
 
-The current public build includes all of the following work:
+This release focuses on a fully settings-driven options preview and Season of Discovery correctness:
 
-- Classic-family compatibility restoration for the supported client branches
-- bundled library hardening and lint cleanup
-- a rebuilt Blizzard options UI with focused child pages
-- a right-column live tooltip preview
-- tooltip appearance customization with fonts, text size, background/border media, colors, alpha, and bar textures
-- mouse anchoring, spell anchoring, and custom-position mover workflow improvements
-- root-page behavior/client toggles instead of a nearly-empty Advanced page
-- hostile mob difficulty-color support on tooltip level lines
-- class-colored specialization names with per-spec icons
-- compact-layout `iLvl` support under GearScore
-- wider built-in Blizzard media/font choices plus SharedMedia pickup when available
-- full locale coverage alignment for the modern options UI
-- maintainer/welcome-text cleanup for all shipped locale files
-- root-page language selection with client-default fallback and English backup behavior
-- **TBC Anniversary 2.5.5 border fix:** NineSlicePanel tooltip backdrops now use a separate `BackdropTemplate` child-frame overlay so class-colored borders render correctly on the 9.x engine. The default grey NineSlice border is overlaid with a `SetBackdrop` edge-only frame at `FrameLevel(2)`, preserving the default background while applying per-class border colors via `SetBackdropBorderColor`.
-- **`getClassColor` safe-pattern rewrite:** guards both `CUSTOM_CLASS_COLORS` and `RAID_CLASS_COLORS` against nil before indexing, preventing taint errors in script environments where one or both globals may be missing.
-- **`resolveTooltipUnit` pcall guard:** wraps `tooltip:GetUnit()` in `pcall` so a single GetUnit error cannot crash the entire tooltip render path.
-- **`safeCall` error capture on all hooks:** all GameTooltip script hooks, event handlers, and callback shims are wrapped in `xpcall(..., geterrorhandler(), ...)` so errors are captured by BugSack/!Swatter instead of silently breaking tooltips.
-- **Class-colored borders now apply to player units only.** Item, spell, buff, NPC, and map-icon tooltips use base colours exclusively — no class-border bleed.
-- **Tooltip contamination fixed.** Player portraits (2D + 3D PlayerModel), elite frames, and class colors are cleaned from every tooltip frame on clear or item-switch, so hovering a player then an item never shows a lingering player model.
-- **Portrait bleed-through eliminated (v0.5.6).** The unit portrait on GameTooltip is now hidden on every tooltip-content transition path — OnShow, OnTooltipSetSpell, OnTooltipSetUnit with invalid unit — not only on OnTooltipCleared. This prevents the player's portrait from persisting when hovering buffs, items, action bars, UI menus, or character-pane equipment after targeting a unit.
-- **Config corruption protection.** `SafeSanitizeConfig` validates every boolean and numeric key on load, repairing corrupt values (string `"true"`/`"false"`, out-of-range numbers) without requiring the user to delete SavedVariables.
-- **Minimap/map-icon flicker eliminated.** Class-border follow-up only fires on player-unit tooltips, preventing the one-frame-delay border change that caused visible stutter on map icons.
-- **Options preview moved outside the settings panel.** The live preview floats to the right of the Blizzard Settings window so the scroll content takes the full panel width.
+- **Options preview is now 100% settings-driven.** The Tooltips-page preview reflects the selected style's default layout and updates instantly when you change any setting — class color, portrait, bars, fonts, textures, borders, alpha, and every content toggle. No keypress required. The live in-game tooltip still expands hybrid styles on Shift; the preview shows the default layout.
+- **Both tooltips share one source of truth.** Every setting feeds the preview example *and* your live tooltip, because both read the same config. What you see in the preview is what you get in the game.
+- **Preview shows a fixed max-level ROGUE example** (named AcidBomb) so it always looks identical regardless of your own character's class.
+- **SoD portrait + class-border fixes.** The 3D portrait now renders for players *and* enemies (no leftover model), and class-tinted borders no longer bleed onto enemy tooltips.
+- **Pawn works on SoD again.** The load gate now accepts Pawn's public API, and the specialization lookup falls back to the primary spec because SoD runes replace talent trees.
+
+Full history is in `CHANGELOG.md`.
+
+## How TacoTip compares
+
+| Area | What you get |
+| --- | --- |
+| Tooltip styles | Full / Compact / Mini, live preview, hostile-mob difficulty colors, custom positioning, mouse + spell anchoring |
+| Player data | GearScore, average item level, dual-spec names with per-spec icons, optional Pawn scores, glyph + achievement data (Wrath) |
+| Character & Inspect frames | GearScore / iLvl overlays with movable labels and X/Y offset controls |
+| Quality of life | Instant fade, titles, guild names/ranks, PvP/team icons, class-tinted styling, saved-anchor-aware mover reset |
+| Integrations | Pawn (when installed), optional SharedMedia fonts/textures, bundled Classic inspection libraries |
 
 ## Tooltip details
 
@@ -114,8 +107,9 @@ Tooltip layouts behave as follows:
 | Client family | Interface |
 | --- | --- |
 | Classic Era / Vanilla | `11508` |
+| Season of Discovery (SoD) | `11508` (same patch `1.15.8` as Classic Era) |
 | Burning Crusade Classic Anniversary | `20505` |
-| Wrath Classic | `30405` |
+| Wrath Classic | `30405` *(carried forward, API unverified — no WotLK reference branch available)* |
 | Titanforge / 3.80.1-style Wrath-family clients | `38001` |
 | Retail | Not supported |
 
@@ -244,11 +238,12 @@ Current localization work included in this build:
 | Optional Pawn support | Enabled automatically when Pawn is installed |
 | Optional SharedMedia support | Used automatically when compatible fonts/textures are registered |
 | Saved settings | Stored through `TacoTipConfig` (auto-repaired on load if corrupt) |
-| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.8` |
+| Future direction | More polish, compatibility work, and quality-of-life features beyond `v0.5.9` |
 | Feedback | Use project comments or the issue tracker |
 
 ## Known Issues
 
-- **Pawn errors on Season of Discovery (`Can't get scale colors until Pawn is initialized`):** On SoD, Pawn's scale data loads 2–3 seconds after login. TacoTip defers its first Pawn probe by 3 seconds (retries once at 8s if needed) so Pawn is never called before it's ready. Scores display normally once Pawn initializes. On TBC/Wrath where Pawn is ready immediately, scores show instantly. No errors or chat spam.
+- **Pawn on Season of Discovery (fixed in 0.5.9):** SoD-era Pawn does not expose `PawnClassicLastUpdatedVersion`, so the previous version-only load gate disabled Pawn entirely on SoD. The gate now also accepts Pawn's public API presence, and the spec lookup falls back to the primary spec because SoD runes replace talent trees (`GetSpecialization` can return `nil`). Pawn scores now display on SoD players. On TBC/Wrath where Pawn is ready immediately, scores show instantly. Pawn's own init-time "scale colors" message (if any) is logged by Pawn, not TacoTip, and is wrapped in `pcall` so it cannot crash a tooltip.
+- **Options preview is settings-driven and expands on Shift (fixed in 0.5.9):** Every setting (style, class color, portrait, bars, fonts, textures, borders, alpha, and all content toggles) drives the preview directly with no keypress, and every setting feeds both the preview example AND your live in-game tooltip since both read the same config. The preview shows a fixed max-level ROGUE example (named AcidBomb) so it always looks the same regardless of your class. Hybrid styles (2/4) show their compact default and expand to full while Shift is held — exactly like the live tooltip.
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.

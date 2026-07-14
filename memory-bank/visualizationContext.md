@@ -28,7 +28,7 @@ Blizzard Options
 
 ```ascii
 +---------------------------------------------------------------------+
-| TacoTip Gearscore TBC v0.5.1                                        |
+| TacoTip Gearscore TBC v0.5.9                                        |
 | Better player tooltips with GearScore, talents, positioning, and UI |
 | polish for Classic-era clients.                                     |
 |                                                                     |

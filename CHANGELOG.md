@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+|| `0.5.9` | `2026-07-14` | SoD fixes: 3D portrait for players AND enemies (no bleed), class-color border no longer bleeds to enemies, Pawn loads on SoD (rune→spec + API-presence gate) |
 | `0.5.7` | `2026-07-12` | Cross-client hardening: pcall guards on PawnGetScaleColor + SetPortraitTexture, LibClassicInspector nameplate field fix |
 | `0.5.6` | `2026-07-11` | Fix: portrait bleed-through on non-unit tooltips |
 | `0.5.5` | `2026-06-24` | Hotfix: `clearTooltipVisuals` forward-reference crash when triggered by other addons (BugSack error on Bartender4/LoonBestInSlot tooltip events) |
@@ -15,6 +16,29 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.5.9] - 2026-07-14
+
+### Fixed - 0.5.9
+
+- **3D portrait bleed on enemy units (SoD / Classic Era):** The 3D `PlayerModel` portrait was gated to player units only, so hovering an enemy/NPC after a player left the previous player's 3D model visible (the 2D `SetPortraitTexture` fallback is a no-op on a `Model` frame). The 3D path now calls `SetUnit(unit)` for **any** unit (players and enemies both render on a PlayerModel) and `pcall(ClearModel)` first so the prior mesh is flushed. 3D stays on by default for everyone. 2D `SetPortraitTexture` is now used only when 3D model creation fails.
+- **Class-color border bleed to enemies:** `storeTooltipPlayerClassColor` returned the **stale** cached class color when no unit was resolvable, so an enemy tooltip could inherit a previous player's class color. It now **clears** the cached color for any non-player / unresolvable unit, so class-tinted borders apply only to players.
+- **Pawn non-functional on SoD:** SoD-era Pawn does not expose `PawnClassicLastUpdatedVersion`, so the old version-only load gate made `pawn.lua` return early and `TT_PAWN:GetScore` was never called → no Pawn line. The load gate now also accepts Pawn's public API presence (`PawnGetItemData` / `PawnGetSingleValueFromItem` / `PawnGetScaleColor` all functions) as proof of load. The spec lookup falls back to the primary spec (`or 1`) because SoD runes replace talent trees and `LibClassicInspector:GetSpecialization` can return `nil` — previously this produced a malformed scale name (`"Classic":CLASS..nil`) and a 0 score.
+
+### Changed - 0.5.9
+
+- **Preview is settings-driven and also expands on Shift (matching the live tooltip):** The Tooltips-page preview now reflects the selected `tip_style` exactly as the live tooltip does — hybrid styles (2/4) show their compact default and expand to full while Shift is held, via a `MODIFIER_STATE_CHANGED` handler registered on the Tooltips page `OnShow` (unregistered on `OnHide`). Every other setting (class color, portrait, bars, fonts, textures, borders, alpha, content toggles) drives the preview directly with no keypress. The preview and the live tooltip both read the same `TacoTipConfig.*` keys, so a setting change updates both.
+- **Preview visibility scoped to the Tooltips page only:** The floating preview pane shows when the Tooltips child page opens (`OnShow`) and hides on close (`OnHide`); the Positioning and Character/Inspect pages never show it.
+- **Every tooltip setting feeds BOTH tooltips:** Verified mechanically that `modernShowExampleTooltip` (preview) and the live `onTooltipSetUnit` → `TT:ApplyTooltipAppearance` path read the same `TacoTipConfig.*` keys. All 43 preview-affecting controls write their key and immediately call `modernShowExampleTooltip()`; the live tooltip re-applies appearance on every unit show. So toggling any setting (style, class color, portrait, bars, fonts, textures, borders, alpha, etc.) updates both the example and the real tooltip.
+- **Preview class-color consistency (P2):** The preview is a fixed ROGUE mannequin (named AcidBomb). Added `TT:ApplyPreviewClassOverride(tooltip, "ROGUE")` so the class-tinted border/background match the mock identity instead of inheriting the real player's class color (previously a Paladin would see ROGUE text with a Paladin border).
+- **Preview resource cleanup (P6):** Added `clearPreviewVisuals()` called on the Tooltips page `OnHide` — clears the 3D portrait model (`ClearModel`) and hides portrait/elite/class-color state so the preview does not hold a mounted model in memory while hidden.
+- **Preview power-bar geometry (P3):** When the health bar is hidden, the power bar now tucks directly under the tooltip (1px gap) instead of leaving an 8px dead stub.
+
+### Notes - 0.5.9
+
+- Version metadata bumped to `0.5.9` in `TacoTip.toc`, `main.lua`, and `options.lua`.
+- SoD and Classic Era share patch `1.15.8` → both target interface `11508`. SoD-specific breakage is the rune/talent divergence in `LibClassicInspector`, not a client-version difference; no separate SoD client handling is required.
+- The `## Interface:` list (`11508, 20505, 30405, 38001`) is unchanged. `30405` (Wrath Classic) is retained but **unverified** — there is no WotLK FrameXML branch in `wow-ui-source` to validate its API surface against, so it is currently carried forward on trust from prior releases rather than confirmed.
 
 ## [0.5.8] - 2026-07-13
 

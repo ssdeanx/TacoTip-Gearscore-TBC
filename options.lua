@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.8"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.9"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -16,7 +16,10 @@ assert(LibStub:GetLibrary("LibClassicInspector", true), "TacoTip requires LibCla
 assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-1.0")
 --assert(LibStub:GetLibrary("LibClassicGearScore", true), "TacoTip requires LibClassicGearScore")
 
-local isPawnLoaded = _G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538
+-- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
+-- version-only gate disabled Pawn on SoD.  Also accept Pawn's public API.
+local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and type(_G.PawnGetScaleColor) == "function"
+local isPawnLoaded = (_G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
 
 local Detours = LibStub("LibDetours-1.0")
 local CI = LibStub("LibClassicInspector")
@@ -52,23 +55,6 @@ local function clampFrameLevel(level)
         return 100
     end
     return math.floor(level + 0.5)
-end
-
--- Clamp a SetAlpha value to the documented WoW range [0, 1]. Values
--- outside this range are silently ignored by the client and indicate
--- a bad computation upstream.
-local function clampAlpha(value)
-    value = tonumber(value)
-    if (not value) then
-        return 1
-    end
-    if (value < 0) then
-        return 0
-    end
-    if (value > 1) then
-        return 1
-    end
-    return value
 end
 
 function TT:GetDefaults()
@@ -1275,7 +1261,7 @@ local function refreshOverlayPositions()
 end
 
 modernShowExampleTooltip = function()
-    local ok, err = xpcall(function()
+        xpcall(function()
         local tooltip = modernOptionsState.preview
         local previewAnchor = modernOptionsState.previewAnchor
         if (not tooltip or not previewAnchor) then
@@ -1340,7 +1326,11 @@ modernShowExampleTooltip = function()
         tooltip:AddLine((L["Honor Rank"] or "Honor Rank: ") .. (L["RANK_TITLE"] or "Champion"), 1, 1, 1)
     end
 
-    local wideStyle = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
+    -- Preview reflects the configured style. Hybrid styles (2/4) show their
+    -- default COMPACT/MINI layout, but expand to full while Shift is held —
+    -- matching the live tooltip. Every other setting drives the preview directly.
+    -- All other appearance/content is driven purely by settings.
+    local wideStyle = (TacoTipConfig.tip_style == 1) or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown())
     local miniStyle = (not wideStyle and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
 
     if (TacoTipConfig.show_separators) then
@@ -1408,6 +1398,13 @@ modernShowExampleTooltip = function()
 
     if (TT and TT.ApplyTooltipAppearance) then
         TT:ApplyTooltipAppearance(tooltip, "player")
+        -- Preview is a FIXED example: the mannequin is always a max-level
+        -- ROGUE named AcidBomb. Force the class-colored border/background to
+        -- ROGUE so it matches the mock identity (otherwise the real player's
+        -- class would tint the border and clash with the ROGUE name).
+        if (TT.ApplyPreviewClassOverride) then
+            TT:ApplyPreviewClassOverride(tooltip, "ROGUE")
+        end
     end
 
     if (modernOptionsState.previewHealthBar) then
@@ -1420,6 +1417,8 @@ modernShowExampleTooltip = function()
             modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", tooltip, "BOTTOMRIGHT", -2, -9)
         else
             modernOptionsState.previewHealthBar:Hide()
+            -- No health bar: tuck the power bar directly under the tooltip
+            -- (1px gap) instead of leaving an 8px dead stub.
             modernOptionsState.previewPowerBar:SetPoint("TOPLEFT", tooltip, "BOTTOMLEFT", 2, -1)
             modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", tooltip, "BOTTOMRIGHT", -2, -1)
         end
@@ -1464,7 +1463,7 @@ local function buildRootPage()
     end, L["OPTIONS_RESET_CONFIGURATION_DESC"] or "Restore TacoTip settings to their defaults, including tooltip appearance and overlay positions.")
     resetButton:SetPoint("LEFT", openMoverButton, "RIGHT", 12, 0)
 
-    controls.rootStyleChoice = createOptionsDropdown(panel, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. Hold Shift on hybrid styles to preview the expanded view.", modernStyleOptions, function(value)
+    controls.rootStyleChoice = createOptionsDropdown(panel, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. The preview reflects the selected style's default layout.", modernStyleOptions, function(value)
         TacoTipConfig.tip_style = value
         if (TT and TT.RefreshOptionsUI) then
             TT:RefreshOptionsUI()
@@ -1557,6 +1556,38 @@ local function buildRootPage()
     modernOptionsState.pages.rootBuilt = true
 end
 
+-- Position the floating preview in the TOP-RIGHT corner of the screen, inset
+-- from the edge so it never sits under the Blizzard Settings X. This is
+-- screen-relative (uses UIParent dimensions) so it stays on-screen at any
+-- resolution / windowed size. The preview keeps its natural size so it always
+-- matches the player's real tooltip.
+local function positionPreviewTopRight()
+    local pp = modernOptionsState.previewPane
+    if (not pp) then return end
+    local inset = 16          -- gap from the screen edge
+    local belowTitleBar = 48  -- drop below the Settings title/X bar
+    pp:ClearAllPoints()
+    pp:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -(inset), -(belowTitleBar))
+end
+
+local function clearPreviewVisuals()
+    local preview = modernOptionsState.preview
+    if (not preview) then return end
+    if (preview.TacoTipPortrait3D) then
+        preview.TacoTipPortrait3D:ClearModel()
+        preview.TacoTipPortrait3D:Hide()
+    end
+    if (preview.TacoTipPortrait) then
+        preview.TacoTipPortrait:Hide()
+    end
+    if (preview.TacoTipEliteFrame) then
+        preview.TacoTipEliteFrame:Hide()
+    end
+    if (preview.TacoTipPlayerClassColor) then
+        preview.TacoTipPlayerClassColor = nil
+    end
+end
+
 local function buildTooltipsPage()
     if (modernOptionsState.pages.tooltipsBuilt) then
         return
@@ -1604,7 +1635,7 @@ local function buildTooltipsPage()
     end
 
     local controls = modernOptionsState.controls
-    controls.styleChoice = createOptionsDropdown(content, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. Hold Shift on hybrid styles to preview the expanded view.", modernStyleOptions, function(value)
+    controls.styleChoice = createOptionsDropdown(content, nil, L["Tooltip Style"], L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default. The preview reflects the selected style's default layout.", modernStyleOptions, function(value)
         TacoTipConfig.tip_style = value
         modernShowExampleTooltip()
     end)
@@ -1883,25 +1914,17 @@ local function buildTooltipsPage()
 
     builder:Finalize(128)
 
-    -- Preview pane floats to the right of the Blizzard Settings panel.
-    -- Parented to UIParent so it is never clipped by the Settings frame
-    -- hierarchy; strata FULLSCREEN_DIALOG ensures it renders above.
+    -- Preview pane floats in the TOP-RIGHT corner of the Blizzard Settings UI,
+    -- parented to UIParent so it is never clipped by the Settings frame
+    -- hierarchy. Its size stays natural (it renders the real tooltip at actual
+    -- size) — it must match what the player's tooltip will look like. It is
+    -- offset in from the screen edge so it never sits under the Settings X.
     local previewPane = CreateFrame("Frame", nil, UIParent)
     previewPane:SetFrameStrata("FULLSCREEN_DIALOG")
     previewPane:SetFrameLevel(100)
     previewPane:SetWidth(250)
     previewPane:Hide()
 
-    -- Position the preview to the right of the tooltips page on first build.
-    -- The preview is not shown here — it only appears via OnShow/OnHide on
-    -- the tooltips page, so it's never visible on other pages.
-    do
-        local panelW = panel:GetWidth() or 640
-        local panelH = panel:GetHeight() or 400
-        previewPane:ClearAllPoints()
-        previewPane:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
-        previewPane:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
-    end
     modernOptionsState.previewPane = previewPane
 
     local previewTitle = previewPane:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -1934,33 +1957,33 @@ local function buildTooltipsPage()
     modernOptionsState.previewPowerBar:SetPoint("TOPRIGHT", modernOptionsState.preview, "BOTTOMRIGHT", -2, -9)
     modernOptionsState.previewPowerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
     modernOptionsState.previewPowerBar:SetStatusBarColor(1, 1, 0)
-    modernOptionsState.preview:SetScript("OnEvent", function() modernShowExampleTooltip() end)
 
     panel:SetScript("OnShow", function()
-        -- Reposition the floating preview to the right of the panel
-        -- each time the page is shown (panel may have been resized).
+        -- Show the floating preview (position is screen-relative top-right,
+        -- clear of the X). The preview reflects settings immediately; hybrid
+        -- styles also expand on Shift like the live tooltip, so listen for
+        -- modifier changes while this page is open.
         local pp = modernOptionsState.previewPane
         if (pp) then
-            local panelW = panel:GetWidth() or 640
-            local panelH = panel:GetHeight() or 400
-            pp:ClearAllPoints()
-            pp:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
-            pp:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
+            positionPreviewTopRight()
             pp:Show()
         end
-        if (modernOptionsState.preview) then
-            modernOptionsState.preview:RegisterEvent("MODIFIER_STATE_CHANGED")
-        end
         if (panel.Refresh) then panel:Refresh() end
+        panel:SetScript("OnEvent", function(_, event)
+            if (event == "MODIFIER_STATE_CHANGED") then
+                modernShowExampleTooltip()
+            end
+        end)
+        panel:RegisterEvent("MODIFIER_STATE_CHANGED")
     end)
     panel:SetScript("OnHide", function()
+        panel:UnregisterEvent("MODIFIER_STATE_CHANGED")
+        panel:SetScript("OnEvent", nil)
         local pp = modernOptionsState.previewPane
         if (pp) then
             pp:Hide()
         end
-        if (modernOptionsState.preview) then
-            modernOptionsState.preview:UnregisterEvent("MODIFIER_STATE_CHANGED")
-        end
+        clearPreviewVisuals()
     end)
 
     panel.Refresh = function()
@@ -2343,11 +2366,7 @@ local function onPageShow(panel)
     if (panel == optionsPages.tooltips) then
         local pp = modernOptionsState.previewPane
         if (pp and not pp:IsShown()) then
-            local panelW = panel:GetWidth() or 640
-            local panelH = panel:GetHeight() or 400
-            pp:ClearAllPoints()
-            pp:SetPoint("TOPLEFT", panel, "TOPRIGHT", 15, 0)
-            pp:SetPoint("BOTTOMLEFT", panel, "TOPRIGHT", 265, -panelH)
+            positionPreviewTopRight()
             pp:Show()
         end
     end

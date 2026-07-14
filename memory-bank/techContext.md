@@ -3,7 +3,8 @@
 ## Runtime
 
 - Lua addon for World of Warcraft Classic-family clients only.
-- Supported interface versions: `11508`, `20505`, `30405`.
+- Supported interface versions: `11508`, `20505`, `30405`, `38001`.
+- `30405` (Wrath Classic) is carried forward on trust from prior releases; its API surface is **unverified** (no WotLK FrameXML branch exists in the local `wow-ui-source` reference to diff against).
 - Saved variable: `TacoTipConfig`.
 
 ## Bundled libraries and manifests
@@ -22,7 +23,7 @@
 
 ## Optional runtime dependency
 
-- Pawn support, detected via `PawnClassicLastUpdatedVersion >= 2.0538`.
+- Pawn support, detected via `PawnClassicLastUpdatedVersion >= 2.0538` **OR** presence of Pawn's public API (`PawnGetItemData` / `PawnGetSingleValueFromItem` / `PawnGetScaleColor`). The API-presence fallback is required because SoD-era Pawn does not expose `PawnClassicLastUpdatedVersion`.
 
 ## Configuration defaults
 
@@ -75,7 +76,7 @@ Defaults returned by `TT:GetDefaults()`:
 
 ## Caveats
 
-- Wide and mini tooltip layouts depend on `tip_style` and Shift state.
+- Wide and mini tooltip layouts: the LIVE tooltip still expands hybrid styles (2/4) on Shift via `main.lua`; the OPTIONS PREVIEW is settings-only and shows each style's default layout (no `IsShiftKeyDown` dependency).
 - Some data may not be available until inspection or item cache finishes, so refresh callbacks matter.
 - `LibClassicInspector/API.txt` is reference material; the `.lua` file is the source of truth.
 - Pawn support remains optional and should never be assumed in code paths or docs.

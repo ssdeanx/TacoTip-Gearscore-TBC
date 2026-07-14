@@ -13,7 +13,11 @@ if (clientBuildMajor < 1 or clientBuildMajor > 3) then
     return
 end
 
-local isPawnLoaded = PawnClassicLastUpdatedVersion and PawnClassicLastUpdatedVersion >= 2.0538
+-- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
+-- version-only gate made the whole module return early and Pawn never loaded.
+-- Also accept the presence of Pawn's public API functions as proof of load.
+local pawnApiPresent = type(PawnGetItemData) == "function" and type(PawnGetSingleValueFromItem) == "function" and type(PawnGetScaleColor) == "function"
+local isPawnLoaded = (PawnClassicLastUpdatedVersion and PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
 
 if (not isPawnLoaded) then
     return
@@ -78,7 +82,10 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
             end
         end
 
-        local spec = CI:GetSpecialization(guid)
+        -- SoD runes replace talent trees, so GetSpecialization can return nil.
+        -- Fall back to the primary spec (1) so Pawn still scores instead of
+        -- producing a malformed scale name ("Classic":CLASS..nil) and 0.
+        local spec = CI:GetSpecialization(guid) or 1
         local _, class = GetPlayerInfoByGUID(guid)
         local pawnScore = 0
         local IsReady = true
@@ -117,7 +124,7 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
                 pawnScore = 0
             end
             local pawnColor
-            if (_G._TacoTipPawnReady) then
+            if (_TacoTipPawnReady) then
                 local pcOk, pcResult = pcall(PawnGetScaleColor, scaleName, true)
                 pawnColor = pcOk and pcResult or nil
             else
@@ -135,15 +142,15 @@ end
 -- We wait 3 seconds, then probe once.  Until this probe succeeds every
 -- tooltip show returns a nil colour — no call to PawnGetScaleColor, no error.
 if (C_Timer and C_Timer.After) then
-    _G._TacoTipPawnReady = false
+    _TacoTipPawnReady = false
     C_Timer.After(3, function()
         local pcOk = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
-        _G._TacoTipPawnReady = pcOk
+        _TacoTipPawnReady = pcOk
         if (not pcOk) then
             -- One more chance in 5 more seconds (very slow client / Pawn version)
             C_Timer.After(5, function()
                 local pcOk2 = pcall(PawnGetScaleColor, "\"Classic\":ROGUE1", true)
-                _G._TacoTipPawnReady = pcOk2
+                _TacoTipPawnReady = pcOk2
             end)
         end
     end)

@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.8"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.9"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -28,7 +28,11 @@ if (not TT) then
     rawset(_G, addOnName, TT)
 end
 
-local isPawnLoaded = _G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538
+-- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
+-- version-only gate made the whole module return early and Pawn never loaded.
+-- Also accept the presence of Pawn's public API functions as proof of load.
+local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and type(_G.PawnGetScaleColor) == "function"
+local isPawnLoaded = (_G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
 
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
 local ALLIANCE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-ALLIANCE:16:16:-2:0:64:64:0:38:0:38|t"
@@ -182,10 +186,10 @@ local function storeTooltipPlayerClassColor(tooltip, unit)
     if (not tooltip) then
         return nil
     end
-    if (not unit) then
-        return tooltip.TacoTipPlayerClassColor
-    end
-    if (not UnitExists or not UnitExists(unit) or not UnitIsPlayer or not UnitIsPlayer(unit)) then
+    -- Any unit we cannot resolve to a real player must invalidate the cached
+    -- class color.  Returning the stale cache here is what let a previous
+    -- player's class color bleed onto an enemy tooltip during frame recycle.
+    if (not unit or not UnitExists or not UnitExists(unit) or not UnitIsPlayer or not UnitIsPlayer(unit)) then
         clearTooltipPlayerClassColor(tooltip)
         return nil
     end
@@ -302,9 +306,7 @@ local function ensureTooltipPortrait(tooltip)
     if (use3D) then
         if (not tooltip.TacoTipPortrait3D) then
             local ok, model = pcall(CreateFrame, "PlayerModel", nil, tooltip)
-            if (not ok or not model) then
-                use3D = false
-            else
+            if (ok and model) then
                 tooltip.TacoTipPortrait3D = model
                 tooltip.TacoTipPortrait3D:SetFrameLevel(tooltip:GetFrameLevel() + 1)
                 tooltip.TacoTipPortrait3D:EnableMouse(false)
@@ -382,7 +384,7 @@ local function getOrCreateBackdropFrame(tooltip)
 end
 
 local function applyTooltipBackdrop(tooltip)
-    local backdrop, isCustom = getOrCreateBackdropFrame(tooltip)
+    local backdrop = getOrCreateBackdropFrame(tooltip)
     if (not backdrop or not backdrop.SetBackdrop) then
         return
     end
@@ -507,14 +509,18 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             portrait:SetSize(portraitW, portraitH)
             portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
             local is3D = TacoTipConfig.tooltip_portrait_3d
-            -- Only use 3D PlayerModel for actual player units.  SetUnit on
-            -- a PlayerModel frame silently fails for NPCs (no player model),
-            -- leaving the PREVIOUS player model visible — the exact portrait
-            -- bleed the user sees.  For NPCs, fall back to 2D texture.
-            if (is3D and portrait.SetUnit and UnitIsPlayer(unit)) then
+            -- 3D PlayerModel renders BOTH players and NPCs/enemies via SetUnit.
+            -- The old UnitIsPlayer gate sent NPCs to SetPortraitTexture, which is
+            -- a no-op on a Model frame and left the previous model visible (bleed).
+            -- ClearModel forces a clean reload of the new unit's mesh so the prior
+            -- portrait cannot persist across unit changes (pcall: ClearModel may be
+            -- absent on some clients).
+            if (is3D and portrait.SetUnit) then
+                pcall(portrait.ClearModel, portrait)
                 pcall(portrait.SetUnit, portrait, unit)
                 pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
             else
+                -- 2D fallback only when 3D model creation failed (portrait is a Texture).
                 pcall(_G.SetPortraitTexture, portrait, unit)
             end
             portrait:Show()
@@ -569,6 +575,29 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     end
 end
 
+function TT:ApplyPreviewClassOverride(tooltip, classFile)
+    if (not tooltip or not classFile) then
+        return
+    end
+    local classColor = getClassColor(classFile)
+    if (not classColor) then
+        return
+    end
+    -- Force this preview frame's cached class color to the requested class so
+    -- the border/background match the mock identity (the live tooltip always
+    -- resolves from the real hovered unit and is unaffected by this override).
+    tooltip.TacoTipPlayerClassColor = tooltip.TacoTipPlayerClassColor or {}
+    tooltip.TacoTipPlayerClassColor.r, tooltip.TacoTipPlayerClassColor.g, tooltip.TacoTipPlayerClassColor.b =
+        classColor.r, classColor.g, classColor.b
+
+    applyTooltipBorderOverlay(tooltip, nil, classColor.r, classColor.g, classColor.b)
+
+    local backdrop = tooltip and tooltip.TacoTipBackdropFrame
+    if (backdrop and backdrop.SetBackdropColor and not backdrop.isBorderOnly and TacoTipConfig.tooltip_background_use_class) then
+        backdrop:SetBackdropColor(classColor.r, classColor.g, classColor.b, TacoTipConfig.tooltip_background_alpha or 0.85)
+    end
+end
+
 local function startPowerBarTicker()
     if (TacoTipPowerBar and not TacoTipPowerBar.updateTicker and type(NewTicker) == "function") then
         TacoTipPowerBar.updateTicker = NewTicker(POWERBAR_UPDATE_RATE, function()
@@ -591,6 +620,22 @@ local function cancelDelayedTooltip()
     if (delayedTooltipTimer) then
         delayedTooltipTimer:Cancel()
         delayedTooltipTimer = nil
+    end
+end
+
+local function clearTooltipVisuals(tooltip)
+    if (not tooltip) then
+        return
+    end
+    clearTooltipPlayerClassColor(tooltip)
+    if (tooltip.TacoTipPortrait) then
+        tooltip.TacoTipPortrait:Hide()
+    end
+    if (tooltip.TacoTipPortrait3D) then
+        tooltip.TacoTipPortrait3D:Hide()
+    end
+    if (tooltip.TacoTipEliteFrame) then
+        tooltip.TacoTipEliteFrame:Hide()
     end
 end
 
@@ -787,9 +832,9 @@ local function onTooltipSetUnit(tooltip)
             nameLineIcons = nameLineIcons .. " " .. (UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
         end
         if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
-            local _, class = UnitClass(tooltipUnit)
-            if (class) then
-                nameLineIcons = nameLineIcons .. " " .. getClassIconMarkup(class)
+            local _, classFile = UnitClass(tooltipUnit)
+            if (classFile) then
+                nameLineIcons = nameLineIcons .. " " .. getClassIconMarkup(classFile)
             end
         end
         if (TacoTipConfig.show_role_icon and UnitIsPlayer(tooltipUnit) and IsInGroup()) then
@@ -1076,22 +1121,6 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip, ...)
         return safeCall(onTooltipSetUnit, tooltip, ...)
     end
 end)
-
-local function clearTooltipVisuals(tooltip)
-    if (not tooltip) then
-        return
-    end
-    clearTooltipPlayerClassColor(tooltip)
-    if (tooltip.TacoTipPortrait) then
-        tooltip.TacoTipPortrait:Hide()
-    end
-    if (tooltip.TacoTipPortrait3D) then
-        tooltip.TacoTipPortrait3D:Hide()
-    end
-    if (tooltip.TacoTipEliteFrame) then
-        tooltip.TacoTipEliteFrame:Hide()
-    end
-end
 
 local function itemToolTipHook(self)
     clearTooltipVisuals(self)
