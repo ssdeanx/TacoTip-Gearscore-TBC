@@ -9,7 +9,7 @@
 --]]
 
 if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "deDE") then return end
-TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALE = {
 ["Player"] = "Spieler",
 ["Pet"] = "Tier",
 ["Target"] = "Ziel",

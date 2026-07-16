@@ -270,7 +270,7 @@ local defaults = {
 ["INSPECT_FRAME_ILVL_VALUE_YPOS"] = 153,
 }
 
-TACOTIP_LOCALE = TACOTIP_LOCALE or {}
+_G.TACOTIP_LOCALE = TACOTIP_LOCALE or {}
 
 for key, value in pairs(defaults) do
     if (TACOTIP_LOCALE[key] == nil) then

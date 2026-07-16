@@ -1,12 +1,12 @@
 ## Interface: 11508, 20505, 30405, 38001
-## Version: 0.5.9
+## Version: 0.6.0
 ## Title: TacoTip Gearscore TBC
 ## Notes: TacoTip (GearScore & Talents)
 ## IconTexture: Interface\Icons\INV_Misc_Spyglass_01
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1555962
 ## SavedVariables: TacoTipConfig
-## OptionalDependencies: LibStub, CallbackHandler-1.0, LibDetours-1.0, LibClassicInspector, LibClassicGearScore, Pawn, LibSharedMedia-3.0, SharedMedia
+## OptionalDependencies: LibStub, CallbackHandler-1.0, LibDetours-1.0, LibClassicInspector, LibClassicGearScore, Pawn, LibSharedMedia-3.0, SharedMedia, WoWUnit
 
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
@@ -30,3 +30,4 @@ pawn.lua
 textures.lua
 options.lua
 main.lua
+TacoTip_Tests.lua

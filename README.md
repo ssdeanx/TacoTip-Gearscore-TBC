@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.5.9` |
+| Public version | `v0.6.0` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -56,7 +56,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
 
-## What's new in v0.5.9
+## What's new in v0.6.0
 
 This release focuses on a fully settings-driven options preview and Season of Discovery correctness:
 

@@ -9,7 +9,7 @@
 
 if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "koKR") then return end
 
-TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALE = {
 ["Player"] = "플레이어",
 ["Pet"] = "소환수",
 ["Target"] = "대상",

@@ -4,7 +4,8 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
-|| `0.5.9` | `2026-07-14` | SoD fixes: 3D portrait for players AND enemies (no bleed), class-color border no longer bleeds to enemies, Pawn loads on SoD (rune→spec + API-presence gate) |
+| `0.6.0` | `2026-07-15` | Class-color border bleed-through fix on the shared GameTooltip (clear + non-player OnShow + spell paths), 3D portrait enlarged to 42×56 (3:4), standalone WoWUnit test suite (/tttest) added as optional dependency, inline test stub removed |
+| `0.5.9` | `2026-07-14` | SoD fixes: 3D portrait for players AND enemies (no bleed), class-color border no longer bleeds to enemies, Pawn loads on SoD (rune→spec + API-presence gate) |
 | `0.5.7` | `2026-07-12` | Cross-client hardening: pcall guards on PawnGetScaleColor + SetPortraitTexture, LibClassicInspector nameplate field fix |
 | `0.5.6` | `2026-07-11` | Fix: portrait bleed-through on non-unit tooltips |
 | `0.5.5` | `2026-06-24` | Hotfix: `clearTooltipVisuals` forward-reference crash when triggered by other addons (BugSack error on Bartender4/LoonBestInSlot tooltip events) |
@@ -16,6 +17,26 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.6.0] - 2026-07-15
+
+### Fixed - 0.6.0
+
+- **Class-color border bleed-through on the shared GameTooltip:** Added `resetTooltipBorderToDefault()` and wired it into `clearTooltipVisuals` (fires on `OnTooltipCleared`), the non-player branch of `onTooltipShow`, and the `OnTooltipSetSpell` handler. A class-tinted border from a previous player hover can no longer persist onto non-unit tooltips (items, spells, buffs, map POI icons). Class borders apply only to real player units.
+
+### Changed - 0.6.0
+
+- **3D portrait default size 38×52 → 42×56 (exact 3:4, taller than wide, ~10% larger):** Base portrait dimensions at scale 1.0 now render a proper 3:4 frame instead of the old near-square 38×52.
+
+### Added - 0.6.0
+
+- **Standalone WoWUnit test suite (`TacoTip_Tests.lua`):** 8 test groups (Core, Config, Borders, Portrait, Guild, Stats, Mover, Modules) covering config defaults/sanitizer, border no-bleed, portrait ratio, GearScore/Pawn/talent nil-safety, mover sync, and module load. Runs via `/tttest` (alias `/tacotip`). Registered as an optional dependency in `TacoTip.toc` and added to the load list. The inline `TT._Test` stub previously appended to `main.lua` was removed.
+
+### Notes - 0.6.0
+
+- Version metadata bumped to `0.6.0` in `TacoTip.toc`, `main.lua`, and `options.lua`.
+- Guild display is intentionally left unchanged: it works on TBC Anniversary (2.5.5–2.5.6) and remains broken on Classic Era / SoD (1.15.8) — known, not in scope this release.
+- Assisted by: Hermes (MoA) — model: nous:tencent/hy3:free. Addon maintainer: AcidBomb (Pilsung).
 
 ## [0.5.9] - 2026-07-14
 

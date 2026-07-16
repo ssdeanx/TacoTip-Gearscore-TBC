@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.5.9"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.0"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -429,6 +429,22 @@ local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, border
     backdrop:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 0.85)
 end
 
+-- Reset the tooltip border to the user's configured base (non-class) color.
+-- Called at the tooltip-recycle boundary (OnTooltipCleared / non-unit OnShow)
+-- so a previous player's class-colored border cannot bleed onto item, spell,
+-- minimap, or world-map POI tooltips that reuse GameTooltip.
+local function resetTooltipBorderToDefault(tooltip)
+    if (not tooltip) then
+        return
+    end
+    applyTooltipBorderOverlay(
+        tooltip, nil,
+        TacoTipConfig.tooltip_border_color_r or 1,
+        TacoTipConfig.tooltip_border_color_g or 1,
+        TacoTipConfig.tooltip_border_color_b or 1
+    )
+end
+
 local function resolveTooltipUnit(tooltip, unit)
     if (unit and UnitExists and UnitExists(unit)) then
         return unit
@@ -501,8 +517,8 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
 
     local portrait = ensureTooltipPortrait(tooltip)
     local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
-    local portraitW = math.floor(38 * portraitScale)
-    local portraitH = math.floor(52 * portraitScale)
+    local portraitW = math.floor(42 * portraitScale)
+    local portraitH = math.floor(56 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
             portrait:ClearAllPoints()
@@ -628,6 +644,7 @@ local function clearTooltipVisuals(tooltip)
         return
     end
     clearTooltipPlayerClassColor(tooltip)
+    resetTooltipBorderToDefault(tooltip)
     if (tooltip.TacoTipPortrait) then
         tooltip.TacoTipPortrait:Hide()
     end
@@ -1222,6 +1239,10 @@ local function onTooltipShow(tooltip)
     -- never inherit a stale class border.
     local unit = resolveTooltipUnit(tooltip)
     if (not unit or not UnitIsPlayer(unit)) then
+        -- Non-player / non-unit tooltip (items, spells, minimap or world-map
+        -- POI icons). Drop any class-colored border left by the previous
+        -- player hover so it cannot bleed through onto this tooltip.
+        resetTooltipBorderToDefault(tooltip)
         return
     end
 
