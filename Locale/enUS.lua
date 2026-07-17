@@ -268,6 +268,10 @@ local defaults = {
 ["INSPECT_FRAME_ILVL_VALUE_FONT_SIZE"] = 10,
 ["INSPECT_FRAME_ILVL_VALUE_XPOS"] = 270,
 ["INSPECT_FRAME_ILVL_VALUE_YPOS"] = 153,
+["OPTIONS_OFFSET_EDIT_DESC"] = "Type a precise pixel offset and press Enter to apply it.",
+["OPTIONS_OFFSET_SLIDER_DESC"] = "Drag to fine-tune this offset. The numeric field stays synchronized.",
+["RANK_TITLE"] = "Champion",
+["REALM"] = "Realm",
 }
 
 _G.TACOTIP_LOCALE = TACOTIP_LOCALE or {}

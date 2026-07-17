@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.0"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.1"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -433,16 +433,24 @@ end
 -- Called at the tooltip-recycle boundary (OnTooltipCleared / non-unit OnShow)
 -- so a previous player's class-colored border cannot bleed onto item, spell,
 -- minimap, or world-map POI tooltips that reuse GameTooltip.
+-- NOTE: This deliberately bypasses applyTooltipBorderOverlay because that
+-- function checks borderTexture and returns early when the texture is nil or
+-- "Interface\\None", leaving the stale class-colored border in place.  The
+-- direct frame write below is not subject to the texture guard so it always
+-- resets the colour, regardless of the configured border texture.
 local function resetTooltipBorderToDefault(tooltip)
     if (not tooltip) then
         return
     end
-    applyTooltipBorderOverlay(
-        tooltip, nil,
-        TacoTipConfig.tooltip_border_color_r or 1,
-        TacoTipConfig.tooltip_border_color_g or 1,
-        TacoTipConfig.tooltip_border_color_b or 1
-    )
+    local backdrop = tooltip and tooltip.TacoTipBackdropFrame
+    if (backdrop and backdrop.SetBackdropBorderColor) then
+        backdrop:SetBackdropBorderColor(
+            TacoTipConfig.tooltip_border_color_r or 1,
+            TacoTipConfig.tooltip_border_color_g or 1,
+            TacoTipConfig.tooltip_border_color_b or 1,
+            TacoTipConfig.tooltip_border_alpha or 0.85
+        )
+    end
 end
 
 local function resolveTooltipUnit(tooltip, unit)
@@ -496,8 +504,15 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     -- this function returns (TBC Anniversary 2026 can refresh the tooltip
     -- frame after OnTooltipSetUnit completes).
     if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and isPlayerTooltip) then
+        local deferralGen = tooltip._borderDeferralGen or 0
         CAfter(0.05, function()
             return safeCall(function()
+                -- If the tooltip's border-deferral generation has changed since
+                -- we scheduled, the tooltip was recycled for different content
+                -- (e.g. map POI, item, another player) — do not re-apply.
+                if (tooltip._borderDeferralGen ~= deferralGen) then
+                    return
+                end
                 if (not tooltip or not tooltip:IsShown()) then
                     return
                 end
@@ -542,44 +557,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             portrait:Show()
         else
             portrait:Hide()
-            if (tooltip.TacoTipEliteFrame) then
-                tooltip.TacoTipEliteFrame:Hide()
-            end
         end
-    end
-
-    if (TacoTipConfig.show_elite_frame and unit and TacoTipConfig.tooltip_portrait and not UnitIsPlayer(unit)) then
-        local classification = UnitClassification(unit)
-        if (classification and classification ~= "normal" and classification ~= "") then
-            local eliteFrame = tooltip.TacoTipEliteFrame
-            if (not eliteFrame) then
-                eliteFrame = tooltip:CreateTexture(nil, "OVERLAY")
-                tooltip.TacoTipEliteFrame = eliteFrame
-            end
-            local portraitSize = portraitW
-            eliteFrame:ClearAllPoints()
-            if (classification == "worldboss") then
-                pcall(eliteFrame.SetAtlas, eliteFrame, "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Winged", false)
-                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
-                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
-            elseif (classification == "rareelite") then
-                pcall(eliteFrame.SetAtlas, eliteFrame, "ui-hud-unitframe-target-portraiton-boss-rare-silver", false)
-                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
-                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
-            elseif (classification == "elite") then
-                pcall(eliteFrame.SetAtlas, eliteFrame, "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold", false)
-                eliteFrame:SetSize(portraitSize * 1.4, portraitSize * 1.4)
-                eliteFrame:SetPoint("CENTER", portrait, "CENTER")
-            elseif (classification == "rare") then
-                pcall(eliteFrame.SetAtlas, eliteFrame, "UnitFrame-Target-PortraitOn-Boss-Rare-Star", false)
-                eliteFrame:SetSize(16, 16)
-                eliteFrame:SetPoint("BOTTOMRIGHT", portrait, "BOTTOMRIGHT", 2, 2)
-            end
-            eliteFrame:Show()
-        end
-    end
-    if (tooltip.TacoTipEliteFrame and not (TacoTipConfig.show_elite_frame and unit and TacoTipConfig.tooltip_portrait and not UnitIsPlayer(unit))) then
-        tooltip.TacoTipEliteFrame:Hide()
     end
 
     local barTexture = (TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
@@ -643,6 +621,12 @@ local function clearTooltipVisuals(tooltip)
     if (not tooltip) then
         return
     end
+    -- Bump the border-deferral generation so any C_Timer.After scheduled
+    -- by ApplyTooltipAppearance or onTooltipShow for this tooltip re-apply
+    -- sees a stale generation and bails out.  This prevents a CAfter that
+    -- fires after the tooltip has been recycled for different content from
+    -- re-applying a class-colored border onto an item/spell/map tooltip.
+    tooltip._borderDeferralGen = (tooltip._borderDeferralGen or 0) + 1
     clearTooltipPlayerClassColor(tooltip)
     resetTooltipBorderToDefault(tooltip)
     if (tooltip.TacoTipPortrait) then
@@ -654,6 +638,10 @@ local function clearTooltipVisuals(tooltip)
     if (tooltip.TacoTipEliteFrame) then
         tooltip.TacoTipEliteFrame:Hide()
     end
+    if (TacoTipPowerBar) then
+        TacoTipPowerBar:Hide()
+    end
+    stopPowerBarTicker()
 end
 
 local function onTooltipSetUnit(tooltip)
@@ -661,9 +649,11 @@ local function onTooltipSetUnit(tooltip)
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit) then
         -- F2: OnTooltipSetUnit can fire with a stale/invalid unit during
-        -- content transitions. Clear both class color and portrait visuals
-        -- here so the portrait from the previous unit does not persist.
-        clearTooltipPlayerClassColor(tooltip)
+        -- content transitions. Clear all player-specific visuals (class
+        -- color, border, portrait, elite frame, power bar) here so nothing
+        -- from the previous unit persists on the recycled tooltip.
+        -- clearTooltipVisuals already calls clearTooltipPlayerClassColor
+        -- internally, so we skip the standalone call here.
         clearTooltipVisuals(tooltip)
         return
     end
@@ -1240,14 +1230,23 @@ local function onTooltipShow(tooltip)
     local unit = resolveTooltipUnit(tooltip)
     if (not unit or not UnitIsPlayer(unit)) then
         -- Non-player / non-unit tooltip (items, spells, minimap or world-map
-        -- POI icons). Drop any class-colored border left by the previous
-        -- player hover so it cannot bleed through onto this tooltip.
-        resetTooltipBorderToDefault(tooltip)
+        -- POI icons). Clear ALL player-specific visuals left by the previous
+        -- hover — border, portrait, 3D portrait, elite frame, power bar —
+        -- so none of them bleed through onto this tooltip.  This is broader
+        -- than just resetTooltipBorderToDefault because ClearLines() (used by
+        -- map POI tooltips) does not fire OnTooltipCleared, so the portrait
+        -- from a previous player hover otherwise persists on the quest NPC.
+        clearTooltipVisuals(tooltip)
         return
     end
 
+    local deferralGen = tooltip._borderDeferralGen or 0
     CAfter(0, function()
         return safeCall(function()
+            -- If the tooltip was recycled since we scheduled, bail out.
+            if (tooltip._borderDeferralGen ~= deferralGen) then
+                return
+            end
             if (not tooltip or not tooltip:IsShown()) then
                 return
             end

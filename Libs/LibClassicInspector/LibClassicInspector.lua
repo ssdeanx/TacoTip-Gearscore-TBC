@@ -3615,7 +3615,7 @@ function lib:GetTalentInfo(unitorguid, tabIndex, talentIndex, _group)
         return nil
     end
     if (guid == UnitGUID("player")) then
-        local name, iconTexture, tier, column, rank, maxRank, isExceptional, available = GetTalentInfo(tabIndex, talentIndex, false, false, group)
+        local name, iconTexture, tier, column, rank, maxRank, isExceptional, available = GetTalentInfo(tabIndex, talentIndex, false, group, nil)
         return name, iconTexture, tier, column, rank, maxRank, isExceptional, available, talents_table[class][tabIndex][talentIndex].id
     else
         local user = getCacheUser2(guid)

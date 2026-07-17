@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.6.0` |
+| Public version | `v0.6.1` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -56,17 +56,20 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
 
-## What's new in v0.6.0
+## What's new in v0.6.1
 
-This release focuses on a fully settings-driven options preview and Season of Discovery correctness:
+This release focuses on audit-driven correctness fixes, tooltip glitch investigation, and test suite hardening:
 
-- **Options preview is now 100% settings-driven.** The Tooltips-page preview reflects the selected style's default layout and updates instantly when you change any setting — class color, portrait, bars, fonts, textures, borders, alpha, and every content toggle. No keypress required. The live in-game tooltip still expands hybrid styles on Shift; the preview shows the default layout.
-- **Both tooltips share one source of truth.** Every setting feeds the preview example *and* your live tooltip, because both read the same config. What you see in the preview is what you get in the game.
-- **Preview shows a fixed max-level ROGUE example** (named AcidBomb) so it always looks identical regardless of your own character's class.
-- **SoD portrait + class-border fixes.** The 3D portrait now renders for players *and* enemies (no leftover model), and class-tinted borders no longer bleed onto enemy tooltips.
-- **Pawn works on SoD again.** The load gate now accepts Pawn's public API, and the specialization lookup falls back to the primary spec because SoD runes replace talent trees.
-
-Full history is in `CHANGELOG.md`.
+- **`tip_style` no longer forced to 2:** Config sanitizer no longer clobbers valid style selections (1, 3, 4, 5).
+- **GetQuality color fix:** Green and blue channels now read from the correct table coefficients instead of being swapped.
+- **CAfter border bleed defense (generation-counter):** The deferred border re-apply in `ApplyTooltipAppearance` now uses a generation counter (`_borderDeferralGen`) bumped on every `clearTooltipVisuals()`, so a stale CAfter from a previous player hover cannot contaminate a recycled tooltip. Combined with a direct backdrop write that bypasses the texture guard in `applyTooltipBorderOverlay`, the border is always reset to the configured base color on every tooltip recycle.
+- **Portrait/visual leak on map quest tooltips (CRITICAL):** The `onTooltipShow` non-player branch (map POI icons, items, spells) now calls `clearTooltipVisuals()` instead of partial cleanup, fixing a bug where the portrait, 3D portrait, and power bar from a previous player hover could persist on non-unit tooltips when `ClearLines()` (used by map POI tooltips) skipped `OnTooltipCleared`.
+- **Elite frame portrait border removed:** The `show_elite_frame` feature (dragon/star atlas overlays on the portrait for elite/rare/boss NPCs) used `SetAtlas` with Wrath-only atlas names that do not exist on TBC Classic. This created orphaned invisible texture frames that accumulated on the shared GameTooltip and could contribute to tooltip glitching. Removed entirely — creation, show/hide logic, config key, and options UI checkbox.
+- **Power bar cleanup:** `clearTooltipVisuals()` now hides `TacoTipPowerBar` and stops its update ticker during tooltip transitions.
+- **Pawn API safety:** `PawnGetSingleValueFromItem` is now wrapped in pcall like every other Pawn API call.
+- **Locale completion:** 22 missing keys added to all 10 non-English locales with translated values; 4 missing keys added to enUS.lua.
+- **Test suite hardening:** Portrait size assertions use float tolerance (`math.abs(w - 42) < 0.01`), Interface metadata test falls back to TOC constant when `GetAddOnMetadata` returns nil, and border bleed tests now use `SetUnit("player")` to ensure the tooltip is visible so `OnTooltipCleared` fires properly.
+- **Version bump:** `0.6.0` → `0.6.1` — TOC, metadata, and CHANGELOG aligned.
 
 ## How TacoTip compares
 

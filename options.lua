@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.0"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.1"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -98,7 +98,6 @@ function TT:GetDefaults()
         tooltip_portrait_scale = 1,
         tooltip_portrait_3d = true,
         tooltip_portrait_zoom = 0.7,
-        show_elite_frame = true,
         tooltip_font = "Fonts\\FRIZQT__.TTF",
         tooltip_font_size = 12,
         tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
@@ -162,11 +161,11 @@ function TT:SafeSanitizeConfig(config)
         "color_class", "show_titles", "show_guild_name", "show_guild_rank",
         "show_talents", "show_gs_player", "show_gs_character", "show_gs_items",
         "show_gs_items_hs", "show_avg_ilvl", "hide_in_combat", "show_item_level",
-        "tip_style", "show_target", "show_pawn_player", "show_team",
+        "show_target", "show_pawn_player", "show_team",
         "show_class_icon", "show_pvp_icon", "guild_rank_alt_style",
         "show_hp_bar", "show_power_bar", "tooltip_border_use_class",
         "tooltip_background_use_class", "tooltip_portrait", "tooltip_portrait_3d",
-        "show_elite_frame", "instant_fade", "anchor_mouse", "anchor_mouse_world",
+        "instant_fade", "anchor_mouse", "anchor_mouse_world",
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_gs_delta", "show_honor_rank", "show_ilvl_inline", "show_realm",
         "show_role_icon", "show_separators"
@@ -212,6 +211,16 @@ function TT:SafeSanitizeConfig(config)
     end
     if (type(config.guild_rank_style) ~= "number" or config.guild_rank_style < 1 or config.guild_rank_style > 2) then
         config.guild_rank_style = defaults.guild_rank_style
+    end
+    -- Color channel bounds (0-1 floats)
+    for _, key in ipairs{
+        "tooltip_border_color_r", "tooltip_border_color_g", "tooltip_border_color_b",
+        "tooltip_background_color_r", "tooltip_background_color_g", "tooltip_background_color_b",
+    } do
+        local val = config[key]
+        if (type(val) ~= "number" or val < 0 or val > 1) then
+            config[key] = defaults[key]
+        end
     end
 end
 
@@ -1580,9 +1589,6 @@ local function clearPreviewVisuals()
     if (preview.TacoTipPortrait) then
         preview.TacoTipPortrait:Hide()
     end
-    if (preview.TacoTipEliteFrame) then
-        preview.TacoTipEliteFrame:Hide()
-    end
     if (preview.TacoTipPlayerClassColor) then
         preview.TacoTipPlayerClassColor = nil
     end
@@ -1729,7 +1735,16 @@ local function buildTooltipsPage()
     controls.showGSDelta:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 30
 
-    controls.showPowerBar = createOptionsCheckbox(content, nil, L["Power Bar"], L["Show unit's power bar under tooltip"], function(_, value) TacoTipConfig.show_power_bar = value; modernShowExampleTooltip() end)
+    controls.showPowerBar = createOptionsCheckbox(content, nil, L["Power Bar"], L["Show unit's power bar under tooltip"], function(_, value)
+        TacoTipConfig.show_power_bar = value; modernShowExampleTooltip()
+        -- Live sync: apply the power bar visibility change to the current tooltip immediately
+        if (GameTooltip and GameTooltip:IsShown() and TT.ApplyTooltipAppearance) then
+            local _, unit = GameTooltip:GetUnit()
+            if (unit) then
+                TT:ApplyTooltipAppearance(GameTooltip, unit)
+            end
+        end
+    end)
     controls.showPowerBar:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 42
 
@@ -1869,13 +1884,6 @@ local function buildTooltipsPage()
     controls.tooltipPortraitZoom:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
     controls.tooltipPortraitZoom.valueText:SetPoint("LEFT", controls.tooltipPortraitZoom, "RIGHT", 8, 0)
     builder.y = builder.y - 56
-
-    controls.showEliteFrame = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ELITE_FRAME"] or "Show elite indicator", L["OPTIONS_SHOW_ELITE_FRAME_DESC"] or "Show the Elite, Rare, or Boss dragon border overlay on the portrait for non-player NPCs.", function(_, value)
-        TacoTipConfig.show_elite_frame = value
-        modernShowExampleTooltip()
-    end)
-    controls.showEliteFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
-    builder.y = builder.y - 34
 
     controls.classIconSize = createOptionsSlider(content, nil, "Class icon size", "Size of the class icon badge shown at the top-right corner of player tooltips.", function(value)
         TacoTipConfig.class_icon_size = value
@@ -2030,8 +2038,6 @@ local function buildTooltipsPage()
         controls.tooltipPortrait3D:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitZoom:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_zoom or 0.7) * 100 + 0.5))
         controls.tooltipPortraitZoom:SetDisabled(not TacoTipConfig.tooltip_portrait)
-        controls.showEliteFrame:SetChecked(TacoTipConfig.show_elite_frame)
-        controls.showEliteFrame:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 20)
         controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
         controls.tooltipFontSize:SetValueSilently(TacoTipConfig.tooltip_font_size or 12)

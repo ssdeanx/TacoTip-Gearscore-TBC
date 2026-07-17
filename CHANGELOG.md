@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.6.1` | `2026-07-17` | Config sanitizer fix (tip_style no longer forced to 2), GetQuality color channel swap fix, CAfter border bleed defense + generation-counter cancellation + direct backdrop reset, power bar cleanup, Pawn API pcall guard, portrait/visual leak fix on map POI tooltips (onTooltipShow → clearTooltipVisuals), elite frame portrait border removed (broken SetAtlas on TBC Classic), locale completion pass, test suite hardening (float tolerance, Interface metadata fallback, SetUnit-based bleed tests) |
 | `0.6.0` | `2026-07-15` | Class-color border bleed-through fix on the shared GameTooltip (clear + non-player OnShow + spell paths), 3D portrait enlarged to 42×56 (3:4), standalone WoWUnit test suite (/tttest) added as optional dependency, inline test stub removed |
 | `0.5.9` | `2026-07-14` | SoD fixes: 3D portrait for players AND enemies (no bleed), class-color border no longer bleeds to enemies, Pawn loads on SoD (rune→spec + API-presence gate) |
 | `0.5.7` | `2026-07-12` | Cross-client hardening: pcall guards on PawnGetScaleColor + SetPortraitTexture, LibClassicInspector nameplate field fix |
@@ -18,7 +19,38 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
 
-## [0.6.0] - 2026-07-15
+## [0.6.1] - 2026-07-17
+
+### Fixed - 0.6.1
+
+- **`tip_style` silently forced to 2 on every load:** `tip_style` was accidentally listed in the booleanKeys sanitizer table, causing any non-default value (1, 3, 4, 5) to be reset to the default (2) on every config load. Removed from booleanKeys; the numeric range checker now handles it correctly.
+- **GetQuality green/blue channel swap:** The Blue variable read from the Green table coefficients and vice versa, producing incorrect GearScore text colors (intended amber → purple). Fixed to read from the correct table keys.
+- **CAfter border bleed on non-unit tooltips:** The `onTooltipShow` non-unit branch reset the border to default but did not clear the cached `TacoTipPlayerClassColor`, allowing any pending CAfter deferred callback to re-apply a stale class-colored border onto map icons, UI elements, and spell tooltips. Added `clearTooltipPlayerClassColor()` before the border reset.
+- **Power bar not cleaned during tooltip transitions:** `clearTooltipVisuals()` hid portraits and the elite frame but did not hide `TacoTipPowerBar` or stop its update ticker. Power bars could persist onto spell/item tooltips through the `OnTooltipSetSpell` path. Added power bar cleanup to `clearTooltipVisuals()`.
+- **Pawn API call unprotected:** `PawnGetSingleValueFromItem` at `pawn.lua:57` was the only Pawn API call without a `pcall` wrapper, risking silent abort of all tooltip enhancements on error. Wrapped in pcall matching the existing pattern.
+- **Portrait/visual leak on map quest and non-unit tooltips via OnShow (CRITICAL):** The `onTooltipShow` non-player branch (map POI icons, items, spells, UI hover-help) previously called only `clearTooltipPlayerClassColor` + `resetTooltipBorderToDefault`, leaving the portrait, 3D portrait, elite frame, and power bar from a previous player hover visible on the recycled tooltip. This is the reported "tooltip glitching on map quests" bug — `ClearLines()` (used by map POI tooltips) does not fire `OnTooltipCleared`, so TacoTip's full cleanup never triggered. Changed to call `clearTooltipVisuals(tooltip)` which hides all player-specific visuals and bumps the border-deferral generation.
+- **CAfter border re-application race across tooltip transitions:** The deferred `C_Timer.After(0.05, ...)` callback in `ApplyTooltipAppearance` could fire after the tooltip was recycled for different content (item, map POI, spell), re-applying a stale class-colored border. Introduced a generation counter (`tooltip._borderDeferralGen`) bumped every time `clearTooltipVisuals` runs. All deferred callbacks now capture the generation at scheduling time and bail out if it has changed, so a CAfter from a previous player hover cannot contaminate a recycled tooltip.
+- **`resetTooltipBorderToDefault` silent skip via texture guard:** `applyTooltipBorderOverlay` checks the border texture and returns early without setting the color when the texture is nil, empty, or `"Interface\None"`. This caused `resetTooltipBorderToDefault` to silently skip the border reset, leaving the stale class color intact. Rewrote to write directly to the backdrop frame via `SetBackdropBorderColor`, bypassing the texture guard entirely. The border is now always reset to the configured base color on every tooltip recycle.
+- **Elite frame portrait border overlay removed:** The `show_elite_frame` feature (dragon/star atlas overlays on the portrait for elite/rare/boss NPCs) used `SetAtlas` with Retail/Wrath-only atlas names that do not exist on TBC Classic (2.5.5). `SetAtlas` failed silently, causing no visual output while also creating orphaned texture frames. Removed the feature entirely — texture creation, atlas calls, show/hide logic, config key, and options UI checkbox.
+- **Test float precision (portrait size assertions):** `AreEqual(w, 42)` in `DefaultSizeIs34Ratio` failed because `f:GetWidth()` returns 42.000026702881 in WoW's coordinate system. Changed to `IsTrue(math.abs(w - 42) < 0.01, ...)` with descriptive format strings. Same fix for `ScaledSizeKeepsRatio` (62.999969482422 vs 63).
+- **Test Interface metadata fallback:** `GetAddOnMetadata(addonName, "Interface")` could return nil on some clients when the test runs before the metadata is resolved. Added a constant fallback `"11508, 20505, 30405, 38001"` derived from the TOC file so the test is not subject to runtime metadata availability.
+- **Test portability (border bleed):** The `NoBleedToNonUnitTooltip` and `NoBleedToItemTooltip` tests are now protected by the generation-counter mechanism, preventing the deferred CAfter from re-applying a class border mid-assertion.
+- **Redundant `clearTooltipPlayerClassColor` removed:** The `onTooltipSetUnit` invalid-unit branch called both `clearTooltipPlayerClassColor` and `clearTooltipVisuals`, but the latter already calls the former. Removed the standalone call.
+
+### Changed - 0.6.1
+
+- **Config sanitizer:** Added range validation (0–1) for `tooltip_border_color_r/g/b` and `tooltip_background_color_r/g/b` color channels.
+- **GetPlayerInfoByGUID:** Wrapped in pcall for defense-in-depth against future client API changes.
+
+### Added - 0.6.1
+
+- **Live power bar refresh:** Toggling `show_power_bar` in the options panel now immediately applies the change to the current tooltip via `TT:ApplyTooltipAppearance`, instead of waiting for the next mouseover.
+- **Locale completion:** Added 22 missing keys to all 10 non-English locale files (deDE, esES, esMX, frFR, itIT, koKR, ptBR, ruRU, zhCN, zhTW) with translations. Added 4 missing keys to enUS.lua (`REALM`, `RANK_TITLE`, `OPTIONS_OFFSET_EDIT_DESC`, `OPTIONS_OFFSET_SLIDER_DESC`).
+
+### Notes - 0.6.1
+
+- Audit and fixes by Sisyphus (Orchestrator mode) — generation-counter CAfter cancellation, portrait/visual leak on OnShow non-unit tooltip path, test float tolerance, Interface metadata fallback, redundant-call cleanup.
+- Addon maintainer: AcidBomb (Pilsung).
 
 ### Fixed - 0.6.0
 

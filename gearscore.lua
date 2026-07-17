@@ -92,7 +92,7 @@ local GUIDIsPlayer = (_G.C_PlayerInfo and _G.C_PlayerInfo.GUIDIsPlayer) or fallb
 local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local floor = math.floor
 
-TT_GS = {}
+_G.TT_GS = {}
 local TT_GS = TT_GS
 
 local BRACKET_SIZE = 1000
@@ -215,8 +215,8 @@ function TT_GS:GetQuality(ItemScore)
     for i = 0,6 do
         if ((ItemScore > i * BRACKET_SIZE) and (ItemScore <= ((i + 1) * BRACKET_SIZE))) then
             local Red = GS_Quality[( i + 1 ) * BRACKET_SIZE].Red["A"] + (((ItemScore - GS_Quality[( i + 1 ) * BRACKET_SIZE].Red["B"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Red["C"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Red["D"])
-            local Blue = GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["A"] + (((ItemScore - GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["B"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["C"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["D"])
-            local Green = GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["A"] + (((ItemScore - GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["B"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["C"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["D"])
+            local Blue = GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["A"] + (((ItemScore - GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["B"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["C"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Blue["D"])
+            local Green = GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["A"] + (((ItemScore - GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["B"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["C"])*GS_Quality[( i + 1 ) * BRACKET_SIZE].Green["D"])
             return Red, Green, Blue, GS_Quality[( i + 1 ) * BRACKET_SIZE].Description
         end
     end
@@ -308,7 +308,10 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
 
-        local _, PlayerEnglishClass = GetPlayerInfoByGUID(guid)
+        local ppOk, _, PlayerEnglishClass = pcall(GetPlayerInfoByGUID, guid)
+        if (not ppOk) then
+            PlayerEnglishClass = ""
+        end
         local GearScore = 0
         local ItemCount = 0
         local LevelTotal = 0
