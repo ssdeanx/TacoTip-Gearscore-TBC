@@ -1,6 +1,6 @@
 
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.1"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.3"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -120,6 +120,7 @@ function TT:GetDefaults()
         show_gs_delta = false,
         show_honor_rank = false,
         show_ilvl_inline = false,
+        show_level_line = true,
         show_realm = false,
         show_role_icon = false,
         show_separators = false,
@@ -810,7 +811,7 @@ local function showHoverTooltip(frame, title, text)
         GameTooltip:SetText(title, 1, 0.82, 0)
         GameTooltip:AddLine(text, 1, 1, 1, true)
     else
-        GameTooltip:SetText(text, 1, 1, 1, true)
+        GameTooltip:SetText(text, 1, 1, 1, 1)
     end
     GameTooltip:Show()
 end
@@ -1308,9 +1309,11 @@ modernShowExampleTooltip = function()
     if (TacoTipConfig.show_guild_name) then
         if (TacoTipConfig.show_guild_rank) then
             if (TacoTipConfig.guild_rank_alt_style) then
-                tooltip:AddLine("|cFF40FB40<Drunken Wrath> (Officer)|r")
+                tooltip:AddLine("|cFF40FB40<Drunken Wrath> Officer|r")
             else
-                tooltip:AddLine(string.format("|cFF40FB40"..L["FORMAT_GUILD_RANK_1"].."|r", "Officer", "Drunken Wrath"))
+                local guildTag = "|cFF40FB40<Drunken Wrath>|r"
+                local rankTag = string.format("|cff%02x%02x%02xOfficer|r", HIGHLIGHT_FONT_COLOR.r * 255, HIGHLIGHT_FONT_COLOR.g * 255, HIGHLIGHT_FONT_COLOR.b * 255)
+                tooltip:AddLine(string.format(L["FORMAT_GUILD_RANK_1"], guildTag, rankTag))
             end
         else
             tooltip:AddLine("|cFF40FB40<Drunken Wrath>|r")
@@ -1665,7 +1668,7 @@ local function buildTooltipsPage()
     builder.y = builder.y - 30
 
     controls.guildRankStyleChoice = createOptionsDropdown(content, nil, L["Style"], L["OPTIONS_GUILD_STYLE_DESC"] or "Choose how TacoTip formats guild rank when both guild name and guild rank are shown.", {
-        { value = 1, text = string.format(L["OPTIONS_GUILD_STYLE_ONE"] or L["FORMAT_GUILD_RANK_1"], L["Rank"], L["Guild"]) },
+        { value = 1, text = string.format(L["OPTIONS_GUILD_STYLE_ONE"] or L["FORMAT_GUILD_RANK_1"], L["Guild"], L["Rank"]) },
         { value = 2, text = L["OPTIONS_GUILD_STYLE_TWO"] or string.format("<%s> (%s)", L["Guild"], L["Rank"]) }
     }, function(value)
         TacoTipConfig.guild_rank_alt_style = (value == 2)
