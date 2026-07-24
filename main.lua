@@ -192,6 +192,32 @@ local function clearTooltipGuildLine(tooltip)
     end
 end
 
+-- Tracks which GameTooltipTextLeft[i] were modified with |c color codes
+-- so clearTooltipVisuals can reset them, preventing the old colored text
+-- from bleeding through on tooltip recycle (item, spell, minimap POI).
+local function clearTooltipColoredText(tooltip)
+    if (not tooltip) then
+        return
+    end
+    local indices = tooltip.TacoTipColoredLineIndices
+    if (not indices) then
+        return
+    end
+    for _, i in ipairs(indices) do
+        local fontString = _G[tooltip:GetName().."TextLeft"..i]
+        if (fontString and fontString.SetText) then
+            local original = tooltip.TacoTipOriginalTexts and tooltip.TacoTipOriginalTexts[i]
+            if (original) then
+                fontString:SetText(original)
+            else
+                fontString:SetText()
+            end
+        end
+    end
+    tooltip.TacoTipColoredLineIndices = nil
+    tooltip.TacoTipOriginalTexts = nil
+end
+
 local function storeTooltipPlayerClassColor(tooltip, unit)
     if (not tooltip) then
         return nil
@@ -653,6 +679,7 @@ local function clearTooltipVisuals(tooltip)
         TacoTipPowerBar:Hide()
     end
     stopPowerBarTicker()
+    clearTooltipColoredText(tooltip)
 end
 
 local function onTooltipSetUnit(tooltip)
@@ -790,6 +817,16 @@ local function onTooltipSetUnit(tooltip)
                     text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
                     local classColoredName = colorizeText(localizedClass, classc.r, classc.g, classc.b)
                     local raceColoredName = localizedRace and colorizeText(localizedRace, classc.r, classc.g, classc.b) or nil
+                    -- Save originals so clearTooltipColoredText can restore them
+                    -- and prevent colored text bleed on tooltip recycle.
+                    tooltip.TacoTipColoredLineIndices = {}
+                    tooltip.TacoTipOriginalTexts = tooltip.TacoTipOriginalTexts or {}
+                    for i = 2, 3 do
+                        if (text[i]) then
+                            tinsert(tooltip.TacoTipColoredLineIndices, i)
+                            tooltip.TacoTipOriginalTexts[i] = text[i]
+                        end
+                    end
                     for i=2,3 do
                         if (text[i]) then
                             if (localizedRace and raceColoredName) then
