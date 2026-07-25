@@ -1,6 +1,6 @@
 {
-    "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/meta/schema/3rd/luarc.json",
-    "Lua.runtime.version": "LuaJIT",
+
+    "Lua.runtime.version": "Lua 5.1",
     "Lua.diagnostics.disable": ["undefined-field"],
     "Lua.diagnostics.globals": [
         "_G",
@@ -212,10 +212,14 @@
         "GetCVarBool"
     ],
     "Lua.runtime.builtin": {
+        "basic": "disable",
         "debug": "disable",
         "io": "disable",
+        "math": "disable",
         "os": "disable",
         "package": "disable",
+        "string": "disable",
+        "table": "disable",
         "utf8": "disable"
     },
     "Lua.workspace.checkThirdParty": false,

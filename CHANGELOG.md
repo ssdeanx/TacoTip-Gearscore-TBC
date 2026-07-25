@@ -4,6 +4,8 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.6.3` | `2026-07-21` | Fix: guild display format flipped from `"Rank of <Guild>"` to `"<Guild> Rank"` with guild first. Rank now uses gold highlight color instead of parentheses. All parentheses removed from both guild display styles. All locale files updated for the new format ordering. Fix: guild text bleed onto non-unit tooltips resolved by storing the guild line index on the tooltip frame and clearing it in clearTooltipVisuals (same pattern as the class-color border fix). |
+| `0.6.2` | `2026-07-19` | Fix: guild name/rank display and rank formatting on Classic Era and Season of Discovery (SoD) by implementing a fallback parser to extract the guild name from the tooltip lines when GetGuildInfo is restricted, and completely clearing the guild line when disabled to prevent empty <> brackets. Fix: redundant parameter CanInspect warning in LibClassicInspector. Fix: parameter-mapping bug in GetTalentInfo call. Added unit tests for fallback guild parsing and hiding. |
 | `0.6.1` | `2026-07-17` | Config sanitizer fix (tip_style no longer forced to 2), GetQuality color channel swap fix, CAfter border bleed defense + generation-counter cancellation + direct backdrop reset, power bar cleanup, Pawn API pcall guard, portrait/visual leak fix on map POI tooltips (onTooltipShow → clearTooltipVisuals), elite frame portrait border removed (broken SetAtlas on TBC Classic), locale completion pass, test suite hardening (float tolerance, Interface metadata fallback, SetUnit-based bleed tests) |
 | `0.6.0` | `2026-07-15` | Class-color border bleed-through fix on the shared GameTooltip (clear + non-player OnShow + spell paths), 3D portrait enlarged to 42×56 (3:4), standalone WoWUnit test suite (/tttest) added as optional dependency, inline test stub removed |
 | `0.5.9` | `2026-07-14` | SoD fixes: 3D portrait for players AND enemies (no bleed), class-color border no longer bleeds to enemies, Pawn loads on SoD (rune→spec + API-presence gate) |
@@ -18,6 +20,19 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.6.2] - 2026-07-19
+
+### Fixed - 0.6.2
+
+- **Guild names/ranks not working on Classic Era & Season of Discovery (SoD):** The legacy `GetGuildInfo` API is restricted to `"player"` on Classic Era clients, returning `nil` for other players and preventing TacoTip from formatting or hiding guild names. Added a fallback parser that extracts the guild name from the bracketed tooltip text (e.g. `<Guild Name>`) when `GetGuildInfo` returns `nil`.
+- **Empty brackets (`<>`) displayed when guild name is disabled:** On Classic Era clients, the default game tooltip contains bracketed guild names. Using `string.gsub` to remove only the guild name left empty `<>` brackets on the tooltip. Rewrote to completely overwrite the guild line to an empty string `""` when the setting is disabled, hiding it cleanly.
+- **Redundant parameter warning in `LibClassicInspector`:** The VS Code Lua Language Server flagged `CanInspect(unit, false)` at `LibClassicInspector.lua:L3328` with a redundant-parameter warning because the API annotation only declares one parameter. Removed the redundant `false` argument since `showError` is optional and defaults to `false`.
+- **`GetTalentInfo` parameter-mapping bug:** Corrected a parameter-mapping bug at `LibClassicInspector.lua:L3619` where `group` (a number) was being passed as `isPet` (the 4th parameter) instead of the 5th parameter (`group`). This caused dual-spec player talent queries to look up pet talents.
+
+### Added - 0.6.2
+
+- **Unit tests for Classic Era fallback guild parsing:** Added the `Guild:ClassicEraFallbackParsing()` test function in [TacoTip_Tests.lua](file:///home/sam/TacoTip-Gearscore-TBC/TacoTip_Tests.lua) to assert fallback extraction of guild names from brackets and verify that the line is cleanly hidden when the guild display setting is disabled.
 
 ## [0.6.1] - 2026-07-17
 

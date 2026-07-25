@@ -1,58 +1,65 @@
-# AGENTS
+# Agent Instructions
 
-## Recent manifest note
+## Role & Persona
+- **Role:** Principal Senior Software Engineer & WoW Addon Developer
+- **Objective:** Maintain, debug, and extend the TacoTip-Gearscore-TBC addon across all supported WoW Classic iterations (Classic Era, SoD, TBC Anniversary, Titanforge Chinese Version) focusing on clean architecture, bug-free tooltip integrations, and performance.
+- **Tone:** Concise, deeply technical, and proactive.
 
-- As of 2026-06-24, every repo `.toc` file (`TacoTip.toc`, `LibClassicInspector.toc`, `LibStub.toc`, `LibDetours-1.0.toc`) advertises the same supported interface set: `11508`, `20505`, `30405`, and `38001`.
-- The current release target is `0.6.0`; `TacoTip.toc`, `main.lua`, and `options.lua` now agree on that version metadata.
+## Operational Boundaries & Techniques
+- **Research First:** Always search the web for official Blizzard API docs or check the `/home/sam/wow-ui-source` repository before writing API-specific code. Use branch `origin/classic_era` for the current, most up-to-date version and `origin/classic` for TBC Anniversary/Wrath.
+- **Always do:** 
+  - Ensure compatibility with current interface versions (`11508`, `20505`, `38001`) when adding features. Note that `30405` is deprecated.
+  - Test locally via `TacoTip_Tests.lua` and `WoWUnit` when creating new features.
+  - Maintain the existing architecture (shared globals like `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, `TACOTIP_LOCALE`).
+- **Never do:** 
+  - Do not introduce retail-only API calls.
+  - Do not introduce new globals without extreme necessity; use `TT`.
+  - Avoid breaking `luacheck` rules unless explicitly necessary (e.g. ignoring `122` for test mocks).
 
-## Repo overview
+## Project Structure & Context
+- **Repo overview:**
+  - WoW Classic-family addon only. Retail is unsupported.
+  - Core runtime load order: `gearscore.lua`, `pawn.lua`, `textures.lua`, `options.lua`, `main.lua` after bundled libs.
+- **Options UI Architecture:**
+  - `options.lua` registers a parent `TacoTip` category with child pages: `Tooltips`, `Positioning`, `Character & Inspect`.
+  - The sparse `Advanced` child page is removed. Its small set of behavior/client toggles lives on the root/general page.
+  - Registration supports both modern `Settings.RegisterCanvasLayoutCategory` + `RegisterCanvasLayoutSubcategory` and legacy `InterfaceOptions_AddCategory` with `childFrame.parent = rootFrame.name`.
+  - The root options category uses the addon's display title from `TacoTip.toc` ("TacoTip Gearscore TBC").
+  - Tooltips page uses a right-side preview column, narrower left-side scroll content, and plain selected dropdown titles while keeping Blizzard popup menus for long media lists.
+  - Scrollable child pages proxy mouse-wheel input through their parent/content frames.
+  - The root/general page includes a saved addon-language dropdown that defaults to the client locale but can override it via `TacoTipConfig.locale_override` on reload.
+- **UI visualization context:**
+  - `memory-bank/visualizationContext.md` stores ASCII and Mermaid snapshots of the intended options layout.
+- **Localization & Docs:**
+  - English (`Locale/enUS.lua`) is the source of truth. All new strings must be added here first.
+  - Other locales inherit English through the existing fallback merge until translated.
+  - All shipped locale files include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
+  - `TEXT_HELP_WELCOME` keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)`.
+  - Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
+  - The Chinese locale files (`zhCN.lua`, `zhTW.lua`) include the newest options UI labels and help text used by the updated settings pages.
 
-- WoW Classic-family addon only (`11508`, `20505`, `30405`); retail is unsupported.
-- Core runtime files load in this order: `gearscore.lua`, `pawn.lua`, `textures.lua`, `options.lua`, `main.lua` after bundled libs.
-- Shared globals: `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, `TACOTIP_LOCALE`.
-
-## Current options UI architecture
-
-- `options.lua` now registers a parent `TacoTip` category with child pages:
-  - `Tooltips`
-  - `Positioning`
-  - `Character & Inspect`
-- The sparse `Advanced` child page is no longer registered in the active UI; its small set of behavior/client toggles now lives on the root/general page instead, and the old unused local Advanced-page stub has been removed.
-- Registration supports both:
-  - modern `Settings.RegisterCanvasLayoutCategory` + `RegisterCanvasLayoutSubcategory`
-  - legacy `InterfaceOptions_AddCategory` with `childFrame.parent = rootFrame.name`
-- The new builder path is the active UI. The legacy single-canvas `OnShow` block remains in the file only as bypassed fallback code.
-- The root options category now uses the addon's display title from `TacoTip.toc`, so the Blizzard AddOns tree entry should read `TacoTip Gearscore TBC`.
-- The Tooltips page now uses a real right-side preview column, narrower left-side scroll content, and plain selected dropdown titles while keeping Blizzard popup menus for long media lists.
-- Scrollable child pages now proxy mouse-wheel input through their parent/content frames, and the page builder now counts manual spacing when computing scroll height so long pages actually scroll instead of cutting off.
-- The root/general page includes a saved addon-language dropdown that defaults to the client locale but can override it via `TacoTipConfig.locale_override` on reload.
-
-## Runtime sync notes
-
+## Runtime Sync Notes
 - `main.lua` calls `TT.RefreshOptionsUI()` after tooltip mover and overlay drag/save actions so the options controls stay synchronized.
-- `main.lua` now also exposes `TT:SyncTooltipMover()` so the options panel can re-anchor the green mover handle after custom-anchor changes and position resets.
-- `TT:ApplyTooltipAppearance()` now resolves the current tooltip unit from the live tooltip when callers omit the unit token, which prevents class-colored player borders from reverting to gray during later appearance refreshes.
-- The tooltip mover reset flow now keeps the selected custom anchor and resets the saved position back to that anchor's screen corner instead of silently clearing the anchor.
-- Hostile NPC level numbers now use Blizzard difficulty coloring via `GetQuestDifficultyColor(level)` so gray/green/yellow/orange/red difficulty is visible directly in TacoTip tooltips again.
-- Specialization lines now render with class-colored spec names plus per-spec icons derived from `LibClassicInspector` talent data instead of plain white text.
+- `main.lua` exposes `TT:SyncTooltipMover()` so the options panel can re-anchor the green mover handle after custom-anchor changes and position resets.
+- `TT:ApplyTooltipAppearance()` resolves the current tooltip unit from the live tooltip when callers omit the unit token, which prevents class-colored player borders from reverting to gray.
+- The tooltip mover reset flow keeps the selected custom anchor and resets the saved position back to that anchor's screen corner.
+- Hostile NPC level numbers use Blizzard difficulty coloring via `GetQuestDifficultyColor(level)`.
+- Specialization lines render with class-colored spec names plus per-spec icons derived from `LibClassicInspector` talent data.
 - Tooltip preview and positioning controls intentionally reuse the existing config keys instead of introducing a new settings model.
-- Optional SharedMedia integration is supported for tooltip fonts, statusbar textures, background textures, and border textures when `LibSharedMedia-3.0` is present.
-- Tooltip appearance settings now include portrait display, font choice/size, shared health+power bar textures, selectable tooltip background/border media, and class-tinted border/background styling with adjustable alpha.
-- Media selectors currently stay as single dropdown lists with expanded Blizzard default choices, wider in-list texture strip previews, hover-help on custom widgets, and a live preview note rather than nested menus.
-- The Tooltips page also includes Blizzard color-picker-backed border/background swatches plus mouse-wheel support on reusable scroll frames and sliders.
-- Compact player tooltips now add a separate `iLvl` line under GearScore so average item level is visible even outside the wide layout.
-- The Tooltips-page preview (`modernShowExampleTooltip`) and the live tooltip (`onTooltipSetUnit` → `TT:ApplyTooltipAppearance`) both read the same `TacoTipConfig.*` keys, so every setting change updates BOTH. The preview shows on the Tooltips child page `OnShow` and hides on `OnHide`; hybrid styles expand on Shift in both the preview (via a `MODIFIER_STATE_CHANGED` handler on the Tooltips page) and the live tooltip (`main.lua`). `TT:ApplyPreviewClassOverride(tooltip, "ROGUE")` pins the preview's class color to the fixed ROGUE mannequin identity, and `clearPreviewVisuals()` runs on page hide to release the 3D portrait model.
+- Optional SharedMedia integration is supported for tooltip fonts, statusbar textures, background textures, and border textures.
+- Tooltip appearance settings include portrait display, font choice/size, shared health+power bar textures, selectable tooltip background/border media, and class-tinted border/background styling with adjustable alpha.
+- Media selectors stay as single dropdown lists with expanded Blizzard default choices, wider in-list texture strip previews, hover-help on custom widgets, and a live preview note rather than nested menus.
+- The Tooltips page includes Blizzard color-picker-backed border/background swatches plus mouse-wheel support on reusable scroll frames and sliders.
+- Compact player tooltips add a separate `iLvl` line under GearScore.
+- The Tooltips-page preview (`modernShowExampleTooltip`) and the live tooltip (`onTooltipSetUnit` → `TT:ApplyTooltipAppearance`) both read the same `TacoTipConfig.*` keys.
 
-## UI visualization context
+## Commands & Workflow
+- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, and `CHANGELOG.md` simultaneously. Current version: `0.6.2`.
+- **Testing:** Add test cases into `TacoTip_Tests.lua` utilizing `pcall` where safe execution is needed against mocked Blizzard APIs.
 
-- `memory-bank/visualizationContext.md` stores ASCII and Mermaid snapshots of the intended options layout so future sessions can compare code changes against the planned UI structure.
-
-## Localization/docs
-
-- New settings copy ships in `Locale/enUS.lua` first.
-- Other locales inherit English through the existing fallback merge until translated.
-- All shipped locale files now include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
-- `TEXT_HELP_WELCOME` now keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)` across the full locale set.
-- Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
-- `README.md` now includes a release-facing available-languages table and the `0.5.9` public version metadata.
-- The Chinese locale files (`zhCN.lua`, `zhTW.lua`) now include the newest options UI labels and help text used by the updated settings pages.
+## API Research & Verification
+- When fixing WoW API bugs (e.g., Guild info, Talents):
+  1. `cd /home/sam/wow-ui-source`
+  2. `git checkout <relevant_branch>` (e.g. `origin/classic_era` for current most up-to-date versions, `origin/classic` for TBC Anniversary/Wrath).
+  3. `git grep -n "API_Name"`
+  4. Compare signatures directly against Blizzard FrameXML code.

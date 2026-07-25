@@ -264,6 +264,49 @@ local function RegisterTacoTipTests()
         cfg.show_guild_name = savedName
         ClearReplaces()
     end
+    function Guild:ClassicEraFallbackParsing()
+        Replace("GetGuildInfo", function(unit)
+            return nil
+        end)
+        local originalGetUnit = GameTooltip.GetUnit
+        GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
+
+        local cfg = _G.TacoTipConfig
+        local savedName = cfg.show_guild_name
+        cfg.show_guild_name = true
+
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("TestPlayer")
+        GameTooltip:AddLine("<TestClassicGuild>")
+        GameTooltip:AddLine("Level 60 Orc Warrior")
+
+        local script = GameTooltip:GetScript("OnTooltipSetUnit")
+        local ok = pc(script, GameTooltip)
+        IsTrue(ok, "OnTooltipSetUnit did not error")
+
+        local line2 = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
+        if (line2 and line2 ~= "") then
+            IsTrue(line2:find("TestClassicGuild") ~= nil, "guild name was extracted and formatted from brackets")
+            IsTrue(line2:find("^|cFF40FB40") ~= nil, "guild line is class-colored/green")
+        end
+
+        cfg.show_guild_name = false
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("TestPlayer")
+        GameTooltip:AddLine("<TestClassicGuild>")
+        GameTooltip:AddLine("Level 60 Orc Warrior")
+
+        ok = pc(script, GameTooltip)
+        IsTrue(ok, "OnTooltipSetUnit with show_guild_name=false did not error")
+
+        local line2_hidden = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
+        IsTrue(line2_hidden == nil or line2_hidden == "" or line2_hidden:find("Level 60") ~= nil, "guild line was completely hidden/skipped")
+
+        cfg.show_guild_name = savedName
+        GameTooltip["GetUnit"] = originalGetUnit
+        ClearReplaces()
+    end
+
 
     -- ============================================================
     -- TT-Stats: GearScore, Pawn, talents nil-safe

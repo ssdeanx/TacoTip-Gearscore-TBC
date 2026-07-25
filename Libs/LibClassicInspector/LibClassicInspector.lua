@@ -28,7 +28,6 @@ if (not lib) then
     return
 end
 oldminor = oldminor or 0
-
 local Detours = LibStub("LibDetours-1.0")
 
 --------------------------------------------------------------------------
@@ -3322,7 +3321,7 @@ function lib:CanInspect(unitorguid)
     elseif (UnitIsPlayer(unitorguid)) then
         unit = unitorguid
     end
-    return unit and UnitExists(unit) and UnitIsConnected(unit) and (not UnitIsDeadOrGhost(unit)) and (not UnitIsUnit(unit, "player")) and CheckInteractDistance(unit, 1) and (not InspectFrame or not InspectFrame:IsShown()) and type(CanInspect) == "function" and CanInspect(unit, false)
+    return unit and UnitExists(unit) and UnitIsConnected(unit) and (not UnitIsDeadOrGhost(unit)) and (not UnitIsUnit(unit, "player")) and CheckInteractDistance(unit, 1) and (not InspectFrame or not InspectFrame:IsShown()) and type(CanInspect) == "function" and CanInspect(unit)
 end
 
 
@@ -3615,7 +3614,7 @@ function lib:GetTalentInfo(unitorguid, tabIndex, talentIndex, _group)
         return nil
     end
     if (guid == UnitGUID("player")) then
-        local name, iconTexture, tier, column, rank, maxRank, isExceptional, available = GetTalentInfo(tabIndex, talentIndex, false, group, nil)
+        local name, iconTexture, tier, column, rank, maxRank, isExceptional, available = GetTalentInfo(tabIndex, talentIndex, false, false, group)
         return name, iconTexture, tier, column, rank, maxRank, isExceptional, available, talents_table[class][tabIndex][talentIndex].id
     else
         local user = getCacheUser2(guid)

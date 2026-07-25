@@ -120,7 +120,6 @@ function TT:GetDefaults()
         show_gs_delta = false,
         show_honor_rank = false,
         show_ilvl_inline = false,
-        show_level_line = true,
         show_realm = false,
         show_role_icon = false,
         show_separators = false,
@@ -811,7 +810,7 @@ local function showHoverTooltip(frame, title, text)
         GameTooltip:SetText(title, 1, 0.82, 0)
         GameTooltip:AddLine(text, 1, 1, 1, true)
     else
-        GameTooltip:SetText(text, 1, 1, 1, 1)
+        GameTooltip:SetText(text, 1, 1, 1, true)
     end
     GameTooltip:Show()
 end

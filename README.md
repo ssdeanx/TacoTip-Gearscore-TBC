@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.6.1` |
+| Public version | `v0.6.3` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -55,6 +55,25 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The live tooltip preview in the options panel now sits in a dedicated right-side column instead of covering the controls.
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
+
+## What's new in v0.6.3
+
+This release improves the guild rank display format on tooltips:
+
+- **Guild display format flipped**: Changed from `"Rank of <Guild>"` to `"<Guild> Rank"` — guild name is shown first, then the rank.
+- **Rank uses color instead of parentheses**: Rank text now renders in gold (`HIGHLIGHT_FONT_COLOR`) instead of being wrapped in parentheses, making it consistent with other addon label/value pairs (target, realm, honor rank).
+- **All parentheses removed from both display styles**: Neither the default nor the alternative guild style uses parentheses anymore.
+
+## What's new in v0.6.2
+
+This release resolves compatibility and behavior issues on Classic Era / Season of Discovery (SoD) clients:
+
+- **Classic Era / SoD Guild display fix**: Implemented a fallback parser that extracts the guild name from the tooltip bracketed text (e.g. `<Guild Name>`) when `GetGuildInfo` is restricted.
+- **Hiding empty brackets**: Completely clears/hides the guild line when disabled rather than doing string substitution, avoiding trailing `<>` brackets on Classic Era clients.
+- **GetTalentInfo parameters**: Corrected a parameter-mapping bug where `group` was being queried as `isPet`, which incorrectly triggered pet talent lookups.
+- **CanInspect warning resolved**: Removed the redundant boolean argument from the `CanInspect` call.
+- **Robust test coverage**: Added unit tests in `TacoTip_Tests.lua` to verify fallback guild parsing and hiding.
+- **Blizzard API reference mapping**: Documented guidelines for using the `wow-ui-source` repository to cross-reference official Blizzard APIs.
 
 ## What's new in v0.6.1
 

@@ -1,5 +1,28 @@
 # Active Context
 
+## 2026-07-19 - v0.6.2: Classic Era/SoD Guild Display & API Hardening
+
+- **Classic Era/SoD Guild Display Fallback:** Restructured the guild text display when `GetGuildInfo` returns nil (due to API restrictions on other player units on patch 1.15.8 Classic Era/SoD clients) by parsing `<Guild Name>` directly from the tooltip text lines.
+- **Overwriting/Hiding Disabled Guilds:** Ensured disabled guild display completely overwrites/clears the guild line, preventing empty `<>` brackets from displaying.
+- **GetTalentInfo Parameter Mapping:** Fixed a talent querying bug where `group` was being mapped to `isPet` instead of the 5th parameter.
+- **CanInspect redundant parameter warning:** Removed the redundant boolean argument from the call to `CanInspect` inside `LibClassicInspector`.
+- **Unit Tests:** Added `Guild:ClassicEraFallbackParsing` unit test to verify brackets fallback extraction and hiding.
+- **Version Bumps:** Bumped addon version to `0.6.2` across manifests, runtime, and documentation.
+
+## 2026-07-17 - v0.6.1: Audit Correctness Fixes
+
+- **Config Sanitizer (`tip_style`):** Fixed a bug where `tip_style` was incorrectly included in `booleanKeys`, forcing it to default to `2` on reload.
+- **GetQuality Green/Blue Swap:** Corrected copy-paste error swapping green and blue channels in GearScore quality coloring.
+- **CAfter Border Bleed Guard:** Added `clearTooltipPlayerClassColor` to the non-unit tooltip branch inside `onTooltipShow`.
+- **Power Bar Cleanup:** Hiding the power bar and stopping its update ticker inside the centralized `clearTooltipVisuals` function.
+- **Color Range Validation:** Added float range checks to color channels during config sanitization.
+
+## 2026-07-15 - v0.6.0: WoWUnit Test Suite Integration & Visual Fixes
+
+- **WoWUnit Test Suite:** Integrated a standalone test runner (`/tttest`) to run modular assertions (core namespace, configs, borders, and specs).
+- **3D Portrait Frame Size:** Resized the 3D model viewport to 42×56 (3:4 ratio).
+- **Border Bleed Fixes:** Hardened OnShow/OnHide script hooks to prevent border bleeding onto minimap or world map icons.
+
 ## 2026-06-12 - v0.5.2: NineSlice class-border overlay fix & border thickness slider
 
 - **Root cause fixed:** The 2.5.3 Consolidated UI Changes moved tooltip backdrops from GameTooltip to a NineSlicePanel sub-frame. NineSlice renders its own built-in grey border that covers any backdrop applied to the tooltip parent, so `SetBackdropBorderColor` had no visible effect. The fix replaces all speculative `NineSlice:SetBorderColor()` / `NineSlice:SetCenterColor()` / `BackdropTemplateMixin`-on-NineSlice calls with a **separate `BackdropTemplate` child-frame overlay** (`getOrCreateBackdropFrame` / `applyTooltipBackdrop`). On 2.5.3+ the NineSlice stays visible for the default background; the overlay frame sits at `FrameLevel(2)` (above NineSlice, below text) and draws only the colored border edge via `SetBackdrop({edgeFile = ...})` + `SetBackdropBorderColor`.

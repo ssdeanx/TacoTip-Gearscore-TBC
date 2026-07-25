@@ -192,32 +192,6 @@ local function clearTooltipGuildLine(tooltip)
     end
 end
 
--- Tracks which GameTooltipTextLeft[i] were modified with |c color codes
--- so clearTooltipVisuals can reset them, preventing the old colored text
--- from bleeding through on tooltip recycle (item, spell, minimap POI).
-local function clearTooltipColoredText(tooltip)
-    if (not tooltip) then
-        return
-    end
-    local indices = tooltip.TacoTipColoredLineIndices
-    if (not indices) then
-        return
-    end
-    for _, i in ipairs(indices) do
-        local fontString = _G[tooltip:GetName().."TextLeft"..i]
-        if (fontString and fontString.SetText) then
-            local original = tooltip.TacoTipOriginalTexts and tooltip.TacoTipOriginalTexts[i]
-            if (original) then
-                fontString:SetText(original)
-            else
-                fontString:SetText()
-            end
-        end
-    end
-    tooltip.TacoTipColoredLineIndices = nil
-    tooltip.TacoTipOriginalTexts = nil
-end
-
 local function storeTooltipPlayerClassColor(tooltip, unit)
     if (not tooltip) then
         return nil
@@ -542,7 +516,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     if ((TacoTipConfig.tooltip_border_use_class or TacoTipConfig.color_class) and isPlayerTooltip) then
         local deferralGen = tooltip._borderDeferralGen or 0
         CAfter(0.05, function()
-            safeCall(function()
+            return safeCall(function()
                 -- If the tooltip's border-deferral generation has changed since
                 -- we scheduled, the tooltip was recycled for different content
                 -- (e.g. map POI, item, another player) — do not re-apply.
@@ -679,7 +653,6 @@ local function clearTooltipVisuals(tooltip)
         TacoTipPowerBar:Hide()
     end
     stopPowerBarTicker()
-    clearTooltipColoredText(tooltip)
 end
 
 local function onTooltipSetUnit(tooltip)
@@ -817,16 +790,6 @@ local function onTooltipSetUnit(tooltip)
                     text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
                     local classColoredName = colorizeText(localizedClass, classc.r, classc.g, classc.b)
                     local raceColoredName = localizedRace and colorizeText(localizedRace, classc.r, classc.g, classc.b) or nil
-                    -- Save originals so clearTooltipColoredText can restore them
-                    -- and prevent colored text bleed on tooltip recycle.
-                    tooltip.TacoTipColoredLineIndices = {}
-                    tooltip.TacoTipOriginalTexts = tooltip.TacoTipOriginalTexts or {}
-                    for i = 2, 3 do
-                        if (text[i]) then
-                            tinsert(tooltip.TacoTipColoredLineIndices, i)
-                            tooltip.TacoTipOriginalTexts[i] = text[i]
-                        end
-                    end
                     for i=2,3 do
                         if (text[i]) then
                             if (localizedRace and raceColoredName) then
@@ -872,35 +835,6 @@ local function onTooltipSetUnit(tooltip)
                 text[guildLineIndex] = ""
             end
             tooltip.TacoTipGuildLineIndex = guildLineIndex
-        end
-        -- SoD/Era: After guild handling, verify the level/race/class line
-        -- survived.  On SoD the level may be on text[2] or text[3] depending
-        -- on guild state, and show_guild_name=false destroys it from text[2]
-        -- without any re-derivation.  If neither text line has a level token,
-        -- re-derive from the Blizzard API and add as an extra tooltip line.
-        if (TacoTipConfig.show_level_line ~= false) then
-            local hasLevelLine = false
-            for i = 2, 3 do
-                if (text[i] and text[i]:find("^Level %d+")) then
-                    hasLevelLine = true
-                    break
-                end
-            end
-            if (not hasLevelLine) then
-                local level = UnitLevel(tooltipUnit)
-                local localizedRace = UnitRace(tooltipUnit)
-                local localizedClass, class = UnitClass(tooltipUnit)
-                if (level and level > 0 and localizedRace and localizedClass) then
-                    local levelLine = string.format("Level %d %s %s", level, localizedRace, localizedClass)
-                    if (TacoTipConfig.color_class and class) then
-                        local classc = getClassColor(class)
-                        if (classc) then
-                            levelLine = colorizeText(levelLine, classc.r, classc.g, classc.b)
-                        end
-                    end
-                    tinsert(linesToAdd, {levelLine})
-                end
-            end
         end
         if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit) and not UnitIsSameServer(tooltipUnit, "player")) then
             local _, realm = UnitName(tooltipUnit)

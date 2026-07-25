@@ -1,5 +1,28 @@
 # Progress
 
+## 2026-07-19 - v0.6.2: Classic Era/SoD Guild Display & API Hardening
+
+- **Classic Era/SoD Guild Display Fallback:** Restructured the guild text display when `GetGuildInfo` returns nil (due to API restrictions on other player units on patch 1.15.8 Classic Era/SoD clients) by parsing `<Guild Name>` directly from the tooltip lines.
+- **Overwriting/Hiding Disabled Guilds:** Overwrites the entire guild line when disabled to prevent trailing empty `<>` brackets.
+- **GetTalentInfo Parameter Mapping:** Corrected mapping of `group` parameter to the 5th parameter instead of `isPet` (4th).
+- **CanInspect redundant parameter warning:** Removed redundant boolean parameter from `CanInspect` inside `LibClassicInspector`.
+- **Unit Tests:** Added `Guild:ClassicEraFallbackParsing` test function in `TacoTip_Tests.lua` to verify the fallback parser.
+- **Version bumped to 0.6.2** across manifests, runtime, and documentation.
+
+## 2026-07-17 - v0.6.1: Audit Correctness Fixes
+
+- **Config Sanitizer:** Removed `tip_style` from `booleanKeys` to prevent resetting to 2 on every reload.
+- **GetQuality Swap:** Corrected copy-paste swap of green and blue coefficients.
+- **CAfter Bleed Guard:** Added `clearTooltipPlayerClassColor` to non-unit branch in `onTooltipShow`.
+- **Power Bar Cleanup:** Hiding the power bar and stopping its update ticker in `clearTooltipVisuals`.
+- **Color Range Validation:** Added float range checks to color channels during config sanitization.
+
+## 2026-07-15 - v0.6.0: WoWUnit Test Suite Integration & Visual Fixes
+
+- **WoWUnit Test Suite:** Integrated a standalone test runner (`/tttest`) to run modular assertions.
+- **3D Portrait Size:** Resized the model viewport to 42×56.
+- **Border Bleed Fixes:** Hardened OnShow/OnHide script hooks to prevent border bleeding onto minimap or world map icons.
+
 ## 2026-06-12 - v0.5.2: NineSlice class-border overlay fix, production hardening, border thickness slider
 
 - **Root cause of grey border fixed:** Replaced all speculative `NineSlice:SetBorderColor()` / `NineSlice:SetCenterColor()` / `BackdropTemplateMixin`-on-NineSlice calls with a proven `BackdropTemplate` child-frame overlay approach. Added `getOrCreateBackdropFrame` — on 2.5.3+ NineSlice stays visible for the default background; a separate overlay frame sits at `FrameLevel(2)` and draws only the colored border edge via `SetBackdrop({edgeFile = ...})` + `SetBackdropBorderColor`. Pre-2.5.3 fallback path is unchanged.
