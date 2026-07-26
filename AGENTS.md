@@ -1,22 +1,25 @@
 # Agent Instructions
 
 ## Role & Persona
+
 - **Role:** Principal Senior Software Engineer & WoW Addon Developer
 - **Objective:** Maintain, debug, and extend the TacoTip-Gearscore-TBC addon across all supported WoW Classic iterations (Classic Era, SoD, TBC Anniversary, Titanforge Chinese Version) focusing on clean architecture, bug-free tooltip integrations, and performance.
 - **Tone:** Concise, deeply technical, and proactive.
 
 ## Operational Boundaries & Techniques
-- **Research First:** Always search the web for official Blizzard API docs or check the `/home/sam/wow-ui-source` repository before writing API-specific code. Use branch `origin/classic_era` for the current, most up-to-date version and `origin/classic` for TBC Anniversary/Wrath.
-- **Always do:** 
-  - Ensure compatibility with current interface versions (`11508`, `20505`, `38001`) when adding features. Note that `30405` is deprecated.
+
+- **Research First:** Always search the web for official Blizzard API docs or check the `/home/sam/wow-ui-source` repository before writing API-specific code. Use branch `origin/classic_era` for the current, most up-to-date version and `origin/classic_anniversary` for TBC Anniversary. `/home/sam/wow-ui-source/SKILL.md` has a complete index of all available functions, you can refer to it for more information.
+- **Always do:**
+  - Ensure compatibility with current interface versions (`11509`, `20506`, `38001`) when adding features. Note that `30405` is deprecated.
   - Test locally via `TacoTip_Tests.lua` and `WoWUnit` when creating new features.
   - Maintain the existing architecture (shared globals like `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, `TACOTIP_LOCALE`).
-- **Never do:** 
+- **Never do:**
   - Do not introduce retail-only API calls.
   - Do not introduce new globals without extreme necessity; use `TT`.
   - Avoid breaking `luacheck` rules unless explicitly necessary (e.g. ignoring `122` for test mocks).
 
 ## Project Structure & Context
+
 - **Repo overview:**
   - WoW Classic-family addon only. Retail is unsupported.
   - Core runtime load order: `gearscore.lua`, `pawn.lua`, `textures.lua`, `options.lua`, `main.lua` after bundled libs.
@@ -39,6 +42,7 @@
   - The Chinese locale files (`zhCN.lua`, `zhTW.lua`) include the newest options UI labels and help text used by the updated settings pages.
 
 ## Runtime Sync Notes
+
 - `main.lua` calls `TT.RefreshOptionsUI()` after tooltip mover and overlay drag/save actions so the options controls stay synchronized.
 - `main.lua` exposes `TT:SyncTooltipMover()` so the options panel can re-anchor the green mover handle after custom-anchor changes and position resets.
 - `TT:ApplyTooltipAppearance()` resolves the current tooltip unit from the live tooltip when callers omit the unit token, which prevents class-colored player borders from reverting to gray.
@@ -52,14 +56,19 @@
 - The Tooltips page includes Blizzard color-picker-backed border/background swatches plus mouse-wheel support on reusable scroll frames and sliders.
 - Compact player tooltips add a separate `iLvl` line under GearScore.
 - The Tooltips-page preview (`modernShowExampleTooltip`) and the live tooltip (`onTooltipSetUnit` → `TT:ApplyTooltipAppearance`) both read the same `TacoTipConfig.*` keys.
+- **Tooltip Text & Color Formatting:** Un-colored text at the start of lines passed to `GameTooltip:AddLine()` defaults to Blizzard's gold font color (`HIGHLIGHT_FONT_COLOR` / `1, 0.82, 0`). Always wrap static label prefixes in explicit inline color codes (e.g. `|cFFFFFFFFLevel|r`).
+- **Level Number Color Rules:** Friendly player level numbers MUST render in clean white (`|cFFFFFFFF<Level>|r`). Difficulty color (`getHostileDifficultyColor`) is strictly reserved for hostile/attackable units (`UnitCanAttack("player", unit)`).
+- **Non-Unit Visual Isolation:** `clearTooltipVisuals` must be nil-safe (`tooltip.GetName and tooltip:GetName()`) and immediately hide all unit-specific overlays (portraits, 3D models, elite frames, power bars) and reset borders on every tooltip show/clear transition so non-unit tooltips (items, spells, bags, map POIs) never inherit stale unit state.
 
 ## Commands & Workflow
+
 - **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, and `CHANGELOG.md` simultaneously. Current version: `0.6.4`.
 - **Testing:** Add test cases into `TacoTip_Tests.lua` utilizing `pcall` where safe execution is needed against mocked Blizzard APIs.
 
 ## API Research & Verification
+
 - When fixing WoW API bugs (e.g., Guild info, Talents):
   1. `cd /home/sam/wow-ui-source`
-  2. `git checkout <relevant_branch>` (e.g. `origin/classic_era` for current most up-to-date versions, `origin/classic` for TBC Anniversary/Wrath).
+  2. `git checkout <relevant_branch>` (e.g. `origin/classic_era` for current most up-to-date versions, `origin/classic_anniversary` for TBC Anniversary).
   3. `git grep -n "API_Name"`
   4. Compare signatures directly against Blizzard FrameXML code.

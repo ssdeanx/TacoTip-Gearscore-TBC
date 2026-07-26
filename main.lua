@@ -185,9 +185,12 @@ end
 
 local function clearTooltipGuildLine(tooltip)
     if (tooltip and tooltip.TacoTipGuildLineIndex) then
-        local left = _G[tooltip:GetName() .. "TextLeft" .. tooltip.TacoTipGuildLineIndex]
-        if (left) then
-            left:SetText()
+        local name = tooltip.GetName and tooltip:GetName()
+        if (name) then
+            local left = _G[name .. "TextLeft" .. tooltip.TacoTipGuildLineIndex]
+            if (left) then
+                left:SetText()
+            end
         end
         tooltip.TacoTipGuildLineIndex = nil
     end
@@ -195,9 +198,12 @@ end
 
 local function clearTooltipLevelColorLine(tooltip)
     if (tooltip and tooltip.TacoTipLevelColorLineIndex) then
-        local left = _G[tooltip:GetName() .. "TextLeft" .. tooltip.TacoTipLevelColorLineIndex]
-        if (left) then
-            left:SetText()
+        local name = tooltip.GetName and tooltip:GetName()
+        if (name) then
+            local left = _G[name .. "TextLeft" .. tooltip.TacoTipLevelColorLineIndex]
+            if (left) then
+                left:SetText()
+            end
         end
         tooltip.TacoTipLevelColorLineIndex = nil
     end
@@ -238,6 +244,10 @@ end
 
 local function getHostileDifficultyColor(unit)
     if (not unit or not GetQuestDifficultyColor) then
+        return nil
+    end
+
+    if (UnitCanAttack and not UnitCanAttack("player", unit) and UnitIsPlayer and UnitIsPlayer(unit)) then
         return nil
     end
 
@@ -853,6 +863,8 @@ local function onTooltipSetUnit(tooltip)
         local diffColor = getHostileDifficultyColor(tooltipUnit)
         if (diffColor) then
             levelStr = colorizeText(levelStr, diffColor.r, diffColor.g, diffColor.b)
+        else
+            levelStr = string.format("|cFFFFFFFF%s|r", levelStr)
         end
 
         local displayClass = localizedClass
@@ -869,13 +881,14 @@ local function onTooltipSetUnit(tooltip)
             end
         end
 
+        local levelPrefix = "|cFFFFFFFFLevel|r"
         local levelLine
         if (displayRace and displayClass) then
-            levelLine = string.format("Level %s %s %s", levelStr, displayRace, displayClass)
+            levelLine = string.format("%s %s %s %s", levelPrefix, levelStr, displayRace, displayClass)
         elseif (displayClass) then
-            levelLine = string.format("Level %s %s", levelStr, displayClass)
+            levelLine = string.format("%s %s %s", levelPrefix, levelStr, displayClass)
         else
-            levelLine = string.format("Level %s", levelStr)
+            levelLine = string.format("%s %s", levelPrefix, levelStr)
         end
 
         local newText = {}

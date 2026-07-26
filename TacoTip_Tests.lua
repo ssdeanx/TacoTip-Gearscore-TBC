@@ -300,7 +300,8 @@ local function RegisterTacoTipTests()
         end)
 
         local originalGetUnit = GameTooltip.GetUnit
-        GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
+        -- Using rawset to avoid tainting the tooltip frame with a new method.
+        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
 
         local cfg = _G.TacoTipConfig
         local savedName = cfg.show_guild_name
@@ -334,7 +335,7 @@ local function RegisterTacoTipTests()
         IsTrue(line2_hidden == nil or line2_hidden == "" or (line2_hidden:find("Level") ~= nil and line2_hidden:find("60") ~= nil), "guild line was completely hidden/skipped")
 
         cfg.show_guild_name = savedName
-        GameTooltip["GetUnit"] = originalGetUnit
+        rawset(GameTooltip, "GetUnit", originalGetUnit)
         ClearReplaces()
     end
 
