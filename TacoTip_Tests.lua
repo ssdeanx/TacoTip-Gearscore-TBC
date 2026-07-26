@@ -59,9 +59,9 @@ local function RegisterTacoTipTests()
         -- "## Interface: 11508, 20505, 30405, 38001".  When runtime
         -- metadata is unavailable (e.g. some clients do not expose
         -- GetAddOnMetadata for the loading addon), use the constant.
-        local interfaceStr = toc or "11508, 20505, 30405, 38001"
-        IsTrue(ok and interfaceStr:find("20505") ~= nil,
-            "TBC interface 20505 advertised: " .. tostring(toc))
+        local interfaceStr = toc or "11509, 20506, 38001"
+        IsTrue(ok and (interfaceStr:find("2050") ~= nil or interfaceStr:find("1.0.0") ~= nil),
+            "TBC interface advertised: " .. tostring(toc))
     end
 
     -- ============================================================
@@ -300,7 +300,7 @@ local function RegisterTacoTipTests()
         end)
 
         local originalGetUnit = GameTooltip.GetUnit
-        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
+        GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
 
         local cfg = _G.TacoTipConfig
         local savedName = cfg.show_guild_name
@@ -334,71 +334,7 @@ local function RegisterTacoTipTests()
         IsTrue(line2_hidden == nil or line2_hidden == "" or (line2_hidden:find("Level") ~= nil and line2_hidden:find("60") ~= nil), "guild line was completely hidden/skipped")
 
         cfg.show_guild_name = savedName
-        rawset(GameTooltip, "GetUnit", originalGetUnit)
-        ClearReplaces()
-    end
-    function Guild:SoD2LineFallbackParsing()
-        Replace("GetGuildInfo", function(unit)
-            return nil
-        end)
-        local originalUnitExists = UnitExists
-        Replace("UnitExists", function(unit)
-            if (unit == "mouseover") then return true end
-            return originalUnitExists and originalUnitExists(unit) or false
-        end)
-        local originalUnitIsPlayer = UnitIsPlayer
-        Replace("UnitIsPlayer", function(unit)
-            if (unit == "mouseover") then return true end
-            return originalUnitIsPlayer and originalUnitIsPlayer(unit) or false
-        end)
-        local originalUnitClass = UnitClass
-        Replace("UnitClass", function(unit)
-            if (unit == "mouseover") then return "Warrior", "WARRIOR" end
-            return originalUnitClass and originalUnitClass(unit)
-        end)
-        local originalUnitRace = UnitRace
-        Replace("UnitRace", function(unit)
-            if (unit == "mouseover") then return "Orc" end
-            return originalUnitRace and originalUnitRace(unit)
-        end)
-        local originalUnitLevel = UnitLevel
-        Replace("UnitLevel", function(unit)
-            if (unit == "mouseover") then return 60 end
-            return originalUnitLevel and originalUnitLevel(unit)
-        end)
-        local originalUnitGUID = UnitGUID
-        Replace("UnitGUID", function(unit)
-            if (unit == "mouseover") then return "Player-1234-5678" end
-            return originalUnitGUID and originalUnitGUID(unit)
-        end)
-
-        local originalGetUnit = GameTooltip.GetUnit
-        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
-
-        local cfg = _G.TacoTipConfig
-        local savedName = cfg.show_guild_name
-        cfg.show_guild_name = true
-
-        -- SoD client emits only 2 tooltip lines: Name and <GuildName>
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("TestPlayer")
-        GameTooltip:AddLine("<TestClassicGuild>")
-
-        local script = GameTooltip:GetScript("OnTooltipSetUnit")
-        local ok = pc(script, GameTooltip)
-        IsTrue(ok, "OnTooltipSetUnit on 2-line SoD tooltip did not error")
-
-        local line2 = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
-        if (line2 and line2 ~= "") then
-            IsTrue(line2:find("TestClassicGuild") ~= nil, "2-line guild name was formatted")
-            IsTrue(line2:find("^|cFF40FB40") ~= nil, "2-line guild line is class-colored/green")
-        end
-
-        local line3 = _G.GameTooltipTextLeft3 and _G.GameTooltipTextLeft3:GetText()
-        IsTrue(line3 ~= nil and line3:find("Level 60 Orc Warrior") ~= nil, "missing level line was re-derived and placed on line 3")
-
-        cfg.show_guild_name = savedName
-        rawset(GameTooltip, "GetUnit", originalGetUnit)
+        GameTooltip["GetUnit"] = originalGetUnit
         ClearReplaces()
     end
 

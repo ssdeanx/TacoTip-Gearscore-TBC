@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.6.4` | `2026-07-26` | Fix: guild fallback parser regex (`^<([^>]+)>%s*(.*)$`) to extract both guild name and rank from 2-line client tooltips (`<GuildName> Rank`). Fix: removed gold rank font color formatting so ranks display in clean white text after the green guild tag. Fix: Level/race/class line missing for guilded players on SoD/Classic Era by dynamically targeting line 3 for guilded players and line 2 for un-guilded players. Fix: UnitIsSameServer API signature argument warning. |
 | `0.6.3` | `2026-07-25` | Fix: guild display format flipped from `"Rank of <Guild>"` to `"<Guild> Rank"` with guild first. Rank now uses gold highlight color instead of parentheses. All parentheses removed from both guild display styles. All locale files updated for the new format ordering. Fix: guild text bleed onto non-unit tooltips resolved by storing the guild line index on the tooltip frame and clearing it in clearTooltipVisuals (same pattern as the class-color border fix). Fix: level/race/class line missing for guilded players on SoD/Classic Era by re-deriving from API when the client omits it. Fix: ClassicEraFallbackParsing unit test was failing because UnitExists wasn't mocked. |
 | `0.6.2` | `2026-07-19` | Fix: guild name/rank display and rank formatting on Classic Era and Season of Discovery (SoD) by implementing a fallback parser to extract the guild name from the tooltip lines when GetGuildInfo is restricted, and completely clearing the guild line when disabled to prevent empty <> brackets. Fix: redundant parameter CanInspect warning in LibClassicInspector. Fix: parameter-mapping bug in GetTalentInfo call. Added unit tests for fallback guild parsing and hiding. |
 | `0.6.1` | `2026-07-17` | Config sanitizer fix (tip_style no longer forced to 2), GetQuality color channel swap fix, CAfter border bleed defense + generation-counter cancellation + direct backdrop reset, power bar cleanup, Pawn API pcall guard, portrait/visual leak fix on map POI tooltips (onTooltipShow → clearTooltipVisuals), elite frame portrait border removed (broken SetAtlas on TBC Classic), locale completion pass, test suite hardening (float tolerance, Interface metadata fallback, SetUnit-based bleed tests) |
@@ -20,6 +21,15 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.6.4] - 2026-07-26
+
+### Fixed - 0.6.4
+
+- **Guild Fallback Parser Regex Update**: Updated fallback pattern matching from `^<(.+)>$` to `^<([^>]+)>%s*(.*)$`. This allows TacoTip to extract both the guild name and rank from 2-line client tooltips (such as `<Mambas Milkers> Initiate`) when `GetGuildInfo` is restricted on Era/SoD.
+- **Removed Gold Rank Color**: Removed `HIGHLIGHT_FONT_COLOR` (`|cffffd200` gold) rank formatting. Guild ranks now display in clean white text following the green class-colored guild tag (`<GuildName> Rank`).
+- **Level Line Placement (Guilded & Un-guilded)**: Hardened level line placement to target line 3 for guilded players and line 2 for un-guilded players dynamically. Also added a `localizedRace` fallback guard so `Level <N> <Class>` always renders even if race data is temporarily missing.
+- **API Warning**: Fixed `UnitIsSameServer` signature call to pass 1 argument instead of 2.
 
 ## [0.6.3] - 2026-07-25
 

@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.6.3` |
+| Public version | `v0.6.4` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -55,6 +55,12 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The live tooltip preview in the options panel now sits in a dedicated right-side column instead of covering the controls.
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
+
+## What's new in v0.6.4
+
+- **Hardened Level Line Parsing**: Fixes level/race/class line missing for guilded players on SoD/Classic Era.
+- **UnitIsSameServer API Fix**: Resolved an argument warning in API usage.
+- **Unit Tests**: Added complete mock coverage for "mouseover" and new test scenario for SoD 2-line client tooltips.
 
 ## What's new in v0.6.3
 

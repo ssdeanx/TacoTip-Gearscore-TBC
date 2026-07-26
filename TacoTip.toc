@@ -1,7 +1,7 @@
 ## Interface: 11509, 20506, 38001
-## Version: 0.6.3
+## Version: 0.6.4
 ## Title: TacoTip Gearscore TBC
-## Notes: TacoTip (GearScore & Talents)
+## Notes: TacoTip (GearScore | Talents | Pawn Integration | Class Colors | 3D PlayerPortrait | Options)
 ## IconTexture: Interface\Icons\INV_Misc_Spyglass_01
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1555962

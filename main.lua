@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.4"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -653,11 +653,6 @@ local function clearTooltipVisuals(tooltip)
     if (not tooltip) then
         return
     end
-    -- Bump the border-deferral generation so any C_Timer.After scheduled
-    -- by ApplyTooltipAppearance or onTooltipShow for this tooltip re-apply
-    -- sees a stale generation and bails out.  This prevents a CAfter that
-    -- fires after the tooltip has been recycled for different content from
-    -- re-applying a class-colored border onto an item/spell/map tooltip.
     tooltip._borderDeferralGen = (tooltip._borderDeferralGen or 0) + 1
     cancelDelayedTooltip()
     clearTooltipPlayerClassColor(tooltip)
@@ -683,16 +678,11 @@ local function onTooltipSetUnit(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit) then
-        -- F2: OnTooltipSetUnit can fire with a stale/invalid unit during
-        -- content transitions. Clear all player-specific visuals (class
-        -- color, border, portrait, elite frame, power bar) here so nothing
-        -- from the previous unit persists on the recycled tooltip.
-        -- clearTooltipVisuals already calls clearTooltipPlayerClassColor
-        -- internally, so we skip the standalone call here.
         clearTooltipVisuals(tooltip)
         return
     end
 
+    clearTooltipVisuals(tooltip)
     storeTooltipPlayerClassColor(tooltip, tooltipUnit)
 
     if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
@@ -727,18 +717,13 @@ local function onTooltipSetUnit(tooltip)
     -- Find the actual level line: players in guilds have the guild on line 2,
     -- so the level text shifts to line 3.
     local levelLineIndex = 2
-    if (text[2] and string.match(text[2], "^<.+>$")) then
-        -- Line 2 is a guild tag — level should be on line 3, but only if
-        -- that line actually exists and isn't also a guild tag.
-        if (text[3] and text[3] ~= "" and not string.match(text[3], "^<.+>$")) then
+    if (text[2] and string.find(text[2], "<.+>")) then
+        if (text[3] and text[3] ~= "" and not string.find(text[3], "<.+>")) then
             levelLineIndex = 3
         end
     end
-    -- Snapshot whether the level line existed BEFORE colorization modifies the
-    -- text.  On SoD/Classic Era the client omits the level/race/class line for
-    -- players entirely, so we check the raw text before any color-code changes.
     local _levelLineExisted = text[levelLineIndex] and text[levelLineIndex] ~= "" and
-        (text[levelLineIndex]:find("^Level %d+") or text[levelLineIndex]:find("^Level %?%?"))
+        (text[levelLineIndex]:find("Level %d+") or text[levelLineIndex]:find("Level %?%?") or text[levelLineIndex]:find("Level"))
     text[levelLineIndex] = colorizeUnitLevelLine(tooltip, tooltipUnit, text[levelLineIndex], levelLineIndex)
 
     if (TacoTipConfig.show_target and UnitIsConnected(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
@@ -836,86 +821,88 @@ local function onTooltipSetUnit(tooltip)
     if (UnitIsPlayer(tooltipUnit)) then
         local localizedClass, class = UnitClass(tooltipUnit)
         local localizedRace = UnitRace(tooltipUnit)
+        local level = UnitLevel(tooltipUnit)
 
         if (not TacoTipConfig.show_titles and string.find(text[1], name)) then
             text[1] = name
         end
-        if (TacoTipConfig.color_class) then
-            if (localizedClass and class) then
-                local classc = getClassColor(class)
-                if (classc) then
-                    --GameTooltipTextLeft1:SetTextColor(classc.r, classc.g, classc.b)
-                    text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
-                    local classColoredName = colorizeText(localizedClass, classc.r, classc.g, classc.b)
-                    local raceColoredName = localizedRace and colorizeText(localizedRace, classc.r, classc.g, classc.b) or
-                        nil
-                    for i = 2, 3 do
-                        if (text[i]) then
-                            if (localizedRace and raceColoredName) then
-                                text[i] = replaceFirstExact(text[i], localizedRace, raceColoredName)
-                            end
-                            text[i] = replaceFirstExact(text[i], localizedClass, classColoredName)
-                        end
-                    end
-                end
+        if (TacoTipConfig.color_class and localizedClass and class) then
+            local classc = getClassColor(class)
+            if (classc) then
+                text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
             end
         end
-        local guildName, guildRankName = GetGuildInfo(tooltipUnit);
-        local guildLineIndex = nil
+
+        local guildName, guildRankName = GetGuildInfo(tooltipUnit)
         if (not guildName) then
-            for i = 2, 3 do
+            for i = 2, #text do
                 if (text[i]) then
-                    local match = string.match(text[i], "^<(.+)>$")
-                    if (match) then
-                        guildName = match
-                        guildLineIndex = i
+                    local gName, gRank = string.match(text[i], "^<([^>]+)>%s*(.*)$")
+                    if (gName) then
+                        guildName = gName
+                        if (gRank and gRank ~= "") then
+                            guildRankName = gRank
+                        end
                         break
                     end
                 end
             end
-        else
-            guildLineIndex = 2
         end
 
-        if (guildName and guildLineIndex) then
-            if (TacoTipConfig.show_guild_name) then
-                if (TacoTipConfig.show_guild_rank and guildRankName) then
-                    if (TacoTipConfig.guild_rank_alt_style) then
-                        text[guildLineIndex] = string.format("|cFF40FB40<%s> %s|r", guildName, guildRankName)
-                    else
-                        local guildTag = string.format("|cFF40FB40<%s>|r", guildName)
-                        local rankTag = string.format("|cff%02x%02x%02x%s|r", HIGHLIGHT_FONT_COLOR.r * 255,
-                            HIGHLIGHT_FONT_COLOR.g * 255, HIGHLIGHT_FONT_COLOR.b * 255, guildRankName)
-                        text[guildLineIndex] = string.format(L["FORMAT_GUILD_RANK_1"], guildTag, rankTag)
-                    end
+        local levelStr = (level and level > 0) and tostring(level) or "??"
+        local diffColor = getHostileDifficultyColor(tooltipUnit)
+        if (diffColor) then
+            levelStr = colorizeText(levelStr, diffColor.r, diffColor.g, diffColor.b)
+        end
+
+        local displayClass = localizedClass
+        local displayRace = localizedRace
+        if (TacoTipConfig.color_class and class) then
+            local classc = getClassColor(class)
+            if (classc) then
+                if (displayClass) then
+                    displayClass = colorizeText(displayClass, classc.r, classc.g, classc.b)
+                end
+                if (displayRace) then
+                    displayRace = colorizeText(displayRace, classc.r, classc.g, classc.b)
+                end
+            end
+        end
+
+        local levelLine
+        if (displayRace and displayClass) then
+            levelLine = string.format("Level %s %s %s", levelStr, displayRace, displayClass)
+        elseif (displayClass) then
+            levelLine = string.format("Level %s %s", levelStr, displayClass)
+        else
+            levelLine = string.format("Level %s", levelStr)
+        end
+
+        local newText = {}
+        newText[1] = text[1]
+
+        if (guildName and TacoTipConfig.show_guild_name) then
+            local guildTag = string.format("|cFF40FB40<%s>|r", guildName)
+            if (TacoTipConfig.show_guild_rank and guildRankName and guildRankName ~= "") then
+                if (TacoTipConfig.guild_rank_alt_style) then
+                    newText[2] = string.format("%s %s", guildTag, guildRankName)
                 else
-                    text[guildLineIndex] = string.format("|cFF40FB40<%s>|r", guildName)
+                    newText[2] = string.format(L["FORMAT_GUILD_RANK_1"], guildTag, guildRankName)
                 end
             else
-                text[guildLineIndex] = ""
+                newText[2] = guildTag
             end
-            tooltip.TacoTipGuildLineIndex = guildLineIndex
+            newText[3] = levelLine
+            tooltip.TacoTipGuildLineIndex = 2
+            tooltip.TacoTipLevelColorLineIndex = 3
+        else
+            newText[2] = levelLine
+            tooltip.TacoTipGuildLineIndex = nil
+            tooltip.TacoTipLevelColorLineIndex = 2
         end
-        -- SoD/Era: The client does not emit a level/race/class line for players
-        -- in guilds (only name + <GuildName> appear).  If the level line was
-        -- absent from the original tooltip text, re-derive it from the Blizzard
-        -- API and append it as an extra line.  The snapshot is taken before
-        -- colorizeUnitLevelLine adds color codes, so the pattern match works.
-        if (not _levelLineExisted) then
-            local level = UnitLevel(tooltipUnit)
-            if (level and level ~= 0 and localizedRace and localizedClass) then
-                local levelStr = (level and level > 0) and tostring(level) or "??"
-                local levelLine = string.format("Level %s %s %s", levelStr, localizedRace, localizedClass)
-                if (TacoTipConfig.color_class and class) then
-                    local classc = getClassColor(class)
-                    if (classc) then
-                        levelLine = colorizeText(levelLine, classc.r, classc.g, classc.b)
-                    end
-                end
-                local targetLineIndex = (guildLineIndex == 2 or (text[2] and string.find(text[2], "<.+>"))) and 3 or 2
-                text[targetLineIndex] = levelLine
-            end
-        end
+
+        text = newText
+
         if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit) and not UnitIsSameServer(tooltipUnit)) then
             local _, realm = UnitName(tooltipUnit)
             if (realm and realm ~= "") then
