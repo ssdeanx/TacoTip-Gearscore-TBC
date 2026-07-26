@@ -268,6 +268,14 @@ local function RegisterTacoTipTests()
         Replace("GetGuildInfo", function(unit)
             return nil
         end)
+        -- resolveTooltipUnit checks UnitExists(unitToken). The test builds a
+        -- tooltip with synthetic lines and no actual unit, so mock UnitExists
+        -- to return true for the token the mocked GetUnit returns.
+        local originalUnitExists = UnitExists
+        Replace("UnitExists", function(unit)
+            if (unit == "mouseover") then return true end
+            return originalUnitExists(unit)
+        end)
         local originalGetUnit = GameTooltip.GetUnit
         GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
 
