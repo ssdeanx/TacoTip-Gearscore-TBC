@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-(C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.3"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -32,7 +32,7 @@ end
 -- version-only gate made the whole module return early and Pawn never loaded.
 -- Also accept the presence of Pawn's public API functions as proof of load.
 local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and
-type(_G.PawnGetScaleColor) == "function"
+    type(_G.PawnGetScaleColor) == "function"
 local isPawnLoaded = (_G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
 
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
@@ -364,7 +364,7 @@ local function applyTooltipFonts(tooltip)
         return
     end
     local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()) or TacoTipConfig.tooltip_font or
-    "Fonts\\FRIZQT__.TTF"
+        "Fonts\\FRIZQT__.TTF"
     local fontSize = TacoTipConfig.tooltip_font_size or 12
     for i = 1, math.max(tooltip:NumLines() + 4, 20) do
         local left = _G[tooltipName .. "TextLeft" .. i]
@@ -417,9 +417,9 @@ local function applyTooltipBackdrop(tooltip)
     end
 
     local backgroundTexture = (TT.GetResolvedTooltipBackground and TT:GetResolvedTooltipBackground()) or
-    TacoTipConfig.tooltip_background_texture or "Interface\\Tooltips\\UI-Tooltip-Background"
+        TacoTipConfig.tooltip_background_texture or "Interface\\Tooltips\\UI-Tooltip-Background"
     local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or
-    TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
+        TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
     local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
 
     if (backdrop.isBorderOnly) then
@@ -450,7 +450,7 @@ local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, border
     end
 
     local borderTexture = (TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()) or
-    TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
+        TacoTipConfig.tooltip_border_texture or "Interface\\Tooltips\\UI-Tooltip-Border"
     local hasBorder = borderTexture and borderTexture ~= "" and borderTexture ~= "Interface\\None"
     if (not hasBorder) then
         return
@@ -591,7 +591,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     end
 
     local barTexture = (TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or
-    TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
+        TacoTipConfig.tooltip_bar_texture or "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
     if (tooltip == GameTooltip and GameTooltipStatusBar and GameTooltipStatusBar.SetStatusBarTexture) then
         GameTooltipStatusBar:SetStatusBarTexture(barTexture)
     end
@@ -788,7 +788,8 @@ local function onTooltipSetUnit(tooltip)
                                 NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
                                 HIGHLIGHT_FONT_COLOR.b })
                     else
-                        tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Player"] .. ")|r" })
+                        tinsert(linesToAdd,
+                            { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Player"] .. ")|r" })
                     end
                 end
             elseif (UnitIsUnit(unitTarget, "pet") or isOtherPlayersPet(unitTarget)) then
@@ -847,7 +848,7 @@ local function onTooltipSetUnit(tooltip)
                     text[1] = colorizeText(text[1], classc.r, classc.g, classc.b)
                     local classColoredName = colorizeText(localizedClass, classc.r, classc.g, classc.b)
                     local raceColoredName = localizedRace and colorizeText(localizedRace, classc.r, classc.g, classc.b) or
-                    nil
+                        nil
                     for i = 2, 3 do
                         if (text[i]) then
                             if (localizedRace and raceColoredName) then
@@ -902,20 +903,20 @@ local function onTooltipSetUnit(tooltip)
         -- colorizeUnitLevelLine adds color codes, so the pattern match works.
         if (not _levelLineExisted) then
             local level = UnitLevel(tooltipUnit)
-            local localizedRace = UnitRace(tooltipUnit)
-            local localizedClass, class = UnitClass(tooltipUnit)
-            if (level and level > 0 and localizedRace and localizedClass) then
-                local levelLine = string.format("Level %d %s %s", level, localizedRace, localizedClass)
+            if (level and level ~= 0 and localizedRace and localizedClass) then
+                local levelStr = (level and level > 0) and tostring(level) or "??"
+                local levelLine = string.format("Level %s %s %s", levelStr, localizedRace, localizedClass)
                 if (TacoTipConfig.color_class and class) then
                     local classc = getClassColor(class)
                     if (classc) then
                         levelLine = colorizeText(levelLine, classc.r, classc.g, classc.b)
                     end
                 end
-                tinsert(linesToAdd, { levelLine })
+                local targetLineIndex = (guildLineIndex == 2 or (text[2] and string.find(text[2], "<.+>"))) and 3 or 2
+                text[targetLineIndex] = levelLine
             end
         end
-        if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit) and not UnitIsSameServer(tooltipUnit, "player")) then
+        if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit) and not UnitIsSameServer(tooltipUnit)) then
             local _, realm = UnitName(tooltipUnit)
             if (realm and realm ~= "") then
                 if (wide_style) then
@@ -950,7 +951,7 @@ local function onTooltipSetUnit(tooltip)
         end
         if (TacoTipConfig.show_team) then
             nameLineIcons = nameLineIcons ..
-            " " .. (UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
+                " " .. (UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
         end
         if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
             local _, classFile = UnitClass(tooltipUnit)
@@ -1108,7 +1109,7 @@ local function onTooltipSetUnit(tooltip)
                         if (avg_ilvl and avg_ilvl > 0) then
                             if (TacoTipConfig.show_ilvl_inline) then
                                 text[1] = text[1] ..
-                                string.format(" |cFF%02x%02x%02x[%s]|r", r * 255, g * 255, b * 255, avg_ilvl)
+                                    string.format(" |cFF%02x%02x%02x[%s]|r", r * 255, g * 255, b * 255, avg_ilvl)
                             else
                                 tinsert(linesToAdd, { "iLvl: " .. avg_ilvl, r, g, b })
                             end
@@ -1148,10 +1149,15 @@ local function onTooltipSetUnit(tooltip)
     end
 
     local n = 0
-    for i = 1, numLines do
+    local maxTextLines = math.max(numLines, #text)
+    for i = 1, maxTextLines do
         if (text[i] and text[i] ~= "") then
             n = n + 1
-            _G["GameTooltipTextLeft" .. n]:SetText(text[i])
+            if (n <= numLines) then
+                _G["GameTooltipTextLeft" .. n]:SetText(text[i])
+            else
+                tooltip:AddLine(text[i])
+            end
         end
     end
     if (wide_style) then
@@ -1201,7 +1207,7 @@ local function onTooltipSetUnit(tooltip)
             TacoTipPowerBar:SetPoint("TOPLEFT", GameTooltip, "BOTTOMLEFT", 2, -9)
             TacoTipPowerBar:SetPoint("TOPRIGHT", GameTooltip, "BOTTOMRIGHT", -2, -9)
             TacoTipPowerBar:SetStatusBarTexture((TT.GetResolvedTooltipStatusBarTexture and TT:GetResolvedTooltipStatusBarTexture()) or
-            "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
+                "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill")
             TacoTipPowerBar:SetStatusBarColor(0, 0, 1)
             function TacoTipPowerBar:Update(u)
                 if (TacoTipConfig.show_power_bar) then
@@ -1264,10 +1270,10 @@ GameTooltip:HookScript("OnTooltipSetUnit", function(tooltip, ...)
     local delay = TacoTipConfig.tooltip_delay or 0
     if (delay > 0 and tooltip == GameTooltip and not InCombatLockdown()) then
         delayedTooltipTimer = C_Timer.NewTimer(delay, function()
-            return safeCall(onTooltipSetUnit, tooltip)
+            safeCall(onTooltipSetUnit, tooltip)
         end)
     else
-        return safeCall(onTooltipSetUnit, tooltip, ...)
+        safeCall(onTooltipSetUnit, tooltip, ...)
     end
 end)
 
@@ -1452,7 +1458,6 @@ hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
             if (not TacoTipMouseAnchor) then
                 CreateMouseAnchor()
-                CreateMouseAnchor = nil
             end
             tooltip:SetOwner(TacoTipMouseAnchor, "ANCHOR_NONE")
             tooltip:ClearAllPoints()
@@ -1981,7 +1986,7 @@ function TacoTip_CustomPosEnable(show)
                 TacoTipDragButton:ShowExample()
             end
             self.ticker = NewTicker(1, function(...)
-                return safeCall(onMoverTick, ...)
+                safeCall(onMoverTick, ...)
             end)
             local function onMoverGameTooltipShow(tooltipFrame)
                 if (TacoTipDragButton:IsShown()) then

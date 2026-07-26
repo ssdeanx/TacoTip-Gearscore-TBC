@@ -810,7 +810,7 @@ local function showHoverTooltip(frame, title, text)
         GameTooltip:SetText(title, 1, 0.82, 0)
         GameTooltip:AddLine(text, 1, 1, 1, true)
     else
-        GameTooltip:SetText(text, 1, 1, 1, true)
+        GameTooltip:SetText(text, 1, 1, 1, 1)
     end
     GameTooltip:Show()
 end

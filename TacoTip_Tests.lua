@@ -268,16 +268,39 @@ local function RegisterTacoTipTests()
         Replace("GetGuildInfo", function(unit)
             return nil
         end)
-        -- resolveTooltipUnit checks UnitExists(unitToken). The test builds a
-        -- tooltip with synthetic lines and no actual unit, so mock UnitExists
-        -- to return true for the token the mocked GetUnit returns.
         local originalUnitExists = UnitExists
         Replace("UnitExists", function(unit)
             if (unit == "mouseover") then return true end
-            return originalUnitExists(unit)
+            return originalUnitExists and originalUnitExists(unit) or false
         end)
+        local originalUnitIsPlayer = UnitIsPlayer
+        Replace("UnitIsPlayer", function(unit)
+            if (unit == "mouseover") then return true end
+            return originalUnitIsPlayer and originalUnitIsPlayer(unit) or false
+        end)
+        local originalUnitClass = UnitClass
+        Replace("UnitClass", function(unit)
+            if (unit == "mouseover") then return "Warrior", "WARRIOR" end
+            return originalUnitClass and originalUnitClass(unit)
+        end)
+        local originalUnitRace = UnitRace
+        Replace("UnitRace", function(unit)
+            if (unit == "mouseover") then return "Orc" end
+            return originalUnitRace and originalUnitRace(unit)
+        end)
+        local originalUnitLevel = UnitLevel
+        Replace("UnitLevel", function(unit)
+            if (unit == "mouseover") then return 60 end
+            return originalUnitLevel and originalUnitLevel(unit)
+        end)
+        local originalUnitGUID = UnitGUID
+        Replace("UnitGUID", function(unit)
+            if (unit == "mouseover") then return "Player-1234-5678" end
+            return originalUnitGUID and originalUnitGUID(unit)
+        end)
+
         local originalGetUnit = GameTooltip.GetUnit
-        GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
+        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
 
         local cfg = _G.TacoTipConfig
         local savedName = cfg.show_guild_name
@@ -308,10 +331,74 @@ local function RegisterTacoTipTests()
         IsTrue(ok, "OnTooltipSetUnit with show_guild_name=false did not error")
 
         local line2_hidden = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
-        IsTrue(line2_hidden == nil or line2_hidden == "" or line2_hidden:find("Level 60") ~= nil, "guild line was completely hidden/skipped")
+        IsTrue(line2_hidden == nil or line2_hidden == "" or (line2_hidden:find("Level") ~= nil and line2_hidden:find("60") ~= nil), "guild line was completely hidden/skipped")
 
         cfg.show_guild_name = savedName
-        GameTooltip["GetUnit"] = originalGetUnit
+        rawset(GameTooltip, "GetUnit", originalGetUnit)
+        ClearReplaces()
+    end
+    function Guild:SoD2LineFallbackParsing()
+        Replace("GetGuildInfo", function(unit)
+            return nil
+        end)
+        local originalUnitExists = UnitExists
+        Replace("UnitExists", function(unit)
+            if (unit == "mouseover") then return true end
+            return originalUnitExists and originalUnitExists(unit) or false
+        end)
+        local originalUnitIsPlayer = UnitIsPlayer
+        Replace("UnitIsPlayer", function(unit)
+            if (unit == "mouseover") then return true end
+            return originalUnitIsPlayer and originalUnitIsPlayer(unit) or false
+        end)
+        local originalUnitClass = UnitClass
+        Replace("UnitClass", function(unit)
+            if (unit == "mouseover") then return "Warrior", "WARRIOR" end
+            return originalUnitClass and originalUnitClass(unit)
+        end)
+        local originalUnitRace = UnitRace
+        Replace("UnitRace", function(unit)
+            if (unit == "mouseover") then return "Orc" end
+            return originalUnitRace and originalUnitRace(unit)
+        end)
+        local originalUnitLevel = UnitLevel
+        Replace("UnitLevel", function(unit)
+            if (unit == "mouseover") then return 60 end
+            return originalUnitLevel and originalUnitLevel(unit)
+        end)
+        local originalUnitGUID = UnitGUID
+        Replace("UnitGUID", function(unit)
+            if (unit == "mouseover") then return "Player-1234-5678" end
+            return originalUnitGUID and originalUnitGUID(unit)
+        end)
+
+        local originalGetUnit = GameTooltip.GetUnit
+        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
+
+        local cfg = _G.TacoTipConfig
+        local savedName = cfg.show_guild_name
+        cfg.show_guild_name = true
+
+        -- SoD client emits only 2 tooltip lines: Name and <GuildName>
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("TestPlayer")
+        GameTooltip:AddLine("<TestClassicGuild>")
+
+        local script = GameTooltip:GetScript("OnTooltipSetUnit")
+        local ok = pc(script, GameTooltip)
+        IsTrue(ok, "OnTooltipSetUnit on 2-line SoD tooltip did not error")
+
+        local line2 = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
+        if (line2 and line2 ~= "") then
+            IsTrue(line2:find("TestClassicGuild") ~= nil, "2-line guild name was formatted")
+            IsTrue(line2:find("^|cFF40FB40") ~= nil, "2-line guild line is class-colored/green")
+        end
+
+        local line3 = _G.GameTooltipTextLeft3 and _G.GameTooltipTextLeft3:GetText()
+        IsTrue(line3 ~= nil and line3:find("Level 60 Orc Warrior") ~= nil, "missing level line was re-derived and placed on line 3")
+
+        cfg.show_guild_name = savedName
+        rawset(GameTooltip, "GetUnit", originalGetUnit)
         ClearReplaces()
     end
 
