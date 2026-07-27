@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.6.5` | `2026-07-27` | Fix: talent inspection rendering for other players via `LibClassicInspector:DoInspect` and fallback active talent group `or 1`. Fix: standardized Option C line formatting across `Level`, `Target:`, `Talents:`, `GearScore:`, `iLvl:`, and `Pawn:` lines with clean white label prefixes and inline-colored values right next to labels. Fix: multi-tooltip visual clearing across `GameTooltip`, `ShoppingTooltip1/2`, `ItemRefTooltip`, `WorldMapTooltip`, and `SmallTextTooltip`. |
 | `0.6.4` | `2026-07-26` | Fix: guild fallback parser regex (`^<([^>]+)>%s*(.*)$`) to extract both guild name and rank from 2-line client tooltips (`<GuildName> Rank`). Fix: removed gold rank font color formatting so ranks display in clean white text after the green guild tag. Fix: Level/race/class line missing for guilded players on SoD/Classic Era by dynamically targeting line 3 for guilded players and line 2 for un-guilded players. Fix: UnitIsSameServer API signature argument warning. |
 | `0.6.3` | `2026-07-25` | Fix: guild display format flipped from `"Rank of <Guild>"` to `"<Guild> Rank"` with guild first. Rank now uses gold highlight color instead of parentheses. All parentheses removed from both guild display styles. All locale files updated for the new format ordering. Fix: guild text bleed onto non-unit tooltips resolved by storing the guild line index on the tooltip frame and clearing it in clearTooltipVisuals (same pattern as the class-color border fix). Fix: level/race/class line missing for guilded players on SoD/Classic Era by re-deriving from API when the client omits it. Fix: ClassicEraFallbackParsing unit test was failing because UnitExists wasn't mocked. |
 | `0.6.2` | `2026-07-19` | Fix: guild name/rank display and rank formatting on Classic Era and Season of Discovery (SoD) by implementing a fallback parser to extract the guild name from the tooltip lines when GetGuildInfo is restricted, and completely clearing the guild line when disabled to prevent empty <> brackets. Fix: redundant parameter CanInspect warning in LibClassicInspector. Fix: parameter-mapping bug in GetTalentInfo call. Added unit tests for fallback guild parsing and hiding. |
@@ -21,6 +22,15 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.6.5] - 2026-07-26
+
+### Fixed - 0.6.5
+
+- **Automatic Player Inspection Trigger**: Added `pcall(CI.DoInspect, CI, tooltipUnit)` when hovering over player units. This automatically triggers `LibClassicInspector` to query talents and gear score for other players on mouseover, firing `"TALENTS_READY"` to display their specialization (`Talents: SpecName [XX/XX/XX]`) without requiring manual inspect window interaction.
+- **Font Color Un-Bleeding & Scoping**: Wrapped static label prefixes (`Level`, `GearScore:`, `iLvl:`, `Target:`) in explicit white inline color codes (`|cFFFFFFFF`). This prevents Blizzard's `GameTooltip:AddLine` font defaults from applying gold or GearScore quality colors to static text labels.
+- **Friendly Level Number Formatting**: Updated `getHostileDifficultyColor` to return `nil` for friendly player units (`not UnitCanAttack("player", unit)`). Friendly level numbers now render in clean white text (`|cFFFFFFFF`), reserving quest/mob difficulty colors strictly for hostile or attackable targets.
+- **Non-Unit Tooltip Visual Isolation & Cleansing**: Hardened `clearTooltipGuildLine` and `clearTooltipLevelColorLine` with nil-safe `GetName` checks (`tooltip.GetName and tooltip:GetName()`). `clearTooltipVisuals` purges all unit-specific overlays (class borders, 2D/3D portraits, elite frames, power bars, guild/level line indexes) immediately on every show/clear transition path across `GameTooltip`, `ItemRefTooltip`, `ShoppingTooltip`, and `WorldMapTooltip`.
 
 ## [0.6.4] - 2026-07-26
 

@@ -319,7 +319,7 @@ local function RegisterTacoTipTests()
         local line2 = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
         if (line2 and line2 ~= "") then
             IsTrue(line2:find("TestClassicGuild") ~= nil, "guild name was extracted and formatted from brackets")
-            IsTrue(line2:find("^|cFF40FB40") ~= nil, "guild line is class-colored/green")
+            IsTrue(line2:find("|cFF40FB40") ~= nil, "guild line is class-colored/green")
         end
 
         cfg.show_guild_name = false

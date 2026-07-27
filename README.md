@@ -7,7 +7,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 
 ## 简体中文 / 繁體中文
 
-- 支持客户端 / 支援用戶端：`1.15.8`、`2.5.5 (20505)`、`3.4.5 (30405)`、`3.80.1 (Titanforge)`
+- 支持客户端 / 支援用戶端：`1.15.9 (11509)`、`2.5.6 (20505)`、`3.4.5 (30405)`、`3.80.1 (Titanforge)`
 - 主要功能 / 主要功能：提示增强、GearScore、平均装等 / 平均物品等級、天赋 / 專精、角色与观察面板信息
 - 打开设置 / 開啟設定：`/tacotip` 或 `/taco`
 - 语言 / 語言：默认跟随客户端语言，未翻译内容会自动回退到英文；主页面也提供语言下拉选单 / 下拉選單。
@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.6.4` |
+| Public version | `v0.6.5` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -55,6 +55,13 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The live tooltip preview in the options panel now sits in a dedicated right-side column instead of covering the controls.
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
+
+## What's new in v0.6.5
+
+- **Automatic Player Inspection Trigger**: Added `LibClassicInspector` `DoInspect` call when hovering over other players so talents and GearScore load automatically on mouseover.
+- **Font Color Un-Bleeding & Scoping**: Explicitly wrapped static label prefixes (`Level`, `GearScore:`, `iLvl:`, `Target:`) in white color codes (`|cFFFFFFFF`) to prevent Blizzard's `AddLine` font defaults from applying gold or quality colors to labels.
+- **Friendly Level Number Formatting**: Level numbers for friendly players now render in clean white text, reserving difficulty color strictly for hostile/attackable units.
+- **Non-Unit Tooltip Isolation & Safety**: Hardened `clearTooltipVisuals` with nil-safe `GetName` checks and ensured all unit-specific overlays (portraits, 3D models, elite frames, power bars, class borders) are immediately purged when switching to non-unit tooltips (items, spells, map icons).
 
 ## What's new in v0.6.4
 

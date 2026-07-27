@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.5"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -133,21 +133,6 @@ local function colorizeText(text, r, g, b)
         return text or ""
     end
     return string.format("%s%s|r", makeColorCode(r, g, b), text)
-end
-
-local function escapePattern(text)
-    if (not text or text == "") then
-        return nil
-    end
-    return (text:gsub("(%W)", "%%%1"))
-end
-
-local function replaceFirstExact(text, needle, replacement)
-    local pattern = escapePattern(needle)
-    if (not text or not pattern or not replacement) then
-        return text
-    end
-    return string.gsub(text, pattern, replacement, 1)
 end
 
 local function getClassIconMarkup(class)
@@ -483,13 +468,23 @@ local function resetTooltipBorderToDefault(tooltip)
         return
     end
     local backdrop = tooltip and tooltip.TacoTipBackdropFrame
-    if (backdrop and backdrop.SetBackdropBorderColor) then
-        backdrop:SetBackdropBorderColor(
-            TacoTipConfig.tooltip_border_color_r or 1,
-            TacoTipConfig.tooltip_border_color_g or 1,
-            TacoTipConfig.tooltip_border_color_b or 1,
-            TacoTipConfig.tooltip_border_alpha or 0.85
-        )
+    if (backdrop) then
+        if (backdrop.SetBackdropBorderColor) then
+            backdrop:SetBackdropBorderColor(
+                TacoTipConfig.tooltip_border_color_r or 1,
+                TacoTipConfig.tooltip_border_color_g or 1,
+                TacoTipConfig.tooltip_border_color_b or 1,
+                TacoTipConfig.tooltip_border_alpha or 0.85
+            )
+        end
+        if (backdrop.SetBackdropColor and not backdrop.isBorderOnly) then
+            backdrop:SetBackdropColor(
+                TacoTipConfig.tooltip_background_color_r or 0,
+                TacoTipConfig.tooltip_background_color_g or 0,
+                TacoTipConfig.tooltip_background_color_b or 0,
+                TacoTipConfig.tooltip_background_alpha or 0.85
+            )
+        end
     end
 end
 
@@ -710,6 +705,12 @@ local function onTooltipSetUnit(tooltip)
 
     local guid = UnitGUID(tooltipUnit)
 
+    if (CI and guid and UnitIsPlayer(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
+        if (CI.DoInspect) then
+            pcall(CI.DoInspect, CI, tooltipUnit)
+        end
+    end
+
     local wide_style = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
     local mini_style = (not wide_style and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
 
@@ -732,8 +733,6 @@ local function onTooltipSetUnit(tooltip)
             levelLineIndex = 3
         end
     end
-    local _levelLineExisted = text[levelLineIndex] and text[levelLineIndex] ~= "" and
-        (text[levelLineIndex]:find("Level %d+") or text[levelLineIndex]:find("Level %?%?") or text[levelLineIndex]:find("Level"))
     text[levelLineIndex] = colorizeUnitLevelLine(tooltip, tooltipUnit, text[levelLineIndex], levelLineIndex)
 
     if (TacoTipConfig.show_target and UnitIsConnected(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
@@ -747,14 +746,14 @@ local function onTooltipSetUnit(tooltip)
                         { L["Target"] .. ":", L["Self"], NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b,
                             HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. L["Self"] .. "|r" })
+                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. L["Self"] .. "|r", 1, 1, 1 })
                 end
             elseif (UnitIsUnit(unitTarget, "player")) then
                 if (wide_style) then
                     tinsert(linesToAdd,
                         { L["Target"] .. ":", L["You"], NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 0 })
                 else
-                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFF00" .. L["You"] .. "|r" })
+                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFF00" .. L["You"] .. "|r", 1, 1, 1 })
                 end
             elseif (UnitIsPlayer(unitTarget)) then
                 local classc
@@ -773,8 +772,8 @@ local function onTooltipSetUnit(tooltip)
                                 .b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b })
                     else
                         tinsert(linesToAdd,
-                            { string.format("%s: |cFF%02x%02x%02x%s|cFFFFFFFF (%s)|r", L["Target"], classc.r * 255,
-                                classc.g * 255, classc.b * 255, targetName, L["Player"]) })
+                            { string.format("%s: |cFF%02x%02x%02x%s|r (%s)", L["Target"], classc.r * 255,
+                                classc.g * 255, classc.b * 255, targetName, L["Player"]), 1, 1, 1 })
                     end
                 else
                     if (wide_style) then
@@ -784,7 +783,7 @@ local function onTooltipSetUnit(tooltip)
                                 HIGHLIGHT_FONT_COLOR.b })
                     else
                         tinsert(linesToAdd,
-                            { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Player"] .. ")|r" })
+                            { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Player"] .. ")|r", 1, 1, 1 })
                     end
                 end
             elseif (UnitIsUnit(unitTarget, "pet") or isOtherPlayersPet(unitTarget)) then
@@ -794,7 +793,7 @@ local function onTooltipSetUnit(tooltip)
                             NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
                             HIGHLIGHT_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Pet"] .. ")|r" })
+                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. targetName .. " (" .. L["Pet"] .. ")|r", 1, 1, 1 })
                 end
             else
                 if (wide_style) then
@@ -802,7 +801,7 @@ local function onTooltipSetUnit(tooltip)
                         { L["Target"] .. ":", targetName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b,
                             HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. targetName .. "|r" })
+                    tinsert(linesToAdd, { L["Target"] .. ": |cFFFFFFFF" .. targetName .. "|r", 1, 1, 1 })
                 end
             end
         else
@@ -822,7 +821,7 @@ local function onTooltipSetUnit(tooltip)
                         { L["Target"] .. ":", L["None"], NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b,
                             GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { L["Target"] .. ": |cFF808080" .. L["None"] .. "|r" })
+                    tinsert(linesToAdd, { L["Target"] .. ": |cFF808080" .. L["None"] .. "|r", 1, 1, 1 })
                 end
             end
         end
@@ -863,8 +862,6 @@ local function onTooltipSetUnit(tooltip)
         local diffColor = getHostileDifficultyColor(tooltipUnit)
         if (diffColor) then
             levelStr = colorizeText(levelStr, diffColor.r, diffColor.g, diffColor.b)
-        else
-            levelStr = string.format("|cFFFFFFFF%s|r", levelStr)
         end
 
         local displayClass = localizedClass
@@ -881,14 +878,13 @@ local function onTooltipSetUnit(tooltip)
             end
         end
 
-        local levelPrefix = "|cFFFFFFFFLevel|r"
         local levelLine
         if (displayRace and displayClass) then
-            levelLine = string.format("%s %s %s %s", levelPrefix, levelStr, displayRace, displayClass)
+            levelLine = string.format("|cFFFFFFFFLevel|r %s %s %s", levelStr, displayRace, displayClass)
         elseif (displayClass) then
-            levelLine = string.format("%s %s %s", levelPrefix, levelStr, displayClass)
+            levelLine = string.format("|cFFFFFFFFLevel|r %s %s", levelStr, displayClass)
         else
-            levelLine = string.format("%s %s", levelPrefix, levelStr)
+            levelLine = string.format("|cFFFFFFFFLevel|r %s", levelStr)
         end
 
         local newText = {}
@@ -897,10 +893,11 @@ local function onTooltipSetUnit(tooltip)
         if (guildName and TacoTipConfig.show_guild_name) then
             local guildTag = string.format("|cFF40FB40<%s>|r", guildName)
             if (TacoTipConfig.show_guild_rank and guildRankName and guildRankName ~= "") then
+                local rankText = string.format("|cFFFFFFFF%s|r", guildRankName)
                 if (TacoTipConfig.guild_rank_alt_style) then
-                    newText[2] = string.format("%s %s", guildTag, guildRankName)
+                    newText[2] = string.format("%s %s", guildTag, rankText)
                 else
-                    newText[2] = string.format(L["FORMAT_GUILD_RANK_1"], guildTag, guildRankName)
+                    newText[2] = string.format(L["FORMAT_GUILD_RANK_1"], guildTag, rankText)
                 end
             else
                 newText[2] = guildTag
@@ -924,7 +921,7 @@ local function onTooltipSetUnit(tooltip)
                         { (L["Realm"] or "Realm") .. ":", realm, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                             NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { string.format("%s: |cFFFFFFFF%s|r", L["Realm"] or "Realm", realm) })
+                    tinsert(linesToAdd, { string.format("%s: |cFFFFFFFF%s|r", L["Realm"] or "Realm", realm), 1, 1, 1 })
                 end
             end
         end
@@ -936,7 +933,7 @@ local function onTooltipSetUnit(tooltip)
                         { (L["Honor Rank"] or "Honor Rank") .. ":", pvpName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                             NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b })
                 else
-                    tinsert(linesToAdd, { string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName) })
+                    tinsert(linesToAdd, { string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName), 1, 1, 1 })
                 end
             end
         end
@@ -1000,7 +997,7 @@ local function onTooltipSetUnit(tooltip)
                     y1, y2, y3 = CI:GetTalentPoints(guid, 2)
                 end
 
-                local active = CI:GetActiveTalentGroup(guid)
+                local active = CI:GetActiveTalentGroup(guid) or 1
 
                 if (active == 2) then
                     if (spec2) then
@@ -1010,14 +1007,9 @@ local function onTooltipSetUnit(tooltip)
                                 { L["Talents"] .. ":", specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                                     NORMAL_FONT_COLOR.b, 1, 1, 1 })
                         else
-                            tinsert(linesToAdd, { string.format("%s: %s", L["Talents"], specText) })
+                            tinsert(linesToAdd, { string.format("%s: %s", L["Talents"], specText), 1, 1, 1 })
                         end
                     end
-                    -- Only render the inactive spec when it is a genuinely
-                    -- different tree. Prevents the same spec being printed
-                    -- twice when both dual-spec slots match (e.g. TBC
-                    -- Anniversary 2026 inspect data, or the player picked
-                    -- the same tree in both slots).
                     if (spec1 and spec1 ~= spec2) then
                         local specText = formatSpecializationText(class, spec1, x1, x2, x3)
                         if (wide_style) then
@@ -1025,7 +1017,7 @@ local function onTooltipSetUnit(tooltip)
                                 { " ", string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR
                                     .g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b })
                         else
-                            tinsert(linesToAdd, { string.format("      |c99ffffff%s|r", specText) })
+                            tinsert(linesToAdd, { string.format("      |c99ffffff%s|r", specText), 1, 1, 1 })
                         end
                     end
                 elseif (active == 1) then
@@ -1036,7 +1028,7 @@ local function onTooltipSetUnit(tooltip)
                                 { L["Talents"] .. ":", specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                                     NORMAL_FONT_COLOR.b, 1, 1, 1 })
                         else
-                            tinsert(linesToAdd, { string.format("%s: %s", L["Talents"], specText) })
+                            tinsert(linesToAdd, { string.format("%s: %s", L["Talents"], specText), 1, 1, 1 })
                         end
                     end
                     -- Only render the inactive spec when it is a genuinely
@@ -1049,7 +1041,7 @@ local function onTooltipSetUnit(tooltip)
                                 { " ", string.format("|c99ffffff%s|r", specText), NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR
                                     .g, NORMAL_FONT_COLOR.b, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b })
                         else
-                            tinsert(linesToAdd, { string.format("      |c99ffffff%s|r", specText) })
+                            tinsert(linesToAdd, { string.format("      |c99ffffff%s|r", specText), 1, 1, 1 })
                         end
                     end
                 end
@@ -1084,34 +1076,17 @@ local function onTooltipSetUnit(tooltip)
                         TacoTipGSHistory[guid] = gearscore
                     end
                     if (wide_style) then
-                        if (r == b and r == g) then
-                            tinsert(linesToAdd,
-                                { "|cFFFFFFFFGearScore:|r " .. gearscore .. gsDelta, "|cFFFFFFFF(iLvl:|r " ..
-                                avg_ilvl .. "|cFFFFFFFF)|r", r, g, b, r, g, b })
-                        else
-                            tinsert(linesToAdd,
-                                { "GearScore: " .. gearscore .. gsDelta, "(iLvl: " .. avg_ilvl .. ")", r, g, b, r, g, b })
-                        end
+                        tinsert(linesToAdd,
+                            { "GearScore: " .. gearscore .. gsDelta, "(iLvl: " .. avg_ilvl .. ")", r, g, b, r, g, b })
                     elseif (mini_style) then
-                        if (r == b and r == g) then
-                            miniText = string.format("GS: |cFF%02x%02x%02x%s|r%s  L: |cFF%02x%02x%02x%s|r  ", r * 255,
-                                g * 255, b * 255, gearscore, gsDelta, r * 255, g * 255, b * 255, avg_ilvl)
-                        else
-                            miniText = string.format("|cFF%02x%02x%02xGS: %s%s  L: %s|r  ", r * 255, g * 255, b * 255,
-                                gearscore, gsDelta, avg_ilvl)
-                        end
+                        miniText = string.format("|cFF%02x%02x%02xGS: %s%s  L: %s|r  ", r * 255, g * 255, b * 255, gearscore, gsDelta, avg_ilvl)
                     else
-                        if (r == b and r == g) then
-                            tinsert(linesToAdd, { "|cFFFFFFFFGearScore:|r " .. gearscore .. gsDelta, r, g, b })
-                        else
-                            tinsert(linesToAdd, { "GearScore: " .. gearscore .. gsDelta, r, g, b })
-                        end
+                        tinsert(linesToAdd, { string.format("GearScore: |cFF%02x%02x%02x%s|r%s", r * 255, g * 255, b * 255, gearscore, gsDelta), 1, 1, 1 })
                         if (avg_ilvl and avg_ilvl > 0) then
                             if (TacoTipConfig.show_ilvl_inline) then
-                                text[1] = text[1] ..
-                                    string.format(" |cFF%02x%02x%02x[%s]|r", r * 255, g * 255, b * 255, avg_ilvl)
+                                text[1] = text[1] .. string.format(" |cFF%02x%02x%02x[%s]|r", r * 255, g * 255, b * 255, avg_ilvl)
                             else
-                                tinsert(linesToAdd, { "iLvl: " .. avg_ilvl, r, g, b })
+                                tinsert(linesToAdd, { string.format("iLvl: |cFF%02x%02x%02x%s|r", r * 255, g * 255, b * 255, avg_ilvl), 1, 1, 1 })
                             end
                         end
                     end
@@ -1156,7 +1131,7 @@ local function onTooltipSetUnit(tooltip)
             if (n <= numLines) then
                 _G["GameTooltipTextLeft" .. n]:SetText(text[i])
             else
-                tooltip:AddLine(text[i])
+                tooltip:AddLine(text[i], 1, 1, 1)
             end
         end
     end
@@ -1180,11 +1155,15 @@ local function onTooltipSetUnit(tooltip)
             if (n < numLines) then
                 n = n + 1
                 local txt, r, g, b = unpack(v)
-                _G["GameTooltipTextLeft" .. n]:SetTextColor(r or NORMAL_FONT_COLOR.r, g or NORMAL_FONT_COLOR.g,
-                    b or NORMAL_FONT_COLOR.b)
+                _G["GameTooltipTextLeft" .. n]:SetTextColor(r or 1, g or 1, b or 1)
                 _G["GameTooltipTextLeft" .. n]:SetText(txt)
             else
-                tooltip:AddLine(unpack(v))
+                local txt, r, g, b = unpack(v)
+                if (r and g and b) then
+                    tooltip:AddLine(txt, r, g, b)
+                else
+                    tooltip:AddLine(txt, 1, 1, 1)
+                end
             end
         end
         while (n < numLines) do
@@ -1334,24 +1313,6 @@ ShoppingTooltip1:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ShoppingTooltip2:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 ItemRefTooltip:HookScript("OnTooltipSetItem", safeItemToolTipHook)
 
-
-GameTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
-    cancelDelayedTooltip()
-    return safeCall(clearTooltipVisuals, tooltip, ...)
-end)
-
-ShoppingTooltip1:HookScript("OnTooltipCleared", function(tooltip, ...)
-    return safeCall(clearTooltipVisuals, tooltip, ...)
-end)
-
-ShoppingTooltip2:HookScript("OnTooltipCleared", function(tooltip, ...)
-    return safeCall(clearTooltipVisuals, tooltip, ...)
-end)
-
-ItemRefTooltip:HookScript("OnTooltipCleared", function(tooltip, ...)
-    return safeCall(clearTooltipVisuals, tooltip, ...)
-end)
-
 -- Re-apply the class-tinted border whenever the tooltip shows, in case a
 -- re-show skipped OnTooltipSetUnit (e.g. anchor re-fire with cached text)
 -- and left SetBackdrop's default 0.5/0.5/0.5 gray border in place. Deferred
@@ -1363,7 +1324,7 @@ local function onTooltipShow(tooltip)
     if (not cached) then
         -- F1: When the tooltip shows for non-unit content (items, spells, UI
         -- elements, options hover-help), the portrait from a previous unit
-        -- display must be cleared.  OnTooltipCleared may not have fired on
+        -- display must be cleared. OnTooltipCleared may not have fired on
         -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
         clearTooltipVisuals(tooltip)
         return
@@ -1373,14 +1334,14 @@ local function onTooltipShow(tooltip)
     end
 
     -- Only apply class-tinted borders when the tooltip actually shows a
-    -- player unit.  Map icons, items, and other non-unit tooltips should
+    -- player unit. Map icons, items, and other non-unit tooltips should
     -- never inherit a stale class border.
     local unit = resolveTooltipUnit(tooltip)
     if (not unit or not UnitIsPlayer(unit)) then
         -- Non-player / non-unit tooltip (items, spells, minimap or world-map
         -- POI icons). Clear ALL player-specific visuals left by the previous
         -- hover — border, portrait, 3D portrait, elite frame, power bar —
-        -- so none of them bleed through onto this tooltip.  This is broader
+        -- so none of them bleed through onto this tooltip. This is broader
         -- than just resetTooltipBorderToDefault because ClearLines() (used by
         -- map POI tooltips) does not fire OnTooltipCleared, so the portrait
         -- from a previous player hover otherwise persists on the quest NPC.
@@ -1410,9 +1371,32 @@ local function onTooltipShow(tooltip)
     end)
 end
 
-GameTooltip:HookScript("OnShow", function(tooltip, ...)
-    return safeCall(onTooltipShow, tooltip, ...)
-end)
+local function registerTooltipVisualClearing(tooltipFrame)
+    if (not tooltipFrame or type(tooltipFrame) ~= "table" or not tooltipFrame.HasScript) then
+        return
+    end
+    if (tooltipFrame:HasScript("OnTooltipCleared")) then
+        tooltipFrame:HookScript("OnTooltipCleared", function(tFrame, ...)
+            cancelDelayedTooltip()
+            return safeCall(clearTooltipVisuals, tFrame, ...)
+        end)
+    end
+    if (tooltipFrame:HasScript("OnShow")) then
+        tooltipFrame:HookScript("OnShow", function(tFrame, ...)
+            return safeCall(onTooltipShow, tFrame, ...)
+        end)
+    end
+    if (tooltipFrame:HasScript("OnHide")) then
+        tooltipFrame:HookScript("OnHide", function(tFrame, ...)
+            cancelDelayedTooltip()
+            return safeCall(clearTooltipVisuals, tFrame, ...)
+        end)
+    end
+end
+
+for _, ttFrame in ipairs({ GameTooltip, ShoppingTooltip1, ShoppingTooltip2, ItemRefTooltip, _G["WorldMapTooltip"], _G["SmallTextTooltip"] }) do
+    registerTooltipVisualClearing(ttFrame)
+end
 
 -- F3: Ensure portrait is hidden when the tooltip shows spell/buff content
 -- (OnTooltipCleared is not guaranteed to fire before OnTooltipSetSpell in the
