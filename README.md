@@ -22,7 +22,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla, Burning Crusade Classic Anniversary, Wrath Classic, Titanforge / 3.80.1 |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.6.5` |
+| Public version | `v0.6.6` |
 
 ## Why TacoTip Gearscore TBC exists
 
@@ -56,52 +56,13 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 - The tooltip mover reset flow now preserves the selected custom anchor instead of wiping it.
 - Long options pages now support proper mouse-wheel scrolling and correct content height instead of visually dead scrollbars.
 
-## What's new in v0.6.5
+## What's new in v0.6.6
 
-- **Automatic Player Inspection Trigger**: Added `LibClassicInspector` `DoInspect` call when hovering over other players so talents and GearScore load automatically on mouseover.
-- **Font Color Un-Bleeding & Scoping**: Explicitly wrapped static label prefixes (`Level`, `GearScore:`, `iLvl:`, `Target:`) in white color codes (`|cFFFFFFFF`) to prevent Blizzard's `AddLine` font defaults from applying gold or quality colors to labels.
-- **Friendly Level Number Formatting**: Level numbers for friendly players now render in clean white text, reserving difficulty color strictly for hostile/attackable units.
-- **Non-Unit Tooltip Isolation & Safety**: Hardened `clearTooltipVisuals` with nil-safe `GetName` checks and ensured all unit-specific overlays (portraits, 3D models, elite frames, power bars, class borders) are immediately purged when switching to non-unit tooltips (items, spells, map icons).
-
-## What's new in v0.6.4
-
-- **Hardened Level Line Parsing**: Fixes level/race/class line missing for guilded players on SoD/Classic Era.
-- **UnitIsSameServer API Fix**: Resolved an argument warning in API usage.
-- **Unit Tests**: Added complete mock coverage for "mouseover" and new test scenario for SoD 2-line client tooltips.
-
-## What's new in v0.6.3
-
-This release improves the guild rank display format on tooltips:
-
-- **Guild display format flipped**: Changed from `"Rank of <Guild>"` to `"<Guild> Rank"` — guild name is shown first, then the rank.
-- **Rank uses color instead of parentheses**: Rank text now renders in gold (`HIGHLIGHT_FONT_COLOR`) instead of being wrapped in parentheses, making it consistent with other addon label/value pairs (target, realm, honor rank).
-- **All parentheses removed from both display styles**: Neither the default nor the alternative guild style uses parentheses anymore.
-
-## What's new in v0.6.2
-
-This release resolves compatibility and behavior issues on Classic Era / Season of Discovery (SoD) clients:
-
-- **Classic Era / SoD Guild display fix**: Implemented a fallback parser that extracts the guild name from the tooltip bracketed text (e.g. `<Guild Name>`) when `GetGuildInfo` is restricted.
-- **Hiding empty brackets**: Completely clears/hides the guild line when disabled rather than doing string substitution, avoiding trailing `<>` brackets on Classic Era clients.
-- **GetTalentInfo parameters**: Corrected a parameter-mapping bug where `group` was being queried as `isPet`, which incorrectly triggered pet talent lookups.
-- **CanInspect warning resolved**: Removed the redundant boolean argument from the `CanInspect` call.
-- **Robust test coverage**: Added unit tests in `TacoTip_Tests.lua` to verify fallback guild parsing and hiding.
-- **Blizzard API reference mapping**: Documented guidelines for using the `wow-ui-source` repository to cross-reference official Blizzard APIs.
-
-## What's new in v0.6.1
-
-This release focuses on audit-driven correctness fixes, tooltip glitch investigation, and test suite hardening:
-
-- **`tip_style` no longer forced to 2:** Config sanitizer no longer clobbers valid style selections (1, 3, 4, 5).
-- **GetQuality color fix:** Green and blue channels now read from the correct table coefficients instead of being swapped.
-- **CAfter border bleed defense (generation-counter):** The deferred border re-apply in `ApplyTooltipAppearance` now uses a generation counter (`_borderDeferralGen`) bumped on every `clearTooltipVisuals()`, so a stale CAfter from a previous player hover cannot contaminate a recycled tooltip. Combined with a direct backdrop write that bypasses the texture guard in `applyTooltipBorderOverlay`, the border is always reset to the configured base color on every tooltip recycle.
-- **Portrait/visual leak on map quest tooltips (CRITICAL):** The `onTooltipShow` non-player branch (map POI icons, items, spells) now calls `clearTooltipVisuals()` instead of partial cleanup, fixing a bug where the portrait, 3D portrait, and power bar from a previous player hover could persist on non-unit tooltips when `ClearLines()` (used by map POI tooltips) skipped `OnTooltipCleared`.
-- **Elite frame portrait border removed:** The `show_elite_frame` feature (dragon/star atlas overlays on the portrait for elite/rare/boss NPCs) used `SetAtlas` with Wrath-only atlas names that do not exist on TBC Classic. This created orphaned invisible texture frames that accumulated on the shared GameTooltip and could contribute to tooltip glitching. Removed entirely — creation, show/hide logic, config key, and options UI checkbox.
-- **Power bar cleanup:** `clearTooltipVisuals()` now hides `TacoTipPowerBar` and stops its update ticker during tooltip transitions.
-- **Pawn API safety:** `PawnGetSingleValueFromItem` is now wrapped in pcall like every other Pawn API call.
-- **Locale completion:** 22 missing keys added to all 10 non-English locales with translated values; 4 missing keys added to enUS.lua.
-- **Test suite hardening:** Portrait size assertions use float tolerance (`math.abs(w - 42) < 0.01`), Interface metadata test falls back to TOC constant when `GetAddOnMetadata` returns nil, and border bleed tests now use `SetUnit("player")` to ensure the tooltip is visible so `OnTooltipCleared` fires properly.
-- **Version bump:** `0.6.0` → `0.6.1` — TOC, metadata, and CHANGELOG aligned.
+- **Power bar ticker cleanup:** The `startPowerBarTicker` update ticker now stops immediately when `GameTooltip` hides, preventing unnecessary CPU use between mouseovers.
+- **PowerBarColor defence-in-depth:** The power bar color lookup now explicitly guards against a nil `PowerBarColor` table, matching the codebase's defensive API-access pattern elsewhere.
+- **Dead config key removed:** The orphan `guild_rank_style` default and its migration validation were cleaned up. The options UI has used `guild_rank_alt_style` since v0.6.x.
+- **Fade-out callback de-dup:** The instant-fade `CAfter(0, ...)` handler stacked callbacks on rapid mouse moves. Replaced with a cancellable `C_Timer.NewTimer` — at most one pending callback exists at any time.
+- **Prism-full structural audit:** A 4-pass architectural audit (config sink, cross-version API compatibility, upvalue/shared-state traps, deferred-callback races) confirmed zero config orphans, zero API-compatibility gaps, and a clean bill of health across all supported clients.
 
 ## How TacoTip compares
 

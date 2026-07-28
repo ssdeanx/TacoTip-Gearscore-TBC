@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.5"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.6"
 local tinsert = tinsert or table.insert
 
 local interfaceVersion = select(4, GetBuildInfo()) or 0
@@ -654,6 +654,14 @@ local function cancelDelayedTooltip()
     end
 end
 
+local fadeTimer = nil
+local function cancelFadeTimer()
+    if (fadeTimer) then
+        fadeTimer:Cancel()
+        fadeTimer = nil
+    end
+end
+
 local function clearTooltipVisuals(tooltip)
     if (not tooltip) then
         return
@@ -1193,7 +1201,7 @@ local function onTooltipSetUnit(tooltip)
                     local unit = u or resolveTooltipUnit(GameTooltip)
                     if (unit) then
                         local _, power = UnitPowerType(unit)
-                        local color = power and PowerBarColor[power] or {}
+                        local color = PowerBarColor and PowerBarColor[power] or {}
                         self:SetStatusBarColor(color.r or 0, color.g or 0, color.b or 1);
                         self:SetMinMaxValues(0, UnitPowerMax(unit))
                         self:SetValue(UnitPower(unit))
@@ -1236,9 +1244,15 @@ local function onTooltipSetUnit(tooltip)
         stopPowerBarTicker()
     end
 
-    if (TacoTipConfig.tooltip_max_width and TacoTipConfig.tooltip_max_width > 0) then
+    if (tooltip.SetMinimumWidth) then
         tooltip:SetMinimumWidth(0)
-        tooltip:SetMaximumWidth(TacoTipConfig.tooltip_max_width)
+    end
+    if (tooltip.SetMaximumWidth) then
+        if (TacoTipConfig.tooltip_max_width and TacoTipConfig.tooltip_max_width > 0) then
+            tooltip:SetMaximumWidth(TacoTipConfig.tooltip_max_width)
+        else
+            tooltip:SetMaximumWidth(0)
+        end
     end
 
     TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
@@ -1407,6 +1421,7 @@ end)
 
 GameTooltip:HookScript("OnHide", function()
     cancelDelayedTooltip()
+    stopPowerBarTicker()
 end)
 
 local function CreateMouseAnchor()
@@ -1850,10 +1865,13 @@ local function onEvent(self, event, ...)
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (resolveTooltipUnit(GameTooltip)) then
-            CAfter(0, function()
-                if (not UnitExists("mouseover")) then
-                    GameTooltip:Hide()
-                end
+            cancelFadeTimer()
+            fadeTimer = C_Timer.NewTimer(0, function()
+                safeCall(function()
+                    if (not UnitExists("mouseover")) then
+                        GameTooltip:Hide()
+                    end
+                end)
             end)
         end
     else -- INVENTORY_READY / TALENTS_READY

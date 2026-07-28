@@ -80,7 +80,6 @@ local function RegisterTacoTipTests()
             "tooltip_portrait_zoom", "tooltip_font",
             "tooltip_font_size", "tooltip_max_width", "tooltip_delay",
             "anchor_mouse", "anchor_mouse_world", "anchor_mouse_spells",
-            "guild_rank_style",
         } do
             IsTrue(d[k] ~= nil, "defaults." .. k .. "=" .. tostring(d[k]))
         end
@@ -241,7 +240,6 @@ local function RegisterTacoTipTests()
     function Guild:ConfigDefaultsShowGuild()
         local d = TT:GetDefaults()
         IsTrue(d.show_guild_name == true, "guild name shown by default")
-        IsTrue(type(d.guild_rank_style) == "number", "guild_rank_style default is numeric")
     end
     function Guild:RenderPathDoesNotError()
         -- End-to-end: mock guild, paint player tooltip, confirm no error and

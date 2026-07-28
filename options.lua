@@ -1,5 +1,5 @@
 local addOnName = ...
-local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.5"
+local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.6.6"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 
@@ -115,7 +115,6 @@ function TT:GetDefaults()
         locale_override = nil,
         unlock_info_position = false,
         show_achievement_points = false,
-        guild_rank_style = 1,
         show_gs_delta = false,
         show_honor_rank = false,
         show_ilvl_inline = false,
@@ -208,9 +207,8 @@ function TT:SafeSanitizeConfig(config)
     if (type(config.tooltip_max_width) ~= "number" or config.tooltip_max_width < 0 or config.tooltip_max_width > 500) then
         config.tooltip_max_width = defaults.tooltip_max_width
     end
-    if (type(config.guild_rank_style) ~= "number" or config.guild_rank_style < 1 or config.guild_rank_style > 2) then
-        config.guild_rank_style = defaults.guild_rank_style
-    end
+    -- NOTE: guild_rank_style was removed in v0.6.x — migrated to guild_rank_alt_style.
+    -- Old saved-values are silently ignored by the memoized default merge above.
     -- Color channel bounds (0-1 floats)
     for _, key in ipairs{
         "tooltip_border_color_r", "tooltip_border_color_g", "tooltip_border_color_b",

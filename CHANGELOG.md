@@ -4,6 +4,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `0.6.6` *(in progress)* | `2026-07-28` | Fix: power bar ticker leak on GameTooltip hide, PowerBarColor nil-guard defence-in-depth, guild_rank_style dead-key cleanup, fade-out callback stacking replaced with cancellable timer. Prism-full structural audit. |
 | `0.6.5` | `2026-07-27` | Fix: talent inspection rendering for other players via `LibClassicInspector:DoInspect` and fallback active talent group `or 1`. Fix: standardized Option C line formatting across `Level`, `Target:`, `Talents:`, `GearScore:`, `iLvl:`, and `Pawn:` lines with clean white label prefixes and inline-colored values right next to labels. Fix: multi-tooltip visual clearing across `GameTooltip`, `ShoppingTooltip1/2`, `ItemRefTooltip`, `WorldMapTooltip`, and `SmallTextTooltip`. |
 | `0.6.4` | `2026-07-26` | Fix: guild fallback parser regex (`^<([^>]+)>%s*(.*)$`) to extract both guild name and rank from 2-line client tooltips (`<GuildName> Rank`). Fix: removed gold rank font color formatting so ranks display in clean white text after the green guild tag. Fix: Level/race/class line missing for guilded players on SoD/Classic Era by dynamically targeting line 3 for guilded players and line 2 for un-guilded players. Fix: UnitIsSameServer API signature argument warning. |
 | `0.6.3` | `2026-07-25` | Fix: guild display format flipped from `"Rank of <Guild>"` to `"<Guild> Rank"` with guild first. Rank now uses gold highlight color instead of parentheses. All parentheses removed from both guild display styles. All locale files updated for the new format ordering. Fix: guild text bleed onto non-unit tooltips resolved by storing the guild line index on the tooltip frame and clearing it in clearTooltipVisuals (same pattern as the class-color border fix). Fix: level/race/class line missing for guilded players on SoD/Classic Era by re-deriving from API when the client omits it. Fix: ClassicEraFallbackParsing unit test was failing because UnitExists wasn't mocked. |
@@ -22,6 +23,19 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 | `0.4.9` | `2026-05-28` | Release polish: final locale sync, maintainer text update, language list/docs refresh, and release metadata bump |
 | `0.4.8` | `2026-05-28` | First public upload: compatibility restoration, modern options UI, tooltip polish, and localization pass |
 | `0.0.1` | `2026-05-18` | Internal revival baseline before packaging |
+
+## [0.6.6] - 2026-07-28
+
+### Fixed - 0.6.6
+
+- **Power bar ticker leak on GameTooltip hide:** The `startPowerBarTicker` update ticker was not cancelled in the `GameTooltip:OnHide` hook — only `cancelDelayedTooltip()` was called. The ticker continued firing after the tooltip hid, consuming CPU until the next `clearTooltipVisuals`. Added `stopPowerBarTicker()` call to the `GameTooltip:OnHide` handler.
+- **PowerBarColor nil-table defence-in-depth:** Changed the guard from `power and PowerBarColor[power]` to `PowerBarColor and PowerBarColor[power]` at `main.lua:1196`. The previous guard only protected against nil `power` but not against a nil `PowerBarColor` global, which is a core Blizzard table present on all clients but not explicitly guarded.
+- **Dead `guild_rank_style` config key removed:** The numeric `guild_rank_style` default and its migration validation were removed from `TT:GetDefaults()` and `SafeSanitizeConfig`. The options UI has used boolean `guild_rank_alt_style` since v0.6.x; the old key was a persistent migration artifact. A comment documents the removal for future maintainers.
+- **Fade-out callback stacking replaced with cancellable timer:** The `CAfter(0, ...)` in `UPDATE_MOUSEOVER_UNIT` (instant-fade mode) stacked callbacks on rapid mouse moves — each event scheduled a new callback with no cancel path. Replaced with a `C_Timer.NewTimer` + `cancelFadeTimer()` pattern matching the existing `delayedTooltipTimer` architecture. At most one pending callback exists at any time, cancelled and re-scheduled on every mouseover event.
+
+### Changed - 0.6.6
+
+- Version metadata bumped to `0.6.6` in `TacoTip.toc`, `main.lua`, `options.lua`, `README.md`, and `CHANGELOG.md`.
 
 ## [0.6.5] - 2026-07-26
 
