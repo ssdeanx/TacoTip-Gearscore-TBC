@@ -56,12 +56,12 @@ local function RegisterTacoTipTests()
             return meta
         end)
         -- Fallback: the TOC file source ("TacoTip.toc") advertises
-        -- "## Interface: 11508, 20505, 30405, 38001".  When runtime
+        -- "## Interface: 11509, 20506, 38001".  When runtime
         -- metadata is unavailable (e.g. some clients do not expose
         -- GetAddOnMetadata for the loading addon), use the constant.
         local interfaceStr = toc or "11509, 20506, 38001"
-        IsTrue(ok and (interfaceStr:find("2050") ~= nil or interfaceStr:find("1.0.0") ~= nil),
-            "TBC interface advertised: " .. tostring(toc))
+        IsTrue(ok and interfaceStr:find("20506") ~= nil,
+            "TBC interface 20506 advertised: " .. tostring(toc))
     end
 
     -- ============================================================
@@ -80,6 +80,7 @@ local function RegisterTacoTipTests()
             "tooltip_portrait_zoom", "tooltip_font",
             "tooltip_font_size", "tooltip_max_width", "tooltip_delay",
             "anchor_mouse", "anchor_mouse_world", "anchor_mouse_spells",
+            "guild_rank_style",
         } do
             IsTrue(d[k] ~= nil, "defaults." .. k .. "=" .. tostring(d[k]))
         end
@@ -240,6 +241,7 @@ local function RegisterTacoTipTests()
     function Guild:ConfigDefaultsShowGuild()
         local d = TT:GetDefaults()
         IsTrue(d.show_guild_name == true, "guild name shown by default")
+        IsTrue(type(d.guild_rank_style) == "number", "guild_rank_style default is numeric")
     end
     function Guild:RenderPathDoesNotError()
         -- End-to-end: mock guild, paint player tooltip, confirm no error and
@@ -266,40 +268,16 @@ local function RegisterTacoTipTests()
         Replace("GetGuildInfo", function(unit)
             return nil
         end)
+        -- resolveTooltipUnit checks UnitExists(unitToken). The test builds a
+        -- tooltip with synthetic lines and no actual unit, so mock UnitExists
+        -- to return true for the token the mocked GetUnit returns.
         local originalUnitExists = UnitExists
         Replace("UnitExists", function(unit)
             if (unit == "mouseover") then return true end
-            return originalUnitExists and originalUnitExists(unit) or false
+            return originalUnitExists(unit)
         end)
-        local originalUnitIsPlayer = UnitIsPlayer
-        Replace("UnitIsPlayer", function(unit)
-            if (unit == "mouseover") then return true end
-            return originalUnitIsPlayer and originalUnitIsPlayer(unit) or false
-        end)
-        local originalUnitClass = UnitClass
-        Replace("UnitClass", function(unit)
-            if (unit == "mouseover") then return "Warrior", "WARRIOR" end
-            return originalUnitClass and originalUnitClass(unit)
-        end)
-        local originalUnitRace = UnitRace
-        Replace("UnitRace", function(unit)
-            if (unit == "mouseover") then return "Orc" end
-            return originalUnitRace and originalUnitRace(unit)
-        end)
-        local originalUnitLevel = UnitLevel
-        Replace("UnitLevel", function(unit)
-            if (unit == "mouseover") then return 60 end
-            return originalUnitLevel and originalUnitLevel(unit)
-        end)
-        local originalUnitGUID = UnitGUID
-        Replace("UnitGUID", function(unit)
-            if (unit == "mouseover") then return "Player-1234-5678" end
-            return originalUnitGUID and originalUnitGUID(unit)
-        end)
-
         local originalGetUnit = GameTooltip.GetUnit
-        -- Using rawset to avoid tainting the tooltip frame with a new method.
-        rawset(GameTooltip, "GetUnit", function() return "TestPlayer", "mouseover" end)
+        GameTooltip["GetUnit"] = function() return "TestPlayer", "mouseover" end
 
         local cfg = _G.TacoTipConfig
         local savedName = cfg.show_guild_name
@@ -317,7 +295,7 @@ local function RegisterTacoTipTests()
         local line2 = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
         if (line2 and line2 ~= "") then
             IsTrue(line2:find("TestClassicGuild") ~= nil, "guild name was extracted and formatted from brackets")
-            IsTrue(line2:find("|cFF40FB40") ~= nil, "guild line is class-colored/green")
+            IsTrue(line2:find("^|cFF40FB40") ~= nil, "guild line is class-colored/green")
         end
 
         cfg.show_guild_name = false
@@ -330,10 +308,10 @@ local function RegisterTacoTipTests()
         IsTrue(ok, "OnTooltipSetUnit with show_guild_name=false did not error")
 
         local line2_hidden = _G.GameTooltipTextLeft2 and _G.GameTooltipTextLeft2:GetText()
-        IsTrue(line2_hidden == nil or line2_hidden == "" or (line2_hidden:find("Level") ~= nil and line2_hidden:find("60") ~= nil), "guild line was completely hidden/skipped")
+        IsTrue(line2_hidden == nil or line2_hidden == "" or line2_hidden:find("Level 60") ~= nil, "guild line was completely hidden/skipped")
 
         cfg.show_guild_name = savedName
-        rawset(GameTooltip, "GetUnit", originalGetUnit)
+        GameTooltip["GetUnit"] = originalGetUnit
         ClearReplaces()
     end
 

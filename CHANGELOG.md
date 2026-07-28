@@ -33,9 +33,19 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 - **Dead `guild_rank_style` config key removed:** The numeric `guild_rank_style` default and its migration validation were removed from `TT:GetDefaults()` and `SafeSanitizeConfig`. The options UI has used boolean `guild_rank_alt_style` since v0.6.x; the old key was a persistent migration artifact. A comment documents the removal for future maintainers.
 - **Fade-out callback stacking replaced with cancellable timer:** The `CAfter(0, ...)` in `UPDATE_MOUSEOVER_UNIT` (instant-fade mode) stacked callbacks on rapid mouse moves — each event scheduled a new callback with no cancel path. Replaced with a `C_Timer.NewTimer` + `cancelFadeTimer()` pattern matching the existing `delayedTooltipTimer` architecture. At most one pending callback exists at any time, cancelled and re-scheduled on every mouseover event.
 
+- **Classic Tooltip API Modernization:** Refactored line queries across `main.lua` to use Blizzard's native C++ methods `tooltip:GetLeftLine(i)` and `tooltip:GetRightLine(i)` via `TT.GetTooltipLeftLine` and `TT.GetTooltipRightLine`. Replaced legacy string concatenations (`_G["GameTooltipTextLeft"..i]`) with direct line getters while maintaining test mock fallback support.
+- **Read-Before-Write Layout Optimization:** Added `tooltip:GetMinimumWidth()` check before calling `SetMinimumWidth(0)` in `TT:ApplyTooltipAppearance` to prevent unnecessary C++ layout recalculation passes.
+- **Power Bar Padding Encapsulation:** Integrated `tooltip:SetPadding(0, 10, 0, 0)` when `TacoTipPowerBar` is shown and `tooltip:ClearPadding()` in `clearTooltipVisuals` so tooltip backdrops cleanly encapsulate status bars.
+- **Screen Boundary Protection:** Applied `tooltip:SetClampRectInsets(0, 0, 15, 15)` in `ApplyTooltipAppearance` to keep long player tooltips 100% visible on screen without edge clipping.
+- **Zero-Flicker Async Inspection Refresh:** Updated `TacoTip_GSCallback` to refresh via `GameTooltip:UpdateTooltip()` when available instead of re-calling `SetUnit`, eliminating tooltip position jump on async inspect updates.
+- **Unnamed Tooltip Support:** Removed strict global frame name dependencies in `applyTooltipFonts` and `onTooltipSetUnit` line read loops, enabling full font styling and line formatting support for third-party or unnamed tooltip frames.
+- **Test Suite Coverage:** Added `Modules:LineAccessGetters` and `Modules:AdvancedTooltipAPIs` unit tests in `TacoTip_Tests.lua` verifying native line getter delegation and advanced C++ API calls.
+
 ### Changed - 0.6.6
 
 - Version metadata bumped to `0.6.6` in `TacoTip.toc`, `main.lua`, `options.lua`, `README.md`, and `CHANGELOG.md`.
+- **GS Quality Colors Rewired to WoW Item Quality Colors:** Replaced the custom `GS_Quality` interpolation gradient (which produced teal/cyan/magenta) with fixed RGB values matching Blizzard's `ITEM_QUALITY_COLORS[0..6]`. Color tiers now accurately reflect WoW item quality: gray → white → green → blue → purple → orange → red.
+- **New 7th Red Tier Added:** Expanded `MAX_SCORE` from `BRACKET_SIZE*6-1` to `BRACKET_SIZE*7`, adding an Artifact (red) tier at the top end of the bracket. Requires ~iLvl 93+ full epic set to reach — unobtainable on Classic Era, accessible to SoD's best-geared characters. `GetQuality` now iterates 7 brackets instead of 6.
 
 ## [0.6.5] - 2026-07-26
 
@@ -228,7 +238,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 - **8 optional tooltip QoL features** (all off by default, toggleable in options):
 
   | Feature | Config Key | Description |
-  |---|---|---|
+  | --- | --- | --- |
   | **Honor rank display** | `show_honor_rank` | Shows the player's PvP rank title (Knight, Centurion, etc.) via `UnitPVPName()` |
   | **Group role icon** | `show_role_icon` | Appends Tank/Healer/DPS role icons on the name line for party/raid members |
   | **iLvl on name line** | `show_ilvl_inline` | Shows average item level next to the player's name instead of on a separate line |

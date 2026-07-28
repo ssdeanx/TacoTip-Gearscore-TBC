@@ -274,6 +274,8 @@ local defaults = {
 ["REALM"] = "Realm",
 }
 
+
+
 _G.TACOTIP_LOCALE = TACOTIP_LOCALE or {}
 
 for key, value in pairs(defaults) do

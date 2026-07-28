@@ -201,6 +201,8 @@ function TT:SafeSanitizeConfig(config)
     if (type(config.tip_style) ~= "number" or config.tip_style < 1 or config.tip_style > 5) then
         config.tip_style = defaults.tip_style
     end
+
+
     if (type(config.tooltip_delay) ~= "number" or config.tooltip_delay < 0 or config.tooltip_delay > 5) then
         config.tooltip_delay = defaults.tooltip_delay
     end
@@ -1252,6 +1254,8 @@ local modernStyleOptions = {
     { value = 4, text = L["MINI/FULL"], tooltip = L["Default MINI, hold SHIFT for FULL"] },
     { value = 5, text = L["MINI"], tooltip = L["Always MINI"] }
 }
+
+
 
 local function refreshOverlayPositions()
     if (PersonalGearScore and PersonalGearScore.RefreshPosition) then PersonalGearScore:RefreshPosition() end

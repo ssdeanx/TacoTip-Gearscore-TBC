@@ -16,7 +16,8 @@ end
 -- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
 -- version-only gate made the whole module return early and Pawn never loaded.
 -- Also accept the presence of Pawn's public API functions as proof of load.
-local pawnApiPresent = type(PawnGetItemData) == "function" and type(PawnGetSingleValueFromItem) == "function" and type(PawnGetScaleColor) == "function"
+local pawnApiPresent = type(PawnGetItemData) == "function" and type(PawnGetSingleValueFromItem) == "function" and
+    type(PawnGetScaleColor) == "function"
 local isPawnLoaded = (PawnClassicLastUpdatedVersion and PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
 
 if (not isPawnLoaded) then
@@ -52,16 +53,22 @@ end
 
 function TT_PAWN:GetItemScore(itemLink, class, specIndex)
     if (itemLink and class and specIndex) then
-        local item = PawnGetItemData(itemLink)
-        if (item) then
-            return tonumber(select(2,PawnGetSingleValueFromItem(item,"\"Classic\":"..class..specIndex))) or 0
+        if (type(PawnGetItemData) == "function") then
+            local ok, item = pcall(PawnGetItemData, itemLink)
+            if (ok and item and type(PawnGetSingleValueFromItem) == "function") then
+                local scaleName = "\"Classic\":" .. class .. specIndex
+                local okScore, _, score = pcall(PawnGetSingleValueFromItem, item, scaleName)
+                if (okScore and score) then
+                    return tonumber(score) or 0
+                end
+            end
         end
     end
     return 0
 end
 
 local function itemcacheCB(tbl, id)
-    for i=1,#tbl.items do
+    for i = 1, #tbl.items do
         if (id == tbl.items[i]) then
             table.remove(tbl.items, i)
         end
@@ -77,7 +84,7 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
     if (guid) then
         if (guid ~= UnitGUID("player")) then
             local _, invTime = CI:GetLastCacheTime(guid)
-            if(invTime == 0) then
+            if (invTime == 0) then
                 return 0, "", "|cffffffff"
             end
         end
@@ -91,17 +98,17 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
         local IsReady = true
 
         if (spec and class) then
-            local scaleName = "\"Classic\":"..class..spec
+            local scaleName = "\"Classic\":" .. class .. spec
             local cb_table
             if (useCallback) then
-                cb_table = {["guid"] = guid, ["items"] = {}}
+                cb_table = { ["guid"] = guid, ["items"] = {} }
             end
             for i = 1, 18 do
                 if (i ~= 4) then
                     local item = CI:GetInventoryItemMixin(guid, i)
                     if (item) then
                         if (item:IsItemDataCached()) then
-                            local tempScore = TT_PAWN:GetItemScore(item:GetItemLink(),class,spec)
+                            local tempScore = TT_PAWN:GetItemScore(item:GetItemLink(), class, spec)
                             pawnScore = pawnScore + tempScore
                         else
                             IsReady = false

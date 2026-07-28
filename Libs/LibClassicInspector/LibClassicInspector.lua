@@ -65,6 +65,9 @@ local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local GetNamePlates = (_G.C_NamePlate and _G.C_NamePlate.GetNamePlates) or _G.GetNamePlates
 local Item = _G.Item
 
+---@type fun(tabIndex: number, talentIndex: number, isInspect?: boolean|number, isPet?: boolean|string, groupIndex?: number): name: string, iconTexture: string|number, tier: number, column: number, rank: number, maxRank: number, isExceptional: boolean, available: number, ...
+local GetTalentInfo = _G.GetTalentInfo
+
 local isWotlk = clientBuildMajor == 3
 local isTBC = clientBuildMajor == 2
 local isClassic = clientBuildMajor == 1
@@ -2888,13 +2891,21 @@ local function cacheUserTalents(unit)
         [1] = { [1] = {}, [2] = {}, [3] = {} },
         [2] = { [1] = {}, [2] = {}, [3] = {} },
         ["time"] = time(),
-        ["active"] = isWotlk and GetActiveTalentGroup(true, false) or 1,
+        ["active"] = isWotlk and GetActiveTalentGroup(true, unit) or 1,
         ["inspect"] = true
     }
     for x = 1, (isWotlk and 2 or 1) do
         for i = 1, 3 do -- GetNumTalentTabs
-            for j = 1, GetNumTalents(i, true, false) do
-                talents[x][i][j] = select(5, GetTalentInfo(i, j, true, false, x))
+            if (isWotlk) then
+                for j = 1, GetNumTalents(i, true, false, x) do
+                    local _, _, _, _, rank = GetTalentInfo(i, j, true, false, x)
+                    talents[x][i][j] = rank
+                end
+            else
+                for j = 1, GetNumTalents(i, true, false) do
+                    local _, _, _, _, rank = GetTalentInfo(i, j, true, false)
+                    talents[x][i][j] = rank
+                end
             end
         end
     end

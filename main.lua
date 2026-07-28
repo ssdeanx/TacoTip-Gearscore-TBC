@@ -28,6 +28,33 @@ if (not TT) then
     rawset(_G, addOnName, TT)
 end
 
+function TT.GetTooltipLeftLine(tooltip, index)
+    if (not tooltip or not index) then return nil end
+    if (tooltip.GetLeftLine) then
+        return tooltip:GetLeftLine(index)
+    end
+    local name = tooltip.GetName and tooltip:GetName()
+    if (name) then
+        return _G[name .. "TextLeft" .. index]
+    end
+    return nil
+end
+
+function TT.GetTooltipRightLine(tooltip, index)
+    if (not tooltip or not index) then return nil end
+    if (tooltip.GetRightLine) then
+        return tooltip:GetRightLine(index)
+    end
+    local name = tooltip.GetName and tooltip:GetName()
+    if (name) then
+        return _G[name .. "TextRight" .. index]
+    end
+    return nil
+end
+
+local getTooltipLeftLine = TT.GetTooltipLeftLine
+local getTooltipRightLine = TT.GetTooltipRightLine
+
 -- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
 -- version-only gate made the whole module return early and Pawn never loaded.
 -- Also accept the presence of Pawn's public API functions as proof of load.
@@ -170,12 +197,9 @@ end
 
 local function clearTooltipGuildLine(tooltip)
     if (tooltip and tooltip.TacoTipGuildLineIndex) then
-        local name = tooltip.GetName and tooltip:GetName()
-        if (name) then
-            local left = _G[name .. "TextLeft" .. tooltip.TacoTipGuildLineIndex]
-            if (left) then
-                left:SetText()
-            end
+        local left = getTooltipLeftLine(tooltip, tooltip.TacoTipGuildLineIndex)
+        if (left) then
+            left:SetText()
         end
         tooltip.TacoTipGuildLineIndex = nil
     end
@@ -183,12 +207,9 @@ end
 
 local function clearTooltipLevelColorLine(tooltip)
     if (tooltip and tooltip.TacoTipLevelColorLineIndex) then
-        local name = tooltip.GetName and tooltip:GetName()
-        if (name) then
-            local left = _G[name .. "TextLeft" .. tooltip.TacoTipLevelColorLineIndex]
-            if (left) then
-                left:SetText()
-            end
+        local left = getTooltipLeftLine(tooltip, tooltip.TacoTipLevelColorLineIndex)
+        if (left) then
+            left:SetText()
         end
         tooltip.TacoTipLevelColorLineIndex = nil
     end
@@ -351,19 +372,16 @@ local function ensureTooltipPortrait(tooltip)
 end
 
 local function applyTooltipFonts(tooltip)
-    if (not tooltip or not tooltip.GetName) then
-        return
-    end
-    local tooltipName = tooltip:GetName()
-    if (not tooltipName) then
+    if (not tooltip) then
         return
     end
     local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()) or TacoTipConfig.tooltip_font or
         "Fonts\\FRIZQT__.TTF"
     local fontSize = TacoTipConfig.tooltip_font_size or 12
-    for i = 1, math.max(tooltip:NumLines() + 4, 20) do
-        local left = _G[tooltipName .. "TextLeft" .. i]
-        local right = _G[tooltipName .. "TextRight" .. i]
+    local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
+    for i = 1, math.max(numLines + 4, 20) do
+        local left = getTooltipLeftLine(tooltip, i)
+        local right = getTooltipRightLine(tooltip, i)
         if (left and left.SetFont) then
             left:SetFont(fontPath, fontSize)
         end
@@ -372,6 +390,7 @@ local function applyTooltipFonts(tooltip)
         end
     end
 end
+
 
 local function getOrCreateBackdropFrame(tooltip)
     if (not tooltip) then
@@ -490,6 +509,9 @@ end
 
 local function resolveTooltipUnit(tooltip, unit)
     if (unit and UnitExists and UnitExists(unit)) then
+        if (tooltip and tooltip.IsUnit and tooltip:IsUnit(unit)) then
+            return unit
+        end
         return unit
     end
     if (tooltip and tooltip.GetUnit) then
@@ -500,6 +522,7 @@ local function resolveTooltipUnit(tooltip, unit)
     end
     return nil
 end
+
 
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
@@ -642,9 +665,14 @@ end
 function TacoTip_GSCallback(guid)
     local ttUnit = resolveTooltipUnit(GameTooltip)
     if (ttUnit and UnitGUID(ttUnit) == guid) then
-        GameTooltip:SetUnit(ttUnit)
+        if (GameTooltip.UpdateTooltip) then
+            pcall(GameTooltip.UpdateTooltip, GameTooltip)
+        else
+            GameTooltip:SetUnit(ttUnit)
+        end
     end
 end
+
 
 local delayedTooltipTimer = nil
 local function cancelDelayedTooltip()
@@ -667,6 +695,8 @@ local function clearTooltipVisuals(tooltip)
         return
     end
     tooltip._borderDeferralGen = (tooltip._borderDeferralGen or 0) + 1
+
+
     cancelDelayedTooltip()
     clearTooltipPlayerClassColor(tooltip)
     resetTooltipBorderToDefault(tooltip)
@@ -685,7 +715,12 @@ local function clearTooltipVisuals(tooltip)
         TacoTipPowerBar:Hide()
     end
     stopPowerBarTicker()
+    if (tooltip._tacoTipPaddingSet and tooltip.ClearPadding) then
+        tooltip:ClearPadding()
+        tooltip._tacoTipPaddingSet = nil
+    end
 end
+
 
 local function onTooltipSetUnit(tooltip)
     local name, tooltipUnit = tooltip:GetUnit()
@@ -722,14 +757,18 @@ local function onTooltipSetUnit(tooltip)
     local wide_style = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
     local mini_style = (not wide_style and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
 
+
+
     local text = {}
     local linesToAdd = {}
 
-    local numLines = GameTooltip:NumLines()
+    local numLines = tooltip:NumLines()
 
     for i = 1, numLines do
-        text[i] = _G["GameTooltipTextLeft" .. i]:GetText()
+        local leftLine = getTooltipLeftLine(tooltip, i)
+        text[i] = leftLine and leftLine:GetText()
     end
+
     if (not text[1] or text[1] == "") then return end
     if (not text[2] or text[2] == "") then return end
 
@@ -1137,34 +1176,47 @@ local function onTooltipSetUnit(tooltip)
         if (text[i] and text[i] ~= "") then
             n = n + 1
             if (n <= numLines) then
-                _G["GameTooltipTextLeft" .. n]:SetText(text[i])
+                local line = getTooltipLeftLine(tooltip, n)
+                if (line) then
+                    line:SetText(text[i])
+                end
             else
                 tooltip:AddLine(text[i], 1, 1, 1)
             end
         end
     end
     if (wide_style) then
-        local anchor = "GameTooltipTextLeft" .. n
+        local anchorLine = getTooltipLeftLine(tooltip, n)
         while (n < numLines) do
             n = n + 1
-            _G["GameTooltipTextLeft" .. n]:SetText()
-            _G["GameTooltipTextRight" .. n]:SetText()
-            _G["GameTooltipTextLeft" .. n]:Hide()
-            _G["GameTooltipTextRight" .. n]:Hide()
+            local left = getTooltipLeftLine(tooltip, n)
+            local right = getTooltipRightLine(tooltip, n)
+            if (left) then
+                left:SetText()
+                left:Hide()
+            end
+            if (right) then
+                right:SetText()
+                right:Hide()
+            end
         end
         for _, v in ipairs(linesToAdd) do
             tooltip:AddDoubleLine(unpack(v))
         end
-        if (_G["GameTooltipTextLeft" .. (n + 1)]) then
-            _G["GameTooltipTextLeft" .. (n + 1)]:SetPoint("TOP", _G[anchor], "BOTTOM", 0, -2)
+        local nextLeft = getTooltipLeftLine(tooltip, n + 1)
+        if (nextLeft and anchorLine) then
+            nextLeft:SetPoint("TOP", anchorLine, "BOTTOM", 0, -2)
         end
     else
         for _, v in ipairs(linesToAdd) do
             if (n < numLines) then
                 n = n + 1
                 local txt, r, g, b = unpack(v)
-                _G["GameTooltipTextLeft" .. n]:SetTextColor(r or 1, g or 1, b or 1)
-                _G["GameTooltipTextLeft" .. n]:SetText(txt)
+                local left = getTooltipLeftLine(tooltip, n)
+                if (left) then
+                    left:SetTextColor(r or 1, g or 1, b or 1)
+                    left:SetText(txt)
+                end
             else
                 local txt, r, g, b = unpack(v)
                 if (r and g and b) then
@@ -1176,12 +1228,19 @@ local function onTooltipSetUnit(tooltip)
         end
         while (n < numLines) do
             n = n + 1
-            _G["GameTooltipTextLeft" .. n]:SetText()
-            _G["GameTooltipTextRight" .. n]:SetText()
-            _G["GameTooltipTextLeft" .. n]:Hide()
-            _G["GameTooltipTextRight" .. n]:Hide()
+            local left = getTooltipLeftLine(tooltip, n)
+            local right = getTooltipRightLine(tooltip, n)
+            if (left) then
+                left:SetText()
+                left:Hide()
+            end
+            if (right) then
+                right:SetText()
+                right:Hide()
+            end
         end
     end
+
 
     if (not TacoTipConfig.show_hp_bar and GameTooltipStatusBar and GameTooltipStatusBar:IsShown()) then
         GameTooltipStatusBar:Hide()
@@ -1235,6 +1294,10 @@ local function onTooltipSetUnit(tooltip)
             TacoTipPowerBar:Update()
             TacoTipPowerBar:Show()
             startPowerBarTicker()
+            if (tooltip.SetPadding) then
+                tooltip:SetPadding(0, 10, 0, 0)
+                tooltip._tacoTipPaddingSet = true
+            end
         else
             TacoTipPowerBar:Hide()
             stopPowerBarTicker()
@@ -1244,9 +1307,18 @@ local function onTooltipSetUnit(tooltip)
         stopPowerBarTicker()
     end
 
-    if (tooltip.SetMinimumWidth) then
-        tooltip:SetMinimumWidth(0)
+    if (tooltip.SetClampRectInsets) then
+        tooltip:SetClampRectInsets(0, 0, 15, 15)
     end
+
+    if (tooltip.SetMinimumWidth) then
+        local currentMin = (tooltip.GetMinimumWidth and tooltip:GetMinimumWidth()) or -1
+        if (currentMin ~= 0) then
+            tooltip:SetMinimumWidth(0)
+        end
+    end
+
+
     if (tooltip.SetMaximumWidth) then
         if (TacoTipConfig.tooltip_max_width and TacoTipConfig.tooltip_max_width > 0) then
             tooltip:SetMaximumWidth(TacoTipConfig.tooltip_max_width)

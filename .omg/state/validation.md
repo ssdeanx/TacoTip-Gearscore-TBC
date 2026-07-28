@@ -1,4 +1,4 @@
-# Validation Plan & Commands (v0.6.2)
+# Validation Plan & Commands (v0.6.6)
 
 This document lists the static analysis, in-game test runner commands, and manual verification procedures for validating **TacoTip-Gearscore-TBC**.
 
