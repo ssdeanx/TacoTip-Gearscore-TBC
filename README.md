@@ -58,11 +58,20 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 
 ## What's new in v0.6.6
 
-- **Power bar ticker cleanup:** The `startPowerBarTicker` update ticker now stops immediately when `GameTooltip` hides, preventing unnecessary CPU use between mouseovers.
-- **PowerBarColor defence-in-depth:** The power bar color lookup now explicitly guards against a nil `PowerBarColor` table, matching the codebase's defensive API-access pattern elsewhere.
-- **Dead config key removed:** The orphan `guild_rank_style` default and its migration validation were cleaned up. The options UI has used `guild_rank_alt_style` since v0.6.x.
-- **Fade-out callback de-dup:** The instant-fade `CAfter(0, ...)` handler stacked callbacks on rapid mouse moves. Replaced with a cancellable `C_Timer.NewTimer` — at most one pending callback exists at any time.
-- **Prism-full structural audit:** A 4-pass architectural audit (config sink, cross-version API compatibility, upvalue/shared-state traps, deferred-callback races) confirmed zero config orphans, zero API-compatibility gaps, and a clean bill of health across all supported clients.
+- **Power bar ticker leak on GameTooltip hide:** The `startPowerBarTicker` update ticker was not cancelled in the `GameTooltip:OnHide` hook — only `cancelDelayedTooltip()` was called. The ticker continued firing after the tooltip hid, consuming CPU until the next `clearTooltipVisuals`. Added `stopPowerBarTicker()` call to the `GameTooltip:OnHide` handler.
+- **PowerBarColor nil-table defence-in-depth:** Changed the guard from `power and PowerBarColor[power]` to `PowerBarColor and PowerBarColor[power]` at `main.lua:1196`. The previous guard only protected against nil `power` but not against a nil `PowerBarColor` global, which is a core Blizzard table present on all clients but not explicitly guarded.
+- **Dead `guild_rank_style` config key removed:** The numeric `guild_rank_style` default and its migration validation were removed from `TT:GetDefaults()` and `SafeSanitizeConfig`. The options UI has used boolean `guild_rank_alt_style` since v0.6.x; the old key was a persistent migration artifact.
+- **Fade-out callback stacking replaced with cancellable timer:** The `CAfter(0, ...)` in `UPDATE_MOUSEOVER_UNIT` (instant-fade mode) stacked callbacks on rapid mouse moves — each event scheduled a new callback with no cancel path. Replaced with a `C_Timer.NewTimer` + `cancelFadeTimer()` pattern matching the existing `delayedTooltipTimer` architecture.
+- **Classic Tooltip API Modernization:** Refactored line queries across `main.lua` to use Blizzard's native C++ methods `tooltip:GetLeftLine(i)` and `tooltip:GetRightLine(i)` via `TT.GetTooltipLeftLine` and `TT.GetTooltipRightLine`. Replaced legacy string concatenations (`_G["GameTooltipTextLeft"..i]`) with direct line getters.
+- **Read-Before-Write Layout Optimization:** Added `tooltip:GetMinimumWidth()` check before calling `SetMinimumWidth(0)` in `TT:ApplyTooltipAppearance` to prevent unnecessary C++ layout recalculation passes.
+- **Power Bar Padding Encapsulation:** Integrated `tooltip:SetPadding(0, 10, 0, 0)` when `TacoTipPowerBar` is shown and `tooltip:ClearPadding()` in `clearTooltipVisuals` so tooltip backdrops cleanly encapsulate status bars.
+- **Screen Boundary Protection:** Applied `tooltip:SetClampRectInsets(0, 0, 15, 15)` in `ApplyTooltipAppearance` to keep long player tooltips 100% visible on screen without edge clipping.
+- **Zero-Flicker Async Inspection Refresh:** Updated `TacoTip_GSCallback` to refresh via `GameTooltip:UpdateTooltip()` when available instead of re-calling `SetUnit`, eliminating tooltip position jump on async inspect updates.
+- **Unnamed Tooltip Support:** Removed strict global frame name dependencies in `applyTooltipFonts` and `onTooltipSetUnit` line read loops, enabling full font styling and line formatting support for third-party or unnamed tooltip frames.
+- **Test Suite Coverage:** Added `Modules:LineAccessGetters` and `Modules:AdvancedTooltipAPIs` unit tests in `TacoTip_Tests.lua`.
+- **LibClassicInspector param-type-mismatch fix:** Fixed 11 false-positive Lua Language Server diagnostic warnings on `GetTalentInfo` calls by using a localized, annotated reference for the Classic WoW API parameter signature, and corrected the internal parameter mapping for `GetNumTalents`/`GetTalentInfo` inside `cacheUserTalents`.
+- **GS Quality Colors Rewired to WoW Item Quality Colors:** Replaced the custom `GS_Quality` interpolation gradient (which produced teal/cyan/magenta) with fixed RGB values matching Blizzard's `ITEM_QUALITY_COLORS[0..6]`. Color tiers now accurately reflect WoW item quality.
+- **New 7th Red Tier Added:** Expanded `MAX_SCORE` from `BRACKET_SIZE*6-1` to `BRACKET_SIZE*7`, adding an Artifact (red) tier at the top end of the bracket. Requires ~iLvl 93+ full epic set to reach — unobtainable on Classic Era, accessible to SoD's best-geared characters. `GetQuality` now iterates 7 brackets instead of 6.
 
 ## How TacoTip compares
 
