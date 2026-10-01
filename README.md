@@ -311,3 +311,5 @@ Current localization work included in this build:
 - **Media Fallback Guarding:** All LibSharedMedia textures, fonts, and borders safely fall back to Blizzard defaults if dynamic media is missing or unregistered.
 
 If you enjoy TacoTip Gearscore TBC, please leave feedback and a rating on CurseForge.
+
+The universal build is in `TacoTip_Forever/`. Its [inspection scheduling](TacoTip_Forever/README.md#inspection-scheduling) restores queued requests and manual-inspect priority.

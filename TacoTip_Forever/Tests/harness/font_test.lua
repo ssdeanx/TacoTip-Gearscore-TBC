@@ -1,6 +1,6 @@
 -- textures.lua expects `local addOnName = ...`; feed it a vararg and read the
 -- table back out of the global it writes.
-local src = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/textures.lua"
+local src = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/textures.lua"
 for _, loc in ipairs{"enUS","deDE","ruRU","zhCN","zhTW"} do
   _G.GetLocale = function() return loc end
   _G.TacoTipForever = nil

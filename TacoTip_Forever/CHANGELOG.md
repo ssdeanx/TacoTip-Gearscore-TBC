@@ -2,6 +2,40 @@
 
 All notable changes to TacoTip are documented in this file.
 
+## Unreleased — inspect queue restoration
+
+- Restore bounded, GUID-keyed inspect requests in `LibForeverInspector`: up to
+  20 queued players, a 2-second shared-channel delay, a 5-second response timeout,
+  and at most 3 attempts before a 10-second cooldown. Queued requests resume after
+  combat or manual inspection without another tooltip hover.
+- Keep requests when their unit token temporarily disappears or `CanInspect`
+  rejects/errors. Defer them for up to 15 seconds from the first unavailable
+  queue check, rotating them behind other players; repeated hovers do not reset
+  the deadline. Expired requests enter the same 10-second cooldown.
+  Added five regression cases across all clients after review exposed this gap.
+- Restore `CheckInteractDistance(unit, 1)` before each background `CanInspect`
+  and `NotifyInspect` attempt. Out-of-range or unknown/restricted distance defers
+  the request instead of repeatedly invoking APIs that can emit UI errors.
+  Leave manual inspection and general UI error messages untouched. Regression
+  tests model an `Out of Range` UI message rather than a caught Lua exception.
+- Respect requests from Blizzard and other addons; never clear their shared
+  inspect data. Resolve changing target/mouseover tokens by GUID, including party
+  and raid units. No new automatic whole-group scanning is introduced.
+- Refresh inventory on `UNIT_INVENTORY_CHANGED` without reading shared talent data.
+  Empty/partial inventory does not become a fresh cache entry or erase old items;
+  complete responses refresh the cache for 10 seconds. Keep separate talent and
+  inventory timestamps and bound cache entries to 500 players.
+- Keep the existing Classic/modern specialization paths. Increment the embedded
+  library minor to 3; the addon release version is unchanged.
+- Add asynchronous inspection regression tests for all five client profiles and
+  make the offline harness portable (`TACOTIP_TEST_ROOT`, default current folder).
+  The first local fix dropped throttled requests and treated an empty inventory
+  as fresh for 30 seconds; these are now explicit regression cases.
+- TBC Anniversary user testing confirmed that equipment loads progressively
+  without hanging. Other clients have offline coverage only; their live behavior
+  remains unverified. The later availability-deferral and range-guard fixes have offline coverage
+  only. See `Tests/harness/README.md`.
+
 | Version | Date | Summary |
 | :--- | :--- | :--- |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |

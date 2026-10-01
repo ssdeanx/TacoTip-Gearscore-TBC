@@ -2,7 +2,7 @@
 -- not raise and that the cross-client wiring lands correctly.
 -- Usage: lua5.1 loadtest.lua <projectId> <interface> <layout> <expectFamily> <expectBracket>
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local ROOT = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/"
 
 local projectId, iface, layout = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 -- Optional: blank out a Blizzard global before load, to prove that a file-scope

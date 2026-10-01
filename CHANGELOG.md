@@ -788,3 +788,7 @@ All notable changes to TacoTip Gearscore TBC will be documented in this file.
 ### Notes - 0.0.1
 
 - This fork exists to keep TacoTip working again and to leave room for future features.
+
+## Unreleased
+
+Universal-build inspection fixes and validation are recorded in [TacoTip_Forever/CHANGELOG.md](TacoTip_Forever/CHANGELOG.md#unreleased--inspect-queue-restoration). The Classic-only root build is unchanged.

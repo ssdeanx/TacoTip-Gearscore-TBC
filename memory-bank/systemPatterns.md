@@ -60,3 +60,7 @@ graph TD
 - The addon’s runtime depends on globals created by earlier files; changing order can break startup.
 - Optional Pawn support should stay conditional rather than becoming a hard requirement.
 - Tooltip layout behavior depends on config flags such as `tip_style`, `show_target`, `show_gs_player`, `show_pawn_player`, and the anchor settings.
+
+## Universal inspection scheduling
+
+`LibForeverInspector` keeps one active background request and a bounded GUID queue. Its scheduler observes all `NotifyInspect` calls, checks interaction distance before background inspect APIs, yields to manual inspection, defers unavailable players for up to 15 seconds without blocking others, and refreshes inventory separately from talents. See `TacoTip_Forever/README.md#inspection-scheduling`.

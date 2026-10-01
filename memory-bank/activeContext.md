@@ -215,3 +215,7 @@ Current guidance for future sessions:
 - Treat `README.md`, `TacoTip.toc`, `main.lua`, `options.lua`, `gearscore.lua`, `pawn.lua`, and `Libs/*` as source of truth.
 - Keep updates small and consistent across the memory-bank files.
 - If code and memory ever disagree, update the memory bank to match the code.
+
+## Universal inspection restoration
+
+Work is scoped to `TacoTip_Forever/`: bounded GUID queue with temporary-unavailability recovery and range guards, inventory-event refresh and client-specific regression coverage. See the nested changelog; TBC Anniversary user testing confirmed equipment eventually loads without hangs. Other clients have offline coverage only.

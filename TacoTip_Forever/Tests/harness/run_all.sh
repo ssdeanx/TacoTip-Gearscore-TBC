@@ -48,6 +48,7 @@ CLIENTS_RETAIL="1 120100"
 
 echo "== client detection =="
 run "detect_test" Tests/harness/detect_test.lua
+run "inspect_test" Tests/harness/inspect_test.lua
 
 echo "== locale and fonts =="
 run "locale_test" Tests/harness/locale_test.lua

@@ -197,3 +197,7 @@
 
 - Memory bank implementation: updated with the Anniversary runtime and lint cleanup work
 - Next step: upgrade `options.lua` into a fuller tabbed/sectioned configuration UI and tighten the options-menu open behavior for Classic/TBC clients
+
+## Universal inspection restoration
+
+The queue/cache regression harness lives in `TacoTip_Forever/Tests/harness/inspect_test.lua` and runs in the portable matrix (135 inspection scenarios, including bounded availability deferral and range/UI-error guards). See the nested changelog for behavior and validation limits; this is not a published release.

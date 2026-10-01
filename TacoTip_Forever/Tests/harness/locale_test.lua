@@ -1,5 +1,5 @@
 -- Simulate WoW's load environment for the locale layer.
-local D = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/Locale/"
+local D = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/Locale/"
 local results = {}
 -- family, when given, stands in for LibForeverInspector. The locale selector
 -- pins WotLK Titanforge to Simplified Chinese, and that branch is unreachable

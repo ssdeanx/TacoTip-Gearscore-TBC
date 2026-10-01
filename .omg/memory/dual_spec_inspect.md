@@ -30,3 +30,7 @@ In `Libs/LibClassicInspector/LibClassicInspector.lua`:
   ```
 
   This ensures the secondary talent icon aligns horizontally with the primary talent icon across all fonts and languages without hardcoded space drift.
+
+## Universal inspector
+
+The universal build retains its existing client-specific talent readers. `UNIT_INVENTORY_CHANGED` refreshes only inventory, never shared inspect talents. Talent and inventory cache timestamps are separate; queued work is GUID-keyed and retains temporarily unavailable players for up to 15 seconds without blocking others. Background attempts check inspect range before calling inspect APIs. See `TacoTip_Forever/CHANGELOG.md` for retry/cache limits.

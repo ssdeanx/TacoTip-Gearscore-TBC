@@ -9,7 +9,7 @@ environment. They need no game client and no WoWUnit.
 bash TacoTip_Forever/Tests/harness/run_all.sh
 ```
 
-50 invocations across all five clients. Exits non-zero on the first failing
+51 invocations across all five clients. Exits non-zero on the first failing
 harness, and prints the failing invocation names.
 
 ## Individual harnesses
@@ -226,3 +226,21 @@ depend on the answer.
 `TooltipDataHandlerMixin` (Retail, Forever). Without it the harness models the
 Classic-family tooltips, which do not -- the case that used to register a
 post-call that never fired.
+
+## Asynchronous inspection regression tests
+
+From `TacoTip_Forever/`, run `lua5.1 Tests/harness/inspect_test.lua`. The real
+library is loaded against five independent client environments (135 scenarios).
+Tests cover manual inspection priority, queued/repeated hovers, combat, bounded
+retries, external requests, GUID/token changes, incomplete inventory, event-only
+item updates, preservation of Classic/modern specialization data, temporary token
+loss or `CanInspect` failure, queue fairness, bounded deferral expiry, range
+checks before initial/retry requests, unavailable range data and visible manual
+UI errors. The suite
+is included in `run_all.sh`; `TACOTIP_TEST_ROOT` can select another addon root.
+The suite fails against the original library as well as the first local hotfix.
+
+TBC Anniversary user testing confirmed that equipment loads progressively without
+hanging before the availability-deferral and range-guard follow-ups; those are verified
+by offline regression tests. Other clients are simulated here; verify their real item arrival, server
+throttling and interoperation before claiming live support is confirmed everywhere.

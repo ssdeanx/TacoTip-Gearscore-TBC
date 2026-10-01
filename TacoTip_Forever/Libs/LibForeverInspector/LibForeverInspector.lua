@@ -8,7 +8,7 @@
     Requires: LibStub, CallbackHandler-1.0
 --]]
 
-local MAJOR, MINOR = "LibForeverInspector", 2
+local MAJOR, MINOR = "LibForeverInspector", 3
 assert(LibStub, "LibForeverInspector requires LibStub")
 assert(LibStub:GetLibrary("CallbackHandler-1.0", true), "LibForeverInspector requires CallbackHandler-1.0")
 
@@ -197,7 +197,6 @@ lib.spec_table = lib.spec_table or {
     ["EVOKER"] = { "Devastation", "Preservation", "Augmentation" },
 }
 
-local inspectPendingUnit = nil
 
 ---------------------------------------------------------------------------
 -- Static talent and glyph data
@@ -3363,22 +3362,95 @@ local function buildSpecIndexByGroup(unit)
     return out
 end
 
-local function cacheUnitData(unit, guid)
-    if (not unit or not guid) then return end
-    local now = time()
-    local data = lib.cache[guid] or {}
-    data.time = now
-    data.items = data.items or {}
+-- Inspect requests share a single client channel with Blizzard and other addons.
+local INSPECT_INTERVAL, INSPECT_TIMEOUT, REFRESH_INTERVAL = 2, 5, 10
+local DEFER_TIMEOUT = 15
+local MAX_ATTEMPTS, MAX_QUEUE, MAX_CACHE = 3, 20, 500
+local queue, cacheOrder = {}, {}
+local unitHints = {"target", "mouseover", "focus"}
+local pending, externalGUID, externalUntil
+local nextInspectTime, processing, sending = 0, false, false
+for guid in pairs(lib.cache) do cacheOrder[#cacheOrder + 1] = guid end
 
-    -- 1-18 is deliberate, not an off-by-one. Slot 4 is the shirt and slot 19
-    -- the tabard; both are unscored by the original GearScore formula, and
-    -- gearscore.lua skips slot 4 explicitly for the same reason. Consumers
-    -- (gearscore.lua, pawn.lua) mirror this range, so changing it here without
-    -- changing them would silently double-count.
-    for slot = 1, 18 do
-        data.items[slot] = GetInventoryItemLink(unit, slot)
+local function plain(value)
+    return not (_G.issecretvalue and _G.issecretvalue(value))
+end
+
+local function unitGUID(unit)
+    if (not unit or not plain(unit)) then return nil end
+    local ok, guid = pcall(UnitGUID, unit)
+    if (ok and plain(guid) and type(guid) == "string") then return guid end
+end
+
+local function findUnit(guid, hint)
+    if (hint and unitGUID(hint) == guid) then return hint end
+    if (InspectFrame and unitGUID(InspectFrame.unit) == guid) then return InspectFrame.unit end
+    for _, unit in ipairs(unitHints) do
+        if (unitGUID(unit) == guid) then return unit end
     end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if (unitGUID(unit) == guid) then return unit end
+    end
+    for i = 1, 40 do
+        local unit = "raid" .. i
+        if (unitGUID(unit) == guid) then return unit end
+    end
+end
 
+local function cacheEntry(guid)
+    local data = lib.cache[guid]
+    if (not data) then
+        data = {}
+        lib.cache[guid] = data
+        cacheOrder[#cacheOrder + 1] = guid
+    end
+    while (#cacheOrder > MAX_CACHE) do
+        lib.cache[table.remove(cacheOrder, 1)] = nil
+    end
+    return data
+end
+
+local function fresh(guid)
+    local data = lib.cache[guid]
+    return data and data.inventoryTime and data.inventoryTime > 0
+        and data.talentTime and time() - data.talentTime < REFRESH_INTERVAL
+        and time() - data.inventoryTime < REFRESH_INTERVAL
+end
+
+local function cacheInventory(unit, guid)
+    local data = cacheEntry(guid)
+    local items, anyItem, complete = {}, false, true
+    local getTexture = _G.GetInventoryItemTexture
+    for slot = 1, 18 do
+        local link = GetInventoryItemLink(unit, slot)
+        if (not plain(link)) then return false end
+        items[slot] = link
+        if (link) then
+            anyItem = true
+        elseif (getTexture) then
+            local texture = getTexture(unit, slot)
+            if (not plain(texture)) then return false end
+            -- Occupied slot whose link has not arrived yet, not an empty slot.
+            if (texture) then complete = false end
+        end
+    end
+    complete = complete and anyItem
+    data.items = data.items or {}
+    if (complete) then
+        data.items = items
+    else
+        -- An empty/partial response must not erase previously loaded equipment.
+        for slot, link in pairs(items) do data.items[slot] = link end
+    end
+    data.inventoryTime = complete and time() or 0
+    data.time = data.inventoryTime -- Preserve the original cache field for consumers.
+    return complete
+end
+
+local function cacheUnitData(unit, guid)
+    local complete = cacheInventory(unit, guid)
+    local data = cacheEntry(guid)
     -- Modern specialization API (Retail & Forever)
     -- pcall'd: Retail documents GetInspectSpecialization as
     -- SecretWhenUnitIdentityRestricted, and this runs straight from the
@@ -3422,50 +3494,158 @@ local function cacheUnitData(unit, guid)
         end
     end
 
-    lib.cache[guid] = data
+    data.talentTime = time()
     lib.callbacks:Fire("INVENTORY_READY", guid)
     lib.callbacks:Fire("TALENTS_READY", guid)
+    return complete
 end
 
-frame:SetScript("OnEvent", function(self, event, ...)
-    if (event == "INSPECT_READY") then
-        local guid = ...
-        if (not guid and inspectPendingUnit and UnitExists and UnitExists(inspectPendingUnit)) then
-            guid = UnitGUID(inspectPendingUnit)
-        end
-        local unit = inspectPendingUnit
-        if (not unit or UnitGUID(unit) ~= guid) then
-            if (UnitExists("target") and UnitGUID("target") == guid) then
-                unit = "target"
-            elseif (UnitExists("mouseover") and UnitGUID("mouseover") == guid) then
-                unit = "mouseover"
+local function enqueue(request)
+    for _, entry in ipairs(queue) do
+        if (entry.guid == request.guid) then return end
+    end
+    if (#queue >= MAX_QUEUE) then table.remove(queue, 1) end
+    queue[#queue + 1] = request
+end
+
+local function retry(request)
+    if (request.attempts < MAX_ATTEMPTS) then
+        enqueue(request)
+    else
+        cacheEntry(request.guid).retryAfter = GetTime() + REFRESH_INTERVAL
+    end
+end
+
+local function pumpQueue()
+    if (processing or InCombatLockdown() or (InspectFrame and InspectFrame:IsShown())) then return end
+    local now = GetTime()
+    if (pending) then
+        if (now < pending.sent + INSPECT_TIMEOUT) then return end
+        local request = pending
+        pending = nil
+        retry(request)
+    end
+    if (now < nextInspectTime or (externalUntil and now < externalUntil)) then return end
+    externalGUID, externalUntil = nil, nil
+    for _ = 1, #queue do
+        local request = table.remove(queue, 1)
+        local unit = findUnit(request.guid, request.unit)
+        if (not fresh(request.guid)) then
+            local ok, allowed = false, false
+            -- CanInspect can report UI errors; pcall cannot suppress those.
+            -- Check distance first on every attempt, including queued retries.
+            if (unit and type(CheckInteractDistance) == "function") then
+                local rangeOK, inRange = pcall(CheckInteractDistance, unit, 1)
+                if (rangeOK and plain(inRange) and inRange) then
+                    ok, allowed = pcall(CanInspect, unit)
+                end
+            end
+            if (ok and plain(allowed) and allowed) then
+                request.deferUntil = nil
+                request.unit, request.sent = unit, now
+                request.attempts = request.attempts + 1
+                pending = request
+                nextInspectTime = now + INSPECT_INTERVAL
+                sending = true
+                local sent = pcall(NotifyInspect, unit)
+                sending = false
+                if (not sent) then
+                    pending = nil
+                    retry(request)
+                end
+                return
+            end
+            -- Keep transiently unavailable GUIDs, but let other players proceed.
+            -- Repeated hovers must not extend this deadline indefinitely.
+            request.deferUntil = request.deferUntil or (now + DEFER_TIMEOUT)
+            if (now < request.deferUntil) then
+                enqueue(request)
+            else
+                cacheEntry(request.guid).retryAfter = now + REFRESH_INTERVAL
             end
         end
-        if (unit and guid) then
-            cacheUnitData(unit, guid)
-        end
-        inspectPendingUnit = nil
-        local clearFn = rawget(_G, "ClearInspectPlayer")
-        if (clearFn) then
-            clearFn()
-        end
     end
-end)
-frame:RegisterEvent("INSPECT_READY")
+end
 
-function lib:DoInspect(unit)
-    if (not unit or not CanInspect or not CanInspect(unit) or InCombatLockdown()
-            or type(_G.NotifyInspect) ~= "function") then
-        return false
+-- An external request supersedes our channel ownership, but not our queued work.
+if (hooksecurefunc and type(_G.NotifyInspect) == "function") then
+    hooksecurefunc("NotifyInspect", function(unit)
+        local now = GetTime()
+        nextInspectTime = now + INSPECT_INTERVAL
+        if (not sending) then
+            if (pending) then
+                local request = pending
+                pending = nil
+                retry(request)
+            end
+            externalGUID, externalUntil = unitGUID(unit), now + INSPECT_TIMEOUT
+        end
+    end)
+end
+
+function lib:DoInspect(unitOrGUID)
+    if (not unitOrGUID or not plain(unitOrGUID) or type(_G.NotifyInspect) ~= "function"
+            or type(CanInspect) ~= "function") then return false end
+    local guid = unitGUID(unitOrGUID)
+    if (not guid and type(unitOrGUID) == "string" and unitOrGUID:find("Player-", 1, true) == 1) then
+        guid = unitOrGUID
     end
-    local guid = UnitGUID(unit)
-    if (not guid or guid == UnitGUID("player")) then
-        return false
-    end
-    inspectPendingUnit = unit
-    NotifyInspect(unit)
+    if (not guid or guid == unitGUID("player") or fresh(guid)) then return false end
+    local data = lib.cache[guid]
+    if (data and data.retryAfter and GetTime() < data.retryAfter) then return false end
+    if (pending and pending.guid == guid) then return true end
+    local unit = findUnit(guid, unitOrGUID)
+    if (not unit or not UnitIsPlayer(unit)) then return false end
+    enqueue({guid = guid, unit = unit, attempts = 0})
+    pumpQueue()
     return true
 end
+
+frame:SetScript("OnEvent", function(_, event, value)
+    if (not plain(value)) then return end
+    if (event == "INSPECT_READY") then
+        -- All supported clients send a GUID. Never infer it from a mutable token.
+        local guid = value
+        if (type(guid) ~= "string" or guid == unitGUID("player")) then return end
+        local unit = findUnit(guid, pending and pending.unit)
+        if (externalGUID == guid) then externalGUID, externalUntil = nil, nil end
+        if (not unit) then return end
+        processing = true
+        local ok, complete = pcall(cacheUnitData, unit, guid)
+        processing = false
+        if (pending and pending.guid == guid) then
+            local request = pending
+            pending = nil
+            if (not ok or not complete) then retry(request) end
+        end
+        if (not ok) then geterrorhandler()(complete) end
+    elseif (event == "UNIT_INVENTORY_CHANGED") then
+        local guid = unitGUID(value)
+        if (not guid or guid == unitGUID("player") or not lib.cache[guid]) then return end
+        -- Inventory updates do not carry talent ownership. Do not read another
+        -- inspected player's talents through this event.
+        processing = true
+        local ok, err = pcall(function()
+            cacheInventory(value, guid)
+            lib.callbacks:Fire("INVENTORY_READY", guid)
+        end)
+        processing = false
+        if (not ok) then geterrorhandler()(err) end
+    end
+    -- Do not ClearInspectPlayer: Blizzard and other listeners still need the data.
+end)
+frame:RegisterEvent("INSPECT_READY")
+frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+
+-- One scheduler for queued requests and timeouts, including clients without C_Timer.
+local elapsedSinceTick = 0
+frame:SetScript("OnUpdate", function(_, elapsed)
+    elapsedSinceTick = elapsedSinceTick + elapsed
+    if (elapsedSinceTick >= 1) then
+        elapsedSinceTick = 0
+        pumpQueue()
+    end
+end)
 
 function lib:GetLastCacheTime(unitorguid)
     local guid = getPlayerGUID(unitorguid)
@@ -3473,8 +3653,8 @@ function lib:GetLastCacheTime(unitorguid)
         return time(), time()
     end
     local cached = guid and lib.cache[guid]
-    if (cached and cached.time) then
-        return cached.time, cached.time
+    if (cached) then
+        return cached.talentTime or 0, cached.inventoryTime or 0
     end
     return 0, 0
 end

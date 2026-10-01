@@ -100,7 +100,7 @@ command instead of bisecting 3000 lines.
 bash Tests/harness/run_all.sh
 ```
 
-50 invocations: five clients × both `GetBuildInfo` layouts × both settings
+51 invocations: five clients × both `GetBuildInfo` layouts × both settings
 registration paths × both Pawn states, plus permutations that blank a Blizzard
 global to prove the file-scope hooks are guarded. Exits non-zero and names the
 failing invocation.
@@ -173,3 +173,10 @@ claims dual spec on single-spec modern clients. Portrait alpha is still slaved
 to the tooltip's, and the portrait is still re-anchored every render. The
 `load_test` mock is still wrong. **None of the portrait work has been confirmed
 in a live client.** See `CHANGELOG.md` → *Still outstanding*.
+
+## Inspector regression coverage
+
+`Tests/harness/inspect_test.lua` loads the real library for all five profiles.
+Preserve manual-inspect priority, bounded GUID queues/retries and independent
+inventory/talent timestamps. Run the suite against the original implementation
+to confirm regressions fail. Offline success does not establish live-client timing.

@@ -1,7 +1,7 @@
 -- Simulates each supported client and asserts the resolved family + gear bracket.
 -- Runs the REAL LibForeverInspector; only the host environment is mocked.
 
-local LIB = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/Libs/"
+local LIB = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/Libs/"
 
 local results, allok = {}, true
 -- NB: in Lua 5.1 assigning `_G = {}` only rebinds the variable, it does not
@@ -155,7 +155,7 @@ do
     local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS)
     local alias, minor = LibStub("LibClassicInspector")
     check("LibClassicInspector alias + minor",
-        (alias == ci and minor == 2),
+        (alias == ci and minor == select(2, LibStub("LibForeverInspector")) and minor > 0),
         "same_table=" .. tostring(alias == ci) .. " minor=" .. tostring(minor))
 end
 

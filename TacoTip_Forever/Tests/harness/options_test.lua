@@ -1,7 +1,7 @@
 -- Executes the options UI build under a mocked client.
 -- Usage: lua5.1 options_test.lua <projectId> <iface> <label> [pipeline] [nosettings] [nocolor] [nosharedmedia]
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local ROOT = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/"
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 local usePipeline  = (arg[4] == "pipeline")

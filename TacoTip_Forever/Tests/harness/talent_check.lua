@@ -3,7 +3,7 @@
 -- Usage: lua5.1 talent_check.lua <projectId> <iface> <label>
 -- Verifies the ported static talent table resolves icons the same way the
 -- working LibClassicInspector does, without loading the whole addon.
-local D = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local D = (os.getenv("TACOTIP_TEST_ROOT") or ".") .. "/"
 local PROJ = tonumber(arg[1]) or 2
 local IFACE = tonumber(arg[2]) or 11509
 local LABEL = arg[3] or "CLASSIC_ERA"
