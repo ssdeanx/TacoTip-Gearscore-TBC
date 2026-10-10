@@ -12,6 +12,20 @@ bash TacoTip_Forever/Tests/harness/run_all.sh
 50 invocations across all five clients. Exits non-zero on the first failing
 harness, and prints the failing invocation names.
 
+The suite defaults to `lua5.1`, which is what WoW actually ships and therefore
+the interpreter that matters. It is also measured green under `lua5.4`, as a
+second opinion — override the interpreter with `LUA`:
+
+```bash
+LUA=lua5.4 bash TacoTip_Forever/Tests/harness/run_all.sh
+```
+
+Measured 2026-10-01 on this tree: **50/50 under `lua5.1`, 50/50 under
+`lua5.4`.** Keep it that way — a 5.4 failure is either a real portability bug
+in the addon or a broken mock, and both are worth knowing about. What the 5.4
+run is *not* is a target: do not bend an assertion, an expected value, or a
+`pcall` to make a 5.1-correct suite green on 5.4.
+
 ## Individual harnesses
 
 Run from the addon root:
@@ -83,6 +97,15 @@ make every assertion in these files pass or fail for the wrong reason.
   crashing code path look like a clean early return.
 * `table.wipe` must exist. Plain Lua 5.1 has no `table.wipe`, so without it
   every pooled-buffer path dies at its first `table.wipe`.
+* `unpack` must be callable in the sandbox, on either interpreter. It is a
+  global in Lua 5.1 but moved to `table.unpack` in 5.2, so each file that needs
+  it resolves `local unpack = unpack or table.unpack` *before* the sandbox table
+  is built. The `xpcall` trampolines unpack their saved varargs through it, and a
+  nil there is close to silent: `safeCall` swallows the resulting error and the
+  pipeline simply produces no lines, so a dozen assertions fail on an empty
+  tooltip instead of naming the real cause. The addon itself must never use
+  `table.unpack` — it does not exist in the 5.1 WoW runs — which is why
+  `.luacheckrc` permits that field on `table` for the harnesses only.
 * Read tooltip text through `GetLeftLine(i):GetText()`, never through the
   backing line records. In non-wide `tip_style` the addon *rewrites* existing
   lines with `left:SetText()` instead of appending, so record-based reads miss

@@ -1,6 +1,8 @@
 -- textures.lua expects `local addOnName = ...`; feed it a vararg and read the
 -- table back out of the global it writes.
-local src = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/textures.lua"
+local _hp = ((arg and arg[0]) or "Tests/harness/font_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local src = dofile(_hd .. "/root.lua") .. "/textures.lua"
 for _, loc in ipairs{"enUS","deDE","ruRU","zhCN","zhTW"} do
   _G.GetLocale = function() return loc end
   _G.TacoTipForever = nil

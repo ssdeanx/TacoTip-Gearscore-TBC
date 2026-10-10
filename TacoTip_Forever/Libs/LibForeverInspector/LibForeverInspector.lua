@@ -64,9 +64,12 @@ lib.frame = frame
 --      WOW_PROJECT_WRATH_CLASSIC            = 11 (WotLK Titanforge)
 --    On the Classic clients it is a Lua global assigned by
 --    Blizzard_FrameXMLBase/<Family>/Constants.lua; on Retail/Forever it is
---    engine/BNet-defined. It cannot degenerate to `nil == nil` because
---    WOW_PROJECT_MAINLINE is 1 on every client, so the retail test is safe.
---    It cannot, however, separate Forever from Retail -- both are MAINLINE.
+--    engine/BNet-defined. Neither side of a comparison may be assumed defined:
+--    the constants are NOT universal, and WOW_PROJECT_ID itself is engine-defined
+--    on camelot, so an unguarded compare can be `nil == nil` and true. Every
+--    constant below is therefore nil-checked before use; see the guard comment
+--    above isClassic/isTBC/isWotlk. It cannot, however, separate Forever from
+--    Retail -- both are MAINLINE.
 --
 -- 2. The interface version, to split the MAINLINE family. Retail and Forever
 --    BOTH document the 4th GetBuildInfo return as interfaceVersion
@@ -99,9 +102,20 @@ local isMainline = (WOW_PROJECT_ID == WOW_PROJECT_MAINLINE)
 local isForever = isMainline and (interfaceVersion >= 16000 and interfaceVersion < 20000)
 local isRetail = isMainline and not isForever
 
-local isClassic = (WOW_PROJECT_ID == WOW_PROJECT_CLASSIC)
-local isTBC = (WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC)
-local isWotlk = (WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC)
+-- Each constant must be proven to EXIST before it is compared. WOW_PROJECT_BC_CLASSIC
+-- and WOW_PROJECT_WRATH_CLASSIC are not universal: on WoW Forever
+-- Blizzard_ProjectConstants/ProjectConstants.lua is the whole file and defines only
+-- WOW_PROJECT_MAINLINE and WOW_PROJECT_CLASSIC, and the BC/Wrath constants live in
+-- Blizzard_FrameXMLBase/{Cata,Mists}/Constants.lua, which Blizzard_FrameXMLBase.toc
+-- gates behind [AllowLoadGameType cata mists] / [AllowLoadGameType mists]. Neither
+-- applies to camelot, so both read nil there -- and with WOW_PROJECT_ID also nil the
+-- bare comparison is `nil == nil`, which is TRUE. That set two family flags at once
+-- and, because the fallback below only runs when no flag is set, it also suppressed
+-- the fallback that would otherwise have classified the client. Hence the `~= nil`
+-- guard on every constant: a constant that was never defined can never match.
+local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC)
+local isTBC = (WOW_PROJECT_BC_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC)
+local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC)
 
 -- Fallbacks for when WOW_PROJECT_ID is unavailable or unrecognised (it is
 -- engine-defined on WoW Forever, so it is not verifiable from source there).
@@ -3346,6 +3360,7 @@ end
 
 -- specIndexByGroup[group] = the tab with the most points in that group.
 local function buildSpecIndexByGroup(unit)
+    -- if (not unit) then return end
     local out = {}
     local groups = hasDualSpec and 2 or 1
     for g = 1, groups do
@@ -3434,37 +3449,193 @@ frame:SetScript("OnEvent", function(self, event, ...)
             guid = UnitGUID(inspectPendingUnit)
         end
         local unit = inspectPendingUnit
-        if (not unit or UnitGUID(unit) ~= guid) then
-            if (UnitExists("target") and UnitGUID("target") == guid) then
+        if (not unit or not UnitExists or not UnitExists(unit) or UnitGUID(unit) ~= guid) then
+            local insFrame = rawget(_G, "InspectFrame")
+            if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and UnitGUID(insFrame.unit) == guid) then
+                unit = insFrame.unit
+            elseif (UnitExists and UnitExists("target") and UnitGUID("target") == guid) then
                 unit = "target"
-            elseif (UnitExists("mouseover") and UnitGUID("mouseover") == guid) then
+            elseif (UnitExists and UnitExists("mouseover") and UnitGUID("mouseover") == guid) then
                 unit = "mouseover"
+            else
+                unit = nil
             end
         end
         if (unit and guid) then
             cacheUnitData(unit, guid)
         end
         inspectPendingUnit = nil
-        local clearFn = rawget(_G, "ClearInspectPlayer")
-        if (clearFn) then
-            clearFn()
-        end
     end
 end)
 frame:RegisterEvent("INSPECT_READY")
 
-function lib:DoInspect(unit)
-    if (not unit or not CanInspect or not CanInspect(unit) or InCombatLockdown()
-            or type(_G.NotifyInspect) ~= "function") then
+local nextInspectTime = 0
+local INSPECT_DELAY = 1.5
+local CACHE_REFRESH_DELAY = 300
+local queue = {}
+
+function lib:CanInspect(unit)
+    if (not unit or (type(InCombatLockdown) == "function" and InCombatLockdown())) then return false end
+    if (type(UnitExists) == "function" and not UnitExists(unit)) then return false end
+    if (type(UnitIsConnected) == "function" and not UnitIsConnected(unit)) then return false end
+    if (type(UnitIsDeadOrGhost) == "function" and UnitIsDeadOrGhost(unit)) then return false end
+    if (type(UnitIsPlayer) == "function" and not UnitIsPlayer(unit)) then return false end
+    if (type(UnitIsUnit) == "function" and UnitIsUnit(unit, "player")) then return false end
+    local insFrame = rawget(_G, "InspectFrame")
+    if (insFrame and insFrame.IsShown and insFrame:IsShown()) then return false end
+    if (type(_G.CanInspect) == "function" and not _G.CanInspect(unit)) then return false end
+    if (type(_G.CheckInteractDistance) == "function" and not _G.CheckInteractDistance(unit, 1)) then return false end
+    return true
+end
+
+function lib:PlayerGUIDToUnitToken(guid)
+    if (not guid) then return nil end
+    if (type(UnitGUID) == "function") then
+        if (UnitGUID("player") == guid) then return "player" end
+        if (UnitGUID("target") == guid) then return "target" end
+        if (UnitGUID("focus") == guid) then return "focus" end
+        if (UnitGUID("mouseover") == guid) then return "mouseover" end
+        if (type(IsInGroup) == "function" and IsInGroup()) then
+            if (type(IsInRaid) == "function" and IsInRaid()) then
+                for i = 1, 40 do
+                    if (UnitGUID("raid" .. i) == guid) then return "raid" .. i end
+                end
+            else
+                for i = 1, 4 do
+                    if (UnitGUID("party" .. i) == guid) then return "party" .. i end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function requestInspect(unit)
+    if (type(_G.NotifyInspect) ~= "function") then return false end
+    inspectPendingUnit = unit
+    nextInspectTime = (type(GetTime) == "function" and GetTime() or 0) + INSPECT_DELAY
+    _G.NotifyInspect(unit)
+    return true
+end
+
+function lib:DoInspect(unitorguid)
+    if (not unitorguid) then return false end
+    local unit = unitorguid
+    if (type(unitorguid) == "string" and unitorguid:find("^Player%-")) then
+        unit = lib:PlayerGUIDToUnitToken(unitorguid)
+    end
+    if (not unit or not lib:CanInspect(unit)) then
         return false
     end
-    local guid = UnitGUID(unit)
+    local guid = type(UnitGUID) == "function" and UnitGUID(unit)
     if (not guid or guid == UnitGUID("player")) then
         return false
     end
-    inspectPendingUnit = unit
-    NotifyInspect(unit)
-    return true
+
+    local cached = lib.cache[guid]
+    if (cached and cached.time and (time() - cached.time < CACHE_REFRESH_DELAY)) then
+        return true
+    end
+
+    local now = type(GetTime) == "function" and GetTime() or 0
+    if (now >= nextInspectTime and not inspectPendingUnit) then
+        return requestInspect(unit)
+    else
+        for i = 1, #queue do
+            if (queue[i] == guid) then
+                return true
+            end
+        end
+        if (#queue >= 20) then
+            table.remove(queue, 1)
+        end
+        table.insert(queue, guid)
+        return true
+    end
+end
+
+local function inspectQueueTick()
+    if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return end
+    if (type(UnitExists) == "function" and (not UnitExists("player") or not UnitIsConnected("player") or UnitIsDeadOrGhost("player"))) then
+        return
+    end
+    local insFrame = rawget(_G, "InspectFrame")
+    if (insFrame and insFrame.IsShown and insFrame:IsShown()) then
+        return
+    end
+    local now = type(GetTime) == "function" and GetTime() or 0
+    if (now < nextInspectTime) then
+        return
+    end
+    if (inspectPendingUnit and now > nextInspectTime + 2) then
+        inspectPendingUnit = nil
+    end
+    if (inspectPendingUnit) then
+        return
+    end
+
+    if (#queue > 0) then
+        for i = #queue, 1, -1 do
+            local guid = queue[i]
+            table.remove(queue, i)
+            local unit = lib:PlayerGUIDToUnitToken(guid)
+            if (unit and lib:CanInspect(unit)) then
+                local cached = lib.cache[guid]
+                if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                    if (requestInspect(unit)) then
+                        return
+                    end
+                end
+            end
+        end
+    end
+
+    if (type(UnitExists) == "function" and UnitExists("target") and lib:CanInspect("target")) then
+        local guid = UnitGUID("target")
+        local cached = guid and lib.cache[guid]
+        if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+            if (requestInspect("target")) then
+                return
+            end
+        end
+    end
+
+    if (type(IsInGroup) == "function" and IsInGroup()) then
+        if (type(IsInRaid) == "function" and IsInRaid()) then
+            for i = 1, 40 do
+                local u = "raid" .. i
+                if (UnitExists(u) and lib:CanInspect(u)) then
+                    local guid = UnitGUID(u)
+                    local cached = guid and lib.cache[guid]
+                    if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                        if (requestInspect(u)) then
+                            return
+                        end
+                    end
+                end
+            end
+        else
+            for i = 1, 4 do
+                local u = "party" .. i
+                if (UnitExists(u) and lib:CanInspect(u)) then
+                    local guid = UnitGUID(u)
+                    local cached = guid and lib.cache[guid]
+                    if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                        if (requestInspect(u)) then
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+if (type(C_Timer) == "table" and type(C_Timer.NewTicker) == "function") then
+    if (lib.queueTicker) then
+        lib.queueTicker:Cancel()
+    end
+    lib.queueTicker = C_Timer.NewTicker(1.5, inspectQueueTick)
 end
 
 function lib:GetLastCacheTime(unitorguid)
@@ -3484,9 +3655,7 @@ function lib:GetInventoryItemMixin(unitorguid, slot)
     if (not guid or not slot) then return nil end
     local link
     if (guid == UnitGUID("player")) then
-        if (C_Item and C_Item.GetInventoryItemLink) then
-            link = C_Item.GetInventoryItemLink("player", slot)
-        elseif (GetInventoryItemLink) then
+        if (GetInventoryItemLink) then
             link = GetInventoryItemLink("player", slot)
         end
     else

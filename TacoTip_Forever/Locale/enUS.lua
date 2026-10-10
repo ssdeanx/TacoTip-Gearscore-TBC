@@ -195,7 +195,7 @@ local defaults = {
     "Choose the tooltip border texture. SharedMedia border packs such as Merfin Plus are picked up automatically when installed, with Blizzard's tooltip border used as the fallback.",
     ["OPTIONS_TOOLTIP_BORDER_THICKNESS"] = "Border thickness",
     ["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] =
-    "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 14px.",
+    "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 16px.",
     ["OPTIONS_TOOLTIP_PORTRAIT"] = "Show unit portrait",
     ["OPTIONS_TOOLTIP_PORTRAIT_DESC"] = "Show a small portrait texture next to player and NPC unit tooltips.",
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE"] = "Portrait scale",

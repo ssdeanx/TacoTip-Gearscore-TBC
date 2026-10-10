@@ -10,7 +10,9 @@
 --
 -- Usage: lua5.1 settings_test.lua <projectId> <iface> <label> [pipeline] [nosettings]
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local _hp = ((arg and arg[0]) or "Tests/harness/settings_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 local usePipeline  = (arg[4] == "pipeline")
@@ -19,6 +21,16 @@ local WITH_PAWN   = (arg[6] == "pawn")
 local DEBUG       = (arg[7] == "debug")
 
 local REALG = _G
+-- `unpack` is a global in Lua 5.1 -- what WoW ships, and what this addon targets
+-- -- but 5.2 moved it to `table.unpack`, so the bare global is nil under lua5.4.
+-- Resolve it once here, before the sandbox table below is built, so both
+-- interpreters get a callable; the local shadows the global at every use in this
+-- file, including the xpcall trampoline, which is the only place that unpacks
+-- varargs. Without it the trampoline throws, main.lua's safeCall handler swallows
+-- that error, and the only visible symptom is the "no runtime errors" check
+-- failing with a nil-global message rather than anything about settings.
+local unpack = unpack or table.unpack
+
 local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
@@ -338,7 +350,12 @@ REALG.TacoTipConfig = {}
 REALG.GetBuildInfo = function() return "1.15.9", "1", "d", iface, "us", "rel" end
 REALG.WOW_PROJECT_MAINLINE = 1
 REALG.WOW_PROJECT_CLASSIC = 2
-REALG.WOW_PROJECT_BC_CLASSIC = 5
+-- NB: the real global is WOW_PROJECT_BURNING_CRUSADE_CLASSIC. This mock used to
+-- declare WOW_PROJECT_BC_CLASSIC, which exists in no Blizzard source at all, so
+-- the library's BC constant read nil here and TBC was classified only by the
+-- interface-band fallback -- a silent dependence on the very fallback the camelot
+-- nil==nil bug suppressed.
+REALG.WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5
 REALG.WOW_PROJECT_WRATH_CLASSIC = 11
 REALG.WOW_PROJECT_CATACLYSM_CLASSIC = 14
 REALG.WOW_PROJECT_MISTS_CLASSIC = 19
@@ -608,10 +625,14 @@ do
     local fh = assert(io.open(ROOT .. "options.lua", "r"))
     local src = fh:read("*a")
     fh:close()
-    local startAt = src:find("function TT:GetDefaults", 1, true)
-    check("GetDefaults is present in options.lua", startAt ~= nil)
+    -- The flat literal is the file-local DEFAULTS table, which GetDefaults now
+    -- copies. Reading GetDefaults' own body would find no keys at all: it is a
+    -- six-line copy loop. This is a test-side correction, not a production
+    -- change -- the declared-key sweep is still the point of the block.
+    local startAt = src:find("local DEFAULTS = {", 1, true)
+    check("the DEFAULTS table is present in options.lua", startAt ~= nil)
     if (startAt) then
-        local body = src:sub(startAt, src:find("\nend", startAt, true) or #src)
+        local body = src:sub(startAt, src:find("\n}", startAt, true) or #src)
         -- GetDefaults is a flat table literal, so every line of the form
         -- `<indent>key =` is a declared setting. Line-based rather than a single
         -- gmatch because bounded repetition in Lua patterns does not backtrack
@@ -623,7 +644,7 @@ do
     end
     check("locale_override is a declared setting despite defaulting to nil",
         declared.locale_override == true)
-    check("GetDefaults and the source agree on the setting count",
+    check("the defaults table and the source agree on the setting count",
         (function()
             local n = 0
             for _ in pairs(declared) do n = n + 1 end
@@ -1108,6 +1129,49 @@ local wire = serialise(CFG)
 for k in pairs(CFG) do CFG[k] = nil end
 for k, v in pairs(wire) do CFG[k] = v end
 TT:ApplyConfigDefaults(CFG)
+--------------------------------------------------------------------------
+-- Every locale must state the CURRENT default border thickness. 0.7.9 moved it
+-- 14 -> 16 (the default border is 128x16 and the edge-file spec requires a
+-- multiple of 8; 14 is not one), but the help text kept promising 14px, so the
+-- slider tooltip lied to every user. Only the text carrying a default claim is
+-- asserted: a translation that omits it is not wrong, merely less specific.
+--------------------------------------------------------------------------
+do
+    local offenders = {}
+    for _, code in ipairs({ "deDE", "enUS", "esES", "esMX", "frFR", "itIT",
+                            "koKR", "ptBR", "ruRU", "zhCN", "zhTW" }) do
+        local f = assert(io.open(ROOT .. "Locale/" .. code .. ".lua", "r"))
+        local body = f:read("*a")
+        f:close()
+        local at = body:find("OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC", 1, true)
+        if (at) then
+            local entry = body:sub(at, body:find("\n%s*%[", at + 1, true) or #body)
+            if (entry:find("14px", 1, true)) then
+                offenders[#offenders + 1] = code
+            end
+        end
+    end
+    check("no locale describes the border thickness default as 14px",
+        #offenders == 0, #offenders > 0 and table.concat(offenders, " ") or nil)
+
+    -- The same string, hardcoded as the fallback in options.lua. Read the source
+    -- because the fallback only shows when the locale key is absent, which the
+    -- enUS load never exercises.
+    local fh = assert(io.open(ROOT .. "options.lua", "r"))
+    local src = fh:read("*a")
+    fh:close()
+    check("the options.lua border-thickness fallback does not say 14px",
+        not src:find("Default is 14px", 1, true))
+    check("the options.lua border-thickness fallback states the current 16px default",
+        src:find("Default is 16px", 1, true) ~= nil)
+
+    local ef = assert(io.open(ROOT .. "Locale/enUS.lua", "r"))
+    local ebody = ef:read("*a")
+    ef:close()
+    check("the shipped enUS border-thickness help states the 16px default",
+        ebody:find("Default is 16px", 1, true) ~= nil)
+end
+
 check("saved values survive a save/load round-trip",
     CFG.show_gs_player == (not DEFAULTS.show_gs_player)
         and CFG.tooltip_font_size == 19 and CFG.tip_style == 4,
@@ -1144,6 +1208,80 @@ TT:ApplyConfigDefaults(CFG)
 check("an out-of-range saved value is clamped to the default",
     CFG.tooltip_font_size == DEFAULTS.tooltip_font_size,
     tostring(CFG.tooltip_font_size))
+
+--------------------------------------------------------------------------
+-- Pawn must not be asked for a score when Pawn has no scale for the
+-- class/spec. pawnLoadedScaleName returns nil in exactly that case, and the
+-- 18-slot loop used to call GetItemScore anyway, which built a guessed
+-- '"MrRobot":CLASSN' name, failed, then tried '"Classic":CLASSN' -- two
+-- guaranteed-to-fail Pawn calls per item, and a re-introduction of the chat
+-- spam path pawnLoadedScaleName exists to avoid.
+--------------------------------------------------------------------------
+do
+    if (not WITH_PAWN) then
+        -- pawn.lua returned early at load: no module to exercise.
+        check("pawn module is absent when Pawn is absent",
+            rawget(REALG, "TT_PAWN") == nil or rawget(REALG, "TacoTip_Pawn") == nil)
+    else
+        local calls = 0
+        local realGetItemData = REALG.PawnGetItemData
+        local realGetSingle = REALG.PawnGetSingleValueFromItem
+        -- An inventory full of cached items, so the loop reaches the scoring
+        -- branch for all 17 non-empty slots rather than the pending branch.
+        local items = {}
+        for slot = 1, 18 do
+            if (slot ~= 4) then
+                items[slot] = "item:" .. slot
+            end
+        end
+        REALG.C_Item.GetInventoryItemLink = function(_, slot) return items[slot] end
+        REALG.UnitGUID = function(u) if (u == "player") then return "Player-1-DEADBEEF" end return nil end
+        REALG.PawnGetItemData = function(link)
+            calls = calls + 1
+            return { link = link }
+        end
+        REALG.PawnGetSingleValueFromItem = function() return nil end
+        -- No scale registered for ANY class/spec, which is the state that made
+        -- pawnLoadedScaleName return nil.
+        REALG.PawnCommon = { Scales = {} }
+        REALG.PawnScaleProviders = { MrRobot = true, Classic = true }
+
+        local pawnScore = 0
+        local okScore, err = pcall(function()
+            pawnScore = REALG.TT_PAWN:GetScore("player", false)
+        end)
+        check("pawn scoring with no available scale does not error", okScore, tostring(err))
+        check("no Pawn item lookup happens when no scale is available",
+            calls == 0, "PawnGetItemData calls=" .. tostring(calls))
+        check("pawn score is zero when no scale is available", pawnScore == 0,
+            tostring(pawnScore))
+
+        -- Control: with a scale registered for the class/spec this mock
+        -- actually resolves, the same inventory MUST be walked. Without this the
+        -- assertion above could pass simply because the loop never ran.
+        local _, ctlClass = REALG.GetPlayerInfoByGUID("Player-1-DEADBEEF")
+        local ctlSpec = LibStub("LibForeverInspector"):GetSpecialization("Player-1-DEADBEEF")
+        REALG.PawnCommon = { Scales = { ['"MrRobot":' .. ctlClass .. tostring(ctlSpec)] = true } }
+        calls = 0
+        -- Pawn returns (statValue, value); pawn.lua reads the SECOND return, so the
+        -- mock must match that arity or the score silently reads 0.
+        REALG.PawnGetSingleValueFromItem = function() return nil, 100 end
+        local controlScore = 0
+        local okCtl, errCtl = pcall(function()
+            controlScore = REALG.TT_PAWN:GetScore("player", false)
+        end)
+        check("pawn scoring with a scale available does not error", okCtl, tostring(errCtl))
+        check("control: a registered scale does walk the inventory",
+            calls == 17, "PawnGetItemData calls=" .. tostring(calls))
+        check("control: a registered scale produces a non-zero score",
+            controlScore > 0, tostring(controlScore))
+
+        REALG.PawnGetItemData = realGetItemData
+        REALG.PawnGetSingleValueFromItem = realGetSingle
+        REALG.PawnCommon = nil
+        REALG.PawnScaleProviders = nil
+    end
+end
 
 --------------------------------------------------------------------------
 -- Registration shape

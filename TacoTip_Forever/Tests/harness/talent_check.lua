@@ -3,7 +3,9 @@
 -- Usage: lua5.1 talent_check.lua <projectId> <iface> <label>
 -- Verifies the ported static talent table resolves icons the same way the
 -- working LibClassicInspector does, without loading the whole addon.
-local D = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local _hp = ((arg and arg[0]) or "Tests/harness/talent_check.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local D = dofile(_hd .. "/root.lua") .. "/"
 local PROJ = tonumber(arg[1]) or 2
 local IFACE = tonumber(arg[2]) or 11509
 local LABEL = arg[3] or "CLASSIC_ERA"
@@ -22,7 +24,9 @@ end
 REALG.GetBuildInfo = function() return "1.15.9", "1", "d", IFACE, "us", "rel" end
 REALG.WOW_PROJECT_MAINLINE = 1
 REALG.WOW_PROJECT_CLASSIC = 2
-REALG.WOW_PROJECT_BC_CLASSIC = 5
+-- The real global is WOW_PROJECT_BURNING_CRUSADE_CLASSIC; this mock used to
+-- declare WOW_PROJECT_BC_CLASSIC, which exists in no Blizzard source.
+REALG.WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5
 REALG.WOW_PROJECT_WRATH_CLASSIC = 11
 REALG.WOW_PROJECT_ID = PROJ
 REALG.UnitClass = function() return "WARRIOR", "WARRIOR" end

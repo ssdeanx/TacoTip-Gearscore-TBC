@@ -1,7 +1,10 @@
 -- Simulates each supported client and asserts the resolved family + gear bracket.
 -- Runs the REAL LibForeverInspector; only the host environment is mocked.
 
-local LIB = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/Libs/"
+local _hp = ((arg and arg[0]) or "Tests/harness/detect_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
+local LIB = ROOT .. "Libs/"
 
 local results, allok = {}, true
 -- NB: in Lua 5.1 assigning `_G = {}` only rebinds the variable, it does not
@@ -9,6 +12,14 @@ local results, allok = {}, true
 -- Wipe the real table instead.
 local REALG = _G
 -- capture the stdlib before anything is wiped
+-- `unpack` is a global in Lua 5.1 -- what WoW ships, and what this addon targets
+-- -- but 5.2 moved it to `table.unpack`, so the bare global is nil under lua5.4.
+-- Nothing in LibForeverInspector calls it, so this only matters to keep the
+-- sandbox faithful; resolving it here means the entry below is a real callable on
+-- both interpreters instead of a key that is silently missing from the copy loop
+-- below, and it has to happen before the wipe either way.
+local unpack = unpack or table.unpack
+
 local STD = { os = os, string = string, pairs = pairs, ipairs = ipairs, type = type,
     pcall = pcall, tonumber = tonumber, tostring = tostring, select = select,
     rawget = rawget, rawset = rawset, setmetatable = setmetatable,
@@ -78,6 +89,30 @@ local CONSTS = {
 }
 
 local P = CONSTS
+
+-- The REAL origin/forever constant set, verbatim. On that branch
+-- Blizzard_ProjectConstants/ProjectConstants.lua is the entire file and defines
+-- exactly these two constants -- WOW_PROJECT_BURNING_CRUSADE_CLASSIC and
+-- WOW_PROJECT_WRATH_CLASSIC live in Blizzard_FrameXMLBase/{Cata,Mists}/Constants.lua,
+-- which Blizzard_FrameXMLBase.toc gates behind [AllowLoadGameType cata mists] and
+-- [AllowLoadGameType mists], so neither loads on camelot. Supplying all five (as
+-- CONSTS above does) is what let a `nil == nil` comparison through unnoticed, so
+-- the mocked environment here must NOT be a superset of the real one.
+local CAMELOT_CONSTS = {
+    WOW_PROJECT_MAINLINE = 1,
+    WOW_PROJECT_CLASSIC = 2,
+}
+
+local FAMILY_FLAGS = { "IsClassic", "IsTBC", "IsWotlk", "IsForever", "IsRetail" }
+
+local function flagsSet(ci)
+    local names = {}
+    for _, f in ipairs(FAMILY_FLAGS) do
+        if ci[f](ci) then names[#names + 1] = f end
+    end
+    return names
+end
+
 local function bracket(ci)
     if ci:IsClassic() then return 200 end
     if ci:IsTBC() then return 400 end
@@ -85,68 +120,57 @@ local function bracket(ci)
     return 1000
 end
 
--- The five real targets, each tested under BOTH plausible GetBuildInfo layouts,
--- so the result does not depend on the unverified Classic slot-4 question.
-for _, t in ipairs({
+-- Every environment detection is asked about lives in this one matrix, so the
+-- invariants below cover all of them and a new case cannot be added without being
+-- held to them. c = constant set (default CONSTS), f = expected family,
+-- b = expected gear bracket, u = expected IsUnknown.
+local SCENARIOS = {
+    -- The five real targets.
     { n = "Classic Era 11509",  p = P.WOW_PROJECT_CLASSIC,                 i = 11509,  f = "classicEra",  b = 200 },
     { n = "TBC Anniversary",    p = P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, i = 20506,  f = "tbc",         b = 400 },
     { n = "Titanforge 38002",   p = P.WOW_PROJECT_WRATH_CLASSIC,           i = 38002,  f = "titanforge",  b = 1000 },
     { n = "WoW Forever 16001",  p = P.WOW_PROJECT_MAINLINE,               i = 16001,  f = "forever",     b = 200 },
     { n = "Retail 120100",      p = P.WOW_PROJECT_MAINLINE,               i = 120100, f = "retail",      b = 1000 },
-}) do
+    -- WoW Forever with WOW_PROJECT_ID unset (engine-defined on camelot) must
+    -- still resolve via the interface band, and must NOT fall back to retail.
+    { n = "Forever, WOW_PROJECT_ID nil", p = nil, i = 16001, f = "forever", b = 200 },
+    -- The open question: if Forever ever reports WOW_PROJECT_MAINLINE, isRetail
+    -- and isForever must still not both be true.
+    { n = "Forever reporting MAINLINE is unambiguous", p = P.WOW_PROJECT_MAINLINE, i = 16001, f = "forever", b = 200 },
+    -- The real camelot environment. This is the regression: the BC and Wrath
+    -- constants do not exist there at all, so `WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC`
+    -- is `nil == nil` and evaluates TRUE. That set isTBC and isWotlk together and,
+    -- because the interface-band fallback only runs when no family flag is set,
+    -- the fallback never got a chance to run -- so Forever was reported as TBC,
+    -- with TBC's 400 item-level bracket and TBC's other family behaviours.
+    { n = "REAL camelot consts, WOW_PROJECT_ID nil", p = nil, i = 16001, f = "forever", b = 200, c = CAMELOT_CONSTS },
+    -- Unrecognised clients must be reported unknown, not silently defaulted.
+    { n = "Cata",   p = P.WOW_PROJECT_CATACLYSM_CLASSIC, i = 40402, f = "unknown", u = true },
+    { n = "Mists",  p = P.WOW_PROJECT_MISTS_CLASSIC,       i = 50504, f = "unknown", u = true },
+}
+
+-- Each scenario runs under BOTH plausible GetBuildInfo layouts, so no result
+-- depends on the unverified Classic slot-4 question.
+for _, t in ipairs(SCENARIOS) do
     for _, layout in ipairs({ "slot4", "slot7" }) do
-        local ci = run(t.p, t.i, layout, CONSTS)
-        local got = ci.family
-        local b = bracket(ci)
-        check(string.format("%s [%s layout]", t.n, layout),
-            (got == t.f and b == t.b and not ci:IsUnknown()),
+        local ci = run(t.p, t.i, layout, t.c or CONSTS)
+        local got, b = ci.family, bracket(ci)
+        local label = string.format("%s [%s layout]", t.n, layout)
+
+        check(label,
+            (got == t.f and (t.b == nil or b == t.b) and (ci:IsUnknown() == (t.u == true))),
             string.format("family=%-11s bracket=%-5d unknown=%s", got, b, tostring(ci:IsUnknown())))
-    end
-end
 
--- WoW Forever with WOW_PROJECT_ID unset (engine-defined on camelot) must still
--- resolve via the interface band, and must NOT be classified as retail.
-do
-    local ci = run(nil, 16001, "slot4", CONSTS)
-    check("Forever, WOW_PROJECT_ID nil",
-        (ci.family == "forever" and not ci:IsRetail() and not ci:IsUnknown()),
-        string.format("family=%s isRetail=%s", ci.family, tostring(ci:IsRetail())))
-end
-
--- The open question: if Forever ever reports WOW_PROJECT_MAINLINE, isRetail and
--- isForever must still not both be true.
-do
-    local ci = run(P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS)
-    check("Forever reporting MAINLINE is unambiguous",
-        (ci.family == "forever" and not ci:IsRetail()),
-        string.format("family=%s isRetail=%s isForever=%s", ci.family, tostring(ci:IsRetail()), tostring(ci:IsForever())))
-end
-
--- Mutual exclusivity across all five.
-do
-    local _, _, _, _, _ = nil, nil, nil, nil, nil
-    for _, t in ipairs({
-        { p = P.WOW_PROJECT_CLASSIC, i = 11509 }, { p = P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, i = 20506 },
-        { p = P.WOW_PROJECT_WRATH_CLASSIC, i = 38002 }, { p = P.WOW_PROJECT_MAINLINE, i = 16001 },
-        { p = P.WOW_PROJECT_MAINLINE, i = 120100 },
-    }) do
-        local ci = run(t.p, t.i, "slot4", CONSTS)
-        local n = 0
-        for _, f in ipairs({ "IsClassic", "IsTBC", "IsWotlk", "IsForever", "IsRetail" }) do
-            if ci[f](ci) then n = n + 1 end
-        end
-        check(string.format("exactly one flag set (iface %d)", t.i), n == 1, "flags_set=" .. n)
-    end
-end
-
--- Unrecognised clients must be reported unknown, not silently defaulted.
-do
-    for _, t in ipairs({ { P.WOW_PROJECT_CATACLYSM_CLASSIC, 40402, "Cata" },
-                         { P.WOW_PROJECT_MISTS_CLASSIC, 50504, "Mists" } }) do
-        local ci = run(t[1], t[2], "slot4", CONSTS)
-        check(string.format("%s reports IsUnknown", t[3]),
-            ci:IsUnknown() and ci.family == "unknown",
-            "family=" .. ci.family)
+        -- The invariant that actually broke, and the one that matters downstream:
+        -- AT MOST ONE family flag may ever be true. Two flags mean the direct
+        -- project comparison and the interface-band fallback disagree, and every
+        -- consumer keys off these flags -- gearscore.lua's item-level bracket,
+        -- main.lua's hasDualSpec and isClassicFamily -- so a double-set silently
+        -- reconfigures the addon on a public client. Zero is legitimate only for
+        -- an unrecognised client, which the family assertion above pins down.
+        local set = flagsSet(ci)
+        check("at most one family flag: " .. label, #set <= 1,
+            "#set=" .. #set .. " [" .. table.concat(set, "+") .. "]")
     end
 end
 

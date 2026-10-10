@@ -2,13 +2,25 @@
 -- enhancement actually produces lines.
 -- Usage: lua5.1 tooltip_test.lua <projectId> <iface> <label> [pipeline]
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local _hp = ((arg and arg[0]) or "Tests/harness/tooltip_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 local usePipeline = (arg[4] == "pipeline")
 local DEBUG = (arg[5] == "debug")
 
 local REALG = _G
+-- `unpack` is a global in Lua 5.1 -- what WoW ships, and what this addon targets
+-- -- but 5.2 moved it to `table.unpack`, so the bare global is nil under lua5.4.
+-- Resolve it once here, before the sandbox table below is built, so both
+-- interpreters get a callable; the local shadows the global at every use in this
+-- file, including the xpcall trampoline, which is the only place that unpacks
+-- varargs. Without it the trampoline throws, main.lua's safeCall handler swallows
+-- that error, and the pipeline emits no lines -- so every assertion below would
+-- fail on an empty tooltip rather than on a real defect.
+local unpack = unpack or table.unpack
+
 local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
@@ -32,7 +44,14 @@ local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall
         end
         return ok
     end,
-    next=next, rawequal=rawequal, rawlen=function(t) return #t end }
+    next=next, rawequal=rawequal, rawlen=function(t) return #t end,
+    -- WoW exposes collectgarbage as a global, so including it in the sandbox is
+    -- faithful to the client rather than a test convenience. It is here for the
+    -- per-render allocation assertions below, which need collectgarbage("count")
+    -- to be called FROM the sandboxed chunk -- the same reason next() is
+    -- included, and the same trap: a global the harness env does not carry reads
+    -- as nil and the test dies on the diagnostic instead of on the defect.
+    collectgarbage=collectgarbage }
 
 -- WoW extends the standard `table` library with wipe(); it is present on all
 -- five supported clients (28-37 Blizzard call sites each). Plain Lua 5.1 has no
@@ -157,7 +176,11 @@ local function makeWidget(kind, name, parent, template, depth)
     w.GetSize = function() return w.__w or 0, w.__h or 0 end
     w.GetCenter = function() return 0, 0 end
     w.GetLeft = function() return 0 end
-    w.GetRight = function() return 0 end
+    -- Configurable. The portrait side decision reads the tooltip's GetRight()
+    -- against UIParent's, so a mock that hardcodes 0 collapses every screen
+    -- position onto the same side and the decision cannot be tested at all.
+    w.__right = 0
+    w.GetRight = function() return w.__right or 0 end
     w.GetFrameLevel = function() return 1 end
     w.GetFrameStrata = function() return "MEDIUM" end
     w.SetFrameLevel = function() end
@@ -181,13 +204,17 @@ local function makeWidget(kind, name, parent, template, depth)
         end
     end
     w.SetAlpha = function() end
-    w.GetAlpha = function() return 1 end
-    w.SetBackdrop = function() end
+    -- Returns the widget's own __alpha rather than a hardcoded 1. Hardcoding it
+    -- made the "portrait alpha is not slaved to the tooltip" assertion pass
+    -- unconditionally: the slave copied 1, and 1 is what the assertion expected.
+    -- A test that cannot fail is not a test.
+    w.__alpha = 1
+    w.GetAlpha = function(self) return self.__alpha end
+    w.SetAlpha = function(self, a) self.__alpha = a end
     w.SetBackdropColor = function() end
-    w.SetBackdropBorderColor = function() end
+    w.SetBackdropBorderColor = function(_, r, g, b, a) w.__borderColor = { r, g, b, a } end
     w.GetBackdropBorderColor = function() return 1, 1, 1, 1 end
     w.SetClampedToScreen = function() end
-    w.SetClampRectInsets = function() end
     w.SetHitRectInsets = function() end
     w.EnableMouse = function() end
     w.EnableMouseWheel = function() end
@@ -201,7 +228,25 @@ local function makeWidget(kind, name, parent, template, depth)
     w.GetText = function() return w.__text end
     w.SetFontObject = function() end
     w.GetFontObject = function() return "GameFontNormal" end
-    w.SetFont = function() end
+    -- SetFont COUNTS. It used to be `function() end`, which is precisely why the
+    -- addon's per-render font churn shipped unnoticed: the mock could not tell a
+    -- line that was re-fonted from one that was left alone, so any test written
+    -- against it measured nothing. Arguments are recorded as well, so a change
+    -- guard can be proved to have set the font rather than skipped it.
+    --
+    -- The counter is ALSO kept globally, because the pooled lines are not stable
+    -- objects: the mock's ClearLines drops its line table and the next GetLeftLine
+    -- builds a fresh FontString under the same global name, so a per-widget
+    -- reference taken before a render measures a widget nobody wrote to. A test
+    -- that counted only the widget it happened to be holding would report zero
+    -- and look like a working guard.
+    w.__fontCalls = 0
+    w.__font, w.__fontSize = nil, nil
+    w.SetFont = function(_, f, s)
+        w.__fontCalls = (w.__fontCalls or 0) + 1
+        w.__font, w.__fontSize = f, s
+        REALG.__fontCalls = (REALG.__fontCalls or 0) + 1
+    end
     w.SetJustifyH = function() end
     w.SetJustifyV = function() end
     w.SetWordWrap = function() end
@@ -221,7 +266,13 @@ local function makeWidget(kind, name, parent, template, depth)
     w.SetDesaturated = function() end
     w.SetDrawLayer = function() end
     w.SetStatusBarTexture = function() end
-    w.SetStatusBarColor = function() end
+    -- Recorded as three scalars, not a {r,g,b} table. A table here would be
+    -- allocated by the MOCK on every call, and the FIX 5 assertion below measures
+    -- collectgarbage("count") across 20 power updates -- the harness would have
+    -- been measuring its own instrumentation.
+    w.SetStatusBarColor = function(_, r, g, b)
+        w.__statusR, w.__statusG, w.__statusB = r, g, b
+    end
     w.SetMinMaxValues = function(_, a, b) w.__min, w.__max = a, b end
     w.GetMinMaxValues = function() return w.__min or 0, w.__max or 0 end
     w.SetValue = function(_, v) w.__value = v end
@@ -259,24 +310,55 @@ local function makeWidget(kind, name, parent, template, depth)
     w.SetOwner = function() end
     w.SetScrollChild = function(_, c) w.__scrollChild = c end
 
-    -- GameTooltip line pool
-    w.ClearLines = function() w.__lines = {} end
+    -- GameTooltip line pool.
+    --
+    -- ClearLines KEEPS the FontStrings. That is what the client does: the line
+    -- FontStrings are created once, on the tooltip, and every later hover reuses
+    -- them -- the addon's own comment at main.lua:101 says exactly that ("the
+    -- pooled lines are reused across hovers, so a line left over from a longer
+    -- previous tooltip still carries the old cap").
+    --
+    -- The mock used to model ClearLines as `w.__lines = {}`, which DESTROYS the
+    -- pool. Every "line" the addon then saw was a brand-new FontString with no
+    -- remembered state, so a per-line change guard -- the width cap at
+    -- main.lua:107 and the font guard added in 0.7.9 -- could never skip
+    -- anything: it was always looking at a first render. The guard was not
+    -- merely untested, it was untestable, and the mock made "apply it every
+    -- render" look like the only possible behaviour.
+    w.__linePool = {}
+    w.ClearLines = function()
+        for i = #w.__lines, 1, -1 do
+            local e = w.__lines[i]
+            if (e and e.__fs) then e.__fs.__text = nil end
+            if (e and e.__fsr) then e.__fsr.__text = nil end
+        end
+        w.__lines = {}
+    end
     w.NumLines = function() return #w.__lines end
     w.AddLine = function(_, txt, r, g, b)
         ADDLINE_CALLS = (ADDLINE_CALLS or 0) + 1
-        w.__lines[#w.__lines + 1] = { left = txt, r = r, g = g, b = b }
+        local n = #w.__lines + 1
+        local e = { left = txt, r = r, g = g, b = b, __fs = w.__linePool[n] }
+        if (e.__fs) then e.__fs.__text = txt end
+        w.__lines[n] = e
     end
     w.AddDoubleLine = function(_, l, rt)
         ADDLINE_CALLS = (ADDLINE_CALLS or 0) + 1
-        w.__lines[#w.__lines + 1] = { left = l, right = rt }
+        local n = #w.__lines + 1
+        local e = { left = l, right = rt, __fs = w.__linePool[n], __fsr = w.__linePoolR[n] }
+        if (e.__fs) then e.__fs.__text = l end
+        if (e.__fsr) then e.__fsr.__text = rt end
+        w.__lines[n] = e
     end
+    w.__linePoolR = {}
     w.GetLeftLine = function(_, i)
         local e = w.__lines[i]
         if (not e) then return nil end
         local fs = e.__fs
         if (not fs) then
             fs = makeWidget("FontString", (name or "TT") .. "TextLeft" .. i, w, nil, depth + 1)
-            fs.__text = e.left
+            if (e.left ~= nil) then fs.__text = e.left end
+            w.__linePool[i] = fs
             e.__fs = fs
         end
         return fs
@@ -288,6 +370,7 @@ local function makeWidget(kind, name, parent, template, depth)
         if (not fs) then
             fs = makeWidget("FontString", (name or "TT") .. "TextRight" .. i, w, nil, depth + 1)
             fs.__text = e.right
+            w.__linePoolR[i] = fs
             e.__fsr = fs
         end
         return fs
@@ -297,9 +380,39 @@ local function makeWidget(kind, name, parent, template, depth)
     w.IsUnit = function(_, u) return w.__unit == u end
     w.GetMinimumWidth = function() return 0 end
     w.SetMinimumWidth = function() end
-    w.SetClampRectInsets = function() end
     w.GetAnchorType = function() return 1 end
-    w.SetBackdrop = function() end
+    -- The three layout writes below COUNT. Like SetFont, they were `function() end`
+    -- and therefore invisible to every test: an addon that re-asserted the same
+    -- padding, clamp inset and anchor on every render looked exactly like one that
+    -- set each of them once. SetBackdrop additionally records the info table so a
+    -- change guard can be shown to be comparing something real.
+    w.__clampCalls = 0
+    w.SetClampRectInsets = function(_, l, r, t, b)
+        w.__clampCalls = (w.__clampCalls or 0) + 1
+        w.__clampInsets = { l, r, t, b }
+    end
+    -- SetPadding and ClearPadding are counted SEPARATELY. They share one slot in
+    -- the client, but clearTooltipVisuals calls ClearPadding on entry to every
+    -- render while the power-bar block calls SetPadding later and only on a
+    -- render that runs to completion -- so with one shared counter the last
+    -- writer alternates and a "the padding was applied" assertion reads 0,0,0,0
+    -- on a frame that is in fact padded.
+    w.__paddingCalls = 0
+    w.__padding = nil
+    w.SetPadding = function(_, l, r, t, b)
+        w.__paddingCalls = (w.__paddingCalls or 0) + 1
+        w.__padding = { l, r, t, b }
+    end
+    w.__clearPaddingCalls = 0
+    w.ClearPadding = function()
+        w.__clearPaddingCalls = (w.__clearPaddingCalls or 0) + 1
+    end
+    w.__backdropCalls = 0
+    w.__backdropInfo = nil
+    w.SetBackdrop = function(_, info)
+        w.__backdropCalls = (w.__backdropCalls or 0) + 1
+        w.__backdropInfo = info
+    end
 
     w.CreateFontString = function(_, n, sub, tmpl)
         local c = makeWidget("FontString", n or (name and name .. "FS"), w, tmpl, depth + 1)
@@ -1097,6 +1210,637 @@ do
     end
 end
 
+--------------------------------------------------------------------------
+-- Per-render change guards (0.7.9).
+--
+-- Everything in this block asserts the SAME shape of thing: a render that
+-- changes nothing observable must not redo work whose result is already on the
+-- frame. The counters are read off the mock, and every mock method these tests
+-- count was `function() end` until this block existed -- so before it, each of
+-- these bugs was invisible to the suite by construction, not by luck.
+--
+-- Three rules keep this block honest:
+--  1. Every "added 0 calls" assertion is paired with one that proves the work
+--     actually HAPPENED. A guard that never fires at all passes the first half
+--     of that pair, so the second half is the evidence.
+--  2. Counters are baselined AFTER a settling pair, never across one, so
+--     first-render construction cost is not billed to a re-render.
+--  3. Measurements span a PAIR of renders, never a single one. A render that
+--     stops early -- clearTooltipLevelColorLine blanks lines 2 and 3 on entry,
+--     and an early return then leaves them blank, so the NEXT render trips the
+--     "player with no level line" guard at main.lua:1429 and stops early too --
+--     contributes nothing to any counter here. A single-render delta would
+--     therefore be 0 or the full cost depending on parity, which is how a
+--     change guard can look like it works without ever having been exercised.
+--     Over a pair at least one render reaches the whole pipeline, which is
+--     enough to distinguish "skipped" from "applied" in both directions.
+--------------------------------------------------------------------------
+do
+    local SCREEN_W = 1920
+    local PAIR = 2
+
+    -- Unit resolution has to be installed explicitly before driving a render.
+    -- The mock does NOT define widget GetUnit -- it falls through to the
+    -- catch-all that returns nothing -- so on the Classic family a unit render
+    -- finds no unit, calls clearTooltipVisuals and returns at main.lua:1378,
+    -- having done none of the work these tests measure. The same is true of
+    -- TooltipUtil on the pipeline family. Both are restored at the end.
+    local savedGetUnit = GT.GetUnit
+    local savedUtilFn = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+
+    local function installUnitResolver()
+        GT.__unit = currentUnit
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function()
+                return "n", currentUnit, UNITS[currentUnit].guid
+            end
+        else
+            GT.GetUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end
+        end
+    end
+
+    local function driveUnit(unitName)
+        currentUnit = unitName or "player"
+        installUnitResolver()
+        local u = UNITS[currentUnit]
+        local guid = (u and u.guid) or "Player-1-00000001"
+        if (POSTCALLS and POSTCALLS[1]) then
+            POSTCALLS[1].fn(GT, { guid = guid })
+        elseif (GT.__hooks and GT.__hooks.OnTooltipSetUnit) then
+            GT.__hooks.OnTooltipSetUnit(GT, guid)
+        end
+    end
+
+    -- A render expected to reach the whole pipeline. The frame is marked shown
+    -- and the stock line set re-seeded BEFORE the call, because two of the
+    -- production conditions under test (the portrait anchor epoch, the power bar
+    -- block) are gated on exactly those two facts.
+    local function settleUnitRender(unitName)
+        GT.__shown = true
+        seedTooltip()
+        driveUnit(unitName)
+    end
+
+    local function settlePair(n)
+        for _ = 1, (n or PAIR) do settleUnitRender("player") end
+    end
+
+    local function line1()
+        return (TT.GetTooltipLeftLine and TT.GetTooltipLeftLine(GT, 1))
+            or (GT.GetLeftLine and GT.GetLeftLine(1))
+    end
+
+    -- A media setting is stored as a SharedMedia name and resolved to a path
+    -- through a cache, so a test that pokes the config has to invalidate that
+    -- cache or it measures nothing. The probe is taken from the addon's own
+    -- choice list rather than hardcoded, so it stays valid as the list changes.
+    local function mediaProbe(kind)
+        local getter = (kind == "font") and TT.GetTooltipFontChoices or TT.GetTooltipBorderChoices
+        local current = (kind == "font") and TT:GetResolvedTooltipFont() or TT:GetResolvedTooltipBorder()
+        if (not getter) then return nil, current end
+        for _, entry in ipairs(getter(TT) or {}) do
+            if (entry.value and entry.value ~= current) then
+                return entry.value, current
+            end
+        end
+        return nil, current
+    end
+
+    local function setMedia(kind, value)
+        if (kind == "font") then
+            REALG.TacoTipConfig.tooltip_font = value
+        else
+            REALG.TacoTipConfig.tooltip_border_texture = value
+        end
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+    end
+
+    -- ---- FIX 1: the portrait side cache is never invalidated -------------
+    --
+    -- The side is cached in tooltip state and only recomputed when the cache is
+    -- absent, the scale changed, or the tooltip is shown and not yet anchored.
+    -- Nothing in the addon ever cleared those two fields, so `portraitAnchored`
+    -- latched true for the life of the GameTooltip frame and the side froze
+    -- until /reload. The clear is the right epoch: a clear is exactly the
+    -- moment the tooltip is recycled, so the next show is a genuinely new
+    -- layout and recomputing from that frame is correct by construction.
+    --
+    -- The production boundary is `tooltipRight >= screenWidth` -- the tooltip's
+    -- RIGHT EDGE against the screen's, not the screen's midpoint. A tooltip
+    -- pinned at the right edge takes the "left" portrait side; one anywhere
+    -- left of it takes "right". The two positions below straddle that boundary
+    -- deliberately rather than sitting at 0.8x and 0.2x, which would land on the
+    -- same side of it and could not detect a frozen cache.
+    do
+        REALG.TacoTipConfig.tooltip_portrait = true
+        REALG.TacoTipConfig.tooltip_portrait_3d = true
+
+        local uiPrev = REALG.UIParent.__right
+        REALG.UIParent.__right = SCREEN_W
+
+        local function anchorPoint()
+            local p = GT.TacoTipPortrait3D
+            if (p and p.GetNumPoints and p:GetNumPoints() > 0) then
+                return select(1, p:GetPoint(1))
+            end
+            return nil
+        end
+
+        -- Position 1: the tooltip's right edge sits past the screen's right edge.
+        -- A recycle FIRST, so the anchor under test is genuinely the first one
+        -- taken at this position. Without it the portrait is still carrying the
+        -- anchor an earlier test left it with (the teardown tests above already
+        -- anchored it at the mock's default GetRight of 0), and point1 would be
+        -- that stale anchor rather than anything this position produced.
+        pcall(TT.clearTooltipVisuals, GT)
+        GT.__right = SCREEN_W + 60
+        settlePair(2)
+        local anchorsAfterFirst = (TT.ev and TT.ev.portraitAnchor) or 0
+        local firstPoint = anchorPoint()
+
+        -- The recycle: what the game does between two unit hovers.
+        if (GT.__hooks and GT.__hooks.OnTooltipCleared) then
+            pcall(GT.__hooks.OnTooltipCleared, GT)
+        end
+
+        -- Position 2: the same frame, tooltip now well left of the right edge.
+        GT.__right = math.floor(SCREEN_W * 0.4)
+        settlePair(2)
+        local anchorsAfterSecond = (TT.ev and TT.ev.portraitAnchor) or 0
+        local secondPoint = anchorPoint()
+
+        check("portrait exists for the side-flip test", GT.TacoTipPortrait3D ~= nil)
+        check("portrait side is recomputed after a clear, not frozen for the session",
+            anchorsAfterSecond > anchorsAfterFirst,
+            "portraitAnchor " .. tostring(anchorsAfterFirst) .. " -> " .. tostring(anchorsAfterSecond))
+        check("portrait moves to the other side after a clear",
+            firstPoint ~= nil and secondPoint ~= nil and firstPoint ~= secondPoint,
+            "point1=" .. tostring(firstPoint) .. " point2=" .. tostring(secondPoint))
+        check("the new side is the one the new position calls for",
+            secondPoint == "TOPLEFT",
+            "got " .. tostring(secondPoint) .. " (a tooltip whose right edge is "
+                .. tostring(GT.__right) .. " of " .. tostring(SCREEN_W) .. " takes TOPLEFT)")
+
+        GT.__right = 0
+        REALG.UIParent.__right = uiPrev
+    end
+
+    -- ---- FIX 2: SetFont re-applied to every line on every render ---------
+    --
+    -- applyTooltipFonts walks max(numLines + 4, 20) lines and called SetFont on
+    -- each, unconditionally. On top of the call cost it runs AFTER the SetText
+    -- loop, so every call invalidated the text measurement that loop had just
+    -- produced. The guard mirrors the idiom applyTooltipMaxWidth already uses
+    -- for width: remember what was applied, write only on a change.
+    --
+    -- The paired assertion is what stops this being satisfied by a guard that
+    -- simply never sets the font.
+    do
+        settlePair(PAIR)
+        local baseFonts = REALG.__fontCalls or 0
+        local wantFont = REALG.TacoTip_Forever:GetResolvedTooltipFont()
+        local wantSize = REALG.TacoTipConfig.tooltip_font_size
+
+        settlePair(PAIR)
+        local l1 = line1()
+        local addedFonts = (REALG.__fontCalls or 0) - baseFonts
+
+        check("a settled re-render re-applies SetFont to no line",
+            addedFonts == 0,
+            "added " .. tostring(addedFonts) .. " SetFont call(s) over " .. tostring(PAIR) .. " renders")
+        check("the font WAS applied, so the guard skips a repeat and not everything",
+            l1 ~= nil and l1.__font == wantFont and l1.__fontSize == wantSize,
+            "line1 font=" .. tostring(l1 and l1.__font) .. " size=" .. tostring(l1 and l1.__fontSize)
+                .. " (wanted " .. tostring(wantFont) .. " / " .. tostring(wantSize) .. ")")
+
+        -- The guard must not be a one-way latch: a changed setting has to write
+        -- through on the next render.
+        local probe, prevFont = mediaProbe("font")
+        if (probe) then
+            setMedia("font", probe)
+            local probeBase = REALG.__fontCalls or 0
+            settlePair(PAIR)
+            l1 = line1()
+            check("changing the font setting re-applies SetFont",
+                (REALG.__fontCalls or 0) > probeBase and l1 ~= nil and l1.__font == probe,
+                "calls added=" .. tostring((REALG.__fontCalls or 0) - probeBase)
+                    .. " line1 font=" .. tostring(l1 and l1.__font) .. " (wanted " .. tostring(probe) .. ")")
+            setMedia("font", prevFont)
+        else
+            -- Reported rather than counted as a pass: with one font in the list
+            -- there is no second value to switch to, and silently passing would
+            -- hide that the latch case is untested here.
+            check("changing the font setting re-applies SetFont", false,
+                "no alternative font in the choice list to switch to")
+        end
+        setMedia("font", REALG.TacoTipConfig.tooltip_font)
+    end
+
+    -- ---- FIX 3: SetBackdrop re-tiled the border on every render ---------
+    --
+    -- Both branches rebuilt a backdropInfo table plus a nested insets table and
+    -- handed them to SetBackdrop, which reassigns its backdrop, re-applies both
+    -- colours and re-tiles the edge texture. None of that depends on the render:
+    -- it depends only on the border texture, the edge size and -- on the legacy
+    -- branch only -- the background texture. tooltip_border_alpha is deliberately
+    -- NOT part of that input, because it is applied by SetBackdropBorderColor,
+    -- which is a different call.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevBorder = CFG.tooltip_border_texture
+        local prevAlpha = CFG.tooltip_border_alpha
+
+        settlePair(PAIR)
+        -- The NineSlice branch is the one every supported client takes, so the
+        -- backdrop frame is our own overlay rather than the tooltip itself.
+        local backdrop = GT.TacoTipBackdropFrame
+        check("backdrop overlay frame exists for the re-tile test", backdrop ~= nil)
+
+        if (backdrop) then
+            local base = backdrop.__backdropCalls or 0
+            settlePair(PAIR)
+            local addedSame = (backdrop.__backdropCalls or 0) - base
+            check("a settled re-render does not re-tile the backdrop",
+                addedSame == 0, "added " .. tostring(addedSame) .. " SetBackdrop call(s)")
+            check("the backdrop WAS set, so the guard skips a repeat and not everything",
+                (backdrop.__backdropInfo or {}).edgeFile ~= nil,
+                "edgeFile=" .. tostring((backdrop.__backdropInfo or {}).edgeFile))
+
+            -- A real change must still write through. This is what separates a
+            -- comparison from "never call SetBackdrop again".
+            local probe = mediaProbe("border")
+            if (probe) then
+                local before = backdrop.__backdropCalls or 0
+                setMedia("border", probe)
+                settlePair(PAIR)
+                local addedBorder = (backdrop.__backdropCalls or 0) - before
+                local info = backdrop.__backdropInfo or {}
+                check("changing the border texture re-tiles the backdrop",
+                    addedBorder > 0,
+                    "added " .. tostring(addedBorder) .. " SetBackdrop call(s), edgeFile="
+                        .. tostring(info.edgeFile))
+                check("the re-tile carries the new border path",
+                    info.edgeFile == probe,
+                    "edgeFile=" .. tostring(info.edgeFile) .. " (wanted " .. tostring(probe) .. ")")
+                setMedia("border", prevBorder)
+                -- Settle before the next measurement. Without this the baseline
+                -- below is captured while the backdrop still carries the PROBE's
+                -- signature, so the first render of the alpha pair legitimately
+                -- re-tiles back to prevBorder and the alpha assertion fails on
+                -- the previous test's leftover.
+                settlePair(PAIR)
+            else
+                check("changing the border texture re-tiles the backdrop", false,
+                    "no alternative border in the choice list to switch to")
+            end
+
+            -- Alpha travels through SetBackdropBorderColor, not SetBackdrop, so
+            -- changing it must NOT re-tile -- and must still take effect.
+            local alphaBase = backdrop.__backdropCalls or 0
+            CFG.tooltip_border_alpha = 0.42
+            settlePair(PAIR)
+            local addedAlpha = (backdrop.__backdropCalls or 0) - alphaBase
+            local bc = backdrop.__borderColor
+            check("changing only the border alpha does not re-tile",
+                addedAlpha == 0, "added " .. tostring(addedAlpha) .. " SetBackdrop call(s)")
+            check("the new border alpha was still applied",
+                bc ~= nil and math.abs((bc[4] or 0) - 0.42) < 0.0001,
+                "alpha=" .. tostring(bc and bc[4]))
+            CFG.tooltip_border_alpha = prevAlpha
+        end
+    end
+
+    -- ---- FIX 4: tooltip_max_width never reached item tooltips -----------
+    --
+    -- applyTooltipMaxWidth had exactly one call site and it was inside
+    -- onTooltipSetUnit. The item path applied the font, the backdrop and the
+    -- border overlay but not the width cap, so the one tooltip type that
+    -- reliably carries a long line was the one type the option did nothing for.
+    --
+    -- The cap is set explicitly: the shipped default is 0, and asserting a cap
+    -- of 0 would pass whether or not the call site exists at all.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevMax = CFG.tooltip_max_width
+        CFG.tooltip_max_width = 300
+
+        GT:ClearLines()
+        GT:AddLine(ITEM[1].name)
+        GT:AddLine("Item Level 88")
+        if (POSTCALLS and POSTCALLS[2]) then
+            POSTCALLS[2].fn(GT, { hyperlink = ITEM[1].link })
+        elseif (GT.__hooks and GT.__hooks.OnTooltipSetItem) then
+            GT.__hooks.OnTooltipSetItem(GT, ITEM[1].link)
+        end
+
+        local itemLine = line1()
+        check("item tooltip honours tooltip_max_width",
+            itemLine ~= nil and itemLine._tacoTipMaxWidth == 300,
+            "line1 _tacoTipMaxWidth=" .. tostring(itemLine and itemLine._tacoTipMaxWidth)
+                .. " (wanted 300)")
+
+        -- The unit path must still cap, or "both call it" could be satisfied by
+        -- removing the original call site instead of adding the second one.
+        settlePair(PAIR)
+        local unitLine = line1()
+        check("unit tooltip still honours tooltip_max_width",
+            unitLine ~= nil and unitLine._tacoTipMaxWidth == 300,
+            "line1 _tacoTipMaxWidth=" .. tostring(unitLine and unitLine._tacoTipMaxWidth))
+
+        CFG.tooltip_max_width = prevMax
+        settlePair(PAIR)
+    end
+
+    -- ---- FIX 5: a throwaway table per power update -----------------------
+    --
+    -- `PowerBarColor[power] or {}` allocated a table on every update for any
+    -- power token PowerBarColor does not key, and Update runs on
+    -- UNIT_POWER_UPDATE, UNIT_MAXPOWER, UNIT_DISPLAYPOWER and once per render --
+    -- the hottest allocation in an otherwise zero-allocation path.
+    --
+    -- Asserted as a GC delta across N updates rather than as behaviour, because
+    -- a behavioural assertion passes both before and after and is therefore not
+    -- evidence of anything. The behavioural half of the pair is kept too, so the
+    -- fix cannot be satisfied by dropping the colour.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevPower = CFG.show_power_bar
+        local prevMax = CFG.tooltip_max_width
+        CFG.show_power_bar = true
+        CFG.tooltip_max_width = 0
+
+        settlePair(PAIR)
+        local bar = REALG.TacoTipPowerBar
+        check("power bar exists for the allocation test", bar ~= nil)
+
+        if (bar and bar.Update) then
+            -- The addon reads the SECOND return of UnitPowerType -- the power
+            -- TOKEN -- as the PowerBarColor key, so the probe has to hand back an
+            -- unkeyed token to reach the `or {}` branch at all. The mock keys
+            -- PowerBarColor by the numeric type 0 and answers UnitPowerType with
+            -- a single value, so a first attempt at this probe returned 0, hit
+            -- the keyed colour, and read back 0.3/0.3/0.8 instead of the
+            -- fallback. That was a broken test, not a broken addon.
+            local N = 20
+            -- Two measurements, and why not a KB limit.
+            --
+            -- A fixed threshold does not survive the interpreter: the same fixed
+            -- code measured 3.44 KB on lua5.1, 2.19 KB on lua5.4 and 2.30 KB on
+            -- luajit over 20 updates, and the luajit figure is mostly one-off JIT
+            -- compilation. Subtracting a hand-written control loop fixed most of
+            -- that but not all -- under luajit roughly 0.10 KB per update of
+            -- interpreter overhead survives it, because the control does not make
+            -- the same calls (no UnitPowerType, no `or`), so it is not
+            -- equivalent work.
+            --
+            -- What does isolate the defect exactly is measuring the SAME closure
+            -- twice and changing only the power token:
+            --   * token 0 is a key of the mock's PowerBarColor, so the lookup
+            --     SUCCEEDS and the old `or {}` never runs;
+            --   * the probe token is not a key, so the old `or {}` runs once per
+            --     update and allocates one five-field table.
+            -- Everything else -- the call, the UnitPowerType lookup, the colour
+            -- read, the three widget writes -- is identical, on the same
+            -- interpreter, in the same run. So the difference between the two is
+            -- the fallback expression and nothing else, and the fixed code has
+            -- no reason for it to be anything but zero.
+            local function measure(n)
+                collectgarbage("collect")
+                collectgarbage("collect")
+                local before = collectgarbage("count")
+                for _ = 1, n do bar:Update("player") end
+                return collectgarbage("count") - before
+            end
+
+            local prevPowerType = REALG.UnitPowerType
+            local function withToken(token)
+                REALG.UnitPowerType = function() return 0, token end
+            end
+
+            -- The addon reads the SECOND return of UnitPowerType -- the power
+            -- TOKEN -- as the PowerBarColor key, so the probe has to hand back an
+            -- unkeyed token to reach the `or {}` branch at all. The mock keys
+            -- PowerBarColor by the numeric type 0 and answers UnitPowerType with
+            -- a single value, so a first attempt at this probe returned 0, hit
+            -- the keyed colour, and read back 0.3/0.3/0.8 instead of the
+            -- fallback. That was a broken test, not a broken addon.
+            local KEYED, UNKEYED = 0, "TT_TOKEN_NOT_A_POWER_TYPE"
+
+            withToken(KEYED)
+            measure(N)                                  -- warm up any lazy state
+            local keyed1 = measure(N)
+            local keyed4 = measure(N * 4)
+            withToken(UNKEYED)
+            local unkeyed1 = measure(N)
+            local unkeyed4 = measure(N * 4)
+
+            -- KB per update, for each token, above whatever both share.
+            local perKeyed = (keyed4 - keyed1) / (N * 3)
+            local perUnkeyed = (unkeyed4 - unkeyed1) / (N * 3)
+            local perFallback = perUnkeyed - perKeyed
+
+            -- Scale: what one table of this shape actually costs here.
+            local sink = {}
+            local function reference()
+                -- Stored so the table is reachable and cannot be elided; read back
+                -- at the end purely so the local is not write-only.
+                sink[1] = { r = 0, g = 0, b = 1 }
+            end
+            local function measureRef(n)
+                collectgarbage("collect")
+                collectgarbage("collect")
+                local before = collectgarbage("count")
+                for _ = 1, n do reference() end
+                return collectgarbage("count") - before
+            end
+            local perAlloc = (measureRef(N * 4) - measureRef(N)) / (N * 3)
+            local sinkKept = (sink[1] ~= nil)      -- see reference() above
+
+            -- `perAlloc <= 0` means the collector does not account for the
+            -- reference at all, so there is no scale to measure against and no
+            -- honest way to assert it here. The condition says so in its detail
+            -- rather than passing a threshold that measured nothing; the
+            -- behavioural half of the pair below still runs everywhere.
+            --
+            -- MEASURED, and worth knowing before anyone tightens this: with the
+            -- `or {}` restored this check fails 4/4 on lua5.1 and 4/4 on lua5.4,
+            -- and passes 4/4 on luajit. LuaJIT's JIT removes the table before it
+            -- exists -- it is constructed, read three times and dropped inside
+            -- one basic block, so it never escapes and is never allocated. There
+            -- is no assertion that can see a defect the interpreter has already
+            -- optimised away. lua5.1 is what WoW ships, so that is the
+            -- measurement that counts; luajit is a cross-check, not the target.
+            check("power updates allocate no garbage per update",
+                sinkKept and (perAlloc <= 0 or perFallback < (perAlloc * 0.25)),
+                string.format(
+                    "unkeyed %.4f KB/update minus keyed %.4f KB/update = %.4f KB of fallback,"
+                        .. " against %.4f KB per table%s",
+                    perUnkeyed, perKeyed, perFallback, perAlloc,
+                    perAlloc <= 0 and " -- UNAVAILABLE on this interpreter: the collector "
+                        .. "does not account for the reference either" or ""))
+
+            local sc = { bar.__statusR, bar.__statusG, bar.__statusB }
+            check("an unkeyed power token still gets the fallback colour",
+                bar.__statusR ~= nil and math.abs(bar.__statusR) < 0.0001
+                    and math.abs(bar.__statusG) < 0.0001
+                    and math.abs(bar.__statusB - 1) < 0.0001,
+                "colour=" .. tostring(sc and table.concat(sc, ",")))
+
+            REALG.UnitPowerType = prevPowerType
+        end
+        CFG.tooltip_max_width = prevMax
+        CFG.show_power_bar = prevPower
+    end
+
+    -- ---- FIX 6: unconditional layout writes ------------------------------
+    --
+    -- The power bar re-asserted both of its anchors every render, the tooltip's
+    -- padding was re-set every render (SetPadding re-lays out the tooltip), and
+    -- the clamp insets were set with no guard at all. All three are idempotent
+    -- in effect and expensive in practice. GetMinimumWidth a few lines below the
+    -- clamp already had the right shape: read the current value, write on a
+    -- change.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevHP, prevPower = CFG.show_hp_bar, CFG.show_power_bar
+        local prevMax = CFG.tooltip_max_width
+        CFG.show_hp_bar = true
+        CFG.show_power_bar = true
+        CFG.tooltip_max_width = 0
+
+        settlePair(PAIR)
+        local bar = REALG.TacoTipPowerBar
+
+        local basePoints = (bar and bar.__setPointCalls) or 0
+        local basePad = GT.__paddingCalls or 0
+        local baseClamp = GT.__clampCalls or 0
+
+        settlePair(PAIR)
+
+        local addedPoints = ((bar and bar.__setPointCalls) or 0) - basePoints
+        local addedPad = (GT.__paddingCalls or 0) - basePad
+        local addedClamp = (GT.__clampCalls or 0) - baseClamp
+
+        check("a settled re-render re-anchors the power bar 0 times",
+            addedPoints == 0, "added " .. tostring(addedPoints) .. " SetPoint call(s)")
+        check("a settled re-render re-sets the tooltip padding 0 times",
+            addedPad == 0, "added " .. tostring(addedPad) .. " SetPadding call(s)")
+        check("a settled re-render re-sets the clamp insets 0 times",
+            addedClamp == 0, "added " .. tostring(addedClamp) .. " SetClampRectInsets call(s)")
+
+        -- Paired: the values must actually be on the frame, or a guard that never
+        -- wrote anything would pass the three checks above.
+        check("the power bar IS anchored",
+            bar ~= nil and (bar.__setPointCalls or 0) >= 2,
+            "SetPoint calls=" .. tostring(bar and bar.__setPointCalls))
+        check("the tooltip padding WAS set",
+            GT.__padding ~= nil and (GT.__padding[2] or 0) == 10,
+            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
+        check("the clamp insets WERE set",
+            GT.__clampInsets ~= nil and (GT.__clampInsets[3] or 0) == 15,
+            "insets=" .. tostring(GT.__clampInsets and table.concat(GT.__clampInsets, ",")))
+
+        -- A real change must write through on the next render, or these guards
+        -- are latches rather than comparisons.
+        local hpBase = (bar and bar.__setPointCalls) or 0
+        CFG.show_hp_bar = false
+        settlePair(PAIR)
+        check("turning off the HP bar re-anchors the power bar",
+            ((bar and bar.__setPointCalls) or 0) > hpBase,
+            "SetPoint calls " .. tostring(hpBase) .. " -> " .. tostring(bar and bar.__setPointCalls))
+        CFG.show_hp_bar = prevHP
+        settlePair(PAIR)
+
+        -- (d) The wide-style continuation line. This branch only runs when
+        -- tip_style makes wide_style true, and the rest of this file pins
+        -- tip_style = 3, so without switching it here the anchor at main.lua:1968
+        -- is never executed at all and a guard on it would be untested code
+        -- wearing a test's clothes.
+        do
+            local prevStyle = CFG.tip_style
+            CFG.tip_style = 1
+            -- Render with a chosen number of stock lines. The pooled line the
+            -- branch anchors is the one AFTER the last rendered line, so the
+            -- line count decides which pooled FontString is involved -- changing
+            -- it is also how the write-through below is provoked.
+            local function renderWithLines(count)
+                GT.__shown = true
+                currentUnit = "player"
+                installUnitResolver()
+                GT:ClearLines()
+                for i = 1, count do GT:AddLine("stock line " .. i) end
+                local u = UNITS[currentUnit]
+                local guid = (u and u.guid) or "Player-1-00000001"
+                if (POSTCALLS and POSTCALLS[1]) then
+                    POSTCALLS[1].fn(GT, { guid = guid })
+                elseif (GT.__hooks and GT.__hooks.OnTooltipSetUnit) then
+                    GT.__hooks.OnTooltipSetUnit(GT, guid)
+                end
+            end
+            local function lineAnchorWrites()
+                local pool = rawget(GT, "__linePool") or {}
+                local total = 0
+                for i = 1, 20 do
+                    local fs = pool[i]
+                    total = total + ((fs and rawget(fs, "__setPointCalls")) or 0)
+                end
+                return total
+            end
+
+            for _ = 1, PAIR do renderWithLines(6) end
+            local wideBase = lineAnchorWrites()
+            check("the wide-style branch runs and anchors a line",
+                wideBase > 0, "line SetPoint calls=" .. tostring(wideBase))
+
+            for _ = 1, PAIR do renderWithLines(6) end
+            local addedSame = lineAnchorWrites() - wideBase
+            check("a settled wide-style re-render re-anchors the continuation line 0 times",
+                addedSame == 0, "added " .. tostring(addedSame) .. " line SetPoint call(s)")
+
+            -- A different line count means a different pooled line AND a
+            -- different anchor line, so the guard has to write. This is what
+            -- separates a comparison from a latch.
+            local shortBase = lineAnchorWrites()
+            for _ = 1, PAIR do renderWithLines(3) end
+            local addedShort = lineAnchorWrites() - shortBase
+            check("a wide-style render with a different line count re-anchors",
+                addedShort > 0, "added " .. tostring(addedShort) .. " line SetPoint call(s)")
+
+            CFG.tip_style = prevStyle
+            for _ = 1, PAIR do settleUnitRender("player") end
+        end
+
+        CFG.tooltip_max_width = prevMax
+        CFG.show_power_bar = prevPower
+    end
+
+    -- Leave the tooltip in the state the rest of the file expects. The resolver
+    -- restore is the LAST thing that happens here: re-installing it afterwards
+    -- would pin the tooltip to "player", which the later unit tests resolve
+    -- through the mock's own IsUnit fallback and would then fail.
+    GT.GetUnit = savedGetUnit
+    if (REALG.TooltipUtil) then
+        REALG.TooltipUtil.GetDisplayedUnit = savedUtilFn
+    end
+    currentUnit = "player"
+    GT.__right = 0
+    GT.__shown = true
+    -- Re-seed the tooltip. The pool model above means a line FontString KEEPS
+    -- whatever the last render left on it, and clearTooltipLevelColorLine /
+    -- clearTooltipGuildLine blank lines 2 and 3 on entry to every render. So
+    -- after a render that did not run to completion those lines read back empty
+    -- -- and a later render then trips the "player with no level line" guard at
+    -- main.lua:1429 and stops early too, which makes the blanking
+    -- self-sustaining. Seeding here hands the rest of the file a tooltip with
+    -- the full stock line set, which is the state it expects.
+    seedTooltip()
+end
+
+
+
+
+
+
 
 
 -- Specialization overlay icon: Retail / WoW Forever ONLY.
@@ -1499,6 +2243,83 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
     --     formatSpecializationText, and once on a Texture overlay outside the
     --     tooltip's left edge.
     local _, nGroup1 = string.gsub(ptxt, "21/0/0", "")
+    -- Portrait presentation: the two defects that made the 3D portrait strobe on
+    -- Retail and WoW Forever. Both trace to the same verified client fact --
+    -- TooltipDataHandler fires the tooltip post-calls BEFORE its own self:Show(),
+    -- so our whole unit handler runs against a frame that has not been laid out
+    -- or presented yet.
+    do
+        currentUnit = "player"
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", currentUnit, UNITS[currentUnit].guid
+        end
+        GT.GetUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end
+        GT.__unit = "player"
+        GT.__shown = true
+        GT.__alpha = 0.25            -- a faded tooltip
+        REALG.TacoTipConfig.tooltip_portrait = true
+        REALG.TacoTipConfig.tooltip_portrait_3d = true
+
+        local anchorsBefore = (TT.ev and TT.ev.portraitAnchor) or 0
+        -- Establish the portrait before instrumenting, so creation-time cost is
+        -- not counted: the claim under test is about RE-renders.
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        unitPost.fn(GT, { guid = UNITS.player.guid })
+
+        local portraitSetScriptCalls = 0
+        local p0 = GT.TacoTipPortrait3D
+        if (p0 and p0.SetScript) then
+            local realSetScript = p0.SetScript
+            p0.SetScript = function(self, ...)
+                portraitSetScriptCalls = portraitSetScriptCalls + 1
+                return realSetScript(self, ...)
+            end
+        end
+
+        for _ = 1, 5 do
+            GT:ClearLines()
+            GT:AddLine("Testplayer")
+            GT:AddLine("Level 60 Human")
+            GT:AddLine("WARRIOR")
+            GT:AddLine("Testguild")
+            GT:AddLine("")
+            GT:AddLine("HP: 50/50")
+            unitPost.fn(GT, { guid = UNITS.player.guid })
+        end
+
+        local portrait = GT.TacoTipPortrait3D
+        check("portrait exists on the modern path", portrait ~= nil)
+        if (portrait) then
+            -- The alpha slave: used to be SetAlpha(tooltip:GetAlpha()) per render,
+            -- so a faded tooltip faded the portrait too, and on modern that read
+            -- sampled a frame Blizzard had not shown yet.
+            check("portrait alpha is NOT slaved to the tooltip's alpha",
+                portrait:GetAlpha() == 1,
+                "portrait alpha=" .. tostring(portrait:GetAlpha()) .. " (tooltip alpha was 0.25)")
+            -- The anchor: used to ClearAllPoints + SetPoint every render, choosing
+            -- the side from GetRight() on a frame that had never been laid out.
+            local anchors = ((TT.ev and TT.ev.portraitAnchor) or 0) - anchorsBefore
+            check("portrait is anchored once across 5 re-renders, not per render",
+                anchors <= 1, "anchored " .. tostring(anchors) .. " times across 5 renders")
+            -- Asserted by instrumenting SetScript rather than by reading
+            -- GetScript("OnUpdate") back. The mock's PlayerModel widget carries the
+            -- parent tooltip's own script table, so GetScript reports Blizzard's
+            -- template scripts and says nothing about what WE installed. What is
+            -- actually load-bearing is that the addon never registers an OnUpdate
+            -- on the portrait -- and that used to happen on every creation.
+            check("no OnUpdate is registered on the portrait during re-renders",
+                portraitSetScriptCalls == 0,
+                "SetScript called " .. tostring(portraitSetScriptCalls) .. " time(s) during 5 renders")
+        end
+        GT.__alpha = 1
+    end
+
     check("modern renders the group 1 readout exactly once", nGroup1 == 1,
         "count=" .. tostring(nGroup1) .. " :: " .. string.gsub(ptxt, "\n", " | "))
     check("modern does not render a group 2 readout",
@@ -1527,6 +2348,201 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         string.find(allText(), "GearScore", 1, true) ~= nil
             or string.find(allText(), "GS:", 1, true) ~= nil
             or #GT.__lines >= 2, string.gsub(allText(), "\n", " | "))
+
+    -- The FRAME-hover case, which the block above explicitly assumed away.
+    -- A unit frame passes ITS OWN unit (player, or target), not the mouseover,
+    -- so UnitGUID("mouseover") and UnitGUID("target") both miss and the guid
+    -- fallback finds nothing. The comment above calls that unrealistic; it is
+    -- the single most common way a player touches their own character.
+    --
+    -- Asserted on the TEARDOWN, not on the text. The tooltip still drew its
+    -- lines, which is exactly why this shipped looking fine: nothing was
+    -- visibly missing except the portrait, which was destroyed and rebuilt on
+    -- every render. Live Retail counters read portrait hide 69 against unit
+    -- renders 70 -- the portrait blinked continuously while the mouse sat
+    -- still on the player frame.
+    do
+        local savedDisp, savedGetUnit, savedUnit = REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit, GT.__unit
+        GT.__unit = "player"
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        pcall(unitPost.fn, GT, { guid = UNITS.player.guid })   -- establish the portrait
+
+        -- Now the frame re-renders while the unit cannot be resolved.
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+        GT.GetUnit = function() return "n", nil end
+
+        local hidesBefore = (TT.ev and TT.ev.portraitHide) or 0
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        pcall(unitPost.fn, GT, { guid = UNITS.player.guid })
+
+        check("a frame hover that cannot resolve its unit does NOT tear the portrait down",
+            ((TT.ev and TT.ev.portraitHide) or 0) == hidesBefore,
+            "portrait hide went " .. tostring(hidesBefore) .. " -> "
+                .. tostring((TT.ev and TT.ev.portraitHide) or 0)
+                .. " on one re-render of the SAME character")
+
+        REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit, GT.__unit = savedDisp, savedGetUnit, savedUnit
+    end
+
+    -- A clear is not proof the character changed. OnTooltipCleared fires BEFORE
+    -- the next unit render, so destroying the model there destroys it before
+    -- onTooltipSetUnit can compare guids -- and a hover tooltip that is cleared
+    -- and immediately repopulated for the SAME character then pays a full async
+    -- PlayerModel reload every render. That is the blink.
+    --
+    -- Driven through the real hook via GetScript, because the mock keeps hooked
+    -- scripts addressable (w.__scripts). retainModel means: hide and re-anchor,
+    -- keep the loaded model, and do not count a teardown.
+    do
+        local savedDisp, savedGetUnit = REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit
+        GT.__unit = "player"
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        pcall(unitPost.fn, GT, { guid = UNITS.player.guid })
+
+        local hidesBefore = (TT.ev and TT.ev.portraitHide) or 0
+        -- __hooks, NOT GetScript. The mock's HookScript writes w.__hooks[s],
+        -- while GetScript reads w.__scripts[s] which is just `true` for
+        -- OnTooltipCleared -- so the first version of this test did
+        -- pcall(true, GT), silently did nothing, and passed with the fix
+        -- reverted. Only the revert check caught it.
+        local cleared = GT.__hooks and GT.__hooks.OnTooltipCleared
+        if (type(cleared) == "function") then pcall(cleared, GT) end
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        pcall(unitPost.fn, GT, { guid = UNITS.player.guid })
+
+        check("clearing and re-rendering the SAME character does not destroy the portrait",
+            ((TT.ev and TT.ev.portraitHide) or 0) == hidesBefore,
+            "portrait hide went " .. tostring(hidesBefore) .. " -> "
+                .. tostring((TT.ev and TT.ev.portraitHide) or 0)
+                .. " across clear + re-render of the SAME character")
+
+        REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit = savedDisp, savedGetUnit
+    end
+
+    -- Hovering a player must NOT inspect it. NotifyInspect is a SERVER REQUEST:
+    -- on an out-of-range unit Blizzard answers "Not in Range" / "Cannot Inspect",
+    -- which is what forum users reported seeing continuously while sweeping the
+    -- mouse across distant players. It also fired once per RENDER rather than
+    -- per hover, and every request ran InspectGuildFrame_Update, whose unguarded
+    -- nil guild realm blanks an inspected player who has no guild.
+    --
+    -- Asserted by COUNTING, because the mock discards its arguments: an addon
+    -- that inspected every player looked identical to one that inspected none.
+    -- Two different players, five renders each, expected zero requests.
+    do
+        local savedNI, savedCU = REALG.NotifyInspect, REALG.CanInspect
+        local savedTarget = UNITS.target
+        -- The addon only inspects PLAYERS, and the mock's "target" is an NPC, so
+        -- a second inspectable unit has to be a second player. Swapped in and
+        -- restored rather than added to UNITS, which many other tests read.
+        UNITS.target = { guid = "Player-9-00000009", name = "Otherplayer", level = 58,
+                         race = "Human", class = "MAGE", isPlayer = true, pvp = false }
+        local calls = 0
+        REALG.CanInspect = function() return true end
+        REALG.NotifyInspect = function() calls = calls + 1 end
+
+        local function renderUnit(u, n)
+            GT.__unit = u
+            GT.GetUnit = function() return "n", u, UNITS[u].guid end
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
+            for _ = 1, n or 5 do
+                GT:ClearLines()
+                GT:AddLine(UNITS[u].name)
+                GT:AddLine("Level 60")
+                pcall(unitPost.fn, GT, { guid = UNITS[u].guid })
+            end
+        end
+
+        local before = calls
+        renderUnit("mouseover", 5)
+        renderUnit("target", 5)
+        local after = calls
+
+        check("hovering a player NEVER auto-inspects (no NotifyInspect on hover)",
+            (after - before) == 0,
+            "NotifyInspect called " .. tostring(after - before)
+                .. " time(s) across 10 renders of 2 different players (expected 0)")
+
+        UNITS.target = savedTarget
+        REALG.NotifyInspect, REALG.CanInspect = savedNI, savedCU
+    end
+
+    -- Another addon's line must survive our clear. This addon remembers the line
+    -- INDEX of the guild and level lines it wrote, and blanks those indices on the
+    -- next clear. Any addon that adds a line to the tooltip (Baganator's tracked
+    -- item amount, Details' ilvl) shifts every index after it, so a remembered
+    -- index then points at THEIR line -- and the unconditional blank erased it.
+    -- Reported as "item amounts break on the second mouseover" with Baganator.
+    --
+    -- Simulated directly: render a player, let a foreign addon claim the
+    -- remembered index, then run the clear. The line is only ours to blank while
+    -- it still holds the text we wrote.
+    do
+        -- Measured as SetText CALLS on the line, not by reading its text back.
+        -- The contract is "do not touch a line we no longer own", and the harness
+        -- already counts calls for SetFont and SetBackdrop for exactly this
+        -- reason: a mock that returns state cannot distinguish an addon that
+        -- wrote the right value from one that wrote nothing at all.
+        local function runClear(rememberedText, lineText)
+            GT:ClearLines()
+            GT:AddLine("Peacebloom")
+            GT:AddLine("Binds when picked up")
+            GT:AddLine("Requires Level 5")
+            local l2 = GT:GetLeftLine(2)
+            local calls = 0
+            local real = l2.SetText
+            l2.SetText = function(a, b) calls = calls + 1; return real(a, b) end
+            l2:SetText(l2, lineText)
+            calls = 0                       -- our own setup write is not the addon's
+            GT.TacoTipGuildLineIndex = 2
+            GT.TacoTipGuildLineText = rememberedText
+            GT.TacoTipLevelColorLineIndex = nil
+            GT.TacoTipLevelColorLineText = nil
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+            GT.GetUnit = function() return "n", nil end
+            pcall(unitPost.fn, GT, { guid = UNITS.player.guid })
+            return calls
+        end
+
+        check("a line that is no longer ours is NOT touched by the clear",
+            runClear("<SomeGuild>", "Baganator: 42") == 0,
+            "line 2 SetText called " .. runClear("<SomeGuild>", "Baganator: 42")
+                .. " time(s); expected 0")
+        -- NOTE: the companion control -- that the clear still blanks a line that
+        -- IS ours -- is deliberately absent. In this mock the line's own __text
+        -- reads back as a table rather than the string SetText was given, for
+        -- every line regardless of how it was set, so ownership cannot be
+        -- observed from the value. Writing that assertion anyway produced a
+        -- check that could not have failed for the right reason, which is the
+        -- exact defect this suite has shipped seven times. The in-game check is
+        -- that a guild line still clears on the next hover.
+    end
 
     GT:ClearLines()
     GT:AddLine(ITEM[1].name)

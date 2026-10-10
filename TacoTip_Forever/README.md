@@ -19,34 +19,45 @@ World of Warcraft engine family from one build — no per-client downloads, no
 
 ---
 
-## What's New in 0.7.8
+## What's New in 0.7.9
 
-**This is the first cross-engine release.** Highlights; full detail in
+Portrait, inspect, unit-frame hover, and border correctness across all five client families. Full detail in
 [CHANGELOG.md](CHANGELOG.md):
 
-- **One build, five client families.** The addon previously loaded twice, failed
-  to load on Titanforge, and silently fell back to stock Blizzard tooltips on
-  TBC Anniversary and Titanforge. All fixed.
-- **Retail and WoW Forever now actually work.** Two file-scope defects left those
-  clients running *half* the addon — an unguarded `OnTooltipSetUnit` hook that
-  raised before the rest of `main.lua` could load, and an invalid
-  `CreateFrame("Texture", ...)` call. Neither is visible on the Classic family,
-  which is why it only ever surfaced on modern clients.
-- **GearScore bracket corrected on WoW Forever.** Forever is a Classic-like
-  client (level cap 60) and had been inheriting Retail's 1000 bracket, inflating
-  every score 5x and flattening the quality colour ramp into a single band.
-- **The 3D portrait stopped blinking.** It was being destroyed and reloaded
-  roughly twice a second while hovering a unit frame. `PlayerModel:SetUnit` loads
-  asynchronously, so every teardown produced a visible flash.
-- **A stray specialization icon no longer appears on the wrong character.**
-  Retail / WoW Forever only; the Classic icon path was never affected.
-- **Pawn no longer spams your chat frame.** The scale library is resolved per
-  client rather than guessed. The old guess spammed
-  *ScaleName must be the name of an existing scale* on every character tooltip —
-  the one defect `pcall` could not silence, because Pawn reports it by writing
-  to the chat frame.
-- **`/tacotip diag`** so a partial load is diagnosable instead of reporting
-  "try /reload".
+- **Stationary hover on PlayerFrame & TargetFrame no longer flickers or destroys on Retail.**
+  In modern Blizzard FrameXML, `UnitFrame_UpdateTooltip` refreshes every 0.2s by calling `SetOwner`
+  and `ClearLines`. TacoTip previously treated these transient internal 200ms refreshes as genuine
+  tooltip dismissals, tearing down and rebuilding the 3D portrait, power bar, and border overlay
+  5 times per second. Fixed with `isUnitFramePeriodicUpdate`, keeping stationary unit-frame hovers
+  completely stable with zero model reloads, zero un-anchoring, and zero flicker.
+- **Right-click inspect no longer strips gear from the paperdoll on Retail and WoW Forever.**
+  `LibForeverInspector` previously called `ClearInspectPlayer()` inside `INSPECT_READY`, which purged
+  the inspected unit before Blizzard's `InspectPaperDollItemSlotButton_Update` could read equipment links.
+  Fixed by deferring clear until `InspectFrame_OnHide`, adding party/raid member fallback resolution, and
+  protecting `InspectGuildFrame_Update` from crashing on guildless inspected players.
+- **The 3D portrait stopped strobing on Retail and WoW Forever.** The modern
+  client fires tooltip post-calls *before* its own `Show()`, which caused the frame to run against
+  unrendered dimensions and re-anchor on every tick. The portrait now anchors once per hover epoch,
+  survives item load callbacks, and smoothly flips between screen edges when near display boundaries.
+- **Default border set to official Blizzard tooltip border (`Interface\Tooltips\UI-Tooltip-Border`).**
+  Replaces previous unverified defaults and ensures native Blizzard appearance across all clients.
+  Expanded the border options with verified native Blizzard FrameXML borders (`UI-DialogBox-Border`,
+  `UI-DialogBox-Gold-Border`, `UI-Achievement-WoodBorder`, `UI-Party-Border`, `UI-Toast-Border`,
+  `TextPanel-Border`, `UI-SliderBar-Border`, `UI-Arena-Border`, `UI-TutorialFrame-CalloutGlow`),
+  and removed the non-texture placeholder `None`.
+- **`/tt diag` reports problems an error handler cannot see.** BugSack and
+  BugGrabber only see *raised* errors. The costliest defects here were the
+  opposite: no error, a plausible tooltip, and a feature quietly absent or
+  pointed at the wrong thing. It now lists those — ambiguous client detection, a
+  border setting that matches nothing, a feature enabled with its backing API
+  missing, no delivery path hooked — plus event counters for call frequency.
+- **100% Localization parity across all 11 languages.** All 11 shipped locales
+  (`enUS`, `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`)
+  contain 100% key coverage (261/261 keys) with verified syntax and matching `%s`/`%d` format tokens.
+- **The power bar is off by default.** Enable it in settings; its colours are
+  correct for mana, rage, energy and every other power type on all five clients.
+
+Supported clients:
 
 - **Classic Era / Season of Discovery (SoD)**: Interface `11509`
 - **The Burning Crusade (TBC) Classic Anniversary**: Interface `20506`
@@ -154,7 +165,7 @@ registered the tooltip hooks twice.
 
 If something looks inert, run this first:
 
-```
+```bash
 /tacotip diag
 ```
 
@@ -252,4 +263,3 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
   - `TacoTip-Client` (detection, alias, locale registry, override including the
     Titanforge `zhCN` pin, font filter, and cross-engine talent point / spec
     index / active-group invariants)
-

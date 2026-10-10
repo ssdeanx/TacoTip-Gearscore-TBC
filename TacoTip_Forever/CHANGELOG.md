@@ -4,8 +4,635 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+---
+
+## [0.7.9] — 2026-10-10
+
+> Portrait and border correctness. **Verified in a live client 2026-10-10** on
+> Classic Era, TBC Anniversary and WotLK Titanforge. Retail and WoW Forever are
+> under active test; see *Known limitations* for what is still open on them.
+
+### Fixed (2026-10-10 re-verification pass)
+
+- **Right-click inspect stripped all gear from the paperdoll on Retail and WoW Forever.**
+  `LibForeverInspector.lua` was calling `ClearInspectPlayer()` inside its `INSPECT_READY`
+  handler immediately after caching the inventory links. Because `ClearInspectPlayer()`
+  purges the inspected unit from the WoW client engine, Blizzard's native
+  `InspectPaperDollItemSlotButton_Update` found `GetInventoryItemTexture` returning nil
+  for all 18 equipment slots, resetting all buttons to their empty background texture.
+  Removed the premature `ClearInspectPlayer()` call from `INSPECT_READY` (Blizzard only calls
+  it on `InspectFrame_OnHide`), added `InspectFrame.unit` fallback matching in
+  `LibForeverInspector` for non-targeted party/raid inspects, and ensured `ADDON_LOADED`
+  registers inspect hooks and `InspectGuildFrame_Update` protection when `Blizzard_InspectUI` loads.
+
+- **IDE Lua Diagnostics `redundant-parameter` warning in `LibForeverInspector.lua`.**
+  `lib:GetInventoryItemMixin` called `C_Item.GetInventoryItemLink("player", slot)` when `C_Item`
+  was present. In standard Blizzard FrameXML (`PaperDollFrame.lua` and `InspectPaperDollFrame.lua`),
+  the engine exposes and uses the global `GetInventoryItemLink("player", slot)` across all
+  client versions (Classic Era through modern Retail). EmmyLua / WoW API IDE stubs do not define
+  a 2-argument signature on `C_Item`, raising a `redundant-parameter` diagnostic error.
+  Standardized to direct global `GetInventoryItemLink("player", slot)` without warnings or overrides.
+
+- **Localization audit & formatting token parity across all 11 locales.**
+  Audited all 11 locale files (`deDE`, `enUS`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`,
+  `ruRU`, `zhCN`, `zhTW`), verifying 100% key completeness (261/261 keys per locale) and
+  exact `%s`/`%d` format specifier parity with zero syntax errors or format mismatches.
+
+- **The 3D portrait blinked continuously on every unit-frame hover.** The 0.7.9
+  fix below removes the per-render strobe but does not remove the cause. When
+  `tooltipUnit` fails to resolve, `onTooltipSetUnit` called
+  `clearTooltipVisuals(tooltip)` with **no `keepModel` argument**, so it
+  defaulted to false and destroyed the PlayerModel on every such render. And the
+  `data.guid` fallback immediately above only ever tries **`mouseover`** and
+  **`target`** — so hovering a *unit frame*, which passes that frame's own unit
+  (`player`, `target`) rather than the mouseover, missed both and failed to
+  resolve. On Retail and WoW Forever the post-call runs before the client's own
+  `Show()`, which is when those reads are least reliable, so it failed on
+  nearly every frame-hover render. Live counters read **`portrait hide: 69`
+  against `unit renders: 70`**.
+
+  The tooltip still *looked* right throughout, because that path does not clear
+  the already-rendered lines: only the portrait was obviously wrong.
+
+  Fixed by comparing guids rather than guessing a unit token from one — the
+  portrait survives when the incoming guid matches the unit already rendered,
+  and still tears down when it differs or is absent. `OnTooltipCleared` /
+  `OnHide` remain the real recycle boundary and are unaffected.
+
+- **Stationary hover on PlayerFrame / TargetFrame constantly destroyed and reset tooltip visuals on Retail.**
+  In modern Blizzard FrameXML (`UnitFrame.lua:389` & `GameTooltip.lua:457`), `GameTooltip_OnUpdate`
+  runs every 0.2s (`TOOLTIP_UPDATE_TIME`) and calls `owner:UpdateTooltip()` (`UnitFrame_UpdateTooltip`).
+  Every 200ms, `UnitFrame_UpdateTooltip` calls `GameTooltip_SetDefaultAnchor` -> `tooltip:SetOwner(parent, "ANCHOR_NONE")`.
+  In the C++ client, `SetOwner` resets ownership and hides the tooltip, firing `OnHide`.
+  Next, `GameTooltip:SetUnit` calls `TooltipDataHandlerMixin:InternalProcessInfo` -> `self:ClearLines()`,
+  firing `OnTooltipCleared`. Finally, Blizzard calls `GameTooltip:Show()`.
+  Because TacoTip's `OnHide` and `OnTooltipCleared` hooks treated these transient 200ms internal refreshes
+  as genuine tooltip dismissals, they ran `clearTooltipVisuals` 5 times per second: resetting the border
+  to default, un-anchoring and hiding the 3D portrait, and hiding `TacoTipPowerBar`.
+  Fixed by implementing `isUnitFramePeriodicUpdate(tooltip)`, which checks whether `owner.UpdateTooltip`
+  and `owner.unit` match the currently rendered unit GUID. If true, the transient `OnHide` and
+  `OnTooltipCleared` skips visual destruction, preserving the 3D model, power bar, and border overlay rock-solid
+  with zero flicker. When the mouse genuinely leaves (`UnitFrame_OnLeave` sets `UpdateTooltip = nil`),
+  full teardown executes as intended.
+  Also corrected `applyTooltipBorderOverlay`'s texture guard from `~= "Interface\\Tooltips\\UI-Tooltip-Border"`
+  to non-empty border check, ensuring border alpha and tinting apply correctly to default tooltips.
+
+- **Auto-inspection restored with range, throttle, and cache safeguards.**
+  Automatic inspect queries on player mouseover and nearby party/raid members are restored
+  so GearScore, iLvl, and talents populate without requiring manual inspect. The previous
+  out-of-range "Cannot Inspect" sound/error and render spam are fully resolved:
+  - Range check via `CheckInteractDistance(unit, 1)` prevents inspecting targets beyond ~28 yards.
+  - 5-minute cache TTL (`CACHE_REFRESH_DELAY`) eliminates redundant inspections for cached players.
+  - 1.5s rate-limit throttling and queue ticker prevent server request spam.
+  - Active Blizzard `InspectFrame` is respected so manual inspects are never interrupted.
+
+- **A guildless inspected player rendered blank.** Verified on `origin/live`,
+  `Blizzard_InspectUI/Mainline/InspectGuildFrame.lua:22`:
+
+  ```lua
+  InspectGuildFrame.guildRealmName:SetFormattedText(INSPECT_GUILD_REALM, guildRealmName)
+  if (guildFactionName and guildNumMembers) then   -- these two ARE guarded
+  ```
+
+  `guildRealmName` is nil for any player with no guild and `SetFormattedText`
+  raises on nil, so the frame dies mid-update. **This is a Blizzard defect, not
+  ours — vanilla Retail does it too** — but auto-inspecting on hover made it a
+  constant occurrence. Wrapped so it cannot kill the frame. Only the modern
+  global form is wrapped; the Cata branch guards every value it formats.
+
+- **Another addon adding a tooltip line had that line erased.** This addon
+  remembers the line **index** of the guild and level lines it wrote
+  (`TacoTipGuildLineIndex = 2`, `TacoTipLevelColorLineIndex = 3`) and blanks
+  those indices on the next clear. Any addon that adds a line — Baganator's
+  tracked item amount, Details' item level — shifts every index after it, so the
+  remembered index then points at *their* line and the blank destroys it.
+  Reported as "item amounts break on the second mouseover". Fixed by remembering
+  the text written and blanking a line only while it still holds it.
+
+- **The harness could grade a tree other than the one under test.** All eight
+  harnesses pinned the literal `/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/`.
+  Relocating the addon, corrupting every Lua file in the copy and running the
+  copy's own harness reported **"50 passed, 1 failed"** — 50 of 51 invocations
+  green with every production file a syntax error, because they loaded the
+  pristine original at that literal path. Only `textures_test` failed, because it
+  was the sole harness deriving its own location. All eight now derive the root
+  from `arg[0]` through `Tests/harness/root.lua`, which errors loudly if the root
+  has no `textures.lua` in it. The same corrupted copy now reports **5 passed, 46
+  failed**.
+
+### Fixed
+
+- **The 3D portrait strobed on Retail and WoW Forever only.** Root cause, read
+  out of the client's own FrameXML rather than inferred: `TooltipDataHandler.lua`
+  runs `ProcessLines()`, then `tooltipPostCall`, then `ProcessTooltipPostCalls`,
+  and only *then* `self:Show()`. Our entire unit post-call handler therefore
+  executes against a tooltip that has never been laid out or presented. Classic
+  has no such ordering — `OnTooltipSetUnit` is an engine-fired script with
+  nothing wrapped around it — which is exactly why this never appeared on any
+  Classic client. Two cosmetic defects became the visible bug:
+  - The portrait set its alpha from `tooltip:GetAlpha()` on every render, and a
+    permanent `OnUpdate` polled the same value every 0.05s. On the modern pair
+    that read sampled a frame Blizzard had not shown yet, so the portrait was
+    assigned an unusable value and then walked back up by the poll — the drop,
+    and the slide back into frame. **The alpha slave and the `OnUpdate` are both
+    gone.** The portrait keeps its own alpha of 1.
+  - The anchor chose its left/right side from `tooltip:GetRight()` against the
+    screen width, then `ClearAllPoints()` and re-anchored on *every* render. Off
+    an unlaid-out frame `GetRight()` is 0, so the side-flip decided from garbage
+    each time. **The side is now cached** and recomputed only when the portrait
+    scale changes or the tooltip is genuinely shown. An unshown frame resolves
+    to the correct default side, so the first anchor is still right.
+
+- **28 fabricated texture paths removed from the border and background lists.**
+  This is a correction of a mistake shipped in `0.7.9` mid-session, recorded here
+  rather than quietly reverted.
+
+  An earlier pass in this same release added `Interface\BackdropTextures\*` paths
+  and made `UI-Backdrop-Edge` the modern default, on the claim that the Classic
+  family is built around `UI-Tooltip-Border` while Retail and WoW Forever are
+  built around the `BackdropTextures` set. **The mechanism was real; the art
+  paths were invented.** There is no `BackdropTextures` directory on Retail at
+  all.
+
+  Verified against `Gethe/wow-ui-textures`, the art mirror that sits beside
+  `wow-ui-source`: the path returns **404 on live**, while `Tooltips/` holds 35
+  files there and 23 on `classic`, so the absence is real rather than an
+  incomplete mirror. `BackdropTextures` also appears in zero commits across the
+  whole `wow-ui-source` history, on all seven branches. Nine fabricated border
+  entries and nineteen fabricated background entries have been removed.
+
+  **Why this mattered enough to catch:** a wrong texture path does not raise. It
+  renders a missing-texture placeholder, so the defect would have looked broken
+  while reporting nothing — the worst failure mode available.
+
+- **Three real Retail tooltip borders added.** Verified present in the `Tooltips/`
+  art mirror on live but **absent on classic**: `UI-Tooltip-Border-Azerite`,
+  `-Corrupted` and `-Maw`. These are the texture-path equivalents of Blizzard's own
+  modern `TooltipAzeriteLayout` / `TooltipCorruptedLayout` / `TooltipMawLayout`
+  NineSlice layouts. All three are 256×32, so each now declares its own
+- **Expanded verified Blizzard native borders and removed `None`.** Added official FrameXML borders from `Blizzard_SharedXML/Backdrop.lua`:
+  `UI-Arena-Border` (edgeSize = 32), `UI-SliderBar-Border` (edgeSize = 8), `UI-Toast-Border` (edgeSize = 12),
+  `TextPanel-Border` (edgeSize = 16), and `UI-TutorialFrame-CalloutGlow` (edgeSize = 16). Removed the non-texture placeholder `None`
+  from border selections and resolution paths.
+
+- **The default border is now resolved in one place** rather than from a literal
+  repeated across three files that had to be kept in step by hand.
+  `TT:GetDefaultTooltipBorder()` in `textures.lua` is the single source and
+  `GetResolvedTooltipBorder` calls it. The value is
+  `Interface\Tooltips\UI-Tooltip-Border`, confirmed present on both the retail
+  and classic art mirrors and byte-identical between them (128×16) — one path
+  serving all five clients. It is a **fallback**, not a stored preference: a
+  player who has chosen a border keeps it on every client.
+
+  It also repairs a defect earlier releases described as a shipped default: the
+  configured value `"Tooltip enlarged"` matches **no entry** in
+  `TT.builtinTooltipBorders`, so it has always fallen through to this fallback
+  rather than naming anything.
+
+- **The default border edge size moves from 14 to 16.** The verified tooltip
+  border is 128×16, so it slices cleanly at 16. The edge-file spec requires the
+  slice size to be a multiple of 8, and 14 is not — which is what produced a
+  slightly ragged edge. `TT:GetResolvedTooltipBorderEdgeSize()` now resolves it,
+  preferring a choice's own declared size over the player's global setting. A
+  hand-edited fractional saved value is now floored: `SafeSanitizeConfig` range-
+  checks `tooltip_border_edge_size` but never rounded it, so a saved `16.5` passed
+  both checks and reached `SetBackdrop`, whose edge sizes must be whole pixels.
+
+  > **Verification limits, stated rather than glossed.** The art mirror's `live`
+  > branch was last committed 2022-08-20 (9.2.7), while the FrameXML mirror is
+  > current. The existence proofs are therefore directly verified as of 9.2.7,
+  > with current-day support being that retail addons pushed in September 2026
+  > still reference `UI-Tooltip-Border`. **WoW Forever has no art mirror at all**
+  > (the mirror carries only `live`/`ptr`/`beta`/`classic`), so its art is
+  > inferred from shared code, not observed. Every *other* directory named in the
+  > border and background lists — DialogFrame, CharacterFrame, Covenant, and so
+  > on — is **also unverified**; only the `Interface\Tooltips\` family above was
+  > actually checked. Treat the rest as candidates, not confirmed paths.
+
+- **The portrait side was frozen for the life of the `GameTooltip` frame.** The
+  0.7.9 fix above caches the left/right decision in tooltip state and recomputes
+  it only when the cache is absent, the scale changed, or the frame is shown and
+  not yet anchored — and it latches `portraitAnchored` to true. Those two fields
+  were written in exactly one place and read in exactly one place, and *nothing
+  ever cleared them*: `clearTooltipVisuals` tore down timers, class colour, border,
+  guild and level lines, portrait, spec icon, power bar and padding, and not the
+  side cache. So the very first hover decided the side until `/reload`. With
+  `anchor_mouse` on, hovering a unit on the far side of the screen left the
+  portrait hanging off the wrong edge.
+
+  Fixed by resetting the cache on the tooltip **recycle** boundary. That word is
+  load-bearing and the first attempt got it wrong — see *Wrong turns* below.
+
+- **`tooltip_max_width` never applied to item tooltips.** `applyTooltipMaxWidth`
+  had exactly one call site, inside `onTooltipSetUnit`. `itemToolTipHook` applied
+  the font, the backdrop and the border overlay but not the width cap, so the one
+  tooltip type that reliably carries a long line was the one type the option did
+  nothing for. The item path now caps too.
+
+- **Per-render change guards.** Five writes happened on every render whose result
+  was already on the frame. Each now compares what it last applied and skips an
+  unchanged write, mirroring the idiom `applyTooltipMaxWidth` already used for
+  the line width cap and the one `SetMinimumWidth` already used for the tooltip's
+  minimum width:
+  - `applyTooltipFonts` called `SetFont` on all twenty pooled lines every render,
+    through `callLabeled` — a widget lookup, a `type()` and a `pcall` per call —
+    and on the item path once more per hover. It also runs *after* the `SetText`
+    loop, so each call invalidated the text measurement that loop had just
+    produced. Now guarded on `line._tacoTipFont` / `_tacoTipFontSize`; a line the
+    pool has just handed out carries nil and is picked up on the next render with
+    no invalidation hook.
+  - `applyTooltipBackdrop` rebuilt a backdrop info table *and* a nested insets
+    table on every render, and `SetBackdrop` reassigns the backdrop, re-applies
+    both colours and re-tiles the edge texture. The insets table is now a module
+    constant, and a signature of exactly what the active branch draws
+    (`edgeFile` + `edgeSize`, plus `bgFile` only on the legacy branch that
+    actually draws a background) skips the call. `tooltip_border_alpha` is
+    deliberately *not* in the signature: it is applied by `SetBackdropBorderColor`
+    in `applyTooltipBorderOverlay`, a different call on a different path, so an
+    alpha change must not drag a re-tile along with it.
+  - The power bar re-asserted both of its anchors every render; the tooltip's
+    padding was re-set every render (`SetPadding` re-lays out the tooltip); the
+    clamp insets were set with no guard at all, not even a capability check; and
+    the wide-style continuation line was re-anchored every wide render. All four
+    now compare.
+  - `PowerBarColor[power] or {}` allocated a five-field table on every power-bar
+    update — on `UNIT_POWER_UPDATE`, `UNIT_MAXPOWER`, `UNIT_DISPLAYPOWER` and
+    once per render — and dropped it on the next line. It was the last bare table
+    literal in a pipeline otherwise built on pooled buffers. Replaced by a shared
+    module-local constant; the fallback colour is unchanged, including the `or 1`
+    on blue that makes an unkeyed power type render blue rather than black.
+
+### Wrong turns
+
+Recorded because each of these cost real time and each would have looked like a
+passing test.
+
+- **The portrait fix was declared done on a test that could not see the bug.**
+  The suite reported "anchored once across 5 re-renders" as green while the
+  portrait blinked on every unit-frame hover, because
+  `tooltip_test.lua:2256` pins `GT.__shown = true` for the modern block — the one
+  value the modern client does *not* have at post-call time. The portrait was
+  still destroyed on ~99% of renders; the test simply never drove the render
+  that destroys it. Re-measuring in a live client is what caught it.
+
+- **The existing test suite explicitly dismissed the case that broke.** The
+  data-gated resolution test asserted *"the realistic case is a hover, where
+  `data.guid` is the mouseover"* — so every modern test drove `GetUnit` and
+  `TooltipUtil.GetDisplayedUnit` to nil and asserted nothing about the teardown
+  that follows. A unit frame passes its *own* unit, not the mouseover. The
+  assumption was reasonable and wrong, and it is the reason the path had no
+  coverage.
+
+- **`lastInspectGUID` was declared inside the function it was meant to persist
+  across.** A dedupe variable declared in `onTooltipSetUnit` is reset to nil on
+  every call, so it deduplicated nothing — the change looked right and was
+  inert. `luacheck` caught it as *"value assigned to variable is unused"*, which
+  is the only reason it was caught before shipping. The dedupe was then made
+  moot by removing auto-inspect entirely.
+
+- **A first draft of the inspect guard referenced an undefined global and
+  wrapped the wrong function.** It guarded both the modern global and the
+  Classic mixin but called the global from the mixin branch. Rewritten to wrap
+  only what exists — and only the modern form, since the Cata branch already
+  guards every value it formats.
+
+- **A side-by-side simulation of the two anchor implementations produced
+  identical numbers for both, which was the tell that it was wrong.** The state
+  was being reset per *render* instead of per *hover*, destroying the very cache
+  under test. Discarded and rewritten. The portrait diagnosis does not rest on
+  that simulation — it rests on `TooltipDataHandler`'s own source, and on live
+  counters.
+
+- **A control assertion was written for the Baganator fix and then removed.**
+  The companion check — that our *own* line still gets cleared — is not
+  observable in the current mock: the line's `__text` reads back as a table for
+  every line regardless of how it was set. Shipping it would have been the
+  eighth instance of a green assertion that cannot fail for the right reason, so
+  it was deleted and the gap documented instead. That half of the fix is verified
+  by reading and by in-game test, not by the harness.
+
+- **A revert experiment silently tested the wrong tree.** Because the harnesses
+  hardcoded an absolute path, a relocated copy graded the original and reported
+  the *same* failures as the fixed run — which read initially as "these
+  assertions have no teeth". They did have teeth; the experiment was measuring a
+  different checkout. This is the same root cause as the harness fix above, and
+  it was found twice before it was understood.
+
+- **A revert script that asserted on a stale copy produced a green revert that
+  never reverted anything.** The bite-check for the edge-size memo was run by
+  rewriting `options.lua` through a scripted set of substitutions. Three
+  consecutive attempts failed on an `AssertionError` *after* some substitutions
+  had already been applied in memory, and because the write is the last statement
+  the file on disk was untouched — so the "reverted" run reported the same eight
+  failures as the fixed run, and for the wrong reason. The first honest signal was
+  `luacheck` reporting the memo slots as `never accessed`, which is what a real
+  revert looks like. **A revert is only evidence once the static analyser agrees
+  the code is gone**, so the check now runs `luacheck` before trusting the
+  output.
+
+- **The portrait side cache was first reset unconditionally inside
+  `clearTooltipVisuals`, and that put back the bug 0.7.9 had just fixed.**
+  `clearTooltipVisuals` is not the recycle boundary it looks like:
+  `onTooltipSetUnit` calls it at `:1392` on *every* successful unit render, not
+  only on a recycle. So an unconditional reset cleared the latch on every
+  re-render as well, and since a GearScore item load re-drives the render many
+  times for one character, the portrait went back to re-anchoring per render.
+  The existing `portrait is anchored once across 5 re-renders` assertion caught it
+  on the modern pair — `anchored 3 times across 5 renders` — which is the fifth
+  time in this project that a green suite measured nothing. The reset is now
+  keyed on `keepModel`, which the addon already computes for exactly this
+  distinction: true means "same character, re-rendered" (a completing item load,
+  a border refresh) and is the one case where the layout has not changed; false
+  means a genuine recycle or a genuine unit change, and both are a new layout.
+
+- **The mock's `ClearLines` destroyed the line pool, which made FIX 2's guard
+  untestable rather than merely untested.** It was modelled as `w.__lines = {}`,
+  so every line the addon saw on every render was a brand-new `FontString` with
+  nothing remembered. A per-line change guard could then never skip anything — it
+  was always looking at a first render — and the mock made "apply it every
+  render" look like the only possible behaviour. The real client creates the line
+  `FontString`s once and reuses them, which the addon's own comment at
+  `main.lua:101` states outright ("the pooled lines are reused across hovers").
+  The mock now keeps the pool. This also means a render that stops early now
+  leaves its state on the frame, which exposed a self-sustaining failure: clearing
+  a tooltip blanks lines 2 and 3 on entry, an early return leaves them blank, and
+  the *next* render then trips the "player with no level line" guard at `:1429`
+  and stops early too. The new tests therefore re-seed the tooltip when they hand
+  it back.
+
+- **Five mock methods the new tests count were `function() end`.** `SetFont`,
+  `SetBackdrop`, `SetPadding`, `SetClampRectInsets` and `SetStatusBarColor` all
+  discarded their arguments and returned nothing observable, so an addon that
+  re-applied the same font forty times a render and one that set it once looked
+  identical. This is the same class of defect as the hardcoded `GetAlpha` above,
+  and it is why none of the five had a test. All five now count, and the four that
+  matter record their arguments as well, so a guard can be shown to have *applied*
+  something rather than skipped everything.
+
+- **A fixed KB threshold for the power-bar allocation check passed on two
+  interpreters and failed on the third.** Identical code measured 3.44 KB on
+  `lua5.1`, 2.19 KB on `lua5.4` and 2.30 KB on `luajit` over 20 updates, and the
+  `luajit` figure is mostly one-off JIT compilation rather than per-update cost —
+  so the assertion was a coin flip there. Subtracting a hand-written control loop
+  fixed most of it but not all: ~0.10 KB per update of interpreter overhead
+  survived, because the control does not make the same calls and so is not
+  equivalent work.
+
+  What works is measuring the **same closure twice and changing only the power
+  token**. Token `0` is a key of the mock's `PowerBarColor`, so the lookup
+  succeeds and the old `or {}` never runs; the probe token is not a key, so it
+  runs once per update. Every other call is identical, on the same interpreter, in
+  the same run, so the difference between the two is the fallback expression and
+  nothing else.
+
+  **With the `or {}` restored, that check fails 4/4 on `lua5.1` and 4/4 on
+  `lua5.4`, and passes 4/4 on `luajit`.** LuaJIT's JIT removes the table before it
+  is allocated — constructed, read three times and dropped inside one basic block,
+  so it never escapes — and no assertion can see a defect the interpreter has
+  already optimised away. `lua5.1` is what WoW ships, so that is the measurement
+  that counts. The check is honest about this rather than silently weak: its
+  detail string names the interpreter when the reference allocation is itself
+  invisible, and the behavioural half of the pair (an unkeyed power token still
+  resolves to the fallback colour) runs everywhere.
+
+- **The `unpack` fix from earlier in this release, and what it cost to find.**
+  Recorded in full under *Testing* below.
+
+- **`next()` is nil in the offline harness, and a diagnostic reached for it.**
+  A debug print added while diagnosing why the Pawn control assertion would not
+  pass used `next(REALG.PawnCommon.Scales)` to echo the registered scale name, and
+  took the whole harness down with `attempt to call global 'next' (a nil value)`.
+  The same rule that forbids `next()` in addon diagnostics applies to the harness:
+  it is a nil in the sandbox, and a diagnostic must never be the thing that fails.
+  `rawget` on the known key is the correct accessor here.
+
+### Testing
+
+- **The harness resolved its own root, and until 2026-10-10 it did not.** All
+  eight harnesses pinned the literal path `/home/sam/TacoTip-Gearscore-TBC/…`, so
+  a relocated copy, worktree, CI runner or second machine graded the *original*
+  checkout. The corrupted-copy proof is in *Fixed* above: 50 of 51 invocations
+  green with every production file a syntax error, and 5 of 51 after the fix.
+  All eight now share `Tests/harness/root.lua`, which derives the root from
+  `arg[0]` and raises if that root has no `textures.lua` in it — a bad path must
+  fail loudly, never silently grade a neighbour. Re-running the suite from the
+  addon directory still resolves to `.` and still passes.
+
+- **Three new assertions, each reverted to confirm it fails before being
+  restored.** A frame hover whose unit cannot resolve must not tear the portrait
+  down (red at `portrait hide went 10 -> 11` on FOREVER and RETAIL); hovering a
+  player must never call `NotifyInspect` (red at *"called 10 time(s) across 10
+  renders of 2 different players"*); and a line at a remembered index that is no
+  longer ours must not be touched by the clear. The inspect one required
+  instrumenting `NotifyInspect` with a counter, because the mock discarded it —
+  an addon that inspected every player was indistinguishable from one that
+  inspected none.
+
+- **The suite now runs under three interpreters, and the third one found a real
+  test defect.** `bash Tests/harness/run_all.sh` defaults to `lua5.1`, which is
+  what WoW ships and what the addon targets. It also passes under `lua5.4` and
+  under `luajit`; `LUA=<interp>` selects one. The 25 `lua5.4` failures that
+  prompted this were one cause: `unpack` is a global in 5.1 and moved to
+  `table.unpack` in 5.2, so the bare global is nil on 5.4. Nine call sites across
+  five harness files, all of them the `xpcall` trampolines that replay saved
+  varargs and the two mock colour getters that return a triple. It is not an
+  addon bug — `unpack` appears nowhere in the shipped files. The signature is the
+  dangerous part: a nil `unpack` there throws inside the trampoline, `safeCall`
+  swallows the error, and the pipeline simply emits no lines, so a dozen
+  assertions fail on an empty tooltip instead of naming the cause.
+
+  `luajit` then earned its place by refusing a GC-delta threshold that `lua5.1`
+  and `lua5.4` both accepted; that is recorded under *Wrong turns*.
+
+- **The border-thickness slider silently did nothing for three of the borders.**
+  `GetResolvedTooltipBorderEdgeSize` returns a choice's own `edgeSize` *before* it
+  ever reads `tooltip_border_edge_size`, and the three themed 256×32 borders
+  declare 32. The slider stayed enabled and still showed the player's stored
+  value, so a drag did nothing and nothing said why. It now disables itself for a
+  border that carries its own geometry, and shows the declared size instead of the
+  ignored setting.
+
+- **The border-thickness help still claimed a 14px default.** 0.7.9 moved the
+  default 14 → 16 (14 is not a multiple of 8, and the default border is 128×16),
+  but both the hardcoded fallback in `options.lua` and the shipped enUS string kept
+  saying 14px, so the slider tooltip lied to every user. Only the two strings that
+  actually state a default needed changing — the other nine locales describe the
+  slider without naming one.
+
+- **Pawn made two guaranteed-to-fail calls per item when no scale was
+  available.** `pawnLoadedScaleName` returns nil precisely when neither provider
+  library has a scale for that class/spec, and that is exactly the state in which
+  `GetItemScore` then built a guessed `"MrRobot":CLASSN`, called Pawn, failed, and
+  built `"Classic":CLASSN` to call again: ~36 `pcall`ed calls per hover, all
+  returning 0. It re-introduced the guessed-name pattern the helper exists to
+  eliminate, and re-opened the `VgerCore.Fail` chat-spam path its own comment
+  describes. `GetScore` now skips the call when there is no proven scale name.
+  Behaviour-identical — both attempts already returned 0, and the tooltip gates on
+  `pawnScore > 0`.
+
+### Performance
+
+Three allocation leaks on the tooltip hot path and one in the settings panel, all
+of which the zero-allocation rule in `AGENTS.md` already forbids. Costs below are
+measured in the offline harness, where the per-hover numbers are exact rather than
+inferred.
+
+- **`GetResolvedTooltipBorderEdgeSize` rebuilt and re-sorted the whole border list
+  on every mouseover.** Its four sibling resolvers are memoised; this fifth one
+  was not. It called `GetTooltipBorderChoices()` inside a `pcall` closure each
+  time — allocating a `seen` table, 55 choice tables, 55 `string.format` preview
+  strings, then sorting 55 entries. ~70 µs and ~110 allocations per hover, plus
+  the closure. It also fired on every widget hover in the settings panel, because
+  `showHoverTooltip` drives the real `GameTooltip`. The declared edge size is a
+  property of the border *choice*, so it is now memoised against the resolved
+  border path. The *config* fallback is deliberately never cached, which is what
+  keeps the thickness slider live.
+
+- **Every options interaction rebuilt and re-sorted all four media lists.**
+  `panel.Refresh` on the Tooltips page called all four choice builders
+  unconditionally; only the resolved *values* were memoised, never the lists.
+  ~207 table allocations plus ~191 `string.format` per Refresh, fired by ~16
+  different controls — a click or drag-release hitch. The lists are now memoised
+  behind their own invalidation point, which meant splitting
+  `InvalidateResolvedMediaCache` in two: an options interaction clears only the
+  resolved values, while a SharedMedia registration still clears the lists.
+  Handing out one shared instance is safe — `dropDown:SetValues` only replaces its
+  reference, and `SetValue` and `toggleMediaPicker` only read.
+
+- **One options refresh repositioned the overlays eight times.** The
+  Character/Inspect page `Refresh` calls `setOffsetValue` eight times and each
+  call ended in `refreshOverlayPositions()`, so one refresh cost 8 × (8
+  `RefreshPosition` + a GearScore recompute). `TT:RefreshOptionsUI()` is what
+  `CreateMover`'s `OnDragStop` calls, and those movers are parented to
+  `PaperDollFrame`/`InspectFrame` — so the `IsShown()` guards passed exactly when
+  the paper doll was open. **Releasing an overlay drag ran 8 full inventory walks
+  (≈144 `GetItemInfo` calls) and 64 `SetPoint` calls** on the frame the player was
+  waiting for. `setOffsetValue` takes a `silent` flag and the bulk refresh
+  repositions once.
+
+- **`TT:GetDefaults()` allocated a 60-key table per Tooltips-page refresh**, purely
+  to read one field. The defaults are now a file-local `DEFAULTS` table shared by
+  `SafeSanitizeConfig` and the Refresh. `GetDefaults()` hands out a **shallow
+  copy**, because `resetCfg` assigns its result straight to `TacoTipConfig` and
+  then writes `conf_version` into it — a shared table would let a reset mutate the
+  defaults themselves. A regression assertion pins that.
+
+- **The media texture lists are being pruned in a separate change**, not here. The
+  audit of all 191 border and background entries (31 confirmed, 92 refuted, 68
+  unverifiable) and the removal of the remaining fabricated paths land on their own
+  so this performance work can be read, reverted and re-measured independently.
+
+### Added
+
+- **`/tt diag` now reports what an error handler structurally cannot.** BugSack
+  and BugGrabger only ever see *raised* errors. The failures that cost the most
+  time in this project were the opposite kind — no error, a plausible tooltip,
+  and a feature quietly absent or pointed at the wrong thing. The diagnostic now
+  prints a **PROBLEMS** section listing states where the addon is internally
+  inconsistent: client detected as *both* Retail and WoW Forever or as *neither*
+  (they share `WOW_PROJECT_MAINLINE`, so only the interface band separates them);
+  a border setting that matches no entry, printing what it is being replaced by; a
+  feature enabled while its backing API is absent; no unit delivery path hooked;
+  and `GameTooltip.SetBackdrop` unexpectedly existing, which would silently
+  activate the legacy full-backdrop branch. Read-only — it creates no widget and
+  calls no setter.
+
+- **`/tt diag` event counters**, cumulative since load: unit renders, GearScore
+  callbacks split into re-entrant and wrong-unit, portrait hide, portrait
+  destroy, portrait re-anchor. These exist because the portrait flicker was a
+  question about how *often* code runs, and no amount of reading settles call
+  frequency. Incremented inline on hot paths; cheap enough to leave in.
+
+### Changed
+
+- **`/tacotip reset` now resets appearance.** `resetCfg` replaced the whole config
+  table and invalidated one dependent, but not the four memoised resolved media
+  values, so the two reset paths disagreed: the reset **button** went on to call
+  `RefreshOptionsUI` → `modernGetConfig` (which invalidated), while
+  **`/tacotip reset`** only refreshed the root page. A player who picked a custom
+  font, border, background or bar texture and typed `/tacotip reset` kept all four
+  applied for the rest of the session. The invalidation now sits in `resetCfg`
+  itself, at the choke point, rather than depending on which caller followed.
+
+- **A test defect that made the portrait fix unprovable.** The harness's mock
+  widget hardcoded `GetAlpha` to return 1, so the "portrait alpha is not slaved"
+  assertion passed *unconditionally* — the slave copied 1, and 1 was the expected
+  value. The first bite-check of that fix therefore failed to bite. `GetAlpha`
+  now returns the widget's own `__alpha` and `SetAlpha` writes it, and both
+  portrait bite-checks now fail correctly when reverted (Retail fails; Classic
+  Era stays green through both).
+- Three new modern-only assertions cover the portrait: alpha is 1 while the
+  tooltip is at 0.25, anchored at most once across 5 re-renders, and no
+  `OnUpdate` registered during re-renders. The last is asserted by instrumenting
+  `SetScript` rather than reading `GetScript("OnUpdate")` back, because the mock
+  `PlayerModel` carries the parent tooltip's whole script table and so reports
+  Blizzard's template scripts rather than what the addon installed.
+
+- **Nine assertions across `options_test` and `settings_test`**, all reverted to
+  confirm they fail before being restored: the edge-size lookup builds the border
+  list once instead of 52 times over 51 calls; the resolved value is still 32 for
+  a themed border (so the count assertion cannot be satisfied by returning a
+  constant); a fractional saved edge size floors to 16; `/tacotip reset`
+  invalidates the media cache; one refresh repositions the overlays once instead
+  of eight times; 50 refreshes rebuild none of the four media lists; the
+  thickness slider disables itself for a border that carries its own size; no
+  locale describes the thickness default as 14px; and `GetDefaults` still returns
+  a fresh table.
+
+  Three of these needed the harness corrected, and in all three cases the harness
+  was wrong rather than the code:
+
+  - **Counting calls cannot test a memo.** The first draft wrapped
+    `GetTooltipBorderChoices` and incremented a counter — which reports 51 whether
+    or not the memo works, because the call still happens either way. It now counts
+    *distinct tables returned*, which is the rebuild count.
+  - **A control assertion that could not fail.** The Pawn check needs to prove two
+    things: that no Pawn call happens when no scale is available, and that the
+    inventory *is* walked when one is. The second half failed for two wrong
+    reasons before it meant anything. The registered scale was named
+    `"MrRobot":WARRIOR1` while the mocked client resolves class `Warrior` and spec
+    `3`, so nothing matched; and the `PawnGetSingleValueFromItem` stub returned
+    three values where `pawn.lua` reads the **second** return, so every score read
+    0 even once the name matched. Both were harness bugs — the stub had the wrong
+    arity, and the control ignored the client's own resolution.
+  - `settings_test` read the declared-settings list out of the `GetDefaults`
+    source body. That body is now a six-line copy loop, so the sweep found no
+    keys at all and reported `locale_override` as undeclared. It now reads the
+    `DEFAULTS` literal instead. The intent of the block is unchanged.
+
+### Known limitations
+
+- **Retail and WoW Forever are under active in-game test as of 2026-10-10.**
+  Classic Era, TBC Anniversary and WotLK Titanforge are confirmed working in a
+  live client. The three fixes above are verified by reading, by the harness and
+  by bite-check, but the Retail/Forever half of each still wants a live pass:
+  the portrait holding still on a unit-frame hover, guild lines clearing on the
+  next hover (the control the mock could not observe), and Baganator's tracked
+  item amount surviving a hover.
+- **`tooltip_background_texture`, its colour and its alpha are dead on all five
+  clients.** `isBorderOnly` is set on every client that has a `NineSlice` child,
+  which is all of them, and `SetBackdropColor` is gated on `not isBorderOnly`.
+  The background dropdown still ships. This is a shipping decision — wire it to
+  the NineSlice path or remove the controls — not a code defect to patch.
+- **The Baganator line-ownership fix has no harness control.** The mock's tooltip
+  lines read their text back as a table rather than a string, so ownership cannot
+  be observed from the value. The "does not touch a line we no longer own" half
+  is asserted; the "still clears our own line" half is not, and is carried as an
+  in-game check.
+- **`load_test.lua` still models the Classic family as having no `NineSlice`**,
+  which the FrameXML contradicts, and pins that `Classic` keeps a legacy
+  `SetBackdrop` fallback, which no client has. So the suite still cannot catch a
+  Classic *border* regression, and every one of the 68 tooltip assertions runs
+  the legacy branch no real client takes. **Downgraded from a release blocker**:
+  the Classic family is confirmed working in a live client, so this is a test
+  integrity note rather than a shipping risk. The `isBorderOnly` path still has
+  no coverage on any client.
+- Three advertised border choices are owned by **Details!** and so are unavailable
+  to players who do not have that addon installed.
 
 ---
 

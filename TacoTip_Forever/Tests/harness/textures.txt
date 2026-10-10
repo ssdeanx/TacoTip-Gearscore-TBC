@@ -1,0 +1,274 @@
+# Reviewed texture-path allow-list for TacoTip's built-in media lists
+# (TT.builtinTooltipBorders, TT.builtinTooltipBackgrounds,
+#  TT.builtinStatusBarTextures in textures.lua).
+#
+# WHAT THIS FILE IS FOR
+#
+# Every path below was classified against Gethe/wow-ui-textures -- the client
+# art mirror that sits beside wow-ui-source and whose repo root IS the client's
+# Interface folder. wow-ui-source itself holds 4 art files out of 4,049 and
+# cannot answer art questions; this mirror can. The branch dates are old (live
+# = 9.2.7, classic = 1.13.5), so it is calibrated rather than authoritative:
+# 96% of the non-addon paths origin/live FrameXML references resolve on live,
+# 95% for classic_era against classic. ABSENCE inside a directory that IS
+# present is therefore real evidence; absence of the whole directory is not.
+#
+# A second check asked whether any wow-ui-source branch mentions the name at
+# all, so a renamed-but-real file is never pruned on a mirror gap alone.
+#
+# WHAT THIS FILE IS *NOT*
+#
+# This list is NOT a live client check, and the harness cannot make it one. An
+# offline Lua process has no way to ask a real client whether a texture file
+# exists; the only thing that can be verified here is membership in this
+# reviewed list. A path here can still be wrong for a client that predates or
+# postdates the mirror. What the guard DOES catch is the actual failure mode:
+# someone adding a path nobody ever audited, and the fabricated-name class
+# returning because it looked plausible.
+#
+# HOW IT IS ENFORCED
+#
+# Tests/harness/textures_test.lua reads textures.lua, extracts every path in
+# the three builtin lists, and fails naming any path not listed below. Adding
+# a path to textures.lua therefore requires adding it here, which is where the
+# review decision gets recorded. The check runs the other way too: a path left
+# here but absent from textures.lua is a stale entry and also fails, so
+# adding and removing a path are equally deliberate acts.
+#
+# Format: blank lines and lines beginning with # are ignored, one path per line,
+# in the plain WoW form Interface\\Dir\\File with a single separator. The guard
+# compares separator- and case-insensitively, because textures.lua writes the
+# separator doubled (Lua source) and because at least one genuine entry,
+# Interface\\CHARACTERFRAME\\UI-Party-Border, is not case-canonical.
+#
+# Audited for release 0.7.9. 191 entries were classified: 31 confirmed, 92
+# refuted and deleted, 68 unverified and kept. A 0.7.9 pass also removed 3
+# third-party Details borders on policy, not on art evidence.
+#
+# Of the 96 paths that survive in textures.lua, 95 are distinct: 30 are
+# verified-present (31 confirmed entries, but Interface\Buttons\WHITE8X8 is
+# listed in both the status bar and the background list), 64 are unverified,
+# and 1 is the sentinel below.
+
+# ===========================================================================
+# VERIFIED-PRESENT  (30 distinct) -- an art file of this name exists in the
+# mirror, on the live branch, the classic branch, or both. These are the only
+# paths that may be described as confirmed.
+# ===========================================================================
+
+# Interface\AchievementFrame
+Interface\AchievementFrame\UI-Achievement-Parchment-Horizontal
+Interface\AchievementFrame\UI-GuildAchievement-Parchment-Horizontal
+Interface\AchievementFrame\UI-Achievement-WoodBorder
+
+# Interface\ArenaEnemyFrame
+Interface\ArenaEnemyFrame\UI-Arena-Border
+
+# Interface\Buttons
+Interface\Buttons\WHITE8X8
+Interface\Buttons\UI-SliderBar-Border
+
+# Interface\CHARACTERFRAME
+Interface\CHARACTERFRAME\UI-Party-Border
+
+# Interface\CastingBar
+Interface\CastingBar\UI-CastingBar-Border
+Interface\CastingBar\UI-CastingBar-Spark
+
+# Interface\DialogFrame
+Interface\DialogFrame\UI-DialogBox-Background
+Interface\DialogFrame\UI-DialogBox-Background-Dark
+Interface\DialogFrame\UI-DialogBox-Gold-Background
+Interface\DialogFrame\UI-DialogBox-Header
+Interface\DialogFrame\UI-DialogBox-Border
+Interface\DialogFrame\UI-DialogBox-Gold-Border
+
+# Interface\FrameGeneral
+Interface\FrameGeneral\UI-Background-Marble
+Interface\FrameGeneral\UI-Background-Rock
+
+# Interface\FriendsFrame
+Interface\FriendsFrame\UI-Toast-Border
+
+# Interface\FullScreenTextures
+Interface\FullScreenTextures\LowHealth
+Interface\FullScreenTextures\OutOfControl
+
+# Interface\Glues
+Interface\Glues\Common\TextPanel-Border
+
+# Interface\Minimap
+Interface\Minimap\UI-Minimap-Background
+
+# Interface\PaperDollInfoFrame
+Interface\PaperDollInfoFrame\UI-Character-Skills-Bar
+
+# Interface\RaidFrame
+Interface\RaidFrame\Raid-Bar-Hp-Fill
+
+# Interface\TabardFrame
+Interface\TabardFrame\TabardFrameBackground
+
+# Interface\TargetingFrame
+Interface\TargetingFrame\UI-StatusBar
+Interface\TargetingFrame\UI-TargetingFrame-BarFill
+
+# Interface\Tooltips
+Interface\Tooltips\UI-Tooltip-Background
+Interface\Tooltips\ChatBubble-Backdrop
+Interface\Tooltips\UI-Tooltip-Border
+Interface\Tooltips\UI-Tooltip-Border-Azerite
+Interface\Tooltips\UI-Tooltip-Border-Corrupted
+Interface\Tooltips\UI-Tooltip-Border-Maw
+
+# Interface\TutorialFrame
+Interface\TutorialFrame\TutorialFrameBackground
+Interface\TutorialFrame\UI-TutorialFrame-CalloutGlow
+
+# ===========================================================================
+# UNVERIFIED  (64) -- the parent directory is absent from the mirror, so there
+# is NO evidence either way. These are NOT confirmed and must never be
+# presented as verified. They are kept because deleting on a guess is the
+# error that created this list; several are Retail-era frames the Classic
+# mirror predates. Re-audit them whenever the mirror is refreshed.
+# ===========================================================================
+
+# Interface\Aidan
+Interface\Aidan\Aidan-Background
+
+# Interface\Archaeology
+Interface\Archaeology\Archaeology-BarFill
+Interface\Archaeology\Archaeology-Background
+Interface\Archaeology\Archaeology-Border
+
+# Interface\Artifact
+Interface\Artifact\Artifact-BarFill
+Interface\Artifact\Artifact-Background
+Interface\Artifact\Artifact-Border
+
+# Interface\Bank
+Interface\Bank\Bank-Background
+Interface\Bank\Bank-Border
+
+# Interface\BattlePet
+Interface\BattlePet\BattlePet-BarFill
+Interface\BattlePet\BattlePet-Background
+Interface\BattlePet\BattlePet-Border
+
+# Interface\CaptureBar
+Interface\CaptureBar\CaptureBar-BarFill
+
+# Interface\ChallengeMode
+Interface\ChallengeMode\ChallengeMode-BarFill
+
+# Interface\Covenant
+Interface\Covenant\Covenant-BarFill
+Interface\Covenant\Covenant-Background
+Interface\Covenant\Covenant-Border
+
+# Interface\DungeonFind
+Interface\DungeonFind\DungeonFind-BarFill
+Interface\DungeonFind\DungeonFind-Background
+Interface\DungeonFind\DungeonFind-Border
+
+# Interface\GameTimeFrame
+Interface\GameTimeFrame\GameTimeFrameBackground
+
+# Interface\GlyphFrame
+Interface\GlyphFrame\Glyph-BarFill
+
+# Interface\GuildBank
+Interface\GuildBank\GuildBank-Background
+
+# Interface\HonorFrame
+Interface\HonorFrame\Honor-BarFill
+
+# Interface\ItemText
+Interface\ItemText\ItemText-Background
+
+# Interface\LFGuild
+Interface\LFGuild\LFGuild-BarFill
+
+# Interface\LossOfControl
+Interface\LossOfControl\LOC-BarFill
+Interface\LossOfControl\LOC-Background
+
+# Interface\Mounts
+Interface\Mounts\Mounts-BarFill
+Interface\Mounts\Mounts-Background
+Interface\Mounts\Mounts-Border
+
+# Interface\ObjectiveTracker
+Interface\ObjectiveTracker\Objective-BarFill
+
+# Interface\OrderHall
+Interface\OrderHall\OrderHall-BarFill
+Interface\OrderHall\OrderHall-Background
+Interface\OrderHall\OrderHall-Border
+
+# Interface\Ornament
+Interface\Ornament\Ornament-Background
+Interface\Ornament\Ornament-Border
+
+# Interface\PartyFrame
+Interface\PartyFrame\PartyFrame-Background
+Interface\PartyFrame\PartyFrame-Border
+
+# Interface\PetBattle
+Interface\PetBattle\PetBattle-XP-Bar
+
+# Interface\PetFrame
+Interface\PetFrame\PetFrame-Border
+
+# Interface\PetJournal
+Interface\PetJournal\PetJournal-Background
+Interface\PetJournal\PetJournal-Border
+
+# Interface\Platform
+Interface\Platform\Platform-BarFill
+
+# Interface\ReputationFrame
+Interface\ReputationFrame\Reputation-BarFill
+Interface\ReputationFrame\Reputation-BarFill2
+
+# Interface\Scenario
+Interface\Scenario\Scenario-BarFill
+Interface\Scenario\Scenario-Background
+Interface\Scenario\Scenario-Border
+
+# Interface\SocialHub
+Interface\SocialHub\SocialHub-Background
+
+# Interface\Stable
+Interface\Stable\Stable-BarFill
+Interface\Stable\Stable-Background
+Interface\Stable\StableFrame-Border
+
+# Interface\StableFrame
+Interface\StableFrame\StableFrameBorder
+
+# Interface\TalkingHead
+Interface\TalkingHead\TalkingHead-Background
+Interface\TalkingHead\TalkingHead-Border
+
+# Interface\Trainer
+Interface\Trainer\Trainer-Background
+Interface\Trainer\TrainerFrame-Border
+
+# Interface\TrainerFrame
+Interface\TrainerFrame\Trainer-BarFill
+
+# Interface\TrainingFrame
+Interface\TrainingFrame\TrainingFrame-Border
+
+# Interface\UIWidgets
+Interface\UIWidgets\UIWidget-Background
+
+# Interface\Vehicle
+Interface\Vehicle\Vehicle-BarFill
+
+# Interface\Warboard
+Interface\Warboard\Warboard-Background
+
+# Interface\WorldState
+Interface\WorldState\WorldState-BarFill

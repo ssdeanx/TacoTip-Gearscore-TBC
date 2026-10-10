@@ -1,5 +1,19 @@
 # Active Context
 
+## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)
+
+- **Official Release Published:** `v0.7.9` successfully validated in live client testing and published across all 5 game versions (Classic Era/SoD `11509`, TBC Anniversary `20506`, WotLK Titanforge `38001`, WoW Forever `16001`, Retail Live `110002`–`120100`).
+- **Complete Auto-Inspect & Right-Click Manual Inspect Harmony:**
+  - Mouseover auto-inspection restored with strict safety gates: ~28-yard range check via `CheckInteractDistance(unit, 1)`, 5-minute cache TTL (`CACHE_REFRESH_DELAY`), and 1.5s rate-limit throttle (`INSPECT_DELAY`) with background queue ticker.
+  - Manual right-click inspect (`InspectFrame`) protected with mutual exclusivity guards (`lib:CanInspect` and `inspectQueueTick` immediately yield while `InspectFrame:IsShown()`).
+  - No premature `ClearInspectPlayer()` calls; paperdoll equipment items render cleanly on Retail/Forever.
+  - Inspected unit's `InspectGearScore` and `InspectAvgItemLvl` reliably render on `InspectPaperDollFrame`.
+- **Eradication of `Interface\None` & Added Verified Blizzard FrameXML Borders:** Removed non-texture `Interface\None` from all borders, options, tests, and fallbacks. Added verified Blizzard FrameXML borders (`UI-Arena-Border`, `UI-SliderBar-Border`, `UI-Toast-Border`, `TextPanel-Border`, `UI-TutorialFrame-CalloutGlow`).
+- **Retail / Forever UnitFrame Periodic Hover Teardown Fix:** Resolved bug where stationary hover over `PlayerFrame` or `TargetFrame` on Retail caused the tooltip to constantly destroy, reset, and flicker via `isUnitFramePeriodicUpdate(tooltip)`.
+- **Lua Diagnostics & Guildless Crash Protection:** Direct `GetInventoryItemLink("player", slot)` in `LibForeverInspector.lua` (zero EmmyLua warnings), and `guardBlizzardInspectGuildFrame` pcall wrapper preventing nil-realm crashes on guildless targets.
+- **11-Locale Audit & Verification:** 100% key parity (261/261 keys) across all 11 locales.
+- **Static Analysis & Test Harness:** `luacheck TacoTip_Forever/` 0 warnings / 0 errors across 31 files; `run_all.sh` 51/51 test invocations green.
+
 ## 2026-09-21 - TacoTip Forever: Universal Cross-Client Architecture & Test Hardening
 
 - **Universal Multi-Engine Client Support:** Unified `TacoTip_Forever/` to run across all World of Warcraft engine families:

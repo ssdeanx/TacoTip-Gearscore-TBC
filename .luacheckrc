@@ -246,7 +246,15 @@ files["Libs/LibClassicInspector/LibClassicInspector.lua"] = {
 -- Offline verification harnesses. These load the real addon against a mocked
 -- WoW environment, so they legitimately touch globals the addon never does.
 files["TacoTip_Forever/Tests/harness/*.lua"] = {
-    read_globals = {},
+    read_globals = {
+        -- `table.unpack` is permitted HERE ONLY. It does not exist in the Lua
+        -- 5.1 WoW ships, so the shipped addon must never use it -- the harnesses
+        -- may, because they resolve `local unpack = unpack or table.unpack` to run
+        -- the same suite under lua5.4 as well. Leaving the field off the
+        -- top-level `table` entry is deliberate: it keeps 5.4-only API out of
+        -- the runtime.
+        table = { fields = { "unpack" } },
+    },
     globals = {
         "ERRORS",
         "COLOR_APPLIED",

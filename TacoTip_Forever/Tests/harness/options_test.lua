@@ -1,7 +1,9 @@
 -- Executes the options UI build under a mocked client.
 -- Usage: lua5.1 options_test.lua <projectId> <iface> <label> [pipeline] [nosettings] [nocolor] [nosharedmedia]
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local _hp = ((arg and arg[0]) or "Tests/harness/options_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 local usePipeline  = (arg[4] == "pipeline")
@@ -10,6 +12,15 @@ local noColor      = (arg[6] == "nocolor")
 local noSharedMedia = (arg[7] == "nosharedmedia")
 
 local REALG = _G
+-- `unpack` is a global in Lua 5.1 -- what WoW ships, and what this addon targets
+-- -- but 5.2 moved it to `table.unpack`, so the bare global is nil under lua5.4.
+-- Nothing in the addon calls it, so this file only needs it to keep the sandbox
+-- faithful plus the two mock color getters below, which return their components
+-- by unpacking the saved triple. Resolve it before the sandbox table is built so
+-- the entry is a real callable on both interpreters instead of a silently absent
+-- key, and so the getters work on either one.
+local unpack = unpack or table.unpack
+
 local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
@@ -479,6 +490,15 @@ local function step(name, fn)
     if (not ok) then recordErr(name, err) end
 end
 
+-- An assertion, in the same tally as `step`: the behaviour blocks below must be
+-- able to FAIL, not merely not throw.
+local function check(name, cond, detail)
+    results[#results + 1] = { name, cond and true or false, detail }
+    if (not cond) then
+        recordErr(name, detail or "assertion failed")
+    end
+end
+
 if (loadFail) then
     STD.io.write(string.format("%-12s LOAD FAIL %s\n", label, loadFail))
     STD.os.exit(1)
@@ -510,6 +530,181 @@ step("GetFormattedSpecializationText", function()
     TT:GetFormattedSpecializationText("WARRIOR", 1, 31, 0, 0, false) end)
 step("GetClassIconMarkup", function() TT:GetClassIconMarkup("WARRIOR") end)
 step("GetClassColor", function() return TT.GetClassColor("WARRIOR") end)
+
+--------------------------------------------------------------------------
+-- Resolved border edge size: the resolver runs on EVERY mouseover (the backdrop
+-- signature check), so an uncached lookup rebuilt and re-sorted the whole border
+-- list per hover.
+--------------------------------------------------------------------------
+do
+    -- Count BUILDS, not calls: the memo returns the same table, so the number of
+    -- distinct tables produced is the rebuild count. Counting calls would report
+    -- 51 either way and could not fail.
+    local built, seen = 0, {}
+    local realChoices = TT.GetTooltipBorderChoices
+    TT.GetTooltipBorderChoices = function(...)
+        local r = realChoices(...)
+        if (not seen[r]) then seen[r] = true; built = built + 1 end
+        return r
+    end
+
+    -- A themed border, so the resolver takes the DECLARED branch and the cache
+    -- is on the path that matters. If it fell through to the config default
+    -- instead, the count assertion below would pass for the wrong reason.
+    TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border-Corrupted"
+    TacoTipConfig.tooltip_border_edge_size = 16
+    TT:InvalidateResolvedMediaCache()
+
+    local declared = TT:GetResolvedTooltipBorderEdgeSize()
+    local first = built
+    for _ = 1, 50 do TT:GetResolvedTooltipBorderEdgeSize() end
+    check("declared edge size does not rebuild the list on every hover",
+        built == first, "builds=" .. tostring(built) .. " afterFirstCall=" .. tostring(first))
+    check("the first call does build the list", first == 1, "afterFirstCall=" .. tostring(first))
+    -- A constant would also satisfy the count assertion, so pin the value: this
+    -- entry declares 32, the player's own setting is 16.
+    check("a themed border still resolves its own declared edge size",
+        declared == 32 and TT:GetResolvedTooltipBorderEdgeSize() == 32,
+        "declared=" .. tostring(declared))
+
+    -- A border with no declared size must still follow the player's setting, and
+    -- must still return an integer for a hand-edited fractional saved value.
+    TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border"
+    TT:InvalidateResolvedMediaCache()
+    check("a border without a declared size uses the player's setting",
+        TT:GetResolvedTooltipBorderEdgeSize() == 16,
+        tostring(TT:GetResolvedTooltipBorderEdgeSize()))
+    TacoTipConfig.tooltip_border_edge_size = 16.5
+    check("a fractional saved edge size is floored to whole pixels",
+        TT:GetResolvedTooltipBorderEdgeSize() == 16,
+        tostring(TT:GetResolvedTooltipBorderEdgeSize()))
+    TacoTipConfig.tooltip_border_edge_size = 16
+
+    TT.GetTooltipBorderChoices = realChoices
+end
+
+--------------------------------------------------------------------------
+-- /tacotip reset must invalidate the resolved-media cache. It replaces the whole
+-- config table but historically left the four memoised resolved values alone, so
+-- a player who typed /tacotip reset kept their custom font, border, background
+-- and bar texture applied for the rest of the session.
+--------------------------------------------------------------------------
+do
+    TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border-Corrupted"
+    TT:InvalidateResolvedMediaCache()
+    local warm = TT:GetResolvedTooltipBorder()
+    TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border"
+    -- Control: absent an invalidation the memo would still answer with the warm
+    -- value, which is the defect. Without this the assertion below would also
+    -- pass if the cache were simply absent.
+    check("control: the cache does serve the primed value while primed",
+        TT:GetResolvedTooltipBorder() == warm, "warm=" .. tostring(warm))
+
+    -- Drive the public slash-command branch rather than resetCfg, which is
+    -- file-local: SlashCmdList is what WoW itself invokes for /tacotip.
+    rawget(REALG, "SlashCmdList").TACOTIP("reset")
+    check("reset invalidates the resolved-media cache",
+        TT:GetResolvedTooltipBorder() == "Interface\\Tooltips\\UI-Tooltip-Border",
+        "after reset=" .. tostring(TT:GetResolvedTooltipBorder()))
+end
+
+--------------------------------------------------------------------------
+-- One RefreshOptionsUI must reposition the overlays once, not eight times.
+--------------------------------------------------------------------------
+do
+    local target = rawget(REALG, "PersonalGearScoreText")
+    local calls = 0
+    local realRefresh = target.RefreshPosition
+    target.RefreshPosition = function(self, ...) calls = calls + 1; return realRefresh(self, ...) end
+    TT:RefreshOptionsUI()
+    target.RefreshPosition = realRefresh
+    check("one options refresh repositions the overlays once, not once per offset",
+        calls == 1, "RefreshPosition calls=" .. tostring(calls))
+end
+
+--------------------------------------------------------------------------
+-- The Tooltips page refresh must not rebuild the four media choice lists. Only
+-- the RESOLVED values were memoised, so every click and every drag release
+-- re-sorted ~191 previews.
+--------------------------------------------------------------------------
+do
+    local KINDS = {
+        { key = "font", fn = "GetTooltipFontChoices" },
+        { key = "bar", fn = "GetTooltipStatusBarTextureChoices" },
+        { key = "background", fn = "GetTooltipBackgroundChoices" },
+        { key = "border", fn = "GetTooltipBorderChoices" },
+    }
+    -- Distinct tables produced == builds. A memo hands back the same instance, so
+    -- a call counter would report 200 either way and could not fail.
+    local builds = {}
+    local reals = {}
+    for _, spec in ipairs(KINDS) do
+        builds[spec.key] = { n = 0, seen = {} }
+        reals[spec.key] = TT[spec.fn]
+        local k = spec.key
+        TT[spec.fn] = function(...)
+            local r = reals[k](...)
+            local b = builds[k]
+            if (not b.seen[r]) then b.seen[r] = true; b.n = b.n + 1 end
+            return r
+        end
+    end
+    -- RefreshOptionsUI reaches every page's Refresh, including the tooltips page
+    -- that calls SetValues on all four media dropdowns.
+    TT:RefreshOptionsUI()
+    local baseline = {}
+    for _, spec in ipairs(KINDS) do baseline[spec.key] = builds[spec.key].n end
+    for _ = 1, 50 do TT:RefreshOptionsUI() end
+
+    local growth = {}
+    for _, spec in ipairs(KINDS) do
+        TT[spec.fn] = reals[spec.key]
+        local d = builds[spec.key].n - baseline[spec.key]
+        if (d ~= 0) then
+            growth[#growth + 1] = string.format("%s +%d", spec.key, d)
+        end
+    end
+    check("50 options refreshes rebuild no media choice list", #growth == 0,
+        #growth > 0 and table.concat(growth, " ") or nil)
+end
+
+--------------------------------------------------------------------------
+-- The thickness slider must not stay enabled for a border that carries its own
+-- edge size: it is ignored for those, so a drag does nothing.
+--------------------------------------------------------------------------
+do
+    -- Find the slider by its bounds rather than by its (auto-generated) name:
+    -- 4..48 is the thickness slider's range and nothing else uses it.
+    local slider
+    for _, w in ipairs(created) do
+        if (w.__kind == "Slider") then
+            local lo, hi = w:GetMinMaxValues()
+            if (lo == 4 and hi == 48) then slider = w break end
+        end
+    end
+    check("the thickness slider is reachable for inspection", slider ~= nil)
+    if (slider) then
+        TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border-Maw"
+        TT:RefreshOptionsUI()
+        check("the thickness slider disables itself for a border with its own edge size",
+            slider:IsEnabled() == false, "IsEnabled=" .. tostring(slider:IsEnabled()))
+
+        TacoTipConfig.tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border"
+        TT:RefreshOptionsUI()
+        check("the thickness slider is enabled again for a border without one",
+            slider:IsEnabled() == true, "IsEnabled=" .. tostring(slider:IsEnabled()))
+    end
+end
+
+--------------------------------------------------------------------------
+-- GetDefaults must keep handing out a fresh table: resetCfg assigns its result
+-- straight to TacoTipConfig and then writes conf_version into it, so a shared
+-- table would let a reset mutate the defaults themselves.
+--------------------------------------------------------------------------
+do
+    local a, b = TT:GetDefaults(), TT:GetDefaults()
+    check("GetDefaults returns a fresh table each call", a ~= b)
+end
 
 local fails = 0
 for _, r in ipairs(results) do

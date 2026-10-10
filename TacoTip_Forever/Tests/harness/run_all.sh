@@ -53,6 +53,13 @@ echo "== locale and fonts =="
 run "locale_test" Tests/harness/locale_test.lua
 run "font_test"   Tests/harness/font_test.lua
 
+echo "== texture paths against the reviewed allow-list =="
+# textures_test is client-independent: it reads textures.lua and
+# Tests/harness/textures.txt, not a mocked client, so it runs once. It guards the
+# class of bug nothing else here can see -- a texture path that does not exist on
+# any client, which renders as a missing-texture placeholder and never raises.
+run "textures_test" Tests/harness/textures_test.lua
+
 echo "== addon load, both GetBuildInfo slot layouts =="
 for slot in slot4 slot7; do
     run "load_test CLASSIC_ERA   $slot"  Tests/harness/load_test.lua 2  11509 $slot classicEra 200  ERA

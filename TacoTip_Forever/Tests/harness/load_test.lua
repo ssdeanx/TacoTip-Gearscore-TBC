@@ -2,7 +2,9 @@
 -- not raise and that the cross-client wiring lands correctly.
 -- Usage: lua5.1 loadtest.lua <projectId> <interface> <layout> <expectFamily> <expectBracket>
 
-local ROOT = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/"
+local _hp = ((arg and arg[0]) or "Tests/harness/load_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
 
 local projectId, iface, layout = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 -- Optional: blank out a Blizzard global before load, to prove that a file-scope
@@ -673,6 +675,89 @@ do
         checks[#checks + 1] = { panelOpened == 0,
             "\"diag\" does not open the options panel (opened " .. tostring(panelOpened) .. "x)" }
     end
+end
+
+-- NOTE (0.7.9, textures lane): this block was accidentally reverted to the
+-- committed version while a sibling lane held uncommitted edits to this file, and
+-- has been reinstated from a verbatim read of the lost working-tree text. Lines
+-- that were never read -- the opening of this section header and roughly eight
+-- lines after the themed-edgeSize check below -- could not be recovered and are
+-- NOT reconstructed, because guessing at assertions is how a harness starts
+-- passing for the wrong reason. If this section once asserted more than it does
+-- now, those assertions are missing and should be restored from the owning lane.
+-- ---------------------------------------------------------------------------
+-- Tooltip texture paths. The default border is the one path confirmed present on
+-- both art mirrors; the earlier Interface\BackdropTextures candidates are not.
+-- (Gethe/wow-ui-textures) returns 404 for the BackdropTextures directory on
+-- live, and the string appears nowhere in wow-ui-source on any branch. A wrong
+-- texture path renders a missing-texture placeholder without raising, so the
+-- bug was silent. These assertions pin the corrected default and, below, make
+-- sure no fabricated path creeps back into the lists.
+do
+    local getDefault = TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder()
+    local want = "Interface\\Tooltips\\UI-Tooltip-Border"
+    checks[#checks + 1] = { getDefault == want,
+        "default border is the verified UI-Tooltip-Border (got " .. tostring(getDefault) .. ")" }
+
+    -- The historical default is a label that matches no entry, so it must resolve
+    -- to that fallback rather than to whatever matched first.
+    local savedBorder = REALG.TacoTipConfig.tooltip_border_texture
+    REALG.TacoTipConfig.tooltip_border_texture = "Tooltip enlarged"
+    local resolved = TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()
+    checks[#checks + 1] = { resolved == want,
+        "an unmatched configured value falls back to the verified default (got "
+            .. tostring(resolved) .. ")" }
+    REALG.TacoTipConfig.tooltip_border_texture = savedBorder
+
+    -- No fabricated texture path may appear in either media list. This used to be
+    -- a check for the single literal string "BackdropTextures", which caught
+    -- exactly one of the 120 invented names retired in 0.7.9 and let the other
+    -- 119 straight back in. The general guard now lives in
+    -- Tests/harness/textures_test.lua: it checks every path in all three builtin
+    -- lists against the reviewed allow-list in Tests/harness/textures.txt, so a
+    -- new invention has to be reviewed before the suite goes green. Do not
+    -- reintroduce a narrower version of the check here.
+    local fabricated = {}
+    for _, list in ipairs({ TT.builtinTooltipBorders or {}, TT.builtinTooltipBackgrounds or {} }) do
+        for _, entry in ipairs(list) do
+            if (type(entry.value) == "string" and entry.value:find("BackdropTextures", 1, true)) then
+                fabricated[#fabricated + 1] = entry.value
+            end
+        end
+    end
+    local fabricatedNote = "none (the general guard is textures_test; this is the"
+        .. " 0.7.9 regression pin for the first batch only)"
+    if (#fabricated > 0) then
+        fabricatedNote = tostring(#fabricated) .. ", first: " .. tostring(fabricated[1])
+    end
+    checks[#checks + 1] = { #fabricated == 0,
+        "no BackdropTextures path is offered (found " .. fabricatedNote .. ")" }
+
+    -- The verified tooltip borders must be present, and the 256x32 themed ones
+    -- must declare their own edge size or they slice wrongly at 16.
+    local byValue = {}
+    for _, entry in ipairs(TT.builtinTooltipBorders or {}) do
+        byValue[entry.value] = entry
+    end
+    checks[#checks + 1] = {
+        byValue["Interface\\Tooltips\\UI-Tooltip-Border"] ~= nil,
+        "the verified Blizzard tooltip border is offered" }
+    local themed = {
+        ["Interface\\Tooltips\\UI-Tooltip-Border-Azerite"] = true,
+        ["Interface\\Tooltips\\UI-Tooltip-Border-Corrupted"] = true,
+        ["Interface\\Tooltips\\UI-Tooltip-Border-Maw"] = true,
+    }
+    local themedOk, themedMissing = true, nil
+    for value in pairs(themed) do
+        local e = byValue[value]
+        if (not e or e.edgeSize ~= 32) then
+            themedOk, themedMissing = false, value
+            break
+        end
+    end
+    checks[#checks + 1] = { themedOk,
+        "each themed 256x32 border declares edgeSize 32 (first bad: "
+            .. tostring(themedMissing) .. ")" }
 end
 
 local bad = 0

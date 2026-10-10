@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)
+
+- **Published Five-Client Release:** `v0.7.9` released and validated across Classic Era / SoD (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38001`), WoW Forever (`16001`), and Retail Live (`110002`–`120100`). Approaching 100k downloads.
+- **Harmonized Auto-Inspect & Right-Click Manual Inspect:**
+  - Mouseover auto-inspect verified with ~28-yard range gating (`CheckInteractDistance(unit, 1)`), 5-minute cache TTL, and 1.5s rate-limit throttling.
+  - Manual right-click inspect verified without item stripping on modern paperdoll frames (`ClearInspectPlayer()` permanently excised from inspect event paths).
+  - InspectGearScore and InspectAvgItemLvl fontstrings fully operational on `InspectPaperDollFrame`.
+- **Eradicated Interface\None & Added Verified Native Borders:** Removed placeholder `Interface\None` and added verified Blizzard FrameXML borders (`UI-Arena-Border`, `UI-SliderBar-Border`, `UI-Toast-Border`, `TextPanel-Border`, `UI-TutorialFrame-CalloutGlow`).
+- **UnitFrame Hover Stabilization:** Fixed 200ms periodic teardown flicker on Retail `PlayerFrame`/`TargetFrame` via `isUnitFramePeriodicUpdate`.
+- **Quality Gates:** 51/51 test harness passes; zero luacheck warnings across 31 files; 100% localization parity across all 11 languages (261 keys).
+
 ## 2026-09-21 - TacoTip Forever: Universal Cross-Client Architecture & Test Hardening
 
 - **Universal Multi-Engine Client Support:** Unified `TacoTip_Forever/` to run across Classic Era/SoD (`11509`), TBC Anniversary (`20506`, `20507`), WotLK/Titanforge (`38001`, `30405`), WoW Forever (`16001`), and Retail/Live (`110002` – `120100`).

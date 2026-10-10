@@ -38,6 +38,12 @@ TT.builtinTooltipFonts = {
 -- ============================================================================
 -- STATUSBAR TEXTURES (bar fills)
 -- ============================================================================
+-- Audited 0.7.9 against the Gethe/wow-ui-textures mirror. Of the 59 entries
+-- this list held: 7 confirmed present, 29 refuted and removed, 23 unverified and
+-- kept. The refuted run was mostly "<Frame>-BarFill" invented per panel -- the
+-- raid bars are the clearest case, where only Raid-Bar-Hp-Fill and
+-- Raid-Bar-Resource-Fill exist and the other five power names did not; Blizzard
+-- ships one resource bar, not one per class resource.
 TT.builtinStatusBarTextures = {
 
     -- TargetingFrame
@@ -49,45 +55,13 @@ TT.builtinStatusBarTextures = {
 
     -- RaidFrame
     { value = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",                 text = "Blizzard - Raid Bar HP" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-Mana-Fill",               text = "Blizzard - Raid Bar Mana" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-Energy-Fill",             text = "Blizzard - Raid Bar Energy" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-Rage-Fill",               text = "Blizzard - Raid Bar Rage" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-Focus-Fill",              text = "Blizzard - Raid Bar Focus" },
-    { value = "Interface\\RaidFrame\\Raid-Bar-RunicPower-Fill",         text = "Blizzard - Raid Bar Runic" },
 
     -- CastingBar
     { value = "Interface\\CastingBar\\UI-CastingBar-Border",            text = "Blizzard - Casting Bar" },
     { value = "Interface\\CastingBar\\UI-CastingBar-Spark",             text = "Blizzard - Casting Bar Spark" },
 
-    -- FriendsFrame
-    { value = "Interface\\FriendsFrame\\FriendsFrame-StatusBar",        text = "Blizzard - Friends XP Bar" },
-
-    -- OptionsFrame
-    { value = "Interface\\OptionsFrame\\UI-OptionsBar",                 text = "Blizzard - Options Bar" },
-
-    -- TalentFrame
-    { value = "Interface\\TalentFrame\\TalentFrame-ListItemFill",       text = "Blizzard - Talent Fill" },
-
-    -- Spellbook
-    { value = "Interface\\Spellbook\\Spellbook-SkillRank",              text = "Blizzard - Skill Rank" },
-
-    -- CharacterFrame
-    { value = "Interface\\CharacterFrame\\Character-Frame-Bar",         text = "Blizzard - Character Bar" },
-
-    -- ContainerFrame
-    { value = "Interface\\ContainerFrame\\Container-Bar",               text = "Blizzard - Container Bar" },
-
-    -- GuildBankFrame
-    { value = "Interface\\GuildBankFrame\\GuildBank-EmbossedFill",      text = "Blizzard - Guild Bank Embossed" },
-
     -- TrainerFrame
     { value = "Interface\\TrainerFrame\\Trainer-BarFill",               text = "Blizzard - Trainer Bar" },
-
-    -- QuestFrame
-    { value = "Interface\\QuestFrame\\QuestProgressBar",                text = "Blizzard - Quest Progress" },
-
-    -- TradeSkillFrame
-    { value = "Interface\\TradeSkillFrame\\TradeSkill-BarFill",         text = "Blizzard - Trade Skill Bar" },
 
     -- ReputationFrame
     { value = "Interface\\ReputationFrame\\Reputation-BarFill",         text = "Blizzard - Reputation Bar" },
@@ -95,25 +69,12 @@ TT.builtinStatusBarTextures = {
 
     -- HonorFrame / PvPFrame
     { value = "Interface\\HonorFrame\\Honor-BarFill",                   text = "Blizzard - Honor Bar" },
-    { value = "Interface\\PvPFrame\\PvP-BarFill",                       text = "Blizzard - PvP Bar" },
-
-    -- LootFrame
-    { value = "Interface\\LootFrame\\LootProgressBar",                  text = "Blizzard - Loot Progress" },
-
-    -- BattlefieldFrame
-    { value = "Interface\\BattlefieldFrame\\Battlefield-BarFill",       text = "Blizzard - Battlefield Bar" },
-
-    -- AuctionFrame
-    { value = "Interface\\AuctionFrame\\AuctionFrame-BarFill",          text = "Blizzard - Auction Bar" },
 
     -- CaptureBar
     { value = "Interface\\CaptureBar\\CaptureBar-BarFill",              text = "Blizzard - Capture Bar" },
 
     -- WorldState (Capture the flag, etc)
     { value = "Interface\\WorldState\\WorldState-BarFill",              text = "Blizzard - World State Bar" },
-
-    -- EncounterJournal
-    { value = "Interface\\EncounterJournal\\EncounterJournal-BarFill",  text = "Blizzard - Encounter Journal Bar" },
 
     -- Scenario
     { value = "Interface\\Scenario\\Scenario-BarFill",                  text = "Blizzard - Scenario Bar" },
@@ -130,20 +91,11 @@ TT.builtinStatusBarTextures = {
     -- Artifact
     { value = "Interface\\Artifact\\Artifact-BarFill",                  text = "Blizzard - Artifact Bar" },
 
-    -- Azerite
-    { value = "Interface\\Azerite\\Azerite-BarFill",                    text = "Blizzard - Azerite Bar" },
-
     -- Covenant
     { value = "Interface\\Covenant\\Covenant-BarFill",                  text = "Blizzard - Covenant Bar" },
 
     -- OrderHall
     { value = "Interface\\OrderHall\\OrderHall-BarFill",                text = "Blizzard - Order Hall Bar" },
-
-    -- Soulbinds
-    { value = "Interface\\Soulbinds\\Soulbinds-BarFill",                text = "Blizzard - Soulbinds Bar" },
-
-    -- Collections
-    { value = "Interface\\Collections\\Collections-BarFill",            text = "Blizzard - Collections Bar" },
 
     -- BattlePet
     { value = "Interface\\BattlePet\\BattlePet-BarFill",                text = "Blizzard - Battle Pet Bar" },
@@ -154,23 +106,8 @@ TT.builtinStatusBarTextures = {
     -- Archaeology
     { value = "Interface\\Archaeology\\Archaeology-BarFill",            text = "Blizzard - Archaeology Bar" },
 
-    -- Garrison
-    { value = "Interface\\Garrison\\Garrison-BarFill",                  text = "Blizzard - Garrison Bar" },
-
-    -- Calendar
-    { value = "Interface\\Calendar\\Calendar-BarFill",                  text = "Blizzard - Calendar Bar" },
-
-    -- MailFrame
-    { value = "Interface\\MailFrame\\Mail-BarFill",                     text = "Blizzard - Mail Bar" },
-
-    -- MacroFrame
-    { value = "Interface\\MacroFrame\\Macro-BarFill",                   text = "Blizzard - Macro Bar" },
-
     -- GlyphFrame
     { value = "Interface\\GlyphFrame\\Glyph-BarFill",                   text = "Blizzard - Glyph Bar" },
-
-    -- Store
-    { value = "Interface\\Store\\Store-BarFill",                        text = "Blizzard - Store Bar" },
 
     -- Stable
     { value = "Interface\\Stable\\Stable-BarFill",                      text = "Blizzard - Stable Bar" },
@@ -187,22 +124,59 @@ TT.builtinStatusBarTextures = {
     -- PetBattle
     { value = "Interface\\PetBattle\\PetBattle-XP-Bar",                 text = "Blizzard - Pet Battle XP" },
 
-    -- BarberShop
-    { value = "Interface\\BarberShop\\Barber-BarFill",                  text = "Blizzard - Barber Bar" },
-
     -- LFGuild
     { value = "Interface\\LFGuild\\LFGuild-BarFill",                    text = "Blizzard - LF Guild Bar" },
-
-    -- GMChat
-    { value = "Interface\\GMChat\\GM-BarFill",                          text = "Blizzard - GM Chat Bar" },
 
     -- Buttons
     { value = "Interface\\Buttons\\WHITE8X8",                           text = "Blizzard - Solid" },
 }
 
+-- Per-client default border texture.
+--
+-- Verified: the Classic family reaches its NineSlice through
+-- TooltipBackdropTemplate, while Retail and WoW Forever reach theirs through
+-- SharedTooltipArtTemplate, so the two pairs really do build tooltips
+-- differently. A single hardcoded default cannot serve both.
+--
+-- Verified 0.7.9: Interface\Tooltips\UI-Tooltip-Border exists on BOTH branches
+-- of the Gethe/wow-ui-textures art mirror, byte-identical at 128x16, so it
+-- serves all five clients from one path. This replaces an earlier guess at
+-- UI-Backdrop-Edge, which the same mirror showed to be absent. The
+-- "which art path either pair ships" question that used to be open here is
+-- now closed; what remains per-client is the edge SIZE, which is 16 because
+-- 14 is not a multiple of 8.
+--
+-- This is the FALLBACK, not a stored preference. A player who has picked a
+-- border keeps it on every client. It applies when nothing is configured, or
+-- when the configured value matches no entry in the list -- which is the case for
+-- the historical default "Tooltip enlarged", a label that was never an entry and
+-- so always resolved here.
+--
+-- Resolved lazily and defensively: it must never raise on the way, and the
+-- library may not be present yet.
+function TT:GetDefaultTooltipBorder()
+    return "Interface\\Tooltips\\UI-Tooltip-Border"
+end
+
+-- Per-client default background, for the same reason. Only consumed on the legacy
+-- full-backdrop path, which no current client takes, but kept in step with the
+-- border so the two defaults cannot drift apart.
+function TT:GetDefaultTooltipBackground()
+    return "Interface\\Tooltips\\UI-Tooltip-Background"
+end
+
 -- ============================================================================
 -- BACKGROUND TEXTURES (bgFile)
 -- ============================================================================
+-- Audited 0.7.9 against the Gethe/wow-ui-textures mirror. Of the 77 entries
+-- this list held: 15 confirmed present, 39 refuted and removed, 23 unverified
+-- and kept. The refuted run was almost entirely the invented
+-- "<Frame>-Background" pattern: LootFrame, MailFrame, OptionsFrame, Spellbook,
+-- PvPFrame, Garrison and the rest do not carry a file by that name, even
+-- though their directories are in the mirror. Several have real art under a
+-- different name (MailFrame ships UI-MailFrameBG and MailItemBorder;
+-- Garrison ships GarrisonUIBackground) -- which is the point. A path that does
+-- not resolve renders as a missing-texture placeholder, never an error.
 TT.builtinTooltipBackgrounds = {
 
     -- DialogFrame
@@ -214,55 +188,23 @@ TT.builtinTooltipBackgrounds = {
     -- FullScreenTextures
     { value = "Interface\\FullScreenTextures\\LowHealth",                              text = "Blizzard - Low Health" },
     { value = "Interface\\FullScreenTextures\\OutOfControl",                           text = "Blizzard - Out of Control" },
-    { value = "Interface\\FullScreenTextures\\Dead",                                   text = "Blizzard - Dead" },
-    { value = "Interface\\FullScreenTextures\\Petrified",                              text = "Blizzard - Petrified" },
 
     -- FrameGeneral
     { value = "Interface\\FrameGeneral\\UI-Background-Marble",                         text = "Blizzard - Marble" },
     { value = "Interface\\FrameGeneral\\UI-Background-Rock",                           text = "Blizzard - Rock" },
-    { value = "Interface\\FrameGeneral\\UI-Background-Chat",                           text = "Blizzard - Chat Background" },
 
     -- AchievementFrame
     { value = "Interface\\AchievementFrame\\UI-Achievement-Parchment-Horizontal",      text = "Blizzard - Parchment" },
     { value = "Interface\\AchievementFrame\\UI-GuildAchievement-Parchment-Horizontal", text = "Blizzard - Parchment 2" },
-    { value = "Interface\\AchievementFrame\\UI-Achievement-Background",                text = "Blizzard - Achievement Background" },
 
     -- TabardFrame
     { value = "Interface\\TabardFrame\\TabardFrameBackground",                         text = "Blizzard - Tabard Background" },
-    { value = "Interface\\TabardFrame\\TabardFrameBackground2",                        text = "Blizzard - Tabard Background 2" },
 
     -- Tooltips
     { value = "Interface\\Tooltips\\UI-Tooltip-Background",                            text = "Blizzard - Tooltip Background" },
 
-    -- CastingBar
-    { value = "Interface\\CastingBar\\UI-CastingBar-Background",                       text = "Blizzard - Casting Bar Background" },
-
-    -- QuestFrame
-    { value = "Interface\\QuestFrame\\QuestFrameBackground",                           text = "Blizzard - Quest Background" },
-    { value = "Interface\\QuestFrame\\QuestFrameDetailBG",                             text = "Blizzard - Quest Detail BG" },
-    { value = "Interface\\QuestFrame\\QuestFrameHighlight",                            text = "Blizzard - Quest Highlight" },
-
-    -- GossipFrame
-    { value = "Interface\\GossipFrame\\GossipTitleBackground",                         text = "Blizzard - Gossip Title" },
-    { value = "Interface\\GossipFrame\\GossipFrameBackground",                         text = "Blizzard - Gossip Background" },
-
     -- ItemText
     { value = "Interface\\ItemText\\ItemText-Background",                              text = "Blizzard - Item Page" },
-
-    -- CharacterFrame
-    { value = "Interface\\CharacterFrame\\CharacterFrameBackground",                   text = "Blizzard - Character Background" },
-
-    -- Spellbook
-    { value = "Interface\\Spellbook\\SpellbookBackground",                             text = "Blizzard - Spellbook" },
-
-    -- TradeSkillFrame
-    { value = "Interface\\TradeSkillFrame\\TradeSkillBackground",                      text = "Blizzard - Trade Skill" },
-
-    -- MerchantFrame
-    { value = "Interface\\MerchantFrame\\MerchantFrameBackground",                     text = "Blizzard - Merchant" },
-
-    -- TaxiFrame
-    { value = "Interface\\TaxiFrame\\TaxiFrameBackground",                             text = "Blizzard - Flight Map" },
 
     -- GameTimeFrame
     { value = "Interface\\GameTimeFrame\\GameTimeFrameBackground",                     text = "Blizzard - Game Time" },
@@ -273,15 +215,6 @@ TT.builtinTooltipBackgrounds = {
     -- TutorialFrame
     { value = "Interface\\TutorialFrame\\TutorialFrameBackground",                     text = "Blizzard - Tutorial" },
 
-    -- EncounterJournal
-    { value = "Interface\\EncounterJournal\\EncounterJournal-Background",              text = "Blizzard - Encounter Journal BG" },
-
-    -- Collections
-    { value = "Interface\\Collections\\Collections-Background",                        text = "Blizzard - Collections BG" },
-
-    -- Store
-    { value = "Interface\\Store\\Store-Background",                                    text = "Blizzard - Store BG" },
-
     -- OrderHall
     { value = "Interface\\OrderHall\\OrderHall-Background",                            text = "Blizzard - Order Hall BG" },
 
@@ -291,17 +224,8 @@ TT.builtinTooltipBackgrounds = {
     -- Artifact
     { value = "Interface\\Artifact\\Artifact-Background",                              text = "Blizzard - Artifact BG" },
 
-    -- Azerite
-    { value = "Interface\\Azerite\\Azerite-Background",                                text = "Blizzard - Azerite BG" },
-
     -- Scenario
     { value = "Interface\\Scenario\\Scenario-Background",                              text = "Blizzard - Scenario BG" },
-
-    -- WorldMap
-    { value = "Interface\\WorldMap\\WorldMap-Background",                              text = "Blizzard - World Map BG" },
-
-    -- MailFrame
-    { value = "Interface\\MailFrame\\MailFrame-Background",                            text = "Blizzard - Mail BG" },
 
     -- Bank
     { value = "Interface\\Bank\\Bank-Background",                                      text = "Blizzard - Bank BG" },
@@ -309,35 +233,8 @@ TT.builtinTooltipBackgrounds = {
     -- GuildBank
     { value = "Interface\\GuildBank\\GuildBank-Background",                            text = "Blizzard - Guild Bank BG" },
 
-    -- GuildFrame
-    { value = "Interface\\GuildFrame\\GuildFrame-Background",                          text = "Blizzard - Guild Frame BG" },
-
-    -- Calendar
-    { value = "Interface\\Calendar\\Calendar-Background",                              text = "Blizzard - Calendar BG" },
-
-    -- AuctionFrame
-    { value = "Interface\\AuctionFrame\\AuctionFrame-Background",                      text = "Blizzard - Auction BG" },
-
-    -- HelpFrame
-    { value = "Interface\\HelpFrame\\HelpFrame-Background",                            text = "Blizzard - Help Frame BG" },
-
-    -- LootFrame
-    { value = "Interface\\LootFrame\\LootFrame-Background",                            text = "Blizzard - Loot Frame BG" },
-
-    -- MacroFrame
-    { value = "Interface\\MacroFrame\\MacroFrame-Background",                          text = "Blizzard - Macro Frame BG" },
-
-    -- OptionsFrame
-    { value = "Interface\\OptionsFrame\\OptionsFrame-Background",                      text = "Blizzard - Options Frame BG" },
-
     -- PartyFrame
     { value = "Interface\\PartyFrame\\PartyFrame-Background",                          text = "Blizzard - Party Frame BG" },
-
-    -- PetitionFrame
-    { value = "Interface\\PetitionFrame\\PetitionFrame-Background",                    text = "Blizzard - Petition Frame BG" },
-
-    -- PvPFrame
-    { value = "Interface\\PvPFrame\\PvPFrame-Background",                              text = "Blizzard - PvP Frame BG" },
 
     -- Stable
     { value = "Interface\\Stable\\Stable-Background",                                  text = "Blizzard - Stable BG" },
@@ -363,47 +260,18 @@ TT.builtinTooltipBackgrounds = {
     -- Archaeology
     { value = "Interface\\Archaeology\\Archaeology-Background",                        text = "Blizzard - Archaeology BG" },
 
-    -- VoidStorage
-    { value = "Interface\\VoidStorage\\VoidStorage-Background",                        text = "Blizzard - Void Storage BG" },
-
-    -- Splash
-    { value = "Interface\\Splash\\Splash-Background",                                  text = "Blizzard - Splash BG" },
-
-    -- Barbershop
-    { value = "Interface\\BarberShop\\BarberShop-Background",                          text = "Blizzard - Barbershop BG" },
-
-    -- BackdropTextures
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured",                     text = "Blizzard - Backdrop Textured" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Blue",                text = "Blizzard - Backdrop Textured Blue" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Bronze",              text = "Blizzard - Backdrop Textured Bronze" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Gold",                text = "Blizzard - Backdrop Textured Gold" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Green",               text = "Blizzard - Backdrop Textured Green" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Purple",              text = "Blizzard - Backdrop Textured Purple" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Red",                 text = "Blizzard - Backdrop Textured Red" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-Silver",              text = "Blizzard - Backdrop Textured Silver" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Textured-White",               text = "Blizzard - Backdrop Textured White" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark",                         text = "Blizzard - Backdrop Dark" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Blue",                    text = "Blizzard - Backdrop Dark Blue" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Bronze",                  text = "Blizzard - Backdrop Dark Bronze" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Gold",                    text = "Blizzard - Backdrop Dark Gold" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Green",                   text = "Blizzard - Backdrop Dark Green" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Purple",                  text = "Blizzard - Backdrop Dark Purple" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Red",                     text = "Blizzard - Backdrop Dark Red" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-Silver",                  text = "Blizzard - Backdrop Dark Silver" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Dark-White",                   text = "Blizzard - Backdrop Dark White" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Solid",                        text = "Blizzard - Backdrop Solid" },
-
+    -- NOTE: an Interface\BackdropTextures\ block (Textured / Dark / Solid, plus
+    -- their nine colour variants) used to sit here. It was removed on 0.7.9:
+    -- there is no BackdropTextures directory on Retail at all. Verified against
+    -- Gethe/wow-ui-textures -- the art mirror that sits beside wow-ui-source --
+    -- where the path returns 404 on live. Those 19 entries were a fabrication, and
+    -- a wrong texture path renders a missing-texture placeholder without raising
+    -- anything, so they would have looked broken rather than failed loudly.
     -- Ornament
     { value = "Interface\\Ornament\\Ornament-Background",                              text = "Blizzard - Ornament" },
 
     -- UIWidgets
     { value = "Interface\\UIWidgets\\UIWidget-Background",                             text = "Blizzard - UI Widget BG" },
-
-    -- ChromieTime
-    { value = "Interface\\ChromieTime\\ChromieTime-Background",                        text = "Blizzard - Chromie Time BG" },
-
-    -- TimeManager
-    { value = "Interface\\TimeManager\\TimeManager-Background",                        text = "Blizzard - Time Manager BG" },
 
     -- Aidan (Art)
     { value = "Interface\\Aidan\\Aidan-Background",                                    text = "Blizzard - Aidan BG" },
@@ -414,15 +282,8 @@ TT.builtinTooltipBackgrounds = {
     -- LossOfControl
     { value = "Interface\\LossOfControl\\LOC-Background",                              text = "Blizzard - Loss of Control BG" },
 
-    -- AdventureMap
-    { value = "Interface\\AdventureMap\\AdventureMap-Background",                      text = "Blizzard - Adventure Map BG" },
-
     -- Warboard
     { value = "Interface\\Warboard\\Warboard-Background",                              text = "Blizzard - Warboard BG" },
-
-    -- Garrison
-    { value = "Interface\\Garrison\\Garrison-Background",                              text = "Blizzard - Garrison BG" },
-    { value = "Interface\\Garrison\\Garrison-Background2",                             text = "Blizzard - Garrison BG 2" },
 
     -- Buttons
     { value = "Interface\\Buttons\\WHITE8X8",                                          text = "Blizzard - Solid" },
@@ -431,59 +292,65 @@ TT.builtinTooltipBackgrounds = {
 -- ============================================================================
 -- BORDER TEXTURES (edgeFile)
 -- ============================================================================
+-- Audited 0.7.9 against the Gethe/wow-ui-textures mirror. Of the 55 entries
+-- this list held: 9 confirmed present, 24 refuted and removed, 22 unverified and
+-- kept. Three more went on policy rather than on art evidence: the
+-- Interface\AddOns\Details\images\border_1..3 entries are third-party Details
+-- media sitting in a Blizzard art list, which is the same contradiction the
+-- font filter acts on. SharedMedia already covers Details, and the filter below
+-- drops the Details fonts for exactly that reason.
 TT.builtinTooltipBorders = {
-
-    { value = "Interface\\AddOns\\Details\\images\\border_1",           text = "Details BarBorder 1" },
-    { value = "Interface\\AddOns\\Details\\images\\border_2",           text = "Details BarBorder 2" },
-    { value = "Interface\\AddOns\\Details\\images\\border_3",           text = "Details BarBorder 3" },
-
-    { value = "Interface\\None",                                        text = "Blizzard - None" },
 
     -- AchievementFrame
     { value = "Interface\\AchievementFrame\\UI-Achievement-WoodBorder", text = "Blizzard - Achievement Wood" },
-    { value = "Interface\\AchievementFrame\\UI-Achievement-Edge",       text = "Blizzard - Achievement Edge" },
 
-    -- Tooltips
-    { value = "Interface\\Tooltips\\ChatBubble-Backdrop",               text = "Blizzard - Chat Bubble" },
-    { value = "Interface\\Tooltips\\UI-Tooltip-Border",                 text = "Blizzard - Tooltip Border" },
+    -- ArenaEnemyFrame
+    { value = "Interface\\ArenaEnemyFrame\\UI-Arena-Border",            text = "Blizzard - Arena Border",      edgeSize = 32 },
+
+    -- Buttons
+    { value = "Interface\\Buttons\\UI-SliderBar-Border",                text = "Blizzard - Slider Bar",       edgeSize = 8 },
+
+    -- CharacterFrame
+    { value = "Interface\\CHARACTERFRAME\\UI-Party-Border",             text = "Blizzard - Party Border" },
 
     -- DialogFrame
     { value = "Interface\\DialogFrame\\UI-DialogBox-Border",            text = "Blizzard - Dialog Border" },
     { value = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border",       text = "Blizzard - Dialog Border Gold" },
 
-    -- CharacterFrame
-    { value = "Interface\\CHARACTERFRAME\\UI-Party-Border",             text = "Blizzard - Party Border" },
-    { value = "Interface\\CharacterFrame\\CharacterFrameBorder",        text = "Blizzard - Character Frame Border" },
+    -- FriendsFrame
+    { value = "Interface\\FriendsFrame\\UI-Toast-Border",               text = "Blizzard - Toast Border",      edgeSize = 12 },
 
-    -- GuildBankFrame
-    { value = "Interface\\GuildBankFrame\\GuildBank-Border",            text = "Blizzard - Guild Bank" },
+    -- Glues / Common
+    { value = "Interface\\Glues\\Common\\TextPanel-Border",             text = "Blizzard - Text Panel",       edgeSize = 16 },
 
-    -- QuestFrame
-    { value = "Interface\\QuestFrame\\QuestFrameBorder",                text = "Blizzard - Quest Border" },
+    -- Tooltips
+    { value = "Interface\\Tooltips\\ChatBubble-Backdrop",               text = "Blizzard - Chat Bubble" },
+    { value = "Interface\\Tooltips\\UI-Tooltip-Border",                 text = "Blizzard - Tooltip Border" },
 
-    -- HelpFrame
-    { value = "Interface\\HelpFrame\\HelpFrame-Border",                 text = "Blizzard - Help Frame" },
+    -- Tooltips, themed. Present on Retail and WoW Forever, ABSENT from the
+    -- Classic art mirror (verified against Gethe/wow-ui-textures: 35 files under
+    -- Tooltips/ on live, 23 on classic, and the three themed borders appear only
+    -- on live). They are the texture-path equivalents of Blizzard's own modern
+    -- TooltipAzeriteLayout / TooltipCorruptedLayout / TooltipMawLayout NineSlice
+    -- layouts, and all three are 256x32, so they slice at edgeSize 32 rather than
+    -- the 16 the plain border uses. Listed unconditionally for simplicity; a
+    -- Classic player who picks one gets a missing-texture placeholder, which is
+    -- why each carries its own edgeSize below rather than sharing the global one.
+    { value = "Interface\\Tooltips\\UI-Tooltip-Border-Azerite",   text = "Blizzard - Tooltip Azerite",   edgeSize = 32 },
+    { value = "Interface\\Tooltips\\UI-Tooltip-Border-Corrupted", text = "Blizzard - Tooltip Corrupted", edgeSize = 32 },
+    { value = "Interface\\Tooltips\\UI-Tooltip-Border-Maw",       text = "Blizzard - Tooltip Maw",       edgeSize = 32 },
+
+    -- TutorialFrame
+    { value = "Interface\\TutorialFrame\\UI-TutorialFrame-CalloutGlow", text = "Blizzard - Tutorial Glow",    edgeSize = 16 },
 
     -- TrainingFrame
     { value = "Interface\\TrainingFrame\\TrainingFrame-Border",         text = "Blizzard - Training Frame" },
-
-    -- Spellbook
-    { value = "Interface\\Spellbook\\SpellbookBorder",                  text = "Blizzard - Spellbook" },
 
     -- PetFrame
     { value = "Interface\\PetFrame\\PetFrame-Border",                   text = "Blizzard - Pet Frame" },
 
     -- StableFrame
     { value = "Interface\\StableFrame\\StableFrameBorder",              text = "Blizzard - Stable Frame" },
-
-    -- EncounterJournal
-    { value = "Interface\\EncounterJournal\\EncounterJournal-Border",   text = "Blizzard - Encounter Journal Border" },
-
-    -- Collections
-    { value = "Interface\\Collections\\Collections-Border",             text = "Blizzard - Collections Border" },
-
-    -- Store
-    { value = "Interface\\Store\\Store-Border",                         text = "Blizzard - Store Border" },
 
     -- OrderHall
     { value = "Interface\\OrderHall\\OrderHall-Border",                 text = "Blizzard - Order Hall Border" },
@@ -494,47 +361,14 @@ TT.builtinTooltipBorders = {
     -- Artifact
     { value = "Interface\\Artifact\\Artifact-Border",                   text = "Blizzard - Artifact Border" },
 
-    -- Azerite
-    { value = "Interface\\Azerite\\Azerite-Border",                     text = "Blizzard - Azerite Border" },
-
     -- Scenario
     { value = "Interface\\Scenario\\Scenario-Border",                   text = "Blizzard - Scenario Border" },
-
-    -- WorldMap
-    { value = "Interface\\WorldMap\\WorldMap-Border",                   text = "Blizzard - World Map Border" },
-
-    -- MailFrame
-    { value = "Interface\\MailFrame\\MailFrame-Border",                 text = "Blizzard - Mail Frame Border" },
 
     -- Bank
     { value = "Interface\\Bank\\Bank-Border",                           text = "Blizzard - Bank Border" },
 
-    -- GuildFrame
-    { value = "Interface\\GuildFrame\\GuildFrame-Border",               text = "Blizzard - Guild Frame Border" },
-
-    -- Calendar
-    { value = "Interface\\Calendar\\Calendar-Border",                   text = "Blizzard - Calendar Border" },
-
-    -- AuctionFrame
-    { value = "Interface\\AuctionFrame\\AuctionFrame-Border",           text = "Blizzard - Auction Border" },
-
-    -- LootFrame
-    { value = "Interface\\LootFrame\\LootFrame-Border",                 text = "Blizzard - Loot Frame Border" },
-
-    -- MacroFrame
-    { value = "Interface\\MacroFrame\\MacroFrame-Border",               text = "Blizzard - Macro Frame Border" },
-
-    -- OptionsFrame
-    { value = "Interface\\OptionsFrame\\OptionsFrame-Border",           text = "Blizzard - Options Frame Border" },
-
     -- PartyFrame
     { value = "Interface\\PartyFrame\\PartyFrame-Border",               text = "Blizzard - Party Frame Border" },
-
-    -- PetitionFrame
-    { value = "Interface\\PetitionFrame\\PetitionFrame-Border",         text = "Blizzard - Petition Frame Border" },
-
-    -- PvPFrame
-    { value = "Interface\\PvPFrame\\PvPFrame-Border",                   text = "Blizzard - PvP Frame Border" },
 
     -- Stable
     { value = "Interface\\Stable\\StableFrame-Border",                  text = "Blizzard - Stable Frame Border" },
@@ -557,47 +391,42 @@ TT.builtinTooltipBorders = {
     -- Archaeology
     { value = "Interface\\Archaeology\\Archaeology-Border",             text = "Blizzard - Archaeology Border" },
 
-    -- VoidStorage
-    { value = "Interface\\VoidStorage\\VoidStorage-Border",             text = "Blizzard - Void Storage Border" },
-
-    -- Barbershop
-    { value = "Interface\\BarberShop\\BarberShop-Border",               text = "Blizzard - Barbershop Border" },
-
-    -- BackdropTextures
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge",          text = "Blizzard - Backdrop Edge" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Blue",     text = "Blizzard - Backdrop Edge Blue" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Bronze",   text = "Blizzard - Backdrop Edge Bronze" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Gold",     text = "Blizzard - Backdrop Edge Gold" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Green",    text = "Blizzard - Backdrop Edge Green" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Purple",   text = "Blizzard - Backdrop Edge Purple" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Red",      text = "Blizzard - Backdrop Edge Red" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-Silver",   text = "Blizzard - Backdrop Edge Silver" },
-    { value = "Interface\\BackdropTextures\\UI-Backdrop-Edge-White",    text = "Blizzard - Backdrop Edge White" },
-
     -- TalkingHead
     { value = "Interface\\TalkingHead\\TalkingHead-Border",             text = "Blizzard - Talking Head Border" },
-
-    -- Garrison
-    { value = "Interface\\Garrison\\Garrison-Border",                   text = "Blizzard - Garrison Border" },
 
     -- Ornament
     { value = "Interface\\Ornament\\Ornament-Border",                   text = "Blizzard - Ornament Border" },
 
-    -- ChromieTime
-    { value = "Interface\\ChromieTime\\ChromieTime-Border",             text = "Blizzard - Chromie Time Border" },
 }
 
 -- ============================================================================
 -- PER-CLIENT FILTERING
 -- ============================================================================
--- The tables above are Blizzard asset paths harvested from Retail's FrameXML.
--- Several of them do not exist on every supported client, and offering a path
--- that cannot resolve is worse than not offering it: Texture:SetTexture silently
--- no-ops on a missing file, so the user picks "Chromie Time Border", the swatch
--- renders blank, and the tooltip ends up with an invisible or solid-white
--- border with no indication of why.
+-- The tables above are candidate Blizzard asset paths. They were NOT harvested
+-- from Retail's FrameXML -- that was the claim until 0.7.9 and it was false:
+-- only 22 of the 191 entries then listed appear in origin/live FrameXML at all,
+-- and the rest were invented in the shape Blizzard's naming convention would
+-- suggest. See the audit note at the head of each list below.
 --
--- Two filters are applied here:
+-- Every path is now classified against Gethe/wow-ui-textures, the art mirror
+-- that sits beside wow-ui-source, which carries the real client Interface tree
+-- (repo root IS the Interface folder; there is no "Interface/" prefix). It is
+-- calibrated: 96% of the non-addon paths origin/live FrameXML references resolve
+-- in its live branch, 95% for classic_era against its classic branch. So
+-- ABSENCE inside a directory that IS present is evidence, while absence of the
+-- whole directory is not. A second check asks whether any wow-ui-source branch
+-- mentions the name at all, so a renamed-but-real file is not pruned.
+--
+-- Offering a path that cannot resolve is worse than not offering it:
+-- Texture:SetTexture silently no-ops on a missing file, so the user picks
+-- "Chromie Time Border", the swatch renders blank, and the tooltip ends up with
+-- an invisible or solid-white border with no indication of why. Nothing raises,
+-- so the harness could never have caught this by running the code.
+--
+-- Tests/harness/textures.txt is the reviewed allow-list that keeps the lists
+-- from drifting back, and textures_test.lua fails on any path absent from it.
+--
+-- Two filters are applied to the FONT list:
 --
 --   1. CJK fonts. Fonts\ZY*.TTF only ship on zhCN and zhTW clients. On any
 --      other locale selecting one silently falls back to the default font.
@@ -606,14 +435,17 @@ TT.builtinTooltipBorders = {
 --      addon, not Blizzard, and were mislabelled "Blizzard - Details ...".
 --      Third-party media is LibSharedMedia's job -- it is an OptionalDependency
 --      and options.lua already reads every media list through it -- so these
---      are dropped from the built-in list rather than mislabelled.
+--      are dropped from the built-in list rather than mislabelled. The same
+--      argument retired the three Interface\AddOns\Details\images\border_*
+--      entries from the BORDER list on 0.7.9; shipping a Details border inside
+--      the Blizzard art list contradicted the rule this comment states.
 --
--- NOT filtered here: the Retail-only FrameXML paths (Warfront*, Covenant*,
--- Azerite*, Artifact*, ChromieTime*, AdventureMap*, and so on). Removing them
--- per client would mean either tagging ~100 entries individually or probing
--- texture existence at runtime, and neither is worth the regression risk in a
--- correctness pass. They are left in place; SharedMedia users get a correct
--- list either way because LibSharedMedia takes precedence when present.
+-- NOT filtered here: the Retail-only paths (Warboard*, Covenant*, Azerite*,
+-- Artifact*, and so on). Removing them per client would mean either tagging
+-- every entry individually or probing texture existence at runtime, and
+-- neither is worth the regression risk in a correctness pass. They are left in
+-- place; SharedMedia users get a correct list either way because LibSharedMedia
+-- takes precedence when present.
 local function ttFilterFontList(list)
     if (type(list) ~= "table") then return list end
     local locale = (type(GetLocale) == "function") and GetLocale() or "enUS"

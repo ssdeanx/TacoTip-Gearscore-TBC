@@ -155,10 +155,12 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
             -- class/spec. Both are silent, and both simply mean "no Pawn colour"
             -- rather than an error.
             --
-            -- GetItemScore tolerates a nil scaleName: PawnGetSingleValueFromItem
-            -- answers 0 for a name it does not have and never calls
-            -- VgerCore.Fail, so it can try both libraries in turn and still
-            -- score correctly on either client.
+            -- A nil scaleName means Pawn has no scale for this class/spec. GetScore then
+            -- skips the score entirely: pawnScore stays 0, which is what both
+            -- attempts already returned, and the tooltip gates on pawnScore > 0.
+            -- Calling anyway cost two guaranteed-to-fail PawnGetSingleValueFromItem
+            -- calls per item -- and re-introduced the guessed-name pattern this
+            -- helper exists to eliminate, including the VgerCore.Fail chat path.
             local scaleName = pawnLoadedScaleName(class, spec)
             local cb_table
             if (useCallback) then
@@ -169,8 +171,10 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
                     local item = CI:GetInventoryItemMixin(guid, i)
                     if (item) then
                         if (item:IsItemDataCached()) then
-                            local tempScore = TT_PAWN:GetItemScore(item:GetItemLink(), class, spec, scaleName)
-                            pawnScore = pawnScore + tempScore
+                            if (scaleName) then
+                                local tempScore = TT_PAWN:GetItemScore(item:GetItemLink(), class, spec, scaleName)
+                                pawnScore = pawnScore + tempScore
+                            end
                         else
                             IsReady = false
                             local itemID = item:GetItemID()

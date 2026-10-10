@@ -1,5 +1,7 @@
 -- Simulate WoW's load environment for the locale layer.
-local D = "/home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever/Locale/"
+local _hp = ((arg and arg[0]) or "Tests/harness/locale_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local D = dofile(_hd .. "/root.lua") .. "/Locale/"
 local results = {}
 -- family, when given, stands in for LibForeverInspector. The locale selector
 -- pins WotLK Titanforge to Simplified Chinese, and that branch is unreachable
