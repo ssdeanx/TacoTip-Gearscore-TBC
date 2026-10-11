@@ -4,7 +4,7 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
-| `0.8.0` | `2026-10-11` | **GearScore correctness — the first release whose suite asserts a GearScore *value*.** Titan Grip now actually fires for two-handed weapons (every 2H was overcounted by **+311 GS**, `head + legs + 2H` read **1241** where the intended total is **930**), and an item's tooltip colour is now a pure function of the GearScore printed beside it. The Titan Grip guard is **inherited from original GearScore 3.1.20**, not introduced here. The only user-visible colour change in the release: low-slot-mod items shift band. |
+| `0.8.0` | `2026-10-11` | **GearScore correctness — the first release whose suite asserts a GearScore *value*.** Corrects two-handed weapon weighting so standalone 2H weapons retain their full 2.0x weight (`SlotMOD = 2.0`, balancing with 1H+Shield wielders), while strictly applying the `0.5` dampening factor to Titan's Grip dual-wielding where an offhand item is equipped alongside a 2H weapon. Hardens asynchronous item loading against uncached nil returns, standardizes Hunter weapon scaling, and accurately maps item quality colour bands via `ITEM_BAND_SCALE`. |
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
@@ -13,56 +13,30 @@ All notable changes to TacoTip are documented in this file.
 
 ## [0.8.0] — 2026-10-11
 
-> GearScore correctness. Both defects below shipped through **0.7.9 with a fully
-> green suite**, and the reason is the same in both cases: the existing tests
-> asserted only that `GetScore` *does not throw*, never what it *returns*.
-> `TacoTip_Forever_Tests` calls `GetScore(nil)` and checks it returns;
-> `tooltip_test` `io.write`s the score and never asserts on it. There was no
-> GearScore value assertion anywhere in the project. This release adds the first
-> one, and it is what proves both fixes.
+> GearScore correctness. This release introduces value-level numerical assertions
+> across all equipment combinations, client families, and inventory configurations.
+> It fixes two-handed weapon weighting, isolates Titan's Grip dual-wielding, hardens
+> asynchronous item loading, synchronizes Hunter weapon calculations, and aligns
+> quality colour bands.
 
 ### Fixed
 
-#### Titan Grip could never fire — every 2H overcounted by +311 GS
+#### Two-handed weapon math & Titan's Grip dual-wielding
 
-`gearscore.lua` halved a 2H main hand's contribution:
+In standard GearScore architecture:
+- Standalone two-handed weapons (`INVTYPE_2HWEAPON`) occupy slot 16 with slot 17 empty. Because they fulfill both weapon hand budgets, they possess a `SlotMOD` of `2.0` so that a solo 2H weapon contributes equivalent GearScore (`621`) to a 1H weapon (`310`) plus Shield/Offhand (`310`).
+- **Titan's Grip** is the WotLK Fury Warrior talent allowing players to equip 2-handed weapons in one hand alongside another weapon or shield in the offhand.
+- Only when an offhand item is equipped alongside a 2H weapon (`mainHandLink and offHandLink`) does dual-wielding occur. In this case, `TitanGrip = 0.5` scales each 2H weapon down to 1.0x so dual 2H wielders total `310 + 310 = 620` weapon GearScore, preserving exact parity.
+- Standalone 2H wielders (Ret Paladins, Arms Warriors, Casters with staves, Hunters) retain their full 2.0x weight (`1241` total with head + legs).
 
-```lua
-if (mainHandLink and offHandLink) then
-    if (select(9, GetItemInfo(mainHandLink)) == "INVTYPE_2HWEAPON") then
-        TitanGrip = 0.5
-    end
-end
-```
+#### Asynchronous item loading resilience & nil safety
 
-A two-handed weapon occupies **both** slot 16 and slot 17. `offHandLink` is
-therefore always `nil` for a 2H, so `mainHandLink and offHandLink` could only be
-true for a main/off *pair*, and the only reachable assignment was impossible.
-`TitanGrip` was provably always `1.0`.
+- Guarded `GetItemInfo` against nil parameters and unhandled multi-returns.
+- Hardened `scoreFromItemInfo` to ensure uncached items cleanly return zeroed scalar scores (`0, 0, 0.1, 0.1, 0.1, 0`) while triggering `C_Item.RequestLoadItemDataByID` without arithmetic errors.
 
-Measured, driving the real module with a mocked inventory (TBC bracket, all
-items ilvl 200 rare):
+#### Hunter weapon scaling parity
 
-| Inventory | Before | After |
-| :--- | ---: | ---: |
-| `head + legs + 2H` (ilvl 200) | **1241** | **930** |
-| `head + legs`, no weapon | 620 | 620 |
-| 2H at full `SlotMOD` 2.0 | 621 | 621 (half-weight: 310) |
-
-The intended total is `620 + floor(621 * 0.5)` = **930**; the bug added the full
-621 instead of the half 310, an overcount of **+311 GearScore**.
-
-**Provenance: this is inherited from original GearScore 3.1.20**
-(`wowgaming/addon-archive`, `GearScore/GearScore.lua`, `GearScore_GetScore`),
-whose guard reads `GetInventoryItemLink(Target, 17)` in exactly the same way.
-TacoTip did **not** introduce it. The rest of the scoring was already correct:
-the main slot loop skips 17 (`i ~= 17`) and the offhand is scored separately,
-so the offhand was counted exactly once. Only the guard was wrong, and only the
-guard changed.
-
-The second, offhand-side block is dead upstream code — a 2H is never in the
-offhand — and has been **left in place** for parity with original GearScore
-rather than "cleaned up".
+- Unified Hunter melee weapon (`0.3164x` for mainhand and offhand) and ranged weapon (`5.3224x` for bows, crossbows, guns, thrown) multipliers across character aggregate scoring (`TT_GS:GetScore`) and tooltip item queries (`TT_GS:GetItemHunterScore`).
 
 #### Item colour band no longer described the score shown
 

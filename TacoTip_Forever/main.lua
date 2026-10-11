@@ -1124,6 +1124,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 cachedSide = (tooltipRight > 0 and tooltipRight >= screenWidth) and "left" or "right"
                 ---@diagnostic disable-next-line: inject-field
                 getTooltipState(tooltip).portraitSide = cachedSide
+                ---@diagnostic disable-next-line: inject-field
                 getTooltipState(tooltip).portraitAnchored = shown
                 portrait._tacoTipScale = portraitScale
                 portrait:ClearAllPoints()

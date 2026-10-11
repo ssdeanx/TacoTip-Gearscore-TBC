@@ -50,3 +50,14 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
   - Zero-allocation pooled tables: `pooledLinesToAdd`, `pooledTooltipText` in `main.lua`
   - Lazy SharedMedia resolution cache with `TT:InvalidateResolvedMediaCache()` in `options.lua`
   - Throttled 3D portrait model sync: 20Hz (0.05s) using `self:GetParent():GetAlpha()`
+
+---
+
+## 5. Companion Addon & GearScore Engine Subsystems
+
+- **TacoTip_Extras (1.0.0):** Standalone companion addon located at `TacoTip_Extras/`. Strictly depends on `TacoTip_Forever` (`## Dependencies: TacoTip_Forever, TacoTip`). Integrates directly with `LibForeverInspector` for non-invasive gear and gem/enchant auditing.
+- **GearScore Engine Rules (`gearscore.lua`):**
+  - Standalone 2H weapons retain `SlotMOD = 2.0` (weight 2.0x, balancing with 1H+Shield at 1241 vs 1240).
+  - Titan's Grip dampening factor `0.5` strictly gated to active dual-wielding (`mainHandLink and offHandLink`).
+  - Hunter weapon scaling: Melee slots at `0.3164x`, Ranged slots at `5.3224x`.
+  - Item quality color bands: scaled by `ITEM_BAND_SCALE` (11.25) across all engine brackets.

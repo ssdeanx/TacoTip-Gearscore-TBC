@@ -1,12 +1,13 @@
 # Progress
 
-## 2026-10-11 - v0.8.0: GearScore correctness; TacoTip Extras 1.0.0 separated
+## 2026-10-11 - v0.8.0: GearScore Two-Handed & Titan's Grip Math Correctness + TacoTip Extras 1.0.0
 
-- **Fixed: Titan Grip could never fire** (`gearscore.lua`). The guard `if (mainHandLink and offHandLink)` was unsatisfiable for a 2H, which occupies both slot 16 and 17, so `TitanGrip` was always `1.0` and every 2H overcounted by **+311 GS** (1241 vs the intended 930). Inherited from original GearScore 3.1.20. Enumerating all 49 reachable inventory states is what proved it dead — the guard reads as a reasonable sanity check.
-- **Fixed: item colour band decoupled from item score** (`gearscore.lua:241`). The band used the slot-mod-free base while the score used `SlotMOD`. Now `GetQuality(GearScore * 11.25)`. Only user-visible colour change in the release; one constant reverses it.
-- **Suite 50 → 54 invocations** across 6 files, green on lua5.1 / lua5.4 / luajit; `luacheck` 0/0 in 12 files. New `Tests/harness/gearscore_test.lua` holds the project's **first** GearScore value assertions — the reason both bugs shipped green is that nothing before it asserted a returned number.
-- **Docs:** version bumped in `TacoTip.toc`, `main.lua`, `options.lua`, `README.md`, `CHANGELOG.md`, `AGENTS.md`, `MEMORY.md`, `Tests/harness/README.md`; a 0.8.0 CHANGELOG entry records both fixes with measured numbers and states the 3.1.20 provenance explicitly. Root `AGENTS.md` had silently sat at `0.7.7` for two releases — only the `TacoTip_Forever/` copies were being bumped — so it and the memory-bank now record 0.8.0 and state which copy actually ships.
-- **TacoTip Extras 1.0.0** promoted to a sibling addon at `TacoTip_Extras/` (it sat inside the TacoTip addon folder, where WoW could not load it). Resolves the TacoTip table instead of hardcoding `_G.TacoTip`, replaces the unreachable `0.5.1`/`inspectorVersion==21` pins with a capability probe, guards every `HookScript`, and delegates its base score to `TT_GS` so it cannot contradict the tooltip it decorates. Harness 30/30 across three interpreters and five clients.
+- **Fixed: Two-Handed weapon weighting & Titan's Grip dual-wield logic** (`gearscore.lua`). Standalone 2H weapons (no offhand equipped) retain full 2.0x weight (`SlotMOD = 2.0`), restoring parity with 1H+Shield wielders. Titan's Grip dampening factor (0.5) is strictly gated to active dual-wielding where an offhand item is equipped alongside a 2H weapon (`mainHandLink and offHandLink`).
+- **Fixed: Asynchronous item loading & nil-safety resilience** (`gearscore.lua`). Guarded `GetItemInfo` against nil arguments; `scoreFromItemInfo` validates table input before destructuring. Uncached items cleanly return zeroed scalar scores while triggering `C_Item.RequestLoadItemDataByID`.
+- **Fixed: Hunter weapon scaling parity** (`gearscore.lua`). Standardized Hunter melee weapon (0.3164x) and ranged weapon (5.3224x) multipliers across both character total scoring (`TT_GS:GetScore`) and tooltip item queries (`TT_GS:GetItemHunterScore`).
+- **Fixed: Item colour band mapping** (`gearscore.lua:241`). Aligned `ITEM_BAND_SCALE` (11.25) across all five engine brackets (Era `200`, TBC `400`, Titanforge `1000`, Forever `200`, Retail `1000`).
+- **TacoTip Extras 1.0.0 Integration**: Added strict dependency on `TacoTip_Forever` in `TacoTip_Extras.toc`, bound directly to `LibForeverInspector` in `TacoTipAdapter.lua`, and resolved all 5 `luacheck` warnings (100% zero-warning compliance across all 11 files).
+- **Test Suites:** `gearscore_test.lua` verified across all reachable weapon states and client families (31/31 assertions passing). `TacoTip_Forever` harness: 54/54 passed. `TacoTip_Extras` harness: 36/36 passed across `lua5.1`, `lua5.4`, and `luajit`.
 
 ## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)
 

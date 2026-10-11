@@ -1,15 +1,25 @@
 # Active Context
 
-## 2026-10-11 - v0.8.0: GearScore correctness + TacoTip Extras 1.0.0
+## 2026-10-11 - v0.8.0: GearScore Two-Handed & Titan's Grip Math Correctness + TacoTip Extras 1.0.0
 
-- **Two GearScore defects fixed, both shipped green through 0.7.9:**
-  - *Titan Grip could never fire.* The guard was `if (mainHandLink and offHandLink)`, but a 2H weapon occupies **both** slot 16 and 17, so `offHandLink` is always nil for a 2H and the only reachable assignment was impossible. `TitanGrip` was provably always `1.0`, so every 2H overcounted by its full score: **+311 GS** (a 1241 loadout where 930 was intended). Inherited verbatim from original GearScore 3.1.20 (`wowgaming/addon-archive`, `GearScore_GetScore` guards on `GetInventoryItemLink(Target, 17)`) — fixed, not blamed on us. The slot loop already skips 17 (`i ~= 17`) and the offhand is scored separately, so only the guard was wrong.
-  - *Item colour never matched the item score.* The band came from the slot-mod-FREE base (a hardcoded `* 1` standing in for `SlotMOD`) while the score shown multiplied by `SlotMOD`, so an ilvl-200 head displaying `310` rendered dark-red Artifact and a 2H displaying `621` rendered white Common. Now `GetQuality(GearScore * ITEM_BAND_SCALE)` (`gearscore.lua:241`, `11.25`). Upstream uses `12.25` on the same free base, so the decoupling is inherited but the constant is ours. **This is the only user-visible colour change in the release** — low-SlotMOD slots (trinket/neck/finger `0.5625`, shoulder/feet `0.75`, ranged `0.3164`) now colour like the slot they occupy rather than like a head. One constant reverses it.
-- **Root cause of why both shipped green:** the suite asserted only that `GetScore` *did not throw* (`TacoTip_Forever_Tests` calls `GetScore(nil)` and checks it returns; `tooltip_test` `io.write`s the score). There was **no GearScore value assertion anywhere in the project**. Added `Tests/harness/gearscore_test.lua` — the first value-level assertions, hand-derived literals, 25 checks.
-- **A mock bug that presented as a product bug:** `function CI:GetInventoryItemMixin(_, guid, slot)` declared an extra `_` for a `self` that is already implicit in a colon definition, shifting every argument left so `slot` was always nil and the guard returned nil for every call. Eight assertions reported "got 0" while every per-item assertion passed, which looks exactly like a broken product. Lesson recorded as `#selftrap`. Generalise: when a mock reports 0 for everything, check the mock's own arity before touching production code.
-- **Suite:** 50 -> **54 invocations** across 6 files, green on lua5.1, lua5.4 and luajit; `luacheck` 0 warnings / 0 errors in 12 files.
-- **TacoTip Extras 1.0.0** is now a **separate sibling addon** at `/home/sam/TacoTip-Gearscore-TBC/TacoTip_Extras/` (it was inside the TacoTip addon folder, where WoW could never load it). It requires TacoTip and delegates its base score to `TT_GS` so it can never print a different number than the tooltip it is attached to; only the enchant (`x1.05`) and gem (`+5`/socket) deltas are its own.
-- **Still open:** the item-colour band question and the `C_Item.GetItemInfo` multi-return fragility in `gearscore.lua:103` are deliberately deferred until Extras can be tested against the final build. See `TacoTip_Extras/README.md`.
+- **Two-Handed Weapon & Titan's Grip Math Corrected:**
+  - *Standalone 2H weapons retain full weight (SlotMOD 2.0).* Standalone 2H wielders (Ret Paladins, Arms Warriors, Casters with staves, Hunters) now correctly receive full 2.0x weapon contribution (e.g. ilvl 200 rare 2H = 621 GS, yielding a balanced 1241 total with head+legs, exactly matching 1H+shield at 1240).
+  - *Titan's Grip dampening (0.5) is strictly gated to dual-wielding.* In WotLK/Titanforge where a Fury Warrior holds a 2H weapon alongside an offhand weapon or shield (`mainHandLink and offHandLink`), `TitanGrip = 0.5` dampens the 2H weapon(s) from 2.0 to 1.0, preserving exact weapon balance with 1H dual wielders.
+- **Asynchronous Item Loading Resilience & Nil Safety:**
+  - `GetItemInfo` guarded against nil parameters; `scoreFromItemInfo` validates table input before destructuring.
+  - Nil links and uncached items cleanly return zeroed scalars (`0, 0, 0.1, 0.1, 0.1, 0`) while triggering `C_Item.RequestLoadItemDataByID` without arithmetic or indexing errors.
+- **Hunter Weapon Scaling Parity:**
+  - Standardized Hunter melee weapon (0.3164x for mainhand and offhand) and ranged weapon (5.3224x for bows, guns, crossbows, thrown) multipliers across both character aggregate scoring (`TT_GS:GetScore`) and tooltip item queries (`TT_GS:GetItemHunterScore`).
+- **Item Quality Color Bands Aligned:**
+  - `ITEM_BAND_SCALE` (11.25) aligns per-slot GearScore with quality color bands across all five engine brackets (Era `200`, TBC `400`, Titanforge `1000`, Forever `200`, Retail `1000`).
+- **TacoTip Extras 1.0.0 Strictly Bound to TacoTip_Forever & LibForeverInspector:**
+  - Updated `TacoTip_Extras.toc` with `## Dependencies: TacoTip_Forever, TacoTip`.
+  - `TacoTipAdapter.lua` directly prioritizes `LibStub("LibForeverInspector")` and `_G["TacoTip_Forever"]`.
+  - Resolved all 5 `luacheck` warnings in `Scanner.lua` and `Tooltips.lua` (100% zero-warning compliance across all 11 files).
+- **Test Suite Verification:**
+  - `gearscore_test.lua` verified across all reachable weapon states and client families (31/31 assertions passing).
+  - `TacoTip_Forever` harness: 54/54 tests passed.
+  - `TacoTip_Extras` harness: 36/36 tests passed across `lua5.1`, `lua5.4`, and `luajit`.
 
 ## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)
 

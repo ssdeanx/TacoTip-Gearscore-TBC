@@ -210,7 +210,9 @@
         "APIDocumentation",
         "Clamp",
         "EventRegistry",
-        "GetCVarBool"
+        "GetCVarBool",
+        "PawnCommon",
+        "PawnScaleProviders"
     ],
     "Lua.runtime.builtin": {
         "basic": "disable",
