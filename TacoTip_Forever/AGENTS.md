@@ -160,7 +160,7 @@ registered postcalls never fire. `dataPipelineActive` tests
 - **The `## Interface:` line decides whether the addon loads at all.** Titanforge
   was listed as `38001` (3.80.1) against a real 3.80.2 and did not load.
 - **Version bump:** `.toc`, `main.lua` `addOnVersion`, `options.lua`, `README.md`
-  and `CHANGELOG.md` together. Current: **0.7.9**, unreleased.
+  and `CHANGELOG.md` together. Current: **0.8.0**, unreleased.
 - **The toc filename must equal the addon folder name.** WoW requires it. The
   folder is `TacoTip_Forever/`; the toc is `TacoTip.toc` so the packaged addon
   installs as `TacoTip` and takes over the existing addon's identity.

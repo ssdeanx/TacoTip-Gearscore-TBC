@@ -19,6 +19,33 @@ World of Warcraft engine family from one build — no per-client downloads, no
 
 ---
 
+## What's New in 0.8.0
+
+GearScore correctness. This is the first release whose test suite asserts a GearScore **value** rather
+than only that scoring does not throw — which is precisely why both bugs below shipped green in 0.7.9.
+Full detail in [CHANGELOG.md](CHANGELOG.md):
+
+- **Titan Grip now applies to two-handed weapons.** A 2H weapon occupies both the main hand and the
+  offhand slot, so the guard that enabled the 0.5 multiplier required *both* hands to hold an item and
+  could never be true for a 2H. `TitanGrip` was therefore always `1.0` and every 2H overcounted by its
+  full score — **+311 GearScore** on a TBC-bracket ilvl-200 2H (`head + legs + 2H` read **1241** where
+  the intended total is **930**). This guard is inherited verbatim from original GearScore 3.1.20
+  (`wowgaming/addon-archive`, `GearScore_GetScore`); TacoTip did not introduce it.
+- **An item's tooltip colour now matches the GearScore printed beside it.** The colour band was computed
+  from the slot-mod-free base while the displayed score included the slot modifier, so a 2H and a head of
+  identical item level wore the same colour while showing different numbers. The band is now a pure
+  function of the score shown. **This is the only user-visible colour change in 0.8.0.** Low-slot-mod
+  items shift band: trinket / neck / finger / wrist / cloak (0.5625), shoulder / waist / feet / hands
+  (0.75) and ranged / thrown (0.3164) now colour like the slot they occupy instead of like a head.
+  Character **totals** keep their own unrescaled ramp — items and totals are separate domains and are
+  deliberately not unified.
+- **New `Tests/harness/gearscore_test.lua`**, the first harness to assert numeric scores: per-item score
+  literals, the Titan Grip half-weight, an exhaustive enumeration of *reachable* weapon states, item
+  colour-band consistency across slots and item levels, and a known full set of known items totalling a
+  known score.
+
+---
+
 ## What's New in 0.7.9
 
 Portrait, inspect, unit-frame hover, and border correctness across all five client families. Full detail in

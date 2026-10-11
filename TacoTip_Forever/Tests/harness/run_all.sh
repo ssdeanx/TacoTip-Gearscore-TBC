@@ -103,6 +103,15 @@ for spec in "2 11509 classicEra 200 ERA legacy" "1 120100 retail 1000 RETAIL pip
         Tests/harness/load_test.lua "$1" "$2" slot4 "$3" "$4" "$5" "$6" GameTooltip_SetDefaultAnchor
 done
 
+echo "== gearscore values, not smoke tests =="
+# The only harness in the suite that asserts a GearScore NUMBER. Everything
+# before it checked only that GetScore returns; that is why the unreachable
+# TitanGrip guard and the slot-mod-free colour band both shipped green. Runs on
+# three brackets because the bands differ per bracket while the scores do not.
+run "gearscore_test CLASSIC_ERA"  Tests/harness/gearscore_test.lua 2  11509 CLASSIC_ERA classicEra
+run "gearscore_test TBC_ANNIV"    Tests/harness/gearscore_test.lua 5  20506 TBC_ANNIV   tbc
+run "gearscore_test TITANFORGE"   Tests/harness/gearscore_test.lua 11 38002 TITANFORGE  titanforge
+
 echo "== tooltip pipeline =="
 run "tooltip_test CLASSIC_ERA"  Tests/harness/tooltip_test.lua 2  11509 CLASSIC_ERA
 run "tooltip_test TBC_ANNIV"    Tests/harness/tooltip_test.lua 5  20506 TBC_ANNIV

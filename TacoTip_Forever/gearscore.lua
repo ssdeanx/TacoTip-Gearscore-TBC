@@ -222,6 +222,24 @@ function TT_GS:GetQuality(ItemScore)
     return 0.5, 0.5, 0.5, "Trash"
 end
 
+-- Item colour band scale.
+--
+-- The colour of an ITEM tooltip must be a pure function of the number printed
+-- beside it. It used not to be: the band was computed from the slot-mod-FREE
+-- base -- the hardcoded `* 1` stood in for SlotMOD -- while the score shown to
+-- the user multiplied that base by GS_ItemTypes[].SlotMOD. A 2H and a head of
+-- identical item level therefore shared a colour while displaying different
+-- scores, so the band never described the number next to it. Upstream GearScore
+-- 3.1.20 decouples them the same way with 12.25; the constant change to 11.25
+-- is ours, and the decoupling was carried over with it.
+--
+-- The ~11x rescale is kept deliberately. Applied to the raw score, a trinket at
+-- a current item level would read as "Trash" -- the bands are sized for a
+-- character total, and per-item scores are a different, smaller domain. Same
+-- reason the character TOTAL in main.lua is passed to GetQuality unrescaled:
+-- totals and items are separate domains and are NOT unified.
+local ITEM_BAND_SCALE = 11.25
+
 -- Resolves the raw item data GearScore needs from a pre-fetched GetItemInfo
 -- result table. Callers that already hold the info (e.g. tooltip hooks) MUST
 -- prefer TT_GS:GetItemScoreFromInfo so one hover performs exactly one
@@ -266,10 +284,12 @@ local function scoreFromItemValues(itemLinkOut, ItemRarity, ItemLevel, ItemEquip
             Table = GS_Formula["A"]
         end
         if ((ItemRarity >= 2) and (ItemRarity <= 4)) then
-            local Red, Green, Blue = TT_GS:GetQuality((floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) * 1 * Scale)) *
-                11.25)
             GearScore = floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) *
                 GS_ItemTypes[ItemEquipLoc].SlotMOD * Scale * QualityScale)
+            -- Band from the score actually displayed, so the two can never
+            -- disagree. Order matters: the clamp below rewrites GearScore, and
+            -- the band is taken from the clamped value.
+            local Red, Green, Blue = TT_GS:GetQuality(GearScore * ITEM_BAND_SCALE)
             if (ItemLevel == 187.05) then
                 ItemLevel = 0
             end
@@ -451,12 +471,27 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
 
-        if (mainHandLink and offHandLink) then
+        -- Titan Grip: a 2H main hand is worth half, because it occupies the
+        -- offhand slot too. It occupies BOTH slot 16 and slot 17, so
+        -- offHandLink is ALWAYS nil for a 2H -- the `and offHandLink` this
+        -- guard used to carry made the only reachable assignment impossible and
+        -- TitanGrip was provably always 1.0. Inherited verbatim from original
+        -- GearScore 3.1.20 (wowgaming/addon-archive, GearScore_GetScore), which
+        -- guards on `GetInventoryItemLink(Target, 17)`.
+        --
+        -- The slot loop below already skips 17 (`i ~= 17`) and the offhand is
+        -- scored separately above, so the offhand is already counted exactly
+        -- once; only this guard was wrong.
+        if (mainHandLink) then
             local ItemEquipLoc = select(9, GetItemInfo(mainHandLink))
             if (ItemEquipLoc == "INVTYPE_2HWEAPON") then
                 TitanGrip = 0.5
             end
         end
+
+        -- The offhand branch below cannot fire for a 2H either (a 2H is never in
+        -- the offhand), so it is dead upstream code. It is left in place for
+        -- parity with original GearScore rather than "cleaned up".
 
         if (offHandLink) then
             local ItemEquipLoc = select(9, GetItemInfo(offHandLink))

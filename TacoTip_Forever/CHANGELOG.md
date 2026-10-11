@@ -4,9 +4,165 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `0.8.0` | `2026-10-11` | **GearScore correctness — the first release whose suite asserts a GearScore *value*.** Titan Grip now actually fires for two-handed weapons (every 2H was overcounted by **+311 GS**, `head + legs + 2H` read **1241** where the intended total is **930**), and an item's tooltip colour is now a pure function of the GearScore printed beside it. The Titan Grip guard is **inherited from original GearScore 3.1.20**, not introduced here. The only user-visible colour change in the release: low-slot-mod items shift band. |
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+---
+
+## [0.8.0] — 2026-10-11
+
+> GearScore correctness. Both defects below shipped through **0.7.9 with a fully
+> green suite**, and the reason is the same in both cases: the existing tests
+> asserted only that `GetScore` *does not throw*, never what it *returns*.
+> `TacoTip_Forever_Tests` calls `GetScore(nil)` and checks it returns;
+> `tooltip_test` `io.write`s the score and never asserts on it. There was no
+> GearScore value assertion anywhere in the project. This release adds the first
+> one, and it is what proves both fixes.
+
+### Fixed
+
+#### Titan Grip could never fire — every 2H overcounted by +311 GS
+
+`gearscore.lua` halved a 2H main hand's contribution:
+
+```lua
+if (mainHandLink and offHandLink) then
+    if (select(9, GetItemInfo(mainHandLink)) == "INVTYPE_2HWEAPON") then
+        TitanGrip = 0.5
+    end
+end
+```
+
+A two-handed weapon occupies **both** slot 16 and slot 17. `offHandLink` is
+therefore always `nil` for a 2H, so `mainHandLink and offHandLink` could only be
+true for a main/off *pair*, and the only reachable assignment was impossible.
+`TitanGrip` was provably always `1.0`.
+
+Measured, driving the real module with a mocked inventory (TBC bracket, all
+items ilvl 200 rare):
+
+| Inventory | Before | After |
+| :--- | ---: | ---: |
+| `head + legs + 2H` (ilvl 200) | **1241** | **930** |
+| `head + legs`, no weapon | 620 | 620 |
+| 2H at full `SlotMOD` 2.0 | 621 | 621 (half-weight: 310) |
+
+The intended total is `620 + floor(621 * 0.5)` = **930**; the bug added the full
+621 instead of the half 310, an overcount of **+311 GearScore**.
+
+**Provenance: this is inherited from original GearScore 3.1.20**
+(`wowgaming/addon-archive`, `GearScore/GearScore.lua`, `GearScore_GetScore`),
+whose guard reads `GetInventoryItemLink(Target, 17)` in exactly the same way.
+TacoTip did **not** introduce it. The rest of the scoring was already correct:
+the main slot loop skips 17 (`i ~= 17`) and the offhand is scored separately,
+so the offhand was counted exactly once. Only the guard was wrong, and only the
+guard changed.
+
+The second, offhand-side block is dead upstream code — a 2H is never in the
+offhand — and has been **left in place** for parity with original GearScore
+rather than "cleaned up".
+
+#### Item colour band no longer described the score shown
+
+In `scoreFromItemValues` the colour band was computed from the **slot-mod-free**
+base, with a hardcoded `* 1` standing in for `SlotMOD`:
+
+```lua
+local Red, Green, Blue = TT_GS:GetQuality((floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) * 1 * Scale)) * 11.25)
+GearScore = floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) * GS_ItemTypes[ItemEquipLoc].SlotMOD * Scale * QualityScale)
+```
+
+The number printed to the user includes `SlotMOD`; the colour does not. Two
+items of identical item level and rarity therefore wore the same colour while
+displaying different scores:
+
+| Item (ilvl 200) | Score shown | Band before |
+| :--- | ---: | :--- |
+| head (`SlotMOD` 1.0) | 310 | Artifact |
+| 2H (`SlotMOD` 2.0) | 621 | **Common** — a 621 GS weapon painted as junk |
+| ranged (`SlotMOD` 0.3164) | 43 | Superior |
+
+Upstream GearScore 3.1.20 decouples the band the same way, using `12.25` on the
+same slot-mod-free base, so the decoupling is **also inherited**. The
+`12.25 -> 11.25` constant change, however, is **ours**.
+
+The band is now applied to the computed `GearScore` through a named constant,
+`ITEM_BAND_SCALE = 11.25`, so the colour is a pure function of the number
+printed beside it. The ~11x rescale is deliberately **kept**: applied to a raw
+score, every small item would flatten into the "Trash" band.
+
+### Which items change tooltip colour
+
+**This is the only user-visible colour change in 0.8.0.** Every item whose
+`SlotMOD` is below 1.0 shifts band, because those are the items whose displayed
+score was most decoupled from their colour. They now colour like the slot they
+occupy rather than like a head:
+
+| Slots | `SlotMOD` |
+| :--- | ---: |
+| ranged, thrown, ranged-right, relic | 0.3164 |
+| trinket, neck, finger, wrist, cloak | 0.5625 |
+| shoulder, waist, feet, hands | 0.7500 |
+
+`SlotMOD` 1.0 items (head, chest, legs, 1H weapons, shield) keep their existing
+band, and the 2H at 2.0 moves up from the far too low "Common" to its true band.
+
+Character **totals** are unaffected: `main.lua` passes `TT_GS:GetQuality(total)`
+unrescaled, and that stays. Item scores and character totals are different
+domains — the bands are sized for a total — and the two are deliberately **not**
+unified.
+
+### Tests
+
+`Tests/harness/gearscore_test.lua` is new and is the first harness in the project
+to assert a GearScore **value**. It drives the real `gearscore.lua` against a
+mocked inventory and asserts:
+
+- per-item score literals derived by hand from the formula (`310`, `621`, `98`, …);
+- the Titan Grip half-weight, and an exhaustive enumeration of **reachable**
+  weapon states;
+- item colour-band consistency across every slot at several item levels and
+  rarities, including the ones that land on a clamp;
+- the low-slot guard — a ranged item must wear *its own* score's band, never a
+  head's;
+- two known full sets of known items producing known totals (3624 for 1H+shield,
+  3314 for 2H-no-offhand), the first such assertions in the suite.
+
+Every fix was reverted to confirm the test **fails**, then restored:
+
+- reverting the Titan Grip fix → **6 assertions fail** (`1241` vs `930`, delta
+  `621` instead of `310`, SET B `3625` vs `3314`);
+- reverting the colour-band fix → **2 assertions fail** (a ranged item comes back
+  wearing the head's `0.92/0.10/0.10` while its own score's band is
+  `0.12/0.81/0.04`).
+
+The one-handed set stays green under both reverts — it is the control proving
+the Titan Grip fix does not disturb a legitimate 1H loadout.
+
+### Wrong turns
+
+- **Reading the Titan Grip guard was not enough.** It reads as a perfectly
+  reasonable sanity check — "only halve the main hand if there is also an
+  offhand". It took enumerating all 49 realistic inventory combinations to
+  prove `TitanGrip` was always `1.0`. The dead assignment is invisible to the
+  eye and obvious to a table.
+- **A mock bug presented as a product bug.** Every `GetScore` assertion first
+  returned `0` while every `GetItemScore` assertion passed. The product was
+  fine; the harness mock was not: `function CI:GetInventoryItemMixin(_, guid, slot)`
+  declares `self` *implicitly* in a colon definition, so the extra `_` shifted
+  every argument one place left and `slot` was always `nil`. It cost real time
+  and pointed squarely at the wrong file. The same lesson as the seven green
+  lies already recorded: **never accept a green test you have not seen fail**,
+  and when everything returns zero, suspect the mock before the product.
+- **The first enumeration asserted a state WoW cannot produce.** `2H + offhand`
+  is impossible, and asserting it froze upstream behaviour that only the
+  fictional state can reach (`gearscore.lua` applies `TitanGrip` to the offhand
+  too, so that state scored 1085 against an expected 1240). The same mistake
+  made the first "known full set" literal wrong: it contained a 2H *and* a
+  shield and scored 3469, i.e. `3624.5 - 155`, the shield counted at half.
+  Neither number was pasted in — both were re-derived by hand from the formula.
 
 ---
 

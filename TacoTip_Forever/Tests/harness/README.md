@@ -9,8 +9,8 @@ environment. They need no game client and no WoWUnit.
 bash TacoTip_Forever/Tests/harness/run_all.sh
 ```
 
-50 invocations across all five clients. Exits non-zero on the first failing
-harness, and prints the failing invocation names.
+54 invocations across six harness files and all five clients. Exits non-zero on
+the first failing harness, and prints the failing invocation names.
 
 The suite defaults to `lua5.1`, which is what WoW actually ships and therefore
 the interpreter that matters. It is also measured green under `lua5.4`, as a
@@ -20,8 +20,8 @@ second opinion — override the interpreter with `LUA`:
 LUA=lua5.4 bash TacoTip_Forever/Tests/harness/run_all.sh
 ```
 
-Measured 2026-10-01 on this tree: **50/50 under `lua5.1`, 50/50 under
-`lua5.4`.** Keep it that way — a 5.4 failure is either a real portability bug
+Measured 2026-10-11 on this tree: **54/54 under `lua5.1`, 54/54 under
+`lua5.4`, 54/54 under `luajit`.** Keep it that way — a 5.4 failure is either a real portability bug
 in the addon or a broken mock, and both are worth knowing about. What the 5.4
 run is *not* is a target: do not bend an assertion, an expected value, or a
 `pcall` to make a 5.1-correct suite green on 5.4.

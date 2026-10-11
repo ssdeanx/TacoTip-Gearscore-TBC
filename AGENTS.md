@@ -65,7 +65,9 @@
 
 ## Commands & Workflow
 
-- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, and `AGENTS.md` simultaneously. Current version: `0.7.7`.
+- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, and `AGENTS.md` simultaneously. Current version: `0.8.0`.
+
+  The live addon is `TacoTip_Forever/`; the repo root holds a stale 0.7.7-era copy (`gearscore.lua`, `main.lua`, `options.lua`, `TacoTip.toc`, `TacoTip_Tests.lua`, and a root `TacoTip.toc` still listing the deprecated interface `38001`). It is **not** what ships. Bump the `TacoTip_Forever/` copies only; do not "helpfully sync" the dead copy. Also keep `memory-bank/activeContext.md` current — root `AGENTS.md` sat at `0.7.7` for two releases because only the `TacoTip_Forever/` copies were bumped.
 - **Testing:** Add test cases into `TacoTip_Tests.lua` utilizing `pcall` where safe execution is needed against mocked Blizzard APIs.
 - **Memory & Documentation Integrity:**
   - Whenever features, UI dimensions, API signatures, defaults, or architectural rules change, you MUST synchronously update:

@@ -1,0 +1,17 @@
+## Interface: 20506
+## Title: |cffd4a84bTacoTip|r |cffbcc3ccGearScore|r |cff9a76d2Enhancer|r
+## Author: NS
+## Version: 0.1.4
+## Dependencies: TacoTip
+## SavedVariables: TacoTipGearScoreEnhancerDB
+## IconTexture: Interface\AddOns\TacoTipGearScoreEnhancer\icons\GS-icon.tga
+
+Core.lua
+Scoring.lua
+Cache.lua
+Scanner.lua
+TacoTipAdapter.lua
+Tooltips.lua
+Frames.lua
+Minimap.lua
+Options.lua
