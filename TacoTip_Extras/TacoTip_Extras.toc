@@ -3,7 +3,7 @@
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: NS
 ## Version: 1.0.0
-## Dependencies: TacoTip
+## Dependencies: TacoTip_Forever, TacoTip
 ## SavedVariables: TacoTipExtrasDB
 ## IconTexture: Interface\AddOns\TacoTip_Extras\icons\GS-icon.tga
 

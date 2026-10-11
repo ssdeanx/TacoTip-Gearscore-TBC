@@ -9,7 +9,7 @@ TacoTip Extras is a **separate project from TacoTip**. It has its own repository
 
 ## Requirements
 
-TacoTip Extras **requires TacoTip**. It declares `## Dependencies: TacoTip`, so TacoTip loads first and nothing here works without it. TacoTip is not bundled, modified, redistributed or forked.
+TacoTip Extras **requires TacoTip_Forever** (or TacoTip). It declares `## Dependencies: TacoTip_Forever, TacoTip`, so TacoTip_Forever loads first and nothing here works without it. It resolves inspection data via `LibForeverInspector`. TacoTip is not bundled, modified, redistributed or forked.
 
 Supported clients — the same set TacoTip supports, declared identically in the TOC:
 

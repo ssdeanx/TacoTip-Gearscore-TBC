@@ -1297,8 +1297,8 @@ check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "WoW requires it; a mismatch means the add-on never loads at all")
 check(tocMeta.Version == "1.0.0",
     "TOC ## Version is 1.0.0", "got " .. tostring(tocMeta.Version))
-check(tocMeta.Dependencies == "TacoTip",
-    "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
+check(tocMeta.Dependencies == "TacoTip_Forever, TacoTip" or tocMeta.Dependencies == "TacoTip_Forever" or tocMeta.Dependencies == "TacoTip",
+    "TOC ## Dependencies includes TacoTip_Forever", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
     "TOC ## SavedVariables is TacoTipExtrasDB",
     "got " .. tostring(tocMeta.SavedVariables))

@@ -225,6 +225,15 @@ local function findInspector()
     local ok, library = pcall(
         libStub.GetLibrary,
         libStub,
+        "LibForeverInspector",
+        true
+    )
+    if ok and type(library) == "table" then
+        return library
+    end
+    ok, library = pcall(
+        libStub.GetLibrary,
+        libStub,
         "LibClassicInspector",
         true
     )
@@ -299,6 +308,11 @@ end
 -- More than one match is reported, never guessed at: this add-on must not touch
 -- the wrong TacoTip.
 local function scanForTacoTipTable()
+    local forever = _G["TacoTip_Forever"]
+    if looksLikeTacoTipTable(forever) then
+        return forever, "TacoTip_Forever", "TacoTip_Forever"
+    end
+
     local packaged = _G[PACKAGED_TACOTIP_NAME]
     if PACKAGED_TACOTIP_NAME ~= OWN_ADDON_NAME and looksLikeTacoTipTable(packaged) then
         return packaged, PACKAGED_TACOTIP_NAME, PACKAGED_TACOTIP_NAME
