@@ -158,7 +158,8 @@ local function readSocketCapacity(nativeLink)
     -- and origin/forever, and appears nowhere in the Interface tree of
     -- classic_era, classic_anniversary or classic_titan). Feature-detected, so
     -- the Classic clients take the degraded path rather than a wrong number.
-    if type(GetItemStats) ~= "function" then
+    local getItemStats = _G.GetItemStats
+    if type(getItemStats) ~= "function" then
         return nil, "socket-capability-unavailable"
     end
 
@@ -166,7 +167,7 @@ local function readSocketCapacity(nativeLink)
     -- NOTE: the second argument matters. GetItemStats(link) without it reports
     -- ONLY the filled sockets on some clients and errors on others; passing an
     -- empty table asks for the full stat set including EMPTY_SOCKET_*.
-    local ok, returned = pcall(GetItemStats, nativeLink, supplied)
+    local ok, returned = pcall(getItemStats, nativeLink, supplied)
     if not ok then
         return nil, "socket-capacity-unavailable"
     end

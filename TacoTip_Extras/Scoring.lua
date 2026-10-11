@@ -333,8 +333,8 @@ end
 local function readScoreGems(item, parsed, linkBlocker)
     local gemIDs, gemBlocker = readCell(item.scoreGemIDs, "score-gems", validateThreeIDs)
     local blocker = mergeBlocker(linkBlocker, gemBlocker)
-    if blocker then
-        return nil, blocker
+    if blocker or not gemIDs then
+        return nil, blocker or makeBlocker("unknown", "score-gems-missing")
     end
     for index = 1, 3 do
         if gemIDs[index] ~= parsed.gemIDs[index] then
@@ -500,8 +500,8 @@ end
 
 local function readSocketEvidence(item, parsed)
     local sockets, socketBlocker = readCell(item.sockets, "sockets", validateSockets)
-    if socketBlocker then
-        return nil, socketBlocker
+    if socketBlocker or not sockets then
+        return nil, socketBlocker or makeBlocker("unknown", "sockets-missing")
     end
 
     if parsed then
@@ -580,7 +580,7 @@ local function evaluateOccupiedItem(item, classToken, classBlocker)
     local socketEvidence, socketBlocker = readSocketEvidence(item, parsed)
     local completionBlocker = mergeBlocker(enchantOpportunityBlocker, socketBlocker)
     local completionValue
-    if not completionBlocker then
+    if not completionBlocker and socketEvidence then
         completionValue = {
             filled = filledEnchantOpportunity + socketEvidence.filled,
             opportunities = enchantOpportunity + socketEvidence.capacity,
@@ -589,7 +589,7 @@ local function evaluateOccupiedItem(item, classToken, classBlocker)
 
     local potentialDeltaBlocker = mergeBlocker(missingEnchantDeltaBlocker, socketBlocker)
     local potentialDelta
-    if not potentialDeltaBlocker then
+    if not potentialDeltaBlocker and socketEvidence then
         potentialDelta = missingEnchantDelta
         if not baseItem.earlyReturn then
             potentialDelta = potentialDelta + socketEvidence.emptyScoreBearing * GEM_BONUS

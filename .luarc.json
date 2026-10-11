@@ -211,6 +211,7 @@
         "Clamp",
         "EventRegistry",
         "GetCVarBool",
+        "GetItemStats",
         "PawnCommon",
         "PawnScaleProviders"
     ],

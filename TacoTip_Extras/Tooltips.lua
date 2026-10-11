@@ -510,7 +510,7 @@ local function updateEnhancementStatus(scope, revision, result, suppressed)
                 slotID, itemID = findItemBlocker(
                     revision,
                     result,
-                    metric.status,
+                    type(metric) == "table" and metric.status or "missing",
                     reason
                 )
             end

@@ -408,13 +408,12 @@ local function parseVersionString(value)
             cursor = dot + 1
         else
             piece = string.sub(value, cursor)
-            cursor = nil
         end
         if not string.match(piece, "^%d+$") then
             return nil
         end
         parts[#parts + 1] = tonumber(piece)
-        if cursor == nil then
+        if not dot then
             break
         end
     end
@@ -767,6 +766,15 @@ local function captureEquipmentCompatibility(contextKey)
         type(config) == "table" and type(config.unlock_info_position) or "missing",
     }
 
+    local refreshFunction = nil
+    if tacoTip and refresh then
+        refreshFunction = tacoTip[spec.refreshMethod]
+    end
+    local initFunction = nil
+    if tacoTip and init then
+        initFunction = tacoTip[spec.initMethod]
+    end
+
     return {
         supported = supported,
         reason = reason,
@@ -774,8 +782,8 @@ local function captureEquipmentCompatibility(contextKey)
         config = config,
         tacoTip = tacoTip,
         hookFunction = _G.hooksecurefunc,
-        refreshFunction = refresh and tacoTip[spec.refreshMethod] or nil,
-        initFunction = init and tacoTip[spec.initMethod] or nil,
+        refreshFunction = refreshFunction,
+        initFunction = initFunction,
         initPath = initPath,
         inspector = library,
         inspectorVersion = libraryVersion,
@@ -1322,7 +1330,7 @@ acquireEquipmentLease = function(contextKey, allowRefresh)
     end
 
     local hidden, originalStates = hideRecordsAtomic(snapshot.records)
-    if not hidden then
+    if not hidden or not originalStates then
         invalidateEquipmentContext(
             contextKey,
             contextKey .. "-visibility-acquire-failed",
@@ -1379,8 +1387,8 @@ handleEquipmentLifecycle = function(contextKey)
         contextKey,
         true
     )
-    if not objectsValid then
-        invalidateEquipmentContext(contextKey, objectReason, false)
+    if not objectsValid or not additions then
+        invalidateEquipmentContext(contextKey, objectReason or (contextKey .. "-objects-invalid"), false)
         return
     end
 
@@ -1392,7 +1400,7 @@ handleEquipmentLifecycle = function(contextKey)
         records[#records + 1] = additions[index]
     end
     local hidden, latestStates = hideRecordsAtomic(records)
-    if not hidden then
+    if not hidden or not latestStates then
         invalidateEquipmentContext(
             contextKey,
             contextKey .. "-visibility-refresh-failed",
