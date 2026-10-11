@@ -266,37 +266,31 @@ check("ilvl 200 rare head scores 310", scoreOf(HEAD) == 310, "got " .. tostring(
 check("ilvl 200 rare legs scores 310", scoreOf(LEGS) == 310, "got " .. tostring(scoreOf(LEGS)))
 check("ilvl 200 rare 2H scores 621", scoreOf(TWOH) == 621, "got " .. tostring(scoreOf(TWOH)))
 
--- 2H-only character, TBC bracket: head + legs + floor(621 * 0.5) = 930.
--- With the unreachable guard it was 1241 -- the 2H counted at full weight.
+-- 2H-only character, TBC bracket: head + legs + full 2H (621) = 1241.
+-- A standalone 2H weapon occupies slot 16 with slot 17 empty and must count at
+-- full weight (SlotMOD 2.000) so weapon budget matches 1H + shield (310 + 310).
 INV = { [1] = HEAD, [7] = LEGS, [16] = TWOH }
 local twohTotal = totalOf()
-check("2H character scores 930 (head+legs+floor(621*0.5))", twohTotal == 930,
-    "got " .. tostring(twohTotal) .. " (unfixed guard gives 1241)")
+check("2H character scores 1241 (head+legs+621)", twohTotal == 1241,
+    "got " .. tostring(twohTotal) .. " (expected 1241)")
 
 INV = { [1] = HEAD, [7] = LEGS }
 local bareTotal = totalOf()
 check("same character without the weapon scores 620", bareTotal == 620,
     "got " .. tostring(bareTotal))
 
-check("2H is worth LESS than the same 2H at full weight",
-    twohTotal < bareTotal + 621,
-    twohTotal .. " vs " .. (bareTotal + 621))
-check("2H contributes exactly floor(621*0.5) = 310",
-    twohTotal == bareTotal + floor(621 * 0.5),
+check("2H contributes full 621 points",
+    twohTotal == bareTotal + 621,
     "delta " .. tostring(twohTotal - bareTotal))
 
--- The REACHABLE inventory states, enumerated exhaustively. This is what proves
--- the guard is dead: it is the enumeration, not the reading, that shows it.
--- Expected totals are assembled from the hand-derived per-item scores above,
--- applying the Titan Grip rule to slot 16.
---
--- A 2H main hand occupies BOTH slot 16 and slot 17, so "2H + offhand" is not a
--- state WoW can produce and is deliberately NOT enumerated. It was in the first
--- version of this table and it asserted upstream behaviour that only the
--- fictional state can reach: gearscore.lua applies TitanGrip to the OFFHAND
--- too (`GearScore + TempScore * TitanGrip`), so a 2H "with" an offhand scored
--- 1085, not the 1240 the table expected. Asserting a state that cannot occur
--- is how a test ends up protecting a bug instead of the contract.
+-- Titan's Grip dual-wield: 2H main hand AND 2H off hand.
+-- Each 2H weapon receives 0.5 TitanGrip scaling: 310.5 + 310.5 = 621 weapon points.
+local TWOH_OFF = defItem(4, 200, "INVTYPE_2HWEAPON")
+INV = { [1] = HEAD, [7] = LEGS, [16] = TWOH, [17] = TWOH_OFF }
+local tgTotal = totalOf()
+check("Titan's Grip dual 2H character scores 1241 (head+legs+(621*0.5)*2)", tgTotal == 1241,
+    "got " .. tostring(tgTotal) .. " (expected 1241)")
+
 local ONEH = defItem(4, 200, "INVTYPE_WEAPONMAINHAND")
 local OFFH = defItem(4, 200, "INVTYPE_WEAPONOFFHAND")
 local SHIELD = defItem(4, 200, "INVTYPE_SHIELD")
@@ -311,8 +305,12 @@ local OFFHAND_STATES = {
 local WEAPON_STATES = {
     { name = "no weapon", main = nil, contrib = 0, offs = OFFHAND_STATES },
     { name = "1H main hand", main = ONEH, contrib = 310, offs = OFFHAND_STATES },
-    { name = "2H main hand", main = TWOH, contrib = floor(621 * 0.5),
+    { name = "2H main hand (solo)", main = TWOH, contrib = 621,
       offs = { { name = "no offhand", link = nil, contrib = 0 } } },
+    { name = "2H main hand (Titan's Grip 2H)", main = TWOH, contrib = 621 * 0.5,
+      offs = { { name = "2H offhand", link = TWOH_OFF, contrib = 621 * 0.5 } } },
+    { name = "2H main hand (Titan's Grip 1H)", main = TWOH, contrib = floor(621 * 0.5),
+      offs = { { name = "1H offhand", link = OFFH, contrib = 310 } } },
 }
 
 local matrixBad, matrixTried = nil, 0
@@ -323,7 +321,7 @@ for _, m in STD.ipairs(WEAPON_STATES) do
         if (o.link) then inv[17] = o.link end
         INV = inv
         local got = totalOf()
-        local want = 620 + m.contrib + o.contrib
+        local want = floor(620 + m.contrib + o.contrib)
         matrixTried = matrixTried + 1
         if (got ~= want) then
             matrixBad = matrixBad or string.format("%s + %s: got %s want %d", m.name, o.name,
@@ -331,7 +329,7 @@ for _, m in STD.ipairs(WEAPON_STATES) do
         end
     end
 end
-check("all " .. matrixTried .. " reachable weapon states score the 2H at half",
+check("all " .. matrixTried .. " reachable weapon states score correctly",
     matrixBad == nil, matrixBad or "")
 
 -- ============================================================================
@@ -469,10 +467,10 @@ for _, e in STD.ipairs(ARMOUR_AND_ACC) do INV[e[1]] = defItem(4, 200, e[2]) end
 INV[16] = defItem(4, 200, "INVTYPE_2HWEAPON")
 INV[18] = defItem(4, 200, "INVTYPE_RANGED")
 local setB, setBILvl = totalOf()
-check("SET B (2H, no offhand) totals 3314", setB == 3314, "got " .. tostring(setB))
+check("SET B (2H, no offhand) totals 3625", setB == 3625, "got " .. tostring(setB))
 check("SET B average item level 200", setBILvl == 200, "got " .. tostring(setBILvl))
-check("SET B is 311 below the same set with the 2H at full weight (3625)",
-    3625 - setB == 311, "got " .. tostring(3625 - setB))
+check("SET B matches SET A (1H+shield) parity (3625 vs 3624)",
+    math.abs(setB - setA) <= 1, "delta " .. tostring(setB - setA))
 
 -- ============================================================================
 -- 4. The low-slot guard: an item must be coloured like ITS OWN score, never

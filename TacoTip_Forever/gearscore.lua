@@ -471,38 +471,29 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
 
-        -- Titan Grip: a 2H main hand is worth half, because it occupies the
-        -- offhand slot too. It occupies BOTH slot 16 and slot 17, so
-        -- offHandLink is ALWAYS nil for a 2H -- the `and offHandLink` this
-        -- guard used to carry made the only reachable assignment impossible and
-        -- TitanGrip was provably always 1.0. Inherited verbatim from original
-        -- GearScore 3.1.20 (wowgaming/addon-archive, GearScore_GetScore), which
-        -- guards on `GetInventoryItemLink(Target, 17)`.
-        --
-        -- The slot loop below already skips 17 (`i ~= 17`) and the offhand is
-        -- scored separately above, so the offhand is already counted exactly
-        -- once; only this guard was wrong.
-        if (mainHandLink) then
-            local ItemEquipLoc = select(9, GetItemInfo(mainHandLink))
-            if (ItemEquipLoc == "INVTYPE_2HWEAPON") then
+        -- Titan Grip: In WotLK, Fury Warriors can dual-wield 2-handed weapons.
+        -- When an offhand item is equipped alongside a 2H weapon (or both are 2H),
+        -- each 2H weapon is scaled by 0.5 (reducing SlotMOD from 2.0 to 1.0) so
+        -- dual-wielding 2H weapons balances with 1H dual wielders (1.0 + 1.0 = 2.0).
+        -- Standalone 2H weapons (no offhand equipped) retain full 2.0x weight.
+        local OffHandTitanGrip = 1
+        if (mainHandLink and offHandLink) then
+            local mhEquipLoc = select(9, GetItemInfo(mainHandLink))
+            local ohEquipLoc = select(9, GetItemInfo(offHandLink))
+            if (mhEquipLoc == "INVTYPE_2HWEAPON") then
                 TitanGrip = 0.5
+            end
+            if (ohEquipLoc == "INVTYPE_2HWEAPON") then
+                OffHandTitanGrip = 0.5
             end
         end
 
-        -- The offhand branch below cannot fire for a 2H either (a 2H is never in
-        -- the offhand), so it is dead upstream code. It is left in place for
-        -- parity with original GearScore rather than "cleaned up".
-
         if (offHandLink) then
-            local ItemEquipLoc = select(9, GetItemInfo(offHandLink))
-            if (ItemEquipLoc == "INVTYPE_2HWEAPON") then
-                TitanGrip = 0.5
-            end
             local TempScore, ItemLevel = TT_GS:GetItemScore(offHandLink)
             if (PlayerEnglishClass == "HUNTER") then
                 TempScore = TempScore * 0.3164
             end
-            GearScore = GearScore + TempScore * TitanGrip
+            GearScore = GearScore + TempScore * OffHandTitanGrip
             ItemCount = ItemCount + 1
             LevelTotal = LevelTotal + ItemLevel
         end
