@@ -1281,7 +1281,7 @@ function Tooltips.HandleModifierStateChanged(key)
     if mode ~= "Minimal" and mode ~= "Compact" then
         return false
     end
-    if not (settings.tooltip.shiftToDetailed == true) then
+    if settings.tooltip.shiftToDetailed ~= true then
         return false
     end
     local nowDown = shiftIsDown()

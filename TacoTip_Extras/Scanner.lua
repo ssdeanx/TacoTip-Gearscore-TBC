@@ -134,7 +134,7 @@ local function captureTemporaryEffects()
         return unavailable, unavailable
     end
 
-    local ok, mainHas, mainExpiration, mainCharges, mainEnchantID, offHas =
+    local ok, mainHas, _, _, _, offHas =
         pcall(GetWeaponEnchantInfo)
     if not ok then
         return unavailable, unavailable
@@ -340,7 +340,7 @@ local function temporaryCellForSlot(slotID, mainTemporary, offTemporary)
 end
 
 local function buildOccupiedSlot(
-    slotID,
+    _slotID,
     itemID,
     nativeLink,
     parsed,
