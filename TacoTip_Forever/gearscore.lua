@@ -100,6 +100,7 @@ end
 local GUIDIsPlayer = (_G.C_PlayerInfo and _G.C_PlayerInfo.GUIDIsPlayer) or fallbackGUIDIsPlayer
 local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local function GetItemInfo(...)
+    if not ... then return nil end
     local fn = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
     if fn then
         return fn(...)
@@ -310,7 +311,7 @@ end
 -- @param info result of GetItemInfo(itemLink) (may be nil while uncached)
 -- @return number gearScore, number itemLevel, number r, number g, number b, string|nil equipLoc
 local function scoreFromItemInfo(info, itemLinkFallback)
-    if (not info) then
+    if (not info or type(info) ~= "table") then
         if (itemLinkFallback and RequestLoadItemDataByID) then
             local itemID = tonumber(string.match(itemLinkFallback, "item:(%d+)"))
             if (itemID) then
@@ -349,9 +350,12 @@ function TT_GS:GetItemHunterScore(ItemLink, info)
     else
         GearScore, ItemLevel, Red, Green, Blue, ItemEquipLoc = TT_GS:GetItemScore(ItemLink)
     end
+    if (not GearScore or GearScore == 0) then
+        return 0, ItemLevel or 0, Red or 0.1, Green or 0.1, Blue or 0.1, ItemEquipLoc
+    end
     if ((ItemEquipLoc == "INVTYPE_2HWEAPON") or (ItemEquipLoc == "INVTYPE_WEAPONMAINHAND") or (ItemEquipLoc == "INVTYPE_WEAPONOFFHAND") or (ItemEquipLoc == "INVTYPE_WEAPON") or (ItemEquipLoc == "INVTYPE_HOLDABLE")) then
         GearScore = floor(GearScore * 0.3164)
-    elseif ((ItemEquipLoc == "INVTYPE_RANGEDRIGHT") or (ItemEquipLoc == "INVTYPE_RANGED")) then
+    elseif ((ItemEquipLoc == "INVTYPE_RANGEDRIGHT") or (ItemEquipLoc == "INVTYPE_RANGED") or (ItemEquipLoc == "INVTYPE_THROWN")) then
         GearScore = floor(GearScore * 5.3224)
     end
     return GearScore, ItemLevel, Red, Green, Blue, ItemEquipLoc

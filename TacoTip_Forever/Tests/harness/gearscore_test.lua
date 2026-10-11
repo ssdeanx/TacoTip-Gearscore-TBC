@@ -518,6 +518,31 @@ check("the same inspected character scores the same as the player",
     "got " .. tostring(otherScore) .. "/" .. tostring(otherILvl)
         .. " want " .. tostring(setB) .. "/" .. tostring(setBILvl))
 
+-- ============================================================================
+-- 6. Hunter weapon scaling & nil-safety resilience
+-- ============================================================================
+
+local hTwohScore = GS:GetItemHunterScore(TWOH)
+check("hunter 2H melee weapon scaled by 0.3164 (621 -> 196)",
+    hTwohScore == 196, "got " .. tostring(hTwohScore))
+
+local hRangedScore = GS:GetItemHunterScore(RANGED)
+check("hunter ranged weapon scaled by 5.3224 (98 -> 521)",
+    hRangedScore == 521, "got " .. tostring(hRangedScore))
+
+local hHeadScore = GS:GetItemHunterScore(HEAD)
+check("hunter non-weapon item unscaled (310)",
+    hHeadScore == 310, "got " .. tostring(hHeadScore))
+
+local nilScore = GS:GetItemScore(nil)
+check("GetItemScore(nil) returns 0 safely", nilScore == 0, "got " .. tostring(nilScore))
+
+local nilInfoScore = GS:GetItemScoreFromInfo(nil)
+check("GetItemScoreFromInfo(nil) returns 0 safely", nilInfoScore == 0, "got " .. tostring(nilInfoScore))
+
+local nilHunterScore = GS:GetItemHunterScore(nil)
+check("GetItemHunterScore(nil) returns 0 safely", nilHunterScore == 0, "got " .. tostring(nilHunterScore))
+
 -- ---- report -----------------------------------------------------------------
 
 local fails = 0
