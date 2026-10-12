@@ -141,7 +141,7 @@ local function onEnter(self)
         return
     end
     tooltip:SetOwner(self, "ANCHOR_LEFT")
-    tooltip:SetText("TacoTip Extras")
+    tooltip:SetText("TacoTip Extras", 1, 1, 1)
     tooltip:AddLine("Left-click to toggle settings")
     tooltip:AddLine("Drag to move")
     if type(tooltip.Show) == "function" then
