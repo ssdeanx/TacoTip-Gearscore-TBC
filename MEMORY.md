@@ -1,6 +1,6 @@
 # TacoTip-Gearscore-TBC — Enterprise Project Memory
 
-> **Version:** `0.8.0` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120100` (Retail)  
+> **Version:** `0.8.1` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120100` (Retail)  
 > **Repository:** `ssdeanx/TacoTip-Gearscore-TBC` | **Maintainer:** Pilsung (AcidBomb) | **Architecture:** Five-client cross-engine, single build
 
 ---
@@ -56,6 +56,9 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
 ## 5. Companion Addon & GearScore Engine Subsystems
 
 - **TacoTip_Extras (1.0.0):** Standalone companion addon located at `TacoTip_Extras/`. Strictly depends on `TacoTip` (`## Dependencies: TacoTip`). Integrates directly with `LibForeverInspector` for non-invasive gear and gem/enchant auditing.
+  - **Retail & Forever Client Compatibility:** Unit resolution supports `TooltipUtil.GetDisplayedUnit`, `TooltipDataProcessor.AddTooltipPostCall`, and 3-value `GetUnit()` returns (`name, unit, guid`). Equipment host parenting falls back gracefully to `CharacterModelScene` and `PaperDollFrame` when `CharacterModelFrame` is absent. `Scoring.ParseEquippedLink` supports variable-length modern item links with bonus IDs. Average item level divisor dynamically checks client type (16 slots on Retail without ranged slot, 17 slots on Classic/TBC/Titanforge/Forever).
+  - **Remote Inspection & Event Binding:** `Scanner.HandleInventoryReady` accepts `isInspect` as true or nil (defensive against varying inspector libraries) and resolves remote unit tokens via `_G.InspectFrame.unit` when the inspected player is not targeted/focused. `LibForeverInspector` fires `("INVENTORY_READY", guid, true, unit)` and checks `InspectFrame.unit` in `PlayerGUIDToUnitToken`. Safe item ID extraction from item links prevents contradiction failures on remote units with uncached IDs.
+  - **Display Modes Default:** Fresh installations and unconfigured profiles default to **Detailed** mode for all display surfaces (both player tooltips and character/inspect equipment summaries).
 - **GearScore Engine Rules (`gearscore.lua`):**
   - Standalone 2H weapons retain `SlotMOD = 2.0` (weight 2.0x, balancing with 1H+Shield at 1241 vs 1240).
   - Titan's Grip dampening factor `0.5` strictly gated to active dual-wielding (`mainHandLink and offHandLink`).

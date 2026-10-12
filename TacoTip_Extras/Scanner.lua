@@ -397,28 +397,37 @@ local function captureSlot(
     priorPending,
     nextPending
 )
-    local itemID = GetInventoryItemID(unit, slotID)
+    local rawItemID = GetInventoryItemID(unit, slotID)
     local nativeLink = GetInventoryItemLink(unit, slotID)
 
-    if itemID == nil and nativeLink == nil then
+    local effectiveItemID = isPositiveInteger(rawItemID) and rawItemID or nil
+    if effectiveItemID == nil and type(nativeLink) == "string" then
+        local extracted = string.match(nativeLink, "item:(%d+)")
+        local parsedID = extracted and tonumber(extracted) or nil
+        if isPositiveInteger(parsedID) then
+            effectiveItemID = parsedID
+        end
+    end
+
+    if effectiveItemID == nil and nativeLink == nil then
         return { state = "confirmed-empty" }, false
     end
-    if isPositiveInteger(itemID) and nativeLink == nil then
-        requestItemData(itemID, targetGeneration, priorPending, nextPending)
+    if isPositiveInteger(effectiveItemID) and nativeLink == nil then
+        requestItemData(effectiveItemID, targetGeneration, priorPending, nextPending)
         return nil, true
     end
-    if not isPositiveInteger(itemID) or type(nativeLink) ~= "string" then
+    if not isPositiveInteger(effectiveItemID) or type(nativeLink) ~= "string" then
         return nil, false, "inventory-id-link-contradiction"
     end
 
-    local parsed, parseReason = Scoring.ParseEquippedLink(nativeLink, itemID)
+    local parsed, parseReason = Scoring.ParseEquippedLink(nativeLink, effectiveItemID)
     if not parsed then
         return nil, false, parseReason or "invalid-native-link"
     end
 
     local occupied, isPending = buildOccupiedSlot(
         slotID,
-        itemID,
+        effectiveItemID,
         nativeLink,
         parsed,
         temporaryWeaponEffect,
@@ -563,6 +572,12 @@ end
 local function resolveRemoteUnit(guid, callbackUnit)
     if unitMatchesRemoteGUID(callbackUnit, guid) then
         return callbackUnit
+    end
+
+    local inspectFrame = _G.InspectFrame
+    if type(inspectFrame) == "table"
+        and unitMatchesRemoteGUID(inspectFrame.unit, guid) then
+        return inspectFrame.unit
     end
 
     if type(inspector) ~= "table"
@@ -724,7 +739,7 @@ end
 function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
     if not initialized
         or event ~= "INVENTORY_READY"
-        or isInspect ~= true
+        or (isInspect ~= nil and isInspect ~= true)
         or not isRemotePlayerGUID(guid) then
         return false
     end

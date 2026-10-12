@@ -86,7 +86,7 @@ end
 
 local function setFreshEquipmentDisplayDefaults(runtime)
     runtime.equipmentDisplay = {
-        mode = "Basic",
+        mode = "Detailed",
         showUnenhanced = false,
         locked = true,
     }
@@ -94,7 +94,7 @@ end
 
 local function setMigratedEquipmentDisplayDefaults(runtime)
     runtime.equipmentDisplay = {
-        mode = "Disabled",
+        mode = "Detailed",
         showUnenhanced = false,
         locked = true,
     }
@@ -193,7 +193,7 @@ local function normalizeSettings(runtime)
 
     local tooltipSettings = runtime.tooltip
     if not VALID_TOOLTIP_MODES[tooltipSettings.mode] then
-        tooltipSettings.mode = "Compact"
+        tooltipSettings.mode = "Detailed"
     end
     defaultBoolean(tooltipSettings, "shiftToDetailed", true)
     defaultBoolean(
@@ -246,7 +246,7 @@ local function normalizeSettings(runtime)
     local equipmentDisplay = {
         mode = VALID_EQUIPMENT_DISPLAY_MODES[equipmentSource.mode]
             and equipmentSource.mode
-            or "Disabled",
+            or "Detailed",
         showUnenhanced = showUnenhanced,
         locked = locked,
         characterPosition = normalizeEquipmentPosition(

@@ -113,9 +113,9 @@ local isRetail = isMainline and not isForever
 -- and, because the fallback below only runs when no flag is set, it also suppressed
 -- the fallback that would otherwise have classified the client. Hence the `~= nil`
 -- guard on every constant: a constant that was never defined can never match.
-local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC)
-local isTBC = (WOW_PROJECT_BC_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC)
-local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC)
+local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC and (clientBuildMajor == 1 or clientBuildMajor == 0))
+local isTBC = (WOW_PROJECT_BC_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC) or (clientBuildMajor == 2)
+local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC) or (clientBuildMajor == 3)
 
 -- Fallbacks for when WOW_PROJECT_ID is unavailable or unrecognised (it is
 -- engine-defined on WoW Forever, so it is not verifiable from source there).
@@ -171,7 +171,15 @@ function lib:IsTBC()
     return isTBC
 end
 
+function lib:IsAnniversary()
+    return isTBC
+end
+
 function lib:IsWotlk()
+    return isWotlk
+end
+
+function lib:IsTitanforge()
     return isWotlk
 end
 
@@ -210,6 +218,107 @@ lib.spec_table = lib.spec_table or {
     ["DEMONHUNTER"] = { "Havoc", "Vengeance" },
     ["EVOKER"] = { "Devastation", "Preservation", "Augmentation" },
 }
+
+local CLASS_IDS = {
+    ["WARRIOR"] = 1,
+    ["PALADIN"] = 2,
+    ["HUNTER"] = 3,
+    ["ROGUE"] = 4,
+    ["PRIEST"] = 5,
+    ["DEATHKNIGHT"] = 6,
+    ["SHAMAN"] = 7,
+    ["MAGE"] = 8,
+    ["WARLOCK"] = 9,
+    ["MONK"] = 10,
+    ["DRUID"] = 11,
+    ["DEMONHUNTER"] = 12,
+    ["EVOKER"] = 13,
+}
+
+local currentLocale = _G.GetLocale and _G.GetLocale() or "enUS"
+if (currentLocale == "deDE") then
+    lib.spec_table_localized = lib.spec_table_localized or {
+        ["WARRIOR"] = { "Waffen", "Furor", "Schutz" },
+        ["PALADIN"] = { "Heilig", "Schutz", "Vergeltung" },
+        ["HUNTER"] = { "Tierherrschaft", "Treffsicherheit", "\195\156berleben" },
+        ["ROGUE"] = { "Meucheln", "Kampf", "T\195\164uschung" },
+        ["PRIEST"] = { "Disziplin", "Heilig", "Schatten" },
+        ["DEATHKNIGHT"] = { "Blut", "Frost", "Unheilig" },
+        ["SHAMAN"] = { "Elementar", "Verst\195\164rkung", "Wiederherstellung" },
+        ["MAGE"] = { "Arkan", "Feuer", "Frost" },
+        ["WARLOCK"] = { "Gebrechen", "D\195\164monologie", "Zerst\195\182rung" },
+        ["DRUID"] = { "Gleichgewicht", "Wildheit", "Wiederherstellung" },
+        ["MONK"] = { "Braumeister", "Nebelwirker", "Windl\195\164ufer" },
+        ["DEMONHUNTER"] = { "Verw\195\188stung", "Rachsucht" },
+        ["EVOKER"] = { "Verheerung", "Bewahrung", "Verst\195\164rkung" },
+    }
+elseif (currentLocale == "esES") then
+    lib.spec_table_localized = lib.spec_table_localized or {
+        ["WARRIOR"] = { "Armas", "Furia", "Protecci\195\179n" },
+        ["PALADIN"] = { "Sagrado", "Protecci\195\179n", "Reprensi\195\179n" },
+        ["HUNTER"] = { "Bestias", "Punter\195\173a", "Supervivencia" },
+        ["ROGUE"] = { "Asesinato", "Combate", "Sutileza" },
+        ["PRIEST"] = { "Disciplina", "Sagrado", "Sombra" },
+        ["DEATHKNIGHT"] = { "Sangre", "Escarcha", "Profano" },
+        ["SHAMAN"] = { "Elemental", "Mejora", "Restauraci\195\179n" },
+        ["MAGE"] = { "Arcano", "Fuego", "Escarcha" },
+        ["WARLOCK"] = { "Aflicci\195\179n", "Demonolog\195\173a", "Destrucci\195\179n" },
+        ["DRUID"] = { "Equilibrio", "Combate feral", "Restauraci\195\179n" },
+        ["MONK"] = { "Maestro cervecero", "Tejedor de niebla", "Viajero del viento" },
+        ["DEMONHUNTER"] = { "Devastaci\195\179n", "Venganza" },
+        ["EVOKER"] = { "Devastaci\195\179n", "Preservaci\195\179n", "Aumento" },
+    }
+elseif (currentLocale == "koKR") then
+    lib.spec_table_localized = lib.spec_table_localized or {
+        ["WARRIOR"] = { "\235\172\180\234\184\176", "\235\182\132\235\133\184", "\235\176\169\236\150\180" },
+        ["PALADIN"] = { "\236\139\160\236\132\177", "\235\179\180\237\152\184", "\236\167\149\235\178\140" },
+        ["HUNTER"] = { "\236\149\188\236\136\152", "\236\130\172\234\178\169", "\236\131\157\236\161\180" },
+        ["ROGUE"] = { "\236\149\148\236\130\180", "\236\160\132\237\136\172", "\236\158\160\237\150\137" },
+        ["PRIEST"] = { "\236\136\152\236\150\145", "\236\139\160\236\132\177", "\236\149\148\237\157\145" },
+        ["DEATHKNIGHT"] = { "\237\152\136\234\184\176", "\235\131\137\234\184\176", "\235\182\128\236\160\149" },
+        ["SHAMAN"] = { "\236\160\149\234\184\176", "\234\179\160\236\150\145", "\237\154\140\235\179\181" },
+        ["MAGE"] = { "\235\185\132\236\160\132", "\237\153\148\236\151\188", "\235\131\137\234\184\176" },
+        ["WARLOCK"] = { "\234\179\160\237\134\181", "\236\149\133\235\167\136", "\237\140\140\234\180\180" },
+        ["DRUID"] = { "\236\161\176\237\153\148", "\236\149\188\236\132\177", "\237\154\140\235\179\181" },
+        ["MONK"] = { "\236\154\145\236\161\176\236\130\172", "\236\154\180\234\180\129\236\130\172", "\237\146\141\236\154\180\236\130\172" },
+        ["DEMONHUNTER"] = { "\237\140\140\235\180\180", "\235\179\181\236\136\152" },
+        ["EVOKER"] = { "\237\153\169\235\157\128", "\235\179\180\236\161\180", "\236\166\157\234\176\149" },
+    }
+elseif (currentLocale == "ruRU") then
+    lib.spec_table_localized = lib.spec_table_localized or {
+        ["WARRIOR"] = { "\208\158\209\128\209\131\208\182\208\184\208\181", "\208\157\208\181\208\184\209\129\209\130\208\190\208\178\209\129\209\130\208\178\208\190", "\208\151\208\176\209\137\208\184\209\130\208\176" },
+        ["PALADIN"] = { "\208\161\208\178\208\181\209\130", "\208\151\208\176\209\137\208\184\209\130\208\176", "\208\146\208\190\208\183\208\180\208\176\209\143\208\189\208\184\208\181" },
+        ["HUNTER"] = { "\208\159\208\190\208\178\208\181\208\187\208\184\209\130\208\181\208\187\209\140 \208\183\208\178\208\181\209\128\208\181\208\185", "\208\161\209\130\209\128\208\181\208\187\209\140\208\177\208\176", "\208\146\209\139\208\182\208\184\208\178\208\176\208\189\208\184\208\181" },
+        ["ROGUE"] = { "\208\155\208\184\208\186\208\178\208\184\208\180\208\176\209\134\208\184\209\143", "\208\145\208\190\208\185", "\208\161\208\186\209\128\209\139\209\130\208\189\208\190\209\129\209\130\209\140" },
+        ["PRIEST"] = { "\208\159\208\190\209\129\208\187\209\131\209\136\208\176\208\189\208\184\208\181", "\208\161\208\178\208\181\209\130", "\208\162\209\140\208\188\208\176" },
+        ["DEATHKNIGHT"] = { "\208\154\209\128\208\190\208\178\209\140", "\208\155\208\181\208\180", "\208\157\208\181\209\135\208\181\209\129\209\130\208\184\208\178\208\190\209\129\209\130\209\140" },
+        ["SHAMAN"] = { "\208\161\209\130\208\184\209\133\208\184\208\184", "\208\161\208\190\208\178\208\181\209\128\209\136\208\181\208\189\209\129\209\130\208\178\208\190\208\178\208\176\208\189\208\184\208\181", "\208\146\208\190\209\129\209\129\209\130\208\176\208\189\208\190\208\178\208\187\208\181\208\189\208\184\208\181" },
+        ["MAGE"] = { "\208\162\208\176\208\185\208\189\208\176\209\143 \208\188\208\176\208\179\208\184\209\143", "\208\158\208\179\208\190\208\189\209\140", "\208\155\208\181\208\180" },
+        ["WARLOCK"] = { "\208\154\208\190\208\187\208\180\208\190\208\178\209\129\209\130\208\178\208\190", "\208\148\208\181\208\188\208\190\208\187\208\190\208\179\208\184\209\143", "\208\160\208\176\208\183\209\128\209\131\209\136\208\181\208\189\208\184\208\181" },
+        ["DRUID"] = { "\208\145\208\176\208\187\208\176\208\189\209\129", "\208\161\208\184\208\187\208\176 \208\183\208\178\208\181\209\128\209\143", "\208\146\208\190\209\129\209\129\209\130\208\176\208\189\208\190\208\178\208\187\208\181\208\189\208\184\208\181" },
+        ["MONK"] = { "Braumeister", "Nebelwirker", "Windl\195\164ufer" },
+        ["DEMONHUNTER"] = { "Havoc", "Vengeance" },
+        ["EVOKER"] = { "Devastation", "Preservation", "Augmentation" },
+    }
+elseif (currentLocale == "zhCN") then
+    lib.spec_table_localized = lib.spec_table_localized or {
+        ["WARRIOR"] = { "\230\173\166\229\153\168", "\231\139\130\230\128\146", "\233\152\178\230\138\164" },
+        ["PALADIN"] = { "\231\165\158\229\156\163", "\233\152\178\230\138\164", "\230\131\169\230\136\146" },
+        ["HUNTER"] = { "\233\135\142\229\133\189\230\142\167\229\136\182", "\229\176\132\229\135\187", "\231\148\159\229\173\152" },
+        ["ROGUE"] = { "\229\165\135\232\162\173", "\230\136\152\230\150\151", "\230\149\143\233\148\144" },
+        ["PRIEST"] = { "\230\136\146\229\190\139", "\231\165\158\229\156\163", "\230\154\151\229\189\177" },
+        ["DEATHKNIGHT"] = { "\233\178\156\232\161\128", "\229\134\176\233\156\156", "\233\130\170\230\129\182" },
+        ["SHAMAN"] = { "\229\133\131\231\180\160", "\229\162\158\229\188\186", "\230\129\162\229\164\141" },
+        ["MAGE"] = { "\229\165\165\230\156\175", "\231\129\171\231\132\176", "\229\134\176\233\156\156" },
+        ["WARLOCK"] = { "\231\151\155\232\139\166", "\230\129\182\233\173\148\229\173\166\232\175\134", "\230\175\129\231\129\173" },
+        ["DRUID"] = { "\229\185\179\232\161\161", "\233\135\142\230\128\167\230\136\152\230\150\151", "\230\129\162\229\164\141" },
+        ["MONK"] = { "\233\135\145\233\133\146", "\231\187\135\233\155\190", "\232\184\143\233\163\142" },
+        ["DEMONHUNTER"] = { "\230\181\169\229\138\171", "\229\164\141\231\167\135" },
+        ["EVOKER"] = { "\230\183\173\231\129\173", "\228\191\157\229\133\168", "\229\162\158\229\188\186" },
+    }
+else
+    lib.spec_table_localized = lib.spec_table
+end
 
 local inspectPendingUnit = nil
 
@@ -3438,9 +3547,12 @@ local function cacheUnitData(unit, guid)
     end
 
     lib.cache[guid] = data
-    lib.callbacks:Fire("INVENTORY_READY", guid)
-    lib.callbacks:Fire("TALENTS_READY", guid)
+    lib.callbacks:Fire("INVENTORY_READY", guid, true, unit)
+    lib.callbacks:Fire("TALENTS_READY", guid, unit)
 end
+
+local nextInspectTime = 0
+local inspectQueueTick
 
 frame:SetScript("OnEvent", function(self, event, ...)
     if (event == "INSPECT_READY") then
@@ -3465,12 +3577,51 @@ frame:SetScript("OnEvent", function(self, event, ...)
             cacheUnitData(unit, guid)
         end
         inspectPendingUnit = nil
+
+        local now = type(GetTime) == "function" and GetTime() or 0
+        if (inspectQueueTick) then
+            if (now >= nextInspectTime) then
+                inspectQueueTick()
+            elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
+                C_Timer.After(math.max(0.05, nextInspectTime - now), inspectQueueTick)
+            end
+        end
+    elseif (event == "PLAYER_TARGET_CHANGED") then
+        if (type(UnitExists) == "function" and UnitExists("target")
+            and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))) then
+            lib:DoInspect("target")
+        end
+    elseif (event == "UPDATE_MOUSEOVER_UNIT") then
+        if (type(UnitExists) == "function" and UnitExists("mouseover")
+            and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))) then
+            lib:DoInspect("mouseover")
+        end
+    elseif (event == "GROUP_ROSTER_UPDATE") then
+        if (inspectQueueTick) then
+            inspectQueueTick()
+        end
+    elseif (event == "UNIT_INVENTORY_CHANGED") then
+        local unit = ...
+        if (unit and type(UnitExists) == "function" and UnitExists(unit)
+            and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
+            local guid = type(UnitGUID) == "function" and UnitGUID(unit)
+            if (guid and lib.cache[guid]) then
+                lib.cache[guid].time = 0
+                lib:DoInspect(unit)
+            end
+        end
     end
 end)
 frame:RegisterEvent("INSPECT_READY")
+frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 
-local nextInspectTime = 0
-local INSPECT_DELAY = 1.5
+local INSPECT_DELAY = (isRetail or isForever) and 0.8 or 1.0
 local CACHE_REFRESH_DELAY = 300
 local queue = {}
 
@@ -3483,8 +3634,17 @@ function lib:CanInspect(unit)
     if (type(UnitIsUnit) == "function" and UnitIsUnit(unit, "player")) then return false end
     local insFrame = rawget(_G, "InspectFrame")
     if (insFrame and insFrame.IsShown and insFrame:IsShown()) then return false end
-    if (type(_G.CanInspect) == "function" and not _G.CanInspect(unit)) then return false end
-    if (type(_G.CheckInteractDistance) == "function" and not _G.CheckInteractDistance(unit, 1)) then return false end
+    local hasCanInspect = type(_G.CanInspect) == "function"
+    local hasCheckDist = type(_G.CheckInteractDistance) == "function"
+    if (hasCanInspect and hasCheckDist) then
+        if (not _G.CanInspect(unit) and not _G.CheckInteractDistance(unit, 1)) then
+            return false
+        end
+    elseif (hasCanInspect and not _G.CanInspect(unit)) then
+        return false
+    elseif (hasCheckDist and not _G.CheckInteractDistance(unit, 1)) then
+        return false
+    end
     return true
 end
 
@@ -3495,6 +3655,10 @@ function lib:PlayerGUIDToUnitToken(guid)
         if (UnitGUID("target") == guid) then return "target" end
         if (UnitGUID("focus") == guid) then return "focus" end
         if (UnitGUID("mouseover") == guid) then return "mouseover" end
+        local insFrame = rawget(_G, "InspectFrame")
+        if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and UnitGUID(insFrame.unit) == guid) then
+            return insFrame.unit
+        end
         if (type(IsInGroup) == "function" and IsInGroup()) then
             if (type(IsInRaid) == "function" and IsInRaid()) then
                 for i = 1, 40 do
@@ -3542,19 +3706,24 @@ function lib:DoInspect(unitorguid)
         return requestInspect(unit)
     else
         for i = 1, #queue do
-            if (queue[i] == guid) then
+            local item = queue[i]
+            local g = type(item) == "table" and item.guid or item
+            if (g == guid) then
+                if (type(item) == "table" and unit) then
+                    item.unit = unit
+                end
                 return true
             end
         end
-        if (#queue >= 20) then
+        if (#queue >= 25) then
             table.remove(queue, 1)
         end
-        table.insert(queue, guid)
+        table.insert(queue, { guid = guid, unit = unit })
         return true
     end
 end
 
-local function inspectQueueTick()
+inspectQueueTick = function()
     if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return end
     if (type(UnitExists) == "function" and (not UnitExists("player") or not UnitIsConnected("player") or UnitIsDeadOrGhost("player"))) then
         return
@@ -3567,18 +3736,37 @@ local function inspectQueueTick()
     if (now < nextInspectTime) then
         return
     end
-    if (inspectPendingUnit and now > nextInspectTime + 2) then
+    if (inspectPendingUnit and now > nextInspectTime + 0.8) then
         inspectPendingUnit = nil
     end
     if (inspectPendingUnit) then
         return
     end
 
+    -- Priority 1: Current player target
+    if (type(UnitExists) == "function" and UnitExists("target") and lib:CanInspect("target")) then
+        local guid = UnitGUID("target")
+        local cached = guid and lib.cache[guid]
+        if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+            if (requestInspect("target")) then
+                return
+            end
+        end
+    end
+
+    -- Priority 2: Queued inspects
     if (#queue > 0) then
         for i = #queue, 1, -1 do
-            local guid = queue[i]
+            local item = queue[i]
             table.remove(queue, i)
-            local unit = lib:PlayerGUIDToUnitToken(guid)
+            local guid = type(item) == "table" and item.guid or item
+            local unitHint = type(item) == "table" and item.unit or nil
+            local unit
+            if (unitHint and type(UnitExists) == "function" and UnitExists(unitHint) and type(UnitGUID) == "function" and UnitGUID(unitHint) == guid) then
+                unit = unitHint
+            else
+                unit = lib:PlayerGUIDToUnitToken(guid)
+            end
             if (unit and lib:CanInspect(unit)) then
                 local cached = lib.cache[guid]
                 if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
@@ -3590,16 +3778,7 @@ local function inspectQueueTick()
         end
     end
 
-    if (type(UnitExists) == "function" and UnitExists("target") and lib:CanInspect("target")) then
-        local guid = UnitGUID("target")
-        local cached = guid and lib.cache[guid]
-        if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
-            if (requestInspect("target")) then
-                return
-            end
-        end
-    end
-
+    -- Priority 3: Party / Raid members in range
     if (type(IsInGroup) == "function" and IsInGroup()) then
         if (type(IsInRaid) == "function" and IsInRaid()) then
             for i = 1, 40 do
@@ -3635,7 +3814,7 @@ if (type(C_Timer) == "table" and type(C_Timer.NewTicker) == "function") then
     if (lib.queueTicker) then
         lib.queueTicker:Cancel()
     end
-    lib.queueTicker = C_Timer.NewTicker(1.5, inspectQueueTick)
+    lib.queueTicker = C_Timer.NewTicker(0.5, inspectQueueTick)
 end
 
 function lib:GetLastCacheTime(unitorguid)
@@ -3753,10 +3932,21 @@ end
 
 function lib:GetSpecializationName(class, specIndex, localized)
     if (not class or not specIndex) then return nil end
-    -- Note: this used to consult _G.TACOTIP_SPEC_NAMES first, on the premise
-    -- that a per-locale table would override the built-in English one. Nothing
-    -- ever wrote that global, so the lookup was always nil. The built-in table
-    -- is now the single source; a locale override would need its own mechanism.
+    if (localized) then
+        if (_G.GetSpecializationInfoForClassID) then
+            local classID = CLASS_IDS[class]
+            if (classID) then
+                local ok, _, name = pcall(_G.GetSpecializationInfoForClassID, classID, specIndex)
+                if (ok and name and name ~= "") then
+                    return name
+                end
+            end
+        end
+        local locTable = lib.spec_table_localized and lib.spec_table_localized[class]
+        if (locTable and locTable[specIndex]) then
+            return locTable[specIndex]
+        end
+    end
     local defaultTable = lib.spec_table and lib.spec_table[class]
     if (defaultTable and defaultTable[specIndex]) then
         return defaultTable[specIndex]
@@ -3764,11 +3954,36 @@ function lib:GetSpecializationName(class, specIndex, localized)
     return nil
 end
 
--- Always returned nil: it consulted _G.TACOTIP_SPEC_ICONS, which nothing ever
--- wrote. main.lua's getSpecializationIcon does the real work (built-in icon
--- table plus a per-class atlas), so this accessor is kept only as a stub for
--- API compatibility and reports the absence honestly.
 function lib:GetSpecializationIcon(class, specIndex)
+    if (not class or not specIndex) then return nil end
+    if (_G.GetSpecializationInfoForClassID) then
+        local classID = CLASS_IDS[class]
+        if (classID) then
+            local ok, _, _, _, icon = pcall(_G.GetSpecializationInfoForClassID, classID, specIndex)
+            if (ok and icon) then
+                return icon
+            end
+        end
+    end
+    if (lib.GetTalentInfoByClass) then
+        local bestTexture, bestTier = nil, -1
+        for talentIndex = 1, 40 do
+            local ok, name, iconTexture, tier, _, _, _, isExceptional = pcall(lib.GetTalentInfoByClass, lib, class, specIndex, talentIndex)
+            if (not ok) then break end
+            if (name and iconTexture) then
+                if (isExceptional) then
+                    return iconTexture
+                end
+                if ((tier or 0) >= bestTier) then
+                    bestTexture = iconTexture
+                    bestTier = tier or 0
+                end
+            end
+        end
+        if (bestTexture) then
+            return bestTexture
+        end
+    end
     return nil
 end
 

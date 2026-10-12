@@ -1,11 +1,22 @@
 # Progress
 
+## 2026-10-12 - v0.8.1: LibForeverInspector Performance & Proactive Pre-Caching Overhaul + TacoTip Extras 1.0.1
+
+- **Proactive Target & Mouseover Inspection Pre-Caching:** Registered `PLAYER_TARGET_CHANGED`, `UPDATE_MOUSEOVER_UNIT`, `GROUP_ROSTER_UPDATE`, and `UNIT_INVENTORY_CHANGED` in `LibForeverInspector`. Automatically and proactively queues inspections for player targets and 3D world mouseovers so GearScore and item level data are computed before user hover or inspect interactions.
+- **Queue Priority:** Ensured active player target has priority ahead of background group iterations in `inspectQueueTick`.
+- **Latency & Interval Tightening:** Reduced `INSPECT_DELAY` to `0.8s` for Retail and WoW Forever (`1.0s` on Classic/TBC/WotLK), down from `1.5s`. Reduced background ticker interval from `1.5s` to `0.5s`.
+- **Immediate Chained Dispatch:** Upon receiving `INSPECT_READY`, the inspection queue tick is chained immediately once cooldown permits, eliminating idle pauses between queue items.
+- **Resilient Range Check Fallback:** Expanded `CanInspect(unit)` to accept units if either `_G.CanInspect(unit)` or `_G.CheckInteractDistance(unit, 1)` succeeds, eliminating range/mount false negatives.
+- **TacoTip Extras 1.0.1 Changelog:** Created dedicated `TacoTip_Extras/CHANGELOG.md` tracking `1.0.1` and `1.0.0` releases.
+- **Version Bump:** Synchronously bumped version to `0.8.1` across `TacoTip_Forever/TacoTip.toc`, `TacoTip_Forever/main.lua`, `TacoTip_Forever/options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, `AGENTS.md`, and memory bank.
+
 ## 2026-10-11 - v0.8.0: GearScore Two-Handed & Titan's Grip Math Correctness + TacoTip Extras 1.0.0
 
 - **Fixed: Two-Handed weapon weighting & Titan's Grip dual-wield logic** (`gearscore.lua`). Standalone 2H weapons (no offhand equipped) retain full 2.0x weight (`SlotMOD = 2.0`), restoring parity with 1H+Shield wielders. Titan's Grip dampening factor (0.5) is strictly gated to active dual-wielding where an offhand item is equipped alongside a 2H weapon (`mainHandLink and offHandLink`).
 - **Fixed: Asynchronous item loading & nil-safety resilience** (`gearscore.lua`). Guarded `GetItemInfo` against nil arguments; `scoreFromItemInfo` validates table input before destructuring. Uncached items cleanly return zeroed scalar scores while triggering `C_Item.RequestLoadItemDataByID`.
 - **Fixed: Hunter weapon scaling parity** (`gearscore.lua`). Standardized Hunter melee weapon (0.3164x) and ranged weapon (5.3224x) multipliers across both character total scoring (`TT_GS:GetScore`) and tooltip item queries (`TT_GS:GetItemHunterScore`).
-- **TacoTip Extras 1.0.0 Integration**: Added strict dependency on `TacoTip` in `TacoTip_Extras.toc`, bound directly to `LibForeverInspector` in `TacoTipAdapter.lua`, and resolved all `luacheck` warnings (100% zero-warning compliance across all 11 files).
+- **TacoTip Extras 1.0.0 Integration & Cross-Engine Modern Hardening**: Added strict dependency on `TacoTip` in `TacoTip_Extras.toc`, bound directly to `LibForeverInspector` in `TacoTipAdapter.lua`. Hardened modern unit resolution (`TooltipUtil.GetDisplayedUnit` and `TooltipDataProcessor.AddTooltipPostCall`), paperdoll parenting (`CharacterModelScene` fallback), variable-length item link parsing, and retail 16-slot average item level divisor. Set **Detailed** as default mode for all surfaces (tooltips and equipment summaries). Resolved all `luacheck` warnings (100% zero-warning compliance across all 11 files).
+- **Fixed: Remote Inspection "Stuck on Scanning"** (`LibForeverInspector.lua`, `TacoTip_Extras/Scanner.lua`). Fixed `LibForeverInspector` `INVENTORY_READY` callback argument dispatch (`guid, true, unit`). Relaxed `Scanner.HandleInventoryReady` guard to allow `isInspect == nil or isInspect == true`. Added `InspectFrame.unit` fallback token resolution across both library and scanner so right-click inspecting non-targeted players resolves their unit token. Added item link ID extraction in `captureSlot` when `GetInventoryItemID` returns nil on remote items.
 - **Test Suites:** `gearscore_test.lua` verified across all reachable weapon states and client families (31/31 assertions passing). `TacoTip_Forever` harness: 54/54 passed. `TacoTip_Extras` harness: 36/36 passed across `lua5.1`, `lua5.4`, and `luajit`.
 
 ## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)

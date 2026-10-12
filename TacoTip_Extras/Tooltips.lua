@@ -148,23 +148,55 @@ local function clearBinding()
 end
 
 local function tooltipUnit(target)
-    if type(target) ~= "table" or type(target.GetUnit) ~= "function" then
+    if type(target) ~= "table" then
         return nil
     end
-    -- GetUnit returns EXACTLY ONE value. `local ok, _, unit = pcall(...)` looks
-    -- like a discard but is not one: pcall yields (true, <unit>), so `_` took
-    -- the unit and `unit` was ALWAYS nil. Every render therefore fell into the
-    -- clearBinding() arm below and the player-tooltip surface added no rows on
-    -- ANY client -- while every load assertion stayed green, because the code
-    -- never raised, it just did nothing.
-    --
-    -- The same `ok, _, value` shape IS correct two lines of intent away where
-    -- UnitClass is called, because UnitClass returns three values; the two are
-    -- not interchangeable and one of them is not a bug.
-    local ok, unit = pcall(target.GetUnit, target)
-    if ok and type(unit) == "string" and unit ~= "" then
-        return unit
+
+    local tooltipUtil = _G.TooltipUtil
+    if type(tooltipUtil) == "table" and type(tooltipUtil.GetDisplayedUnit) == "function" then
+        local ok, _, dispUnit, dispGUID = pcall(tooltipUtil.GetDisplayedUnit, target)
+        if ok then
+            if type(dispUnit) == "string" and dispUnit ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(dispUnit) then
+                return dispUnit
+            end
+            if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function" then
+                if _G.UnitGUID("mouseover") == dispGUID then return "mouseover" end
+                if _G.UnitGUID("target") == dispGUID then return "target" end
+                if _G.UnitGUID("player") == dispGUID then return "player" end
+                if _G.UnitGUID("focus") == dispGUID then return "focus" end
+            end
+        end
     end
+
+    if type(target.GetUnit) == "function" then
+        local ok, name, unit, guid = pcall(target.GetUnit, target)
+        if ok then
+            -- In WoW API, GetUnit() returns (name, unit) on Classic and (name, unit, guid) on modern.
+            -- When called via pcall(target.GetUnit, target), the return values are: ok, name, unit, guid.
+            if type(unit) == "string" and unit ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(unit) then
+                return unit
+            end
+            -- If a mock or test returns the unit token as the single/first return value:
+            if type(name) == "string" and name ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(name) then
+                return name
+            end
+            -- If guid matches a known unit token:
+            if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function" then
+                if _G.UnitGUID("mouseover") == guid then return "mouseover" end
+                if _G.UnitGUID("target") == guid then return "target" end
+                if _G.UnitGUID("player") == guid then return "player" end
+                if _G.UnitGUID("focus") == guid then return "focus" end
+            end
+        end
+    end
+
+    if type(target.IsUnit) == "function" and type(_G.UnitExists) == "function" and _G.UnitExists("mouseover") then
+        local ok, isMouseover = pcall(target.IsUnit, target, "mouseover")
+        if ok and isMouseover then
+            return "mouseover"
+        end
+    end
+
     return nil
 end
 
@@ -1104,11 +1136,8 @@ local function onTooltipUpdatePoll(target)
     if type(target.IsShown) == "function" and not target:IsShown() then
         return
     end
-    if type(target.GetUnit) ~= "function" then
-        return
-    end
-    local ok, unit = pcall(target.GetUnit, target)
-    if not ok or type(unit) ~= "string" or unit == "" then
+    local unit = tooltipUnit(target)
+    if not unit then
         return
     end
     renderPlayerTooltip(target)
@@ -1254,6 +1283,23 @@ function Tooltips.Initialize(runtimeSettings)
     remoteListener = remotePublished
     Scanner.Subscribe(localListener)
     Cache.Subscribe(remoteListener)
+
+    if type(_G.TooltipDataProcessor) == "table"
+        and type(_G.TooltipDataProcessor.AddTooltipPostCall) == "function"
+        and type(_G.Enum) == "table"
+        and type(_G.Enum.TooltipDataType) == "table"
+        and _G.Enum.TooltipDataType.Unit then
+        pcall(
+            _G.TooltipDataProcessor.AddTooltipPostCall,
+            _G.Enum.TooltipDataType.Unit,
+            function(tip)
+                if initialized and tip == tooltip then
+                    renderPlayerTooltip(tip)
+                end
+            end
+        )
+    end
+
     Tooltips.ApplySettings()
     return true
 end

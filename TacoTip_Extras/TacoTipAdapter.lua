@@ -884,9 +884,13 @@ local function captureEquipmentParents(contextKey)
         local name = spec.parentNames[index]
         local parent = _G[name]
         if parent == nil then
-            return nil, contextKey == "inspect"
-                and "inspect-not-loaded"
-                or "character-not-ready"
+            if contextKey == "character" and name == "CharacterModelFrame" and _G.PaperDollFrame ~= nil then
+                parent = _G.CharacterModelScene or _G.PaperDollFrame
+            else
+                return nil, contextKey == "inspect"
+                    and "inspect-not-loaded"
+                    or "character-not-ready"
+            end
         end
         parents[name] = parent
     end
@@ -916,11 +920,20 @@ local function captureEquipmentSnapshot(contextKey)
     local records = {}
     local fonts = {}
     local fontParent = parents[spec.fontParentName]
+    if contextKey == "character" and not _G.CharacterModelFrame and parents["PaperDollFrame"] then
+        fontParent = parents["PaperDollFrame"]
+    end
     for index = 1, #spec.fontNames do
         local name = spec.fontNames[index]
         local object = _G[name]
-        if not validateVisibilityObject(object, "FontString", fontParent) then
-            return nil, contextKey .. "-fontstring-ownership-invalid", false
+        local expectedParent = fontParent
+        if not validateVisibilityObject(object, "FontString", expectedParent) then
+            if contextKey == "character" and parents["PaperDollFrame"] and validateVisibilityObject(object, "FontString", parents["PaperDollFrame"]) then
+                expectedParent = parents["PaperDollFrame"]
+                fontParent = expectedParent
+            else
+                return nil, contextKey .. "-fontstring-ownership-invalid", false
+            end
         end
         local read, shown = objectIsShown(object)
         if not read then
@@ -971,6 +984,7 @@ local function captureEquipmentSnapshot(contextKey)
 
     return {
         parents = parents,
+        fontParent = fontParent,
         fonts = fonts,
         movers = movers,
         records = records,
@@ -1037,12 +1051,16 @@ local function validateLeasedObjects(contextKey, allowNewMovers)
 
     for index = 1, #spec.parentNames do
         local name = spec.parentNames[index]
-        if _G[name] ~= currentLease.parents[name] then
+        local liveParent = _G[name]
+        if liveParent == nil and contextKey == "character" and name == "CharacterModelFrame" then
+            liveParent = _G.CharacterModelScene or _G.PaperDollFrame
+        end
+        if liveParent ~= currentLease.parents[name] then
             return false, contextKey .. "-parent-identity-changed", nil
         end
     end
 
-    local fontParent = currentLease.parents[spec.fontParentName]
+    local fontParent = currentLease.fontParent or currentLease.parents[spec.fontParentName]
     for index = 1, #spec.fontNames do
         local name = spec.fontNames[index]
         local object = currentLease.fonts[name]

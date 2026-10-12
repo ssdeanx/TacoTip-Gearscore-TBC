@@ -534,7 +534,10 @@ local GAME_TOOLTIP_EXTRA = {
         rawset(f, "__lines", 0)
         return true
     end,
-    GetUnit = function(f) return rawget(f, "__unit") end,
+    GetUnit = function(f)
+        local u = rawget(f, "__unit")
+        return u and "CharacterName", u, u and "Player-1111-22223333" or nil
+    end,
     SetOwner = function(f, owner) rawset(f, "__owner", owner) end,
     GetOwner = function(f) return rawget(f, "__owner") end,
     NumLines = function(f) return rawget(f, "__lines") or 0 end,
@@ -858,7 +861,13 @@ local function baseEnv()
     REALG.GameTooltip = buildGameTooltip()
     REALG.Minimap = newRegion("Frame", "Minimap")
     REALG.PaperDollFrame = newRegion("Frame", "PaperDollFrame")
-    REALG.CharacterModelFrame = newRegion("Frame", "CharacterModelFrame")
+    if CLIENT == "retail" or CLIENT == "forever" then
+        REALG.CharacterModelFrame = nil
+        REALG.CharacterModelScene = newRegion("Frame", "CharacterModelScene", REALG.PaperDollFrame)
+    else
+        REALG.CharacterModelFrame = newRegion("Frame", "CharacterModelFrame", REALG.PaperDollFrame)
+        REALG.CharacterModelScene = nil
+    end
     REALG.CharacterFrame = newRegion("Frame", "CharacterFrame")
     REALG.InspectFrame = newRegion("Frame", "InspectFrame")
     REALG.InspectModelFrame = newRegion("Frame", "InspectModelFrame")
@@ -1960,6 +1969,15 @@ if type(REALG.TacoTipExtrasDB) == "table" then
     check(REALG.TacoTipExtrasDB.schema == 2,
         "TacoTipExtrasDB schema normalised to 2",
         "got " .. tostring(REALG.TacoTipExtrasDB.schema))
+    if type(REALG.TacoTipExtrasDB.settings) == "table" then
+        local s = REALG.TacoTipExtrasDB.settings
+        check(s.tooltip ~= nil and s.tooltip.mode == "Detailed",
+            "default tooltip mode is Detailed",
+            "got " .. tostring(s.tooltip and s.tooltip.mode))
+        check(s.equipmentDisplay ~= nil and s.equipmentDisplay.mode == "Detailed",
+            "default equipment display mode is Detailed",
+            "got " .. tostring(s.equipmentDisplay and s.equipmentDisplay.mode))
+    end
 end
 check(REALG.TacoTipGearScoreEnhancerDB == nil,
     "legacy TacoTipGearScoreEnhancerDB still never written")
@@ -2181,6 +2199,36 @@ check(result.metrics.gearScore.status == "complete"
     "got " .. tostring(result.metrics.gearScore.value)
         .. ", expected " .. tostring(expectedEnchanted + expectedGemmed))
 
+local shortLink = "|cffffffff|Hitem:50001:0:41398:0:0:0:0:0:0:0:0:0:0:0:0|h[Short Item]|h|r"
+local parsedShort, shortReason = Scoring.ParseEquippedLink(shortLink, 50001)
+check(parsedShort ~= nil and parsedShort.itemID == 50001,
+    "ParseEquippedLink accepts variable-length modern link (< 20 fields)",
+    "reason: " .. tostring(shortReason))
+
+local longLink = "|cffffffff|Hitem:50001:0:41398:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0|h[Long Item]|h|r"
+local parsedLong, longReason = Scoring.ParseEquippedLink(longLink, 50001)
+check(parsedLong ~= nil and parsedLong.itemID == 50001,
+    "ParseEquippedLink accepts variable-length modern link (> 20 fields)",
+    "reason: " .. tostring(longReason))
+
+if CLIENT == "retail" then
+    local expectedRaw = (200 + 200) / 16
+    local expectedDisplay = math.floor(expectedRaw + 0.5)
+    check(result.metrics.averageItemLevel.status == "complete"
+        and result.metrics.averageItemLevel.value.display == expectedDisplay,
+        "Retail averageItemLevel divisor is 16 slots (not 17)",
+        "got " .. tostring(result.metrics.averageItemLevel.value and result.metrics.averageItemLevel.value.display)
+            .. ", expected " .. tostring(expectedDisplay))
+else
+    local expectedRaw = (200 + 200) / 17
+    local expectedDisplay = math.floor(expectedRaw + 0.5)
+    check(result.metrics.averageItemLevel.status == "complete"
+        and result.metrics.averageItemLevel.value.display == expectedDisplay,
+        "Classic/Forever averageItemLevel divisor is 17 slots",
+        "got " .. tostring(result.metrics.averageItemLevel.value and result.metrics.averageItemLevel.value.display)
+            .. ", expected " .. tostring(expectedDisplay))
+end
+
 -- ---------------------------------------------------------------------------
 -- Socket degradation where GetItemStats does not exist
 -- ---------------------------------------------------------------------------
@@ -2217,6 +2265,123 @@ else
         "current total survives the degradation",
         "status " .. tostring(result.metrics.gearScore.status))
 end
+
+-- ---------------------------------------------------------------------------
+-- Remote Inspection / INVENTORY_READY
+-- ---------------------------------------------------------------------------
+
+out(("\n-- remote inspection: INVENTORY_READY handling and InspectFrame unit resolution --\n"))
+
+local Cache = namespace.Cache
+local REMOTE_GUID_A = "Player-9999-00112233"
+local REMOTE_GUID_B = "Player-9999-00445566"
+local REMOTE_GUID_C = "Player-9999-00778899"
+
+local origUnitExists = REALG.UnitExists
+local origUnitIsPlayer = REALG.UnitIsPlayer
+local origUnitGUID = REALG.UnitGUID
+local origGUIDIsPlayer = REALG.GUIDIsPlayer
+local origUnitClass = REALG.UnitClass
+local origUnitLevel = REALG.UnitLevel
+local origGetInventoryItemID = REALG.GetInventoryItemID
+local origGetInventoryItemLink = REALG.GetInventoryItemLink
+
+REALG.UnitExists = function(unit)
+    return unit == "player" or unit == "target" or unit == "party1"
+end
+REALG.UnitIsPlayer = function(unit)
+    return unit == "player" or unit == "target" or unit == "party1"
+end
+REALG.UnitClass = function(unit)
+    if unit == "target" or unit == "party1" then
+        return "Mage", "MAGE", 8
+    end
+    return "Warrior", "WARRIOR", 1
+end
+REALG.UnitLevel = function(unit)
+    return (unit == "player" or unit == "target" or unit == "party1") and 70 or 0
+end
+
+local remoteUnitMap = {
+    target = REMOTE_GUID_A,
+    party1 = REMOTE_GUID_C,
+}
+
+REALG.UnitGUID = function(unit)
+    if unit == "player" then return HARNESS_PLAYER_GUID end
+    return remoteUnitMap[unit]
+end
+
+REALG.GUIDIsPlayer = function(guid)
+    return guid == HARNESS_PLAYER_GUID or guid == REMOTE_GUID_A or guid == REMOTE_GUID_B or guid == REMOTE_GUID_C
+end
+
+REALG.GetInventoryItemID = function(unit, slotID)
+    if (unit == "player" or unit == "target" or unit == "party1") and slotID == 1 then
+        return 50003
+    end
+    return nil
+end
+
+REALG.GetInventoryItemLink = function(unit, slotID)
+    if (unit == "player" or unit == "target" or unit == "party1") and slotID == 1 then
+        return HARNESS_ITEM_LINK
+    end
+    return nil
+end
+
+-- 1. Omitted isInspect and unit (as LibForeverInspector on Retail/Forever passes)
+-- Target currently holds REMOTE_GUID_A.
+remoteUnitMap.target = REMOTE_GUID_A
+REALG.InspectFrame.unit = "target"
+local handledA = Scanner.HandleInventoryReady("INVENTORY_READY", REMOTE_GUID_A)
+check(handledA == true,
+    "HandleInventoryReady accepts omitted isInspect and resolves unit from target/InspectFrame",
+    "got " .. tostring(handledA))
+local cachedA = Cache.Get(REMOTE_GUID_A)
+check(type(cachedA) == "table" and cachedA.state == "complete",
+    "remote scan for REMOTE_GUID_A reached complete state",
+    "state=" .. tostring(cachedA and cachedA.state))
+
+-- 2. Explicit isInspect = true and unit = "target" (as LibClassicInspector passes)
+remoteUnitMap.target = REMOTE_GUID_B
+local handledB = Scanner.HandleInventoryReady("INVENTORY_READY", REMOTE_GUID_B, true, "target")
+check(handledB == true,
+    "HandleInventoryReady accepts explicit isInspect=true and explicit unit",
+    "got " .. tostring(handledB))
+local cachedB = Cache.Get(REMOTE_GUID_B)
+check(type(cachedB) == "table" and cachedB.state == "complete",
+    "remote scan for REMOTE_GUID_B reached complete state",
+    "state=" .. tostring(cachedB and cachedB.state))
+
+-- 3. Target is NOT the unit; InspectFrame.unit is "party1" holding REMOTE_GUID_C
+remoteUnitMap.target = nil
+REALG.InspectFrame.unit = "party1"
+local handledC = Scanner.HandleInventoryReady("INVENTORY_READY", REMOTE_GUID_C)
+check(handledC == true,
+    "HandleInventoryReady resolves unit from InspectFrame.unit when target is empty",
+    "got " .. tostring(handledC))
+local cachedC = Cache.Get(REMOTE_GUID_C)
+check(type(cachedC) == "table" and cachedC.state == "complete",
+    "remote scan for REMOTE_GUID_C reached complete state",
+    "state=" .. tostring(cachedC and cachedC.state))
+
+-- 4. Explicit isInspect = false is rejected
+local rejected = Scanner.HandleInventoryReady("INVENTORY_READY", REMOTE_GUID_A, false, "target")
+check(rejected == false,
+    "HandleInventoryReady rejects explicit isInspect=false",
+    "got " .. tostring(rejected))
+
+-- Restore mocks
+REALG.UnitExists = origUnitExists
+REALG.UnitIsPlayer = origUnitIsPlayer
+REALG.UnitGUID = origUnitGUID
+REALG.GUIDIsPlayer = origGUIDIsPlayer
+REALG.UnitClass = origUnitClass
+REALG.UnitLevel = origUnitLevel
+REALG.GetInventoryItemID = origGetInventoryItemID
+REALG.GetInventoryItemLink = origGetInventoryItemLink
+REALG.InspectFrame.unit = nil
 
 -- ---------------------------------------------------------------------------
 -- Summary

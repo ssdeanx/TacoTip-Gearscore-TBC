@@ -1,5 +1,24 @@
 # Active Context
 
+## 2026-10-12 - v0.8.1: LibForeverInspector Performance & Proactive Pre-Caching Overhaul + TacoTip Extras 1.0.1
+
+- **Proactive Target & Mouseover Inspection Pre-Caching:**
+  - `LibForeverInspector` registered `PLAYER_TARGET_CHANGED`, `UPDATE_MOUSEOVER_UNIT`, `GROUP_ROSTER_UPDATE`, and `UNIT_INVENTORY_CHANGED`.
+  - When targeting a player or hovering a player in the 3D world, inspection is queued immediately (`lib:DoInspect("target")` / `lib:DoInspect("mouseover")`) so GearScore/ilvl are pre-calculated before tooltip or inspect frame interactions occur.
+  - Active targets (`target`) receive immediate queue priority in `inspectQueueTick`.
+- **Latency & Throttle Optimization:**
+  - Lowered `INSPECT_DELAY` to `0.8s` on Retail and WoW Forever (and `1.0s` on Classic/TBC/WotLK), down from `1.5s`.
+  - Tightened background inspection ticker from `1.5s` to `0.5s`.
+  - Added immediate chained dispatch on `INSPECT_READY`: the moment a pending inspect completes and cooldown permits, the queue ticker fires instantly rather than idling for the next timer tick.
+  - Reduced stale pending inspect timeout from 3.5s to ~1.6s (`nextInspectTime + 0.8`).
+- **Resilient Range Gating:**
+  - Enhanced `CanInspect(unit)` to succeed if *either* `_G.CanInspect(unit)` or `_G.CheckInteractDistance(unit, 1)` confirms inspect eligibility, resolving max-range, mount, and elevation dead zones where `CheckInteractDistance` failed.
+- **TacoTip Extras 1.0.1 Changelog & Polish:**
+  - Created dedicated `TacoTip_Extras/CHANGELOG.md` tracking `1.0.1` and `1.0.0` releases.
+- **Synchronous Release Verification:**
+  - 100% test pass rate across `TacoTip_Forever` (54 tests) and `TacoTip_Extras` (36 tests).
+  - 0 warnings / 0 errors under `luacheck` across both packages.
+
 ## 2026-10-11 - v0.8.0: GearScore Two-Handed & Titan's Grip Math Correctness + TacoTip Extras 1.0.0
 
 - **Two-Handed Weapon & Titan's Grip Math Corrected:**
@@ -15,11 +34,14 @@
 - **TacoTip Extras 1.0.0 Strictly Bound to TacoTip & LibForeverInspector:**
   - Declares `## Dependencies: TacoTip` in `TacoTip_Extras.toc`.
   - `TacoTipAdapter.lua` directly prioritizes `LibStub("LibForeverInspector")` and resolves `_G["TacoTip"]`.
+  - **Retail & Forever Cross-Engine Hardening:** Added modern unit resolution support using `TooltipUtil.GetDisplayedUnit` and `TooltipDataProcessor.AddTooltipPostCall` alongside `GetUnit()`. Supported modern Character frame layout (`CharacterModelScene` fallback when `CharacterModelFrame` is nil). Updated `Scoring.ParseEquippedLink` to accept variable-length modern links with bonus IDs. Standardized 16-slot average item level divisor for Retail (no ranged slot) while preserving 17-slot divisor for Classic/TBC/Titanforge/Forever.
+  - **Remote Inspection "Stuck on Scanning" Resolution:** Resolved inspect scan deadlock where right-clicking and inspecting other players remained indefinitely in `"Scanning equipment..."`. Fixed `LibForeverInspector` callback firing to include `isInspect` (`true`) and `unit` with `INVENTORY_READY`. Updated `Scanner.HandleInventoryReady` to defensively accept both `isInspect = true` and legacy `nil`. Added `InspectFrame.unit` resolution in `LibForeverInspector:PlayerGUIDToUnitToken` and `Scanner.resolveRemoteUnit` so non-targeted players resolve their unit token cleanly. Added fallback item ID extraction from native links in `captureSlot` when `GetInventoryItemID` returns nil on remote units.
+  - **Detailed Mode Default for All Surfaces:** Fresh installs and reset profiles default to **Detailed** mode across player tooltips (`tooltip.mode = "Detailed"`) and character/inspect equipment summaries (`equipmentDisplay.mode = "Detailed"`).
   - Resolved all `luacheck` warnings (100% zero-warning compliance across all 11 files).
 - **Test Suite Verification:**
   - `gearscore_test.lua` verified across all reachable weapon states and client families (31/31 assertions passing).
   - `TacoTip_Forever` harness: 54/54 tests passed.
-  - `TacoTip_Extras` harness: 36/36 tests passed across `lua5.1`, `lua5.4`, and `luajit`.
+  - `TacoTip_Extras` harness: 36/36 tests passed across `lua5.1`, `lua5.4`, and `luajit` (including new remote inspect matrix covering omitted `isInspect`, `InspectFrame.unit` fallback, and cache completion).
 
 ## 2026-10-10 - v0.7.9: Official Release Published Across All Major Game Versions (97k+ Downloads)
 

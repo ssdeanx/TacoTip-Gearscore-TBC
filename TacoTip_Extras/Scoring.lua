@@ -108,6 +108,20 @@ local function isPositiveInteger(value)
     return isInteger(value) and value > 0
 end
 
+local function isRetailClient()
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 100000 then
+            return true
+        end
+        if iface > 0 then
+            return false
+        end
+    end
+    return _G.CharacterRangedSlot == nil and _G.CharacterModelScene ~= nil
+end
+
 local function makeBlocker(status, reason)
     return { status = status, reason = reason }
 end
@@ -222,7 +236,7 @@ function Scoring.ParseEquippedLink(nativeLink, expectedItemID)
     end
 
     local fields = splitColonFields(payload)
-    if #fields ~= 20 or fields[1] ~= "item" or not string.match(fields[2] or "", "^%d+$") then
+    if #fields < 6 or fields[1] ~= "item" or not string.match(fields[2] or "", "^%d+$") then
         return nil, "malformed-item-payload"
     end
 
@@ -862,7 +876,8 @@ function Scoring.Evaluate(revision, policy)
 
     local averageValue
     if not averageBlocker then
-        local raw = averageTotal / #REQUIRED_SLOTS
+        local slotCount = isRetailClient() and 16 or #REQUIRED_SLOTS
+        local raw = averageTotal / slotCount
         averageValue = { raw = raw, display = math.floor(raw + 0.5) }
     end
     result.metrics.averageItemLevel = metricFrom(averageValue, averageBlocker)

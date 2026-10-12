@@ -4,10 +4,54 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `0.8.1` | `2026-10-12` | **Inspection engine performance, proactive pre-caching, and range responsiveness.** Pre-caches player gear/talents immediately on target selection (`PLAYER_TARGET_CHANGED`) and 3D world mouseover (`UPDATE_MOUSEOVER_UNIT`). Triggers dynamic inspection on group roster updates (`GROUP_ROSTER_UPDATE`) and gear swaps (`UNIT_INVENTORY_CHANGED`). Accelerates queue processing with a 0.5s ticker, an adaptive 0.8s throttle on Retail/Forever, and instant next-inspect dispatch upon `INSPECT_READY`. Prioritizes actively targeted players. Fixes max-range inspect dead zones by accepting either `CanInspect` or `CheckInteractDistance`. Resolves inspect frame "Scanning equipment..." deadlock by firing full `INVENTORY_READY` parameters `(guid, true, unit)`, binding `InspectFrame.unit` fallback tokens, and handling remote uncached item IDs. |
 | `0.8.0` | `2026-10-11` | **GearScore correctness — the first release whose suite asserts a GearScore *value*.** Corrects two-handed weapon weighting so standalone 2H weapons retain their full 2.0x weight (`SlotMOD = 2.0`, balancing with 1H+Shield wielders), while strictly applying the `0.5` dampening factor to Titan's Grip dual-wielding where an offhand item is equipped alongside a 2H weapon. Hardens asynchronous item loading against uncached nil returns, standardizes Hunter weapon scaling, and accurately maps item quality colour bands via `ITEM_BAND_SCALE`. |
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+---
+
+## [0.8.1] — 2026-10-12
+
+> Inspection engine performance, proactive pre-caching, and range responsiveness.
+> Eliminates latency by pre-caching player data on target and mouseover events,
+> speeds up the background queue ticker from 1.5s to 0.5s with instant `INSPECT_READY`
+> chained dispatch, prioritizes actively targeted players, and resolves remote
+> inspection deadlocks.
+
+### Added
+
+- **Proactive Target Pre-caching (`PLAYER_TARGET_CHANGED`):**
+  Targeting any inspectable player instantly triggers inspection in the background. GearScore, average item level, specialization, and talents are cached before hovering their unit frame or opening manual inspect.
+- **Eager World Mouseover (`UPDATE_MOUSEOVER_UNIT`):**
+  Sweeping over player characters in the 3D world triggers immediate background inspection queries rather than waiting for tooltip rendering passes.
+- **Group Roster Inspection Scanning (`GROUP_ROSTER_UPDATE`):**
+  Automatically runs inspection passes over party and raid members as group members join or update.
+- **Equipment Swap Invalidation (`UNIT_INVENTORY_CHANGED`):**
+  When an inspected player swaps items, their cached profile is immediately invalidated and re-inspected.
+
+### Fixed
+
+- **Remote Inspect "Scanning Equipment..." Deadlock:**
+  Corrected `LibForeverInspector` callback firing to include `isInspect` (`true`) and `unit` with `INVENTORY_READY` (`lib.callbacks:Fire("INVENTORY_READY", guid, true, unit)`), matching consumer contracts and preventing `TacoTip_Extras` from rejecting the callback.
+- **Non-Targeted Inspect Resolution via `InspectFrame.unit`:**
+  When players are inspected via right-click contextual menus (guild roster, chat, `/who`, friends list), they are frequently not current target, focus, or mouseover. `lib:PlayerGUIDToUnitToken` now matches `InspectFrame.unit`, ensuring remote inspects resolve their unit token cleanly.
+- **Uncached Item ID Resolution on Remote Inspect:**
+  Handled remote inspection situations where `GetInventoryItemID` returns `nil` while `GetInventoryItemLink` returns a valid item string link, extracting the item ID directly from the native link to prevent false contradiction failures.
+- **Max-Range Inspect Failure & Terrain Dead Zones:**
+  `lib:CanInspect(unit)` now succeeds if either `_G.CanInspect(unit)` or `_G.CheckInteractDistance(unit, 1)` confirms inspect eligibility, resolving false-negative rejections caused by tall mounts, elevation changes, or 28-yard border thresholds.
+- **Inspection Queue Throttle & Idle Latency:**
+  Tightened `INSPECT_DELAY` from 1.5s to 0.8s on modern clients (1.0s on Classic). Replaced the static 1.5s background ticker with a 0.5s ticker, and chained next-queue dispatch immediately upon `INSPECT_READY` arrival, completely eliminating idle delays between sequential player scans.
+- **Specialization Lookup & Unused Variable Resolution in `LibForeverInspector`:**
+  - Resolved unused `localized` parameter in `lib:GetSpecializationName(class, specIndex, localized)`: queries modern `GetSpecializationInfoForClassID` on Retail/Forever and `lib.spec_table_localized` across localized clients (`deDE`, `esES`, `koKR`, `ruRU`, `zhCN`), falling back gracefully to English defaults.
+  - Resolved unused `class` and `specIndex` parameters in `lib:GetSpecializationIcon(class, specIndex)`: dynamically extracts the specialization icon via `GetSpecializationInfoForClassID` on Retail/Forever and via `lib:GetTalentInfoByClass` on Classic.
+  - Added `lib:IsAnniversary()` and `lib:IsTitanforge()` convenience aliases.
+  - Hardened TBC Anniversary client detection via `clientBuildMajor == 2` (`20506`) alongside Blizzard's native `WOW_PROJECT_BURNING_CRUSADE_CLASSIC` constant.
+- **Target Prioritization:**
+  The background inspect loop now checks and inspects your actively selected target ahead of queued or group roster background iterations.
+- **Pending Inspect Timeout:**
+  Reduced the pending inspect timeout from 3.5s (`nextInspectTime + 2.0`) to ~1.6s (`nextInspectTime + 0.8`), recovering gracefully if a target moves out of range or disconnects.
 
 ---
 

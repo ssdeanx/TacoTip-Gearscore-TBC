@@ -92,7 +92,7 @@ The minimap button can be dragged around the minimap. Left-click opens the add-o
 
 **Enable add-on** is the master output switch. Disabling it retains child preferences, hides add-on output, and releases every active TacoTip lease. **Restore TacoTip settings** remains a tooltip-only action: it disables and releases only the player-tooltip takeover and its `show_gs_player` recovery record. It does not change or suspend the equipment summary, its mode, or its positions.
 
-A fresh profile starts with the equipment summary in Basic mode, Unenhanced GS off, positions locked, and both saved positions unset.
+A fresh profile starts with both player tooltips and equipment summaries in Detailed mode, Unenhanced GS off, positions locked, and both saved positions unset.
 
 **Reset add-on settings** uses the fresh-profile defaults; **Reset summary positions** clears only the two equipment positions.
 
@@ -116,7 +116,7 @@ Inspected player names, GUIDs, equipment, scores, diagnostics, scanner revisions
 
 The offline harness loads every file in the TOC, in TOC order, against a mocked client:
 
-```
+```bash
 bash TacoTip_Extras/Tests/harness/run_all.sh
 ```
 

@@ -190,6 +190,9 @@ end
 local function validHostIdentity(context)
     local host = _G[context.hostName]
     local model = _G[context.modelName]
+    if not model and context.key == "character" then
+        model = _G.CharacterModelScene
+    end
     if type(host) ~= "table" or type(model) ~= "table"
         or type(host.HookScript) ~= "function"
         or type(host.CreateFontString) ~= "function"

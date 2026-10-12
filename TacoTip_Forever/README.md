@@ -19,6 +19,21 @@ World of Warcraft engine family from one build — no per-client downloads, no
 
 ---
 
+## What's New in 0.8.1
+
+Inspection engine performance, proactive pre-caching, and remote inspect responsiveness. Full detail in [CHANGELOG.md](CHANGELOG.md):
+
+- **Proactive Target Pre-caching (`PLAYER_TARGET_CHANGED`):** Selecting or tab-targeting any inspectable player immediately triggers background inspection, pre-caching their equipment, talents, specialization, and GearScore before you hover over their model or open the inspect window.
+- **Eager Mouseover Triggering (`UPDATE_MOUSEOVER_UNIT`):** Sweeping over player models in the 3D game world begins the inspection query immediately without waiting for tooltip layout passes.
+- **Group Member Roster Scanning (`GROUP_ROSTER_UPDATE`):** Party and raid member inspections are triggered dynamically on group roster updates.
+- **Instant Unit Inventory Refresh (`UNIT_INVENTORY_CHANGED`):** When an inspected player swaps equipment, their cache entry is invalidated and re-inspected immediately.
+- **Optimized Throttling & Adaptive Queue Timer:** Tightened `INSPECT_DELAY` to `0.8s` on Retail / Forever (and `1.0s` on Classic). Replaced the static 1.5s queue ticker with a responsive `0.5s` ticker and prompt next-item dispatch upon `INSPECT_READY`, eliminating idle queue latency.
+- **Target Prioritization in Queue:** Actively targeted players are prioritized ahead of background group polling.
+- **Adaptive Range Tolerance in `CanInspect`:** Solved edge-case range check failures (due to mount height, vertical elevation, or borderline 28-yard distance) by accepting confirmation from either `CanInspect(unit)` or `CheckInteractDistance(unit, 1)` rather than demanding both simultaneously.
+- **"Scanning Equipment..." Deadlock Resolution:** Corrected `LibForeverInspector` `INVENTORY_READY` callback dispatch to pass `(guid, true, unit)`, resolved non-targeted unit tokens via `InspectFrame.unit`, and safely parsed item IDs from links when `GetInventoryItemID` returns nil on remote items.
+
+---
+
 ## What's New in 0.8.0
 
 GearScore correctness. This is the first release whose test suite asserts a GearScore **value** rather
