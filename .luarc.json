@@ -213,7 +213,8 @@
         "GetCVarBool",
         "GetItemStats",
         "PawnCommon",
-        "PawnScaleProviders"
+        "PawnScaleProviders",
+        "GUIDIsPlayer"
     ],
     "Lua.runtime.builtin": {
         "basic": "disable",

@@ -1,4 +1,4 @@
-# TacoTip [path: /home/sam/TacoTip-Gearscore-TBC/TacoTip_Forever]
+# TacoTip
 
 TacoTip is a character, item and guild tooltip enhancement that runs on **every**
 World of Warcraft engine family from one build — no per-client downloads, no
@@ -10,7 +10,7 @@ World of Warcraft engine family from one build — no per-client downloads, no
 | **The Burning Crusade Classic Anniversary** | `20506` |
 | **WotLK Titanforge** | `38002` |
 | **WoW Forever** | `16001` |
-| **Retail / Live (The War Within & Midnight)** | `110002`, `110100`, `110200`, `120000`, `120100` |
+| **Retail / Live (Midnight)** | `120100` |
 
 > **This release replaces the previous Classic-only TacoTip.** It is the same
 > addon, continued — your existing configuration carries over, and the GearScore

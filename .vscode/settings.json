@@ -129,6 +129,19 @@
         "APIDocumentation",
         "Clamp",
         "EventRegistry",
-        "GetCVarBool"
+        "GetCVarBool",
+        "SETTINGS_TITLE",
+        "SETTINGS_CLOSE",
+        "SETTINGS_APPLY",
+        "SETTINGS_DEFAULTS",
+        "KEY_UNBOUND_ERROR",
+        "KEYBINDINGFRAME_MOUSEWHEEL_ERROR",
+        "KEY_BOUND",
+        "PRIMARY_KEY_UNBOUND_ERROR",
+        "SYSTEMOPTIONS_MENU",
+        "Kiosk",
+        "SETTINGS_SEARCH_RESULTS",
+        "SETTINGS_BIND_KEY_TO_COMMAND_OR_CANCEL",
+        "SETTINGS_SEARCH_NOTHING_FOUND"
     ]
 }

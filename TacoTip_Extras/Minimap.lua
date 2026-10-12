@@ -7,7 +7,7 @@ end
 local MinimapButton = {}
 namespace.Minimap = MinimapButton
 
-local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\icons\\GS-icon"
+local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\tt-2"
 local BORDER_PATH = "Interface\\Minimap\\MiniMap-TrackingBorder"
 local HIGHLIGHT_PATH = "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight"
 local BACKGROUND_PATH = "Interface\\Minimap\\UI-Minimap-Background"

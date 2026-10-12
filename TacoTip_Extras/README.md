@@ -243,5 +243,3 @@ can be argued with instead of guessed at.
 TacoTip Extras is independently written by NS and released under the MIT License. See [LICENSE](LICENSE).
 
 TacoTip is a required external dependency; it is not bundled, modified, redistributed or forked, and this project does not imply endorsement by TacoTip or its author.
-
-GearScore calculation behavior is derived from the MIT-licensed GearScoreTBCClassic project. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for complete attribution and license notices.

@@ -9,7 +9,7 @@ namespace.Options = Options
 
 local CATEGORY_NAME = "TacoTip Extras"
 local EQUIPMENT_CATEGORY_NAME = "Equipment Windows"
-local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\icons\\GS-icon"
+local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\tt-2"
 local SUCCESS_RED, SUCCESS_GREEN, SUCCESS_BLUE = 0.45, 0.82, 0.55
 local NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE = 0.58, 0.56, 0.64
 local WARNING_RED, WARNING_GREEN, WARNING_BLUE = 0.95, 0.72, 0.30
@@ -18,7 +18,8 @@ local FOOTER_RED, FOOTER_GREEN, FOOTER_BLUE = 0.55, 0.52, 0.62
 local INTRO_TEXT = "A TacoTip companion that adds enhancement-aware GearScore, "
     .. "Average iLvl, and Completion to player tooltips."
 
-local SCORE_EXPLANATION = [[Current GS is the player’s present GearScore in this addon and the headline value shown in Compact mode. Use Current GS when referring to the player’s current GearScore. It includes equipped items plus supported bonuses from installed permanent enchants and gems.
+local SCORE_EXPLANATION =
+[[Current GS is the players present GearScore in this addon and the headline value shown in Compact mode. Use Current GS when referring to the players current GearScore. It includes equipped items plus supported bonuses from installed permanent enchants and gems.
 
 Unenhanced GS is an optional comparison using the same equipment with only those counted installed bonuses removed. It shows how much those enhancements already contribute; it is not the player’s current GearScore.
 
@@ -168,14 +169,14 @@ local HELP = {
 
 local MODE_CHOICES = {
     { value = "Disabled", text = "Disabled" },
-    { value = "Minimal", text = "Minimal" },
-    { value = "Compact", text = "Compact" },
+    { value = "Minimal",  text = "Minimal" },
+    { value = "Compact",  text = "Compact" },
     { value = "Detailed", text = "Detailed" },
 }
 
 local EQUIPMENT_MODE_CHOICES = {
     { value = "Disabled", text = "Disabled" },
-    { value = "Basic", text = "Basic" },
+    { value = "Basic",    text = "Basic" },
     { value = "Detailed", text = "Detailed" },
 }
 
@@ -189,10 +190,23 @@ local FIELD_KEYS = {
 }
 
 local DIAGNOSTIC_SLOTS = {
-    [1] = true, [2] = true, [3] = true, [5] = true, [6] = true,
-    [7] = true, [8] = true, [9] = true, [10] = true, [11] = true,
-    [12] = true, [13] = true, [14] = true, [15] = true,
-    [16] = true, [17] = true, [18] = true,
+    [1] = true,
+    [2] = true,
+    [3] = true,
+    [5] = true,
+    [6] = true,
+    [7] = true,
+    [8] = true,
+    [9] = true,
+    [10] = true,
+    [11] = true,
+    [12] = true,
+    [13] = true,
+    [14] = true,
+    [15] = true,
+    [16] = true,
+    [17] = true,
+    [18] = true,
 }
 
 local INTEGRATION_REASONS = {
@@ -736,7 +750,7 @@ local function createEquipmentModeDropdown()
     end)
     attachHelp(dropDown, "equipmentMode")
     local dropDownButton = _G[
-        addonName .. "EquipmentSummaryModeDropdownButton"
+    addonName .. "EquipmentSummaryModeDropdownButton"
     ]
     if type(dropDownButton) == "table" then
         attachHelp(dropDownButton, "equipmentMode")
