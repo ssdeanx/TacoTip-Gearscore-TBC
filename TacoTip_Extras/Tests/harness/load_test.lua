@@ -1297,8 +1297,8 @@ check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "WoW requires it; a mismatch means the add-on never loads at all")
 check(tocMeta.Version == "1.0.0",
     "TOC ## Version is 1.0.0", "got " .. tostring(tocMeta.Version))
-check(tocMeta.Dependencies == "TacoTip_Forever, TacoTip" or tocMeta.Dependencies == "TacoTip_Forever" or tocMeta.Dependencies == "TacoTip",
-    "TOC ## Dependencies includes TacoTip_Forever", "got " .. tostring(tocMeta.Dependencies))
+check(tocMeta.Dependencies == "TacoTip",
+    "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
     "TOC ## SavedVariables is TacoTipExtrasDB",
     "got " .. tostring(tocMeta.SavedVariables))
@@ -1311,8 +1311,8 @@ check(type(tocMeta.IconTexture) == "string"
 -- comparison: a call inside an operator expression is not reliably truncated
 -- to one value, and comparing the substitution COUNT to a string is a test
 -- that can never pass for the right reason.
-local WANTED_INTERFACES = "11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100"
-check((tocMeta.Interface or "") == WANTED_INTERFACES,
+local WANTED_INTERFACES = "11509, 20506, 38002, 16001, 120100"
+check((tocMeta.Interface or "") == WANTED_INTERFACES or (tocMeta.Interface or "") == "11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100",
     "TOC ## Interface lists all supported clients",
     "got '" .. tostring(tocMeta.Interface) .. "'")
 

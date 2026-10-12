@@ -9,7 +9,7 @@ TacoTip Extras is a **separate project from TacoTip**. It has its own repository
 
 ## Requirements
 
-TacoTip Extras **requires TacoTip_Forever** (or TacoTip). It declares `## Dependencies: TacoTip_Forever, TacoTip`, so TacoTip_Forever loads first and nothing here works without it. It resolves inspection data via `LibForeverInspector`. TacoTip is not bundled, modified, redistributed or forked.
+TacoTip Extras **requires TacoTip**. It declares `## Dependencies: TacoTip`, so TacoTip loads first and nothing here works without it. It resolves inspection data via `LibForeverInspector`. TacoTip is not bundled, modified, redistributed or forked.
 
 Supported clients — the same set TacoTip supports, declared identically in the TOC:
 
@@ -18,8 +18,8 @@ Supported clients — the same set TacoTip supports, declared identically in the
 | Classic Era | 11509 |
 | TBC Anniversary | 20506 |
 | WotLK Titanforge | 38002 |
-| WoW Forever | 16001, 110002, 110100, 110200 |
-| Retail | 120000, 120100 |
+| WoW Forever | 16001 |
+| Retail | 120100 |
 
 ## Installation
 

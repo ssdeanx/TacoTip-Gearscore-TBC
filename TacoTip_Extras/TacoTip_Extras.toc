@@ -1,9 +1,9 @@
-## Interface: 11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100
+## Interface: 11509, 20506, 38002, 16001, 120100
 ## Title: |cffd4a84bTacoTip|r |cffbcc3ccExtras|r
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: NS
 ## Version: 1.0.0
-## Dependencies: TacoTip_Forever, TacoTip
+## Dependencies: TacoTip
 ## SavedVariables: TacoTipExtrasDB
 ## IconTexture: Interface\AddOns\TacoTip_Extras\icons\GS-icon.tga
 

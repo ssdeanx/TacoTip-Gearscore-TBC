@@ -61,4 +61,4 @@ graph TD
 - Optional Pawn support should stay conditional rather than becoming a hard requirement.
 - Tooltip layout behavior depends on config flags such as `tip_style`, `show_target`, `show_gs_player`, `show_pawn_player`, and the anchor settings.
 - **Two-Handed Weapon & Titan's Grip Math:** Standalone two-handed weapons must retain `SlotMOD = 2.0` (weight 2.0x). The `TitanGrip = 0.5` dampening factor is strictly gated to active dual-wielding where an offhand link is equipped (`mainHandLink and offHandLink`).
-- **TacoTip_Extras Companion Pattern:** `TacoTip_Extras` lives as an independent sibling addon requiring `TacoTip_Forever` (`## Dependencies: TacoTip_Forever, TacoTip`) and resolves `LibForeverInspector` directly via `LibStub`.
+- **TacoTip_Extras Companion Pattern:** `TacoTip_Extras` lives as an independent sibling addon requiring `TacoTip` (`## Dependencies: TacoTip`) and resolves `LibForeverInspector` directly via `LibStub`.

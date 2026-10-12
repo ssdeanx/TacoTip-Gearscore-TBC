@@ -12,10 +12,10 @@
   - Standardized Hunter melee weapon (0.3164x for mainhand and offhand) and ranged weapon (5.3224x for bows, guns, crossbows, thrown) multipliers across both character aggregate scoring (`TT_GS:GetScore`) and tooltip item queries (`TT_GS:GetItemHunterScore`).
 - **Item Quality Color Bands Aligned:**
   - `ITEM_BAND_SCALE` (11.25) aligns per-slot GearScore with quality color bands across all five engine brackets (Era `200`, TBC `400`, Titanforge `1000`, Forever `200`, Retail `1000`).
-- **TacoTip Extras 1.0.0 Strictly Bound to TacoTip_Forever & LibForeverInspector:**
-  - Updated `TacoTip_Extras.toc` with `## Dependencies: TacoTip_Forever, TacoTip`.
-  - `TacoTipAdapter.lua` directly prioritizes `LibStub("LibForeverInspector")` and `_G["TacoTip_Forever"]`.
-  - Resolved all 5 `luacheck` warnings in `Scanner.lua` and `Tooltips.lua` (100% zero-warning compliance across all 11 files).
+- **TacoTip Extras 1.0.0 Strictly Bound to TacoTip & LibForeverInspector:**
+  - Declares `## Dependencies: TacoTip` in `TacoTip_Extras.toc`.
+  - `TacoTipAdapter.lua` directly prioritizes `LibStub("LibForeverInspector")` and resolves `_G["TacoTip"]`.
+  - Resolved all `luacheck` warnings (100% zero-warning compliance across all 11 files).
 - **Test Suite Verification:**
   - `gearscore_test.lua` verified across all reachable weapon states and client families (31/31 assertions passing).
   - `TacoTip_Forever` harness: 54/54 tests passed.

@@ -55,7 +55,7 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
 
 ## 5. Companion Addon & GearScore Engine Subsystems
 
-- **TacoTip_Extras (1.0.0):** Standalone companion addon located at `TacoTip_Extras/`. Strictly depends on `TacoTip_Forever` (`## Dependencies: TacoTip_Forever, TacoTip`). Integrates directly with `LibForeverInspector` for non-invasive gear and gem/enchant auditing.
+- **TacoTip_Extras (1.0.0):** Standalone companion addon located at `TacoTip_Extras/`. Strictly depends on `TacoTip` (`## Dependencies: TacoTip`). Integrates directly with `LibForeverInspector` for non-invasive gear and gem/enchant auditing.
 - **GearScore Engine Rules (`gearscore.lua`):**
   - Standalone 2H weapons retain `SlotMOD = 2.0` (weight 2.0x, balancing with 1H+Shield at 1241 vs 1240).
   - Titan's Grip dampening factor `0.5` strictly gated to active dual-wielding (`mainHandLink and offHandLink`).
