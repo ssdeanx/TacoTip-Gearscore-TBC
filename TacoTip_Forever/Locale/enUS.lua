@@ -202,6 +202,8 @@ local defaults = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Scale the portrait shown next to unit tooltips.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Show 3D portrait",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Use a live 3D model instead of a 2D portrait texture.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Invert portrait side",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Swap the portrait to the opposite side of the tooltip.",
     ["OPTIONS_PORTRAIT_ZOOM"] = "Portrait zoom",
     ["OPTIONS_PORTRAIT_ZOOM_DESC"] =
     "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face.",

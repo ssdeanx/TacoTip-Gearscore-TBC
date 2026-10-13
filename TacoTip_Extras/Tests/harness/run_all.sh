@@ -25,6 +25,12 @@ cd "$ADDON" || exit 1
 
 TEST="Tests/harness/load_test.lua"
 
+# The focused behavioural suite. load_test.lua proves the add-on LOADS against
+# each of the five clients; this one drives the leaderboard and asserts what it
+# rendered. Both must pass on every interpreter -- a green load matrix says
+# nothing about whether the browser opens on your own rank.
+BEHAVIOUR_TEST="Tests/harness/rankbrowser_test.lua"
+
 pass=0
 fail=0
 failed_invocations=()
@@ -113,6 +119,9 @@ for interp in $INTERPRETERS; do
         set -- $spec
         run "$1 $2" "$interp" "$TEST" "$1" "$2"
     done
+
+    run "leaderboard behaviour (classic)" "$interp" "$BEHAVIOUR_TEST" classic
+    run "leaderboard behaviour (retail)"  "$interp" "$BEHAVIOUR_TEST" retail
 
     echo
 done

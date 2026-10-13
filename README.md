@@ -23,7 +23,7 @@ The original addon stopped working for TBC Classic, so this fork exists to make 
 | Supported clients | Classic Era / Vanilla (`11509`), Season of Discovery (`11509`), TBC Classic Anniversary (`20506`), Titanforge (`38001`) |
 | Installation | Copy the `TacoTip` folder into `Interface/AddOns` |
 | Dependencies | Required libraries are bundled; Pawn support is optional |
-| Public version | `v0.8.1` |
+| Public version | `v0.8.2` |
 
 ## Why TTacoTip - Gearscore & iLvl | TBC - Era - SoD | exists
 

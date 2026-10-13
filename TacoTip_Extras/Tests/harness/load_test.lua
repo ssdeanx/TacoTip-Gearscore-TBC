@@ -315,6 +315,10 @@ end
 -- ---------------------------------------------------------------------------
 
 local REALG = _G
+
+-- Names published by CreateFrame, so a harness can look a named control up
+-- without depending on the global being present for unrelated reasons.
+local RAWL = {}
 local STD = {
     os = os, string = string, pairs = pairs, ipairs = ipairs, type = type,
     pcall = pcall, tonumber = tonumber, tostring = tostring, select = select,
@@ -345,6 +349,7 @@ local REGION = {
     SetParent = noop,
     GetPoint = function() return nil end,
     SetPoint = noop,
+    SetAllPoints = noop,
     ClearAllPoints = noop,
     GetNumPoints = function() return 0 end,
     SetSize = noop, SetWidth = noop, SetHeight = noop,
@@ -370,10 +375,25 @@ local REGION = {
     SetID = noop, GetID = function() return nil end,
     SetHitRectInsets = noop,
     SetPropagateMouseInput = noop,
+    -- C-level engine methods. They have NO Lua definition in FrameXML on any
+    -- branch (verified: Blizzard_SharedXML/BindingUtil.lua calls
+    -- `selectedHighlight:SetShown(...)` on classic_era and forever alike),
+    -- so a source grep for them finds nothing and wrongly suggests absence.
+    -- Model them, or a perfectly valid call reads as a widget-method MISS and
+    -- a raise -- which is how a mock gap gets reported as a product defect.
+    SetShown = function(self, shown)
+        self.__shown = shown and true or false
+    end,
+    Raise = function() end,
+    Lower = function() end,
 }
 
 local FRAME_EXTRA = {
-    SetScript = function() end,
+    -- NOTE: SetScript is REPLACED further down by the validating `patch`ed
+    -- version, which stores handlers as `__script_<name>`. Do not define a
+    -- competing SetScript here -- the later one wins, and a test reading the
+    -- wrong field then fails for reasons that have nothing to do with the
+    -- add-on.
     GetScript = function() return nil end,
     HasScript = function() return false end,
     -- HookScript raises on an undeclared script, exactly like the real one. A
@@ -419,6 +439,7 @@ local FONTSTRING_EXTRA = {
 
 local TEXTURE_EXTRA = {
     SetTexture = noop, GetTexture = function() return nil end,
+    SetColorTexture = noop,
     SetTexCoord = noop, GetTexCoord = function() return 0, 0, 1, 1 end,
     SetVertexColor = noop, GetVertexColor = function() return 1, 1, 1, 1 end,
     SetDesaturated = noop, SetBlendMode = noop, SetAllDesaturated = noop,
@@ -452,7 +473,7 @@ local CHECK_EXTRA = {
 
 local KINDS = {
     Frame = FRAME_EXTRA, Button = FRAME_EXTRA, StatusBar = FRAME_EXTRA,
-    Slider = FRAME_EXTRA,
+    Slider = FRAME_EXTRA, EditBox = FRAME_EXTRA, ScrollFrame = FRAME_EXTRA,
     CheckButton = merge(FRAME_EXTRA, CHECK_EXTRA),
     FontString = FONTSTRING_EXTRA, Texture = TEXTURE_EXTRA,
 }
@@ -467,6 +488,10 @@ KINDS.Slider = merge(FRAME_EXTRA, {
     SetMinMaxValues = noop, GetMinMaxValues = function() return 0, 1 end,
     SetValue = noop, GetValue = function() return 0 end,
     SetValueStep = noop, SetObeyStepOnDrag = noop, SetThumbTexture = noop,
+})
+KINDS.EditBox = merge(FRAME_EXTRA, {
+    GetText = function() return "" end, SetText = noop,
+    HighlightText = noop, ClearFocus = noop, SetAutoFocus = noop,
 })
 
 local METHOD_CACHE = {}
@@ -500,6 +525,7 @@ local BUTTON_SCRIPTS = {
     OnClick = true, OnEnter = true, OnLeave = true, OnMouseDown = true,
     OnMouseUp = true, OnDragStart = true, OnDragStop = true,
     OnReceiveDrag = true, OnPressed = true, OnDisable = true, OnEnable = true,
+    OnTextChanged = true, OnEscapePressed = true, OnEnterPressed = true,
 }
 
 local BUTTON_KINDS = {
@@ -593,7 +619,8 @@ newRegion = function(kind, name, parent, template)
 end
 
 buildMethods("Frame"); buildMethods("Button"); buildMethods("CheckButton")
-buildMethods("StatusBar"); buildMethods("Slider")
+buildMethods("StatusBar"); buildMethods("Slider"); buildMethods("EditBox")
+buildMethods("ScrollFrame")
 buildMethods("FontString"); buildMethods("Texture")
 -- Before the patch() calls below, so a shared patch (HasScript, HookScript,
 -- SetScript, Show/Hide) also lands on GameTooltip. Patching it afterwards
@@ -730,8 +757,19 @@ local function baseEnv()
     REALG.arg = arg
     REALG.time = os.time
     REALG.date = os.date
+    -- Named frames are published as globals by the real client, and add-ons
+    -- rely on that: a control created as CreateFrame("Button", "MyAddonFoo")
+    -- is reachable as _G.MyAddonFoo and as /click MyAddonFoo in-game. This
+    -- mock used to discard the name, so any assertion about a NAMED control
+    -- read nil and could only ever fail -- which is how "the Options button is
+    -- clickable" went untested rather than proven broken.
     REALG.CreateFrame = function(kind, name, parent, template)
-        return newRegion(kind, name, parent, template)
+        local region = newRegion(kind, name, parent, template)
+        if type(name) == "string" and name ~= "" then
+            RAWL[name] = region
+            REALG[name] = region
+        end
+        return region
     end
     REALG.UIParent = newRegion("Frame", "UIParent")
     REALG.DEFAULT_CHAT_FRAME = {
@@ -1273,11 +1311,11 @@ local function parseToc(path)
     if type(raw) ~= "string" then return nil, nil end
     local meta, files = {}, {}
     for line in (raw .. "\n"):gmatch("(.-)\r?\n") do
-        line = line:gsub("^%s+", ""):gsub("%s+$", "")
-        if line ~= "" and line:sub(1, 2) ~= "##" then
-            files[#files + 1] = (line:gsub("\\", "/"))
-        elseif line:sub(1, 2) == "##" then
-            local key, value = line:match("^##%s*([^:]+):%s*(.*)$")
+        local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+        if trimmed ~= "" and trimmed:sub(1, 2) ~= "##" then
+            files[#files + 1] = (trimmed:gsub("\\", "/"))
+        elseif trimmed:sub(1, 2) == "##" then
+            local key, value = trimmed:match("^##%s*([^:]+):%s*(.*)$")
             if key then
                 meta[key:gsub("%s+$", "")] = value
             end
@@ -1304,8 +1342,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.0.0",
-    "TOC ## Version is 1.0.0", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.0",
+    "TOC ## Version is 1.2.0", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -1327,9 +1365,9 @@ check((tocMeta.Interface or "") == WANTED_INTERFACES or (tocMeta.Interface or ""
 
 check(tocFiles[1] == "Core.lua", "Core.lua is first in the TOC",
     "got " .. tostring(tocFiles[1]))
-local ORDER = { "Core.lua", "Scoring.lua", "Cache.lua", "Scanner.lua",
-    "TacoTipAdapter.lua", "Tooltips.lua", "Frames.lua", "Minimap.lua",
-    "Options.lua" }
+local ORDER = { "Core.lua", "Scoring.lua", "Cache.lua", "RankDB.lua",
+    "RankSync.lua", "Scanner.lua", "TacoTipAdapter.lua", "Tooltips.lua",
+    "Frames.lua", "RankBrowser.lua", "Minimap.lua", "Options.lua" }
 local orderOK, orderDetail = true, ""
 for index = 1, #tocFiles do
     local expected = ORDER[index]
@@ -1344,7 +1382,7 @@ for index = 1, #tocFiles do
         break
     end
 end
-check(orderOK, "TOC load order is the reviewed 9-file order", orderDetail)
+check(orderOK, "TOC load order is the reviewed 12-file order", orderDetail)
 
 -- ---------------------------------------------------------------------------
 -- Load
@@ -1473,7 +1511,7 @@ check(#loadErrors == 0, "no TOC file raised during load",
 
 out(("\n-- namespace resolution --\n"))
 for _, key in ipairs({ "Core", "Scanner", "Scoring", "Cache", "TacoTipAdapter",
-    "Tooltips", "Frames", "Minimap", "Options" }) do
+    "Tooltips", "Frames", "Minimap", "Options", "RankDB", "RankSync", "RankBrowser" }) do
     check(type(namespace[key]) == "table", "namespace." .. key .. " resolved",
         "got " .. type(namespace[key]))
 end
@@ -1971,8 +2009,8 @@ if type(REALG.TacoTipExtrasDB) == "table" then
         "got " .. tostring(REALG.TacoTipExtrasDB.schema))
     if type(REALG.TacoTipExtrasDB.settings) == "table" then
         local s = REALG.TacoTipExtrasDB.settings
-        check(s.tooltip ~= nil and s.tooltip.mode == "Detailed",
-            "default tooltip mode is Detailed",
+        check(s.tooltip ~= nil and s.tooltip.mode == "Compact",
+            "default tooltip mode is Compact",
             "got " .. tostring(s.tooltip and s.tooltip.mode))
         check(s.equipmentDisplay ~= nil and s.equipmentDisplay.mode == "Detailed",
             "default equipment display mode is Detailed",
@@ -2065,6 +2103,7 @@ check(REALG.C_AddOns.GetAddOnMetadata(TT_GLOBAL, "Version") == TACOTIP_VERSION,
 
 out(("\n-- scoring: base score is TT_GS's, deltas are additive --\n"))
 
+do
 local Scoring = namespace.Scoring
 
 local function cell(value) return { status = "complete", value = value } end
@@ -2265,6 +2304,7 @@ else
         "current total survives the degradation",
         "status " .. tostring(result.metrics.gearScore.status))
 end
+end
 
 -- ---------------------------------------------------------------------------
 -- Remote Inspection / INVENTORY_READY
@@ -2272,6 +2312,7 @@ end
 
 out(("\n-- remote inspection: INVENTORY_READY handling and InspectFrame unit resolution --\n"))
 
+do
 local Cache = namespace.Cache
 local REMOTE_GUID_A = "Player-9999-00112233"
 local REMOTE_GUID_B = "Player-9999-00445566"
@@ -2382,6 +2423,403 @@ REALG.UnitLevel = origUnitLevel
 REALG.GetInventoryItemID = origGetInventoryItemID
 REALG.GetInventoryItemLink = origGetInventoryItemLink
 REALG.InspectFrame.unit = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- GearScore Server RankDB, P2P Sync & Leaderboard Browser
+-- ---------------------------------------------------------------------------
+
+do
+    out(("\n-- RankDB: Validation --\n"))
+    local RankDB = namespace.RankDB
+
+    -- 1. RankDB: Validation
+    local badRecord1 = { guid = "", name = "Test", gs = 1000 }
+    local ok1, err1 = RankDB.ValidateRecord(badRecord1)
+    check(ok1 == nil and type(err1) == "string",
+        "RankDB.ValidateRecord rejects empty GUID",
+        "got " .. tostring(ok1))
+
+    local badRecord2 = { guid = "Player-1-001", name = "", gs = 1000 }
+    local ok2, err2 = RankDB.ValidateRecord(badRecord2)
+    check(ok2 == nil and type(err2) == "string",
+        "RankDB.ValidateRecord rejects empty name",
+        "got " .. tostring(ok2))
+
+    local badRecord3 = { guid = "Player-1-001", name = "Test", gs = -5 }
+    local ok3, err3 = RankDB.ValidateRecord(badRecord3)
+    check(ok3 == nil and type(err3) == "string",
+        "RankDB.ValidateRecord rejects negative GearScore",
+        "got " .. tostring(ok3))
+
+    local badRecord4 = { guid = "Player-1-001", name = "Test", gs = 25000 }
+    local ok4, err4 = RankDB.ValidateRecord(badRecord4)
+    check(ok4 == nil and type(err4) == "string",
+        "RankDB.ValidateRecord rejects excessive GearScore (> 15000)",
+        "got " .. tostring(ok4))
+
+    local validRec = {
+        guid = "Player-1-001",
+        name = "Arthas",
+        faction = "Alliance",
+        class = "PALADIN",
+        classID = 2,
+        specName = "Retribution",
+        gs = 4500,
+        ilvl = 142.5,
+        timestamp = 100000,
+    }
+    local cleanRec = RankDB.ValidateRecord(validRec)
+    check(type(cleanRec) == "table" and cleanRec.name == "Arthas" and cleanRec.gs == 4500,
+        "RankDB.ValidateRecord accepts and sanitizes valid record",
+        "clean=" .. tostring(cleanRec and cleanRec.name))
+end
+
+do
+    out(("\n-- RankDB: Storage, Sorting & Lookups --\n"))
+    local RankDB = namespace.RankDB
+    local testRealm = "TestRealm"
+    local testNow = REALG.time and REALG.time() or 1000000
+    local validRec = {
+        guid = "Player-1-001",
+        name = "Arthas",
+        faction = "Alliance",
+        class = "PALADIN",
+        classID = 2,
+        specName = "Retribution",
+        gs = 4500,
+        ilvl = 142.5,
+        timestamp = testNow - 100,
+    }
+    local storeOK, storeStatus = RankDB.StoreRecord(validRec, testRealm)
+    check(storeOK == true and storeStatus == "stored",
+        "RankDB.StoreRecord stores new valid record",
+        "status=" .. tostring(storeStatus))
+
+    local olderRec = {
+        guid = "Player-1-001",
+        name = "Arthas",
+        faction = "Alliance",
+        class = "PALADIN",
+        classID = 2,
+        gs = 4000,
+        timestamp = testNow - 200,
+    }
+    local olderOK, olderStatus = RankDB.StoreRecord(olderRec, testRealm)
+    check(olderOK == true and olderStatus == "up-to-date",
+        "RankDB.StoreRecord enforces last-write-wins (rejects older timestamp)",
+        "status=" .. tostring(olderStatus))
+
+    local newerRec = {
+        guid = "Player-1-001",
+        name = "Arthas",
+        faction = "Alliance",
+        class = "PALADIN",
+        classID = 2,
+        gs = 4800,
+        timestamp = testNow - 50,
+    }
+    local newerOK, newerStatus = RankDB.StoreRecord(newerRec, testRealm)
+    check(newerOK == true and newerStatus == "stored",
+        "RankDB.StoreRecord updates record when newer timestamp arrives",
+        "status=" .. tostring(newerStatus))
+
+    -- Populate remaining players
+    RankDB.StoreRecord({ guid = "Player-1-002", name = "Uther", faction = "Alliance", class = "PALADIN", gs = 5200, ilvl = 150, timestamp = testNow - 100 }, testRealm)
+    RankDB.StoreRecord({ guid = "Player-1-003", name = "Thrall", faction = "Horde", class = "SHAMAN", gs = 5100, ilvl = 148, timestamp = testNow - 100 }, testRealm)
+    RankDB.StoreRecord({ guid = "Player-1-004", name = "Sylvanas", faction = "Horde", class = "HUNTER", gs = 5300, ilvl = 155, timestamp = testNow - 100 }, testRealm)
+    RankDB.StoreRecord({ guid = "Player-1-005", name = "Jaina", faction = "Alliance", class = "MAGE", gs = 4900, ilvl = 145, timestamp = testNow - 100 }, testRealm)
+
+    local allLeaderboard, allCount = RankDB.GetLeaderboard(testRealm, "all")
+    check(allCount == 5, "RankDB.GetLeaderboard('all') returns all 5 players", "got " .. tostring(allCount))
+    check(allLeaderboard[1].name == "Sylvanas" and allLeaderboard[2].name == "Uther" and allLeaderboard[5].name == "Arthas",
+        "RankDB.GetLeaderboard sorts descending by GearScore",
+        "1st=" .. tostring(allLeaderboard[1] and allLeaderboard[1].name) .. ", 5th=" .. tostring(allLeaderboard[5] and allLeaderboard[5].name))
+
+    local allyLeaderboard, allyCount = RankDB.GetLeaderboard(testRealm, "alliance")
+    check(allyCount == 3, "RankDB.GetLeaderboard('alliance') returns 3 Alliance players", "got " .. tostring(allyCount))
+    check(allyLeaderboard[1].name == "Uther" and allyLeaderboard[2].name == "Jaina" and allyLeaderboard[3].name == "Arthas",
+        "RankDB.GetLeaderboard('alliance') sorted correctly",
+        "1st=" .. tostring(allyLeaderboard[1] and allyLeaderboard[1].name))
+
+    local hordeLeaderboard, hordeCount = RankDB.GetLeaderboard(testRealm, "horde")
+    check(hordeCount == 2, "RankDB.GetLeaderboard('horde') returns 2 Horde players", "got " .. tostring(hordeCount))
+    check(hordeLeaderboard[1].name == "Sylvanas" and hordeLeaderboard[2].name == "Thrall",
+        "RankDB.GetLeaderboard('horde') sorted correctly",
+        "1st=" .. tostring(hordeLeaderboard[1] and hordeLeaderboard[1].name))
+
+    local paladinLeaderboard, paladinCount = RankDB.GetLeaderboard(testRealm, "all", "PALADIN")
+    check(paladinCount == 2, "RankDB class filter PALADIN returns 2 paladins", "got " .. tostring(paladinCount))
+    check(paladinLeaderboard[1].name == "Uther" and paladinLeaderboard[2].name == "Arthas",
+        "RankDB class filter returns paladins in sorted order",
+        "1st=" .. tostring(paladinLeaderboard[1] and paladinLeaderboard[1].name))
+
+    local searchLeaderboard, searchCount = RankDB.GetLeaderboard(testRealm, "all", nil, "thr")
+    check(searchCount == 1 and searchLeaderboard[1].name == "Thrall",
+        "RankDB live search query matches substring case-insensitively",
+        "match=" .. tostring(searchLeaderboard[1] and searchLeaderboard[1].name))
+
+    -- GetPlayerRank O(1) resolution
+    local oSyl, fSyl, cSyl, totalSyl = RankDB.GetPlayerRank("Player-1-004", testRealm)
+    check(oSyl == 1 and fSyl == 1 and cSyl == 1 and totalSyl == 5,
+        "RankDB.GetPlayerRank resolves Sylvanas as #1 Overall, #1 Horde, #1 Hunter",
+        ("overall=%s, faction=%s, class=%s"):format(tostring(oSyl), tostring(fSyl), tostring(cSyl)))
+
+    local oArt, fArt, cArt = RankDB.GetPlayerRank("Player-1-001", testRealm)
+    check(oArt == 5 and fArt == 3 and cArt == 2,
+        "RankDB.GetPlayerRank resolves Arthas as #5 Overall, #3 Alliance, #2 Paladin",
+        ("overall=%s, faction=%s, class=%s"):format(tostring(oArt), tostring(fArt), tostring(cArt)))
+end
+
+do
+    out(("\n-- RankDB: PruneStaleRecords --\n"))
+    local RankDB = namespace.RankDB
+    local staleRealm = "StaleRealm"
+    local oldTime = (REALG.time and REALG.time() or 1000000) - (70 * 24 * 3600)
+    local freshTime = (REALG.time and REALG.time() or 1000000) - (10 * 24 * 3600)
+    RankDB.StoreRecord({ guid = "Player-1-Old", name = "Oldie", gs = 3000, timestamp = oldTime }, staleRealm)
+    RankDB.StoreRecord({ guid = "Player-1-Fresh", name = "Freshie", gs = 4000, timestamp = freshTime }, staleRealm)
+
+    local prunedCount = RankDB.PruneStaleRecords(staleRealm, 60, 5000)
+    check(prunedCount == 1, "RankDB.PruneStaleRecords evicts record older than 60 days", "pruned=" .. tostring(prunedCount))
+    local remaining, remCount = RankDB.GetLeaderboard(staleRealm, "all")
+    check(remCount == 1 and remaining[1].name == "Freshie",
+        "Fresh record survives pruning",
+        "remaining=" .. tostring(remaining[1] and remaining[1].name))
+end
+
+do
+    out(("\n-- RankSync: Serialization, Deserialization & Queue --\n"))
+    local RankDB = namespace.RankDB
+    local RankSync = namespace.RankSync
+    local testNow = REALG.time and REALG.time() or 1000000
+
+    local syncRec = {
+        guid = "Player-1-001",
+        name = "Arthas",
+        faction = "Alliance",
+        classID = 2,
+        class = "PALADIN",
+        specName = "Retribution",
+        gs = 4800,
+        ilvl = 145.2,
+        timestamp = testNow - 50,
+    }
+    local wirePayload = RankSync.SerializeRecord(syncRec)
+    check(type(wirePayload) == "string" and wirePayload:sub(1, 2) == "R;",
+        "RankSync.SerializeRecord generates valid 'R;' prefixed wire format",
+        "wire=" .. tostring(wirePayload))
+
+    local restoredRec = RankSync.DeserializeRecord(wirePayload)
+    check(type(restoredRec) == "table"
+        and restoredRec.guid == syncRec.guid
+        and restoredRec.name == syncRec.name
+        and restoredRec.faction == syncRec.faction
+        and restoredRec.classID == syncRec.classID
+        and restoredRec.class == syncRec.class
+        and restoredRec.specName == syncRec.specName
+        and restoredRec.gs == syncRec.gs
+        and restoredRec.timestamp == syncRec.timestamp,
+        "RankSync.DeserializeRecord reconstructs record perfectly",
+        "name=" .. tostring(restoredRec and restoredRec.name))
+
+    local badPayload = "R;invalid;short"
+    local corruptRec = RankSync.DeserializeRecord(badPayload)
+    check(corruptRec == nil, "RankSync.DeserializeRecord safely rejects corrupt payload", "got " .. tostring(corruptRec))
+
+    local queueSyncRealm = "SyncTestRealm"
+    local syncInspectRec = {
+        guid = "Player-1-999",
+        name = "Mograine",
+        faction = "Alliance",
+        class = "PALADIN",
+        classID = 2,
+        gs = 5000,
+        realm = queueSyncRealm,
+        timestamp = testNow - 20,
+    }
+    RankSync.QueueInspectRecord(syncInspectRec)
+    local mogRank = RankDB.GetPlayerRank("Player-1-999", queueSyncRealm)
+    check(mogRank == 1, "RankSync.QueueInspectRecord immediately registers player in RankDB", "rank=" .. tostring(mogRank))
+end
+
+do
+    out(("\n-- Tooltips: Server Rank Display & Toggle --\n"))
+    local RankDB = namespace.RankDB
+    local testNow = REALG.time and REALG.time() or 1000000
+
+    -- Store standing for HARNESS_PLAYER_GUID in active realm
+    RankDB.StoreRecord({
+        guid = HARNESS_PLAYER_GUID,
+        name = "Tester",
+        faction = "Alliance",
+        class = "WARRIOR",
+        classID = 1,
+        gs = 310,
+        timestamp = testNow - 10,
+    })
+
+    if SURFACE_ACTIVE then
+        local driveScript = (EXPECTED_DRIVER == "unit-hook") and "OnTooltipSetUnit" or "OnUpdate"
+
+        -- Drive GameTooltipFrame render for HARNESS_PLAYER_GUID
+        GameTooltipFrame:SetUnit("player")
+        GameTooltipFrame:AddLine("Tester")
+        GameTooltipFrame:AddLine("Level 70")
+        GameTooltipFrame:Show()
+        fireScript(GameTooltipFrame, "OnShow")
+        local addedBeforeRank = #GAME_TOOLTIP_ADDED
+        fireScript(GameTooltipFrame, driveScript)
+        local foundRank = false
+        local rankText = ""
+        for i = addedBeforeRank + 1, #GAME_TOOLTIP_ADDED do
+            local line = GAME_TOOLTIP_ADDED[i]
+            if type(line) == "string" and line:find("Gearscore Rank:", 1, true) then
+                foundRank = true
+                rankText = line
+            end
+        end
+        check(foundRank == true, "Tooltips:ServerRankLine appends Rank line to tooltip", "line=" .. tostring(rankText))
+
+        -- Disable rank in settings and re-render
+        if REALG.TacoTipExtrasDB and REALG.TacoTipExtrasDB.settings and REALG.TacoTipExtrasDB.settings.tooltip then
+            REALG.TacoTipExtrasDB.settings.tooltip.show_server_rank = false
+        end
+        GameTooltipFrame:SetUnit("player")
+        GameTooltipFrame:AddLine("Tester")
+        GameTooltipFrame:AddLine("Level 70")
+        GameTooltipFrame:Show()
+        fireScript(GameTooltipFrame, "OnShow")
+        local addedBeforeDisabled = #GAME_TOOLTIP_ADDED
+        fireScript(GameTooltipFrame, driveScript)
+        local foundRankDisabled = false
+        for i = addedBeforeDisabled + 1, #GAME_TOOLTIP_ADDED do
+            local line = GAME_TOOLTIP_ADDED[i]
+            if type(line) == "string" and line:find("Gearscore Rank:", 1, true) then
+                foundRankDisabled = true
+            end
+        end
+        check(foundRankDisabled == false, "Tooltips:ServerRankToggle suppresses rank line when disabled", "found=" .. tostring(foundRankDisabled))
+
+        -- Restore settings to true
+        if REALG.TacoTipExtrasDB and REALG.TacoTipExtrasDB.settings and REALG.TacoTipExtrasDB.settings.tooltip then
+            REALG.TacoTipExtrasDB.settings.tooltip.show_server_rank = true
+        end
+        GameTooltipFrame:Hide()
+        fireScript(GameTooltipFrame, "OnHide")
+    else
+        check(true, "Tooltips:ServerRankLine skipped when tooltip surface inactive (gated by adapter)")
+    end
+end
+
+do
+    out(("\n-- RankBrowser UI & Slash Commands --\n"))
+    local RankBrowser = namespace.RankBrowser
+
+    check(type(RankBrowser) == "table", "RankBrowser table exists", "type=" .. type(RankBrowser))
+    check(type(RankBrowser.Toggle) == "function", "RankBrowser.Toggle is a function", "type=" .. type(RankBrowser.Toggle))
+    local rankFrame = RankBrowser.CreateUI and RankBrowser.CreateUI()
+    check(type(rankFrame) == "table", "TacoTipRankFrame frame is created", "got " .. type(rankFrame))
+    -- SLASH_<NAME>1 and SlashCmdList.<NAME> are ONE declaration. Asserting the
+    -- SLASH_ half alone passed while the SlashCmdList half was missing, which
+    -- is how a registered-but-dead command ships.
+    check(type(REALG.SlashCmdList) == "table" and type(REALG.SlashCmdList.TACOTIPRANKS) == "function",
+        "Slash handler TACOTIPRANKS is registered in SlashCmdList")
+    check(REALG.SLASH_TACOTIPRANKS1 == "/ttrank", "Slash command /ttrank registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS1))
+    check(REALG.SLASH_TACOTIPRANKS2 == "/ttranks", "Slash command /ttranks registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS2))
+    check(REALG.SLASH_TACOTIPRANKS3 == "/ttleaderboard", "Slash command /ttleaderboard registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS3))
+    check(REALG.SLASH_TACOTIPRANKS4 == "/tt lb", "Slash command /tt lb registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS4))
+    check(REALG.SLASH_TACOTIPRANKS5 == "/tt rank", "Slash command /tt rank registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS5))
+    check(REALG.SLASH_TACOTIPRANKS6 == "/tt ranks", "Slash command /tt ranks registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS6))
+    check(REALG.SLASH_TACOTIPRANKS7 == "/tt leaderboard", "Slash command /tt leaderboard registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS7))
+
+    -- Every declared alias must be DISTINCT. A duplicated alias would shadow
+    -- another and make one unreachable, and a table keyed by alias would let
+    -- one silently win.
+    do
+        local seen, dupes = {}, {}
+        for i = 1, 7 do
+            local alias = REALG["SLASH_TACOTIPRANKS" .. i]
+            if type(alias) == "string" then
+                if seen[alias] then
+                    dupes[#dupes + 1] = alias
+                end
+                seen[alias] = true
+            end
+        end
+        check(#dupes == 0, "all seven slash aliases are distinct", table.concat(dupes, ","))
+    end
+
+    -- The Options button must actually invoke the browser. Reaching into the
+    -- The Options button must actually invoke the browser. Invoking its stored
+    -- OnClick is the only way to catch a callback wired to a stale or nil
+    -- reference -- a button that exists, looks right, and does nothing.
+    do
+        local browser = namespace.RankBrowser
+        local optionsButton = RAWL.TacoTip_ExtrasOpenLeaderboardButton
+
+        check(type(browser) == "table",
+            "RankBrowser is present when the Options button is clicked")
+        check(type(optionsButton) == "table",
+            "the Options 'Open Server Leaderboard' button was created by name",
+            "got " .. type(optionsButton))
+
+        local toggles = 0
+        local realToggle = nil
+        if type(browser) == "table" and type(browser.Toggle) == "function" then
+            realToggle = browser.Toggle
+            browser.Toggle = function(...)
+                toggles = toggles + 1
+                return realToggle(...)
+            end
+        end
+
+        if type(optionsButton) == "table" then
+            -- SetScript stores handlers as __script_<name> (see the patched
+            -- SetScript above); GetScript returns the chained result.
+            local onClick = rawget(optionsButton, "__script_OnClick")
+            check(type(onClick) == "function",
+                "the Options leaderboard button stored a callable OnClick",
+                "got " .. type(onClick))
+            if type(onClick) == "function" then
+                local ok, err = pcall(onClick, optionsButton)
+                check(ok, "clicking the Options leaderboard button does not raise", tostring(err))
+                check(toggles == 1,
+                    "clicking the Options leaderboard button opens the browser",
+                    "Toggle called " .. toggles .. " times")
+            end
+        end
+
+        if realToggle then
+            browser.Toggle = realToggle
+        end
+    end
+
+    -- The slash handler must open the browser too, not merely exist.
+    do
+        local browser = namespace.RankBrowser
+        local toggles = 0
+        local realToggle = nil
+        if type(browser) == "table" and type(browser.Toggle) == "function" then
+            realToggle = browser.Toggle
+            browser.Toggle = function(...)
+                toggles = toggles + 1
+                return realToggle(...)
+            end
+        end
+        local handler = type(REALG.SlashCmdList) == "table"
+            and REALG.SlashCmdList.TACOTIPRANKS or nil
+        if type(handler) == "function" then
+            local ok, err = pcall(handler, "/tt lb")
+            check(ok, "the /tt lb slash handler does not raise", tostring(err))
+            check(toggles == 1, "the /tt lb slash handler opens the browser",
+                "Toggle called " .. toggles .. " times")
+        end
+        if realToggle then
+            browser.Toggle = realToggle
+        end
+    end
+end
 
 -- ---------------------------------------------------------------------------
 -- Summary

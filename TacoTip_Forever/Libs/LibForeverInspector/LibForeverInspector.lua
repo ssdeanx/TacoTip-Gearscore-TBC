@@ -3320,6 +3320,7 @@ local function queryTalentIcon(specIndex, groupIndex, isInspect, target)
 end
 
 local specializationIconCache = {}
+local specializationIconMissUntil = {}
 
 -- Returns a Texture-ready icon for a specialization, or nil. MODERN CLIENTS
 -- ONLY (Retail / WoW Forever).
@@ -3358,6 +3359,19 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
         return cached or nil
     end
 
+    -- Stable-state-unaware inspect targets do not cache a `false` miss, so
+    -- without this guard each hover would re-run the (expensive) talent grid
+    -- pass for them. Re-query at most every 5s instead. A real icon that
+    -- streams in later is picked up at the next interval.
+    if (isInspect and not cached) then
+        local getNow = _G.GetTime
+        local now = type(getNow) == "function" and getNow() or 0
+        local missUntil = specializationIconMissUntil[key]
+        if (type(missUntil) == "number" and now < missUntil) then
+            return nil
+        end
+    end
+
     local icon = queryTalentIcon(specIndex, groupIndex, isInspect, target)
 
     -- The fallback below is ONLY valid for the local player.
@@ -3386,8 +3400,11 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
         -- No talent data for this unit yet. Do NOT cache the miss: caching
         -- `false` here would make "no icon" stick for the rest of the session,
         -- so the icon would never appear even after their talents stream in and
-        -- the answer becomes knowable. Skipping the write makes the next hover
-        -- re-query, which is the only point at which the data can have changed.
+        -- the answer becomes knowable. Skip the write and arm the 5s re-query
+        -- gate above so hover stops re-running the talent grid every frame.
+        local getNow = _G.GetTime
+        local now = type(getNow) == "function" and getNow() or 0
+        specializationIconMissUntil[key] = now + 5
         return nil
     end
 
@@ -3397,6 +3414,7 @@ end
 
 function lib:InvalidateModernSpecializationIconCache()
     specializationIconCache = {}
+    specializationIconMissUntil = {}
 end
 
 local function createItemWrapper(link)
@@ -3492,6 +3510,7 @@ local function cacheUnitData(unit, guid)
     local now = time()
     local data = lib.cache[guid] or {}
     data.time = now
+    data.stale = nil
     data.items = data.items or {}
 
     -- 1-18 is deliberate, not an off-by-one. Slot 4 is the shirt and slot 19
@@ -3552,6 +3571,7 @@ local function cacheUnitData(unit, guid)
 end
 
 local nextInspectTime = 0
+
 local inspectQueueTick
 
 frame:SetScript("OnEvent", function(self, event, ...)
@@ -3609,7 +3629,10 @@ frame:SetScript("OnEvent", function(self, event, ...)
             and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
             local guid = type(UnitGUID) == "function" and UnitGUID(unit)
             if (guid and lib.cache[guid]) then
-                lib.cache[guid].time = 0
+                -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
+                -- means "no data" and hides GearScore/iLvl, so zeroing made
+                -- them vanish until (and unless) the re-inspect succeeded.
+                lib.cache[guid].stale = true
                 lib:DoInspect(unit)
             end
         end
@@ -3621,9 +3644,16 @@ frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 
-local INSPECT_DELAY = (isRetail or isForever) and 0.8 or 1.0
+local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
 local CACHE_REFRESH_DELAY = 300
 local queue = {}
+
+-- Fresh = has data, has not been flagged stale by UNIT_INVENTORY_CHANGED, and is
+-- younger than the refresh window. Stale data is still served to readers.
+local function isCacheFresh(cached)
+    return (cached and cached.time and not cached.stale
+        and (time() - cached.time < CACHE_REFRESH_DELAY)) and true or false
+end
 
 function lib:CanInspect(unit)
     if (not unit or (type(InCombatLockdown) == "function" and InCombatLockdown())) then return false end
@@ -3637,8 +3667,23 @@ function lib:CanInspect(unit)
     local hasCanInspect = type(_G.CanInspect) == "function"
     local hasCheckDist = type(_G.CheckInteractDistance) == "function"
     if (hasCanInspect and hasCheckDist) then
-        if (not _G.CanInspect(unit) and not _G.CheckInteractDistance(unit, 1)) then
-            return false
+        if (isRetail or isForever) then
+            -- Mainline-family: either signal is enough. This is the behaviour
+            -- that made Retail/Forever hover inspection start working; do not
+            -- tighten it.
+            if (not _G.CanInspect(unit) and not _G.CheckInteractDistance(unit, 1)) then
+                return false
+            end
+        else
+            -- Classic Era / SoD / TBC / Titanforge: CanInspect only validates
+            -- the unit (visible, inspectable player) and answers true at ANY
+            -- distance. The real ~28yd range gate is CheckInteractDistance(unit, 1),
+            -- so it is mandatory here. Without it NotifyInspect fires at
+            -- out-of-range players, INSPECT_READY never arrives and the
+            -- pending slot stalls the whole queue.
+            if (not _G.CanInspect(unit) or not _G.CheckInteractDistance(unit, 1)) then
+                return false
+            end
         end
     elseif (hasCanInspect and not _G.CanInspect(unit)) then
         return false
@@ -3697,7 +3742,7 @@ function lib:DoInspect(unitorguid)
     end
 
     local cached = lib.cache[guid]
-    if (cached and cached.time and (time() - cached.time < CACHE_REFRESH_DELAY)) then
+    if (isCacheFresh(cached)) then
         return true
     end
 
@@ -3747,7 +3792,7 @@ inspectQueueTick = function()
     if (type(UnitExists) == "function" and UnitExists("target") and lib:CanInspect("target")) then
         local guid = UnitGUID("target")
         local cached = guid and lib.cache[guid]
-        if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+        if (not isCacheFresh(cached)) then
             if (requestInspect("target")) then
                 return
             end
@@ -3769,7 +3814,7 @@ inspectQueueTick = function()
             end
             if (unit and lib:CanInspect(unit)) then
                 local cached = lib.cache[guid]
-                if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                if (not isCacheFresh(cached)) then
                     if (requestInspect(unit)) then
                         return
                     end
@@ -3786,7 +3831,7 @@ inspectQueueTick = function()
                 if (UnitExists(u) and lib:CanInspect(u)) then
                     local guid = UnitGUID(u)
                     local cached = guid and lib.cache[guid]
-                    if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                    if (not isCacheFresh(cached)) then
                         if (requestInspect(u)) then
                             return
                         end
@@ -3799,7 +3844,7 @@ inspectQueueTick = function()
                 if (UnitExists(u) and lib:CanInspect(u)) then
                     local guid = UnitGUID(u)
                     local cached = guid and lib.cache[guid]
-                    if (not cached or not cached.time or (time() - cached.time >= CACHE_REFRESH_DELAY)) then
+                    if (not isCacheFresh(cached)) then
                         if (requestInspect(u)) then
                             return
                         end

@@ -441,13 +441,17 @@ local function makeRows(mode, result, unit)
     end
 
     if type(averageDisplay) == "number" then
+        local avgRed, avgGreen, avgBlue = currentScoreColor(current)
+        if not validColor(avgRed, avgGreen, avgBlue) then
+            avgRed, avgGreen, avgBlue = NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
+        end
         rows[#rows + 1] = metricRow(
             "Average iLvl",
             averageDisplay,
             nil,
-            classRed,
-            classGreen,
-            classBlue
+            avgRed,
+            avgGreen,
+            avgBlue
         )
     end
 

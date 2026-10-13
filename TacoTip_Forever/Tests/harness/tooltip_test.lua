@@ -941,6 +941,8 @@ local function allText()
 end
 
 local checks = {}
+-- The name-on-line-1 bump. Mirrors TOOLTIP_NAME_FONT_SIZE_DELTA in main.lua.
+local TOOLTIP_NAME_FONT_SIZE_DELTA = 2
 local function check(name, cond, detail)
     checks[#checks + 1] = { name, cond and true or false, detail }
 end
@@ -1290,6 +1292,11 @@ do
             or (GT.GetLeftLine and GT.GetLeftLine(1))
     end
 
+    local function lineN(n)
+        return (TT.GetTooltipLeftLine and TT.GetTooltipLeftLine(GT, n))
+            or (GT.GetLeftLine and GT.GetLeftLine(n))
+    end
+
     -- A media setting is stored as a SharedMedia name and resolved to a path
     -- through a cache, so a test that pokes the config has to invalidate that
     -- cache or it measures nothing. The probe is taken from the addon's own
@@ -1385,6 +1392,97 @@ do
         REALG.UIParent.__right = uiPrev
     end
 
+    -- ---- Portrait base dimensions and exact 3:4 --------------------------
+    local function currentAnchorPoint()
+        local p = GT.TacoTipPortrait3D
+        if (p and p.GetNumPoints and p:GetNumPoints() > 0) then
+            return select(1, p:GetPoint(1))
+        end
+        return nil
+    end
+
+    do
+        local prevScale = REALG.TacoTipConfig.tooltip_portrait_scale
+        -- Both base numbers must be even so that every slider stop lands on an
+        -- exact integer: the slider runs 50..200 step 5, so a half stop and a
+        -- 1.5 stop are both in range and both divide/multiply by 2.
+        local expected = {
+            { scale = 0.50, w = 33, h = 44 },
+            { scale = 1.00, w = 66, h = 88 },
+            { scale = 1.50, w = 99, h = 132 },
+            { scale = 2.00, w = 132, h = 176 },
+        }
+        for _, case in ipairs(expected) do
+            REALG.TacoTipConfig.tooltip_portrait_scale = case.scale
+            pcall(TT.clearTooltipVisuals, GT)
+            settlePair(2)
+            local p = GT.TacoTipPortrait3D
+            local w = p and p.__w
+            local h = p and p.__h
+            check(string.format("portrait is %dx%d at scale %.2f", case.w, case.h, case.scale),
+                w == case.w and h == case.h,
+                "got " .. tostring(w) .. "x" .. tostring(h))
+            -- Ratio is the point of "keep 3:4": w:h must be exactly 3:4, so
+            -- 4*w must equal 3*h with no rounding tolerance at all.
+            check(string.format("portrait keeps an exact 3:4 ratio at scale %.2f", case.scale),
+                w ~= nil and h ~= nil and (w * 4) == (h * 3),
+                string.format("%s x %s -> 4w=%d 3h=%d", tostring(w), tostring(h),
+                    w and (w * 4) or -1, h and (h * 3) or -1))
+        end
+        REALG.TacoTipConfig.tooltip_portrait_scale = prevScale
+        pcall(TT.clearTooltipVisuals, GT)
+        settlePair(2)
+    end
+
+    -- ---- Invert portrait side (option, default off) ----------------------
+    do
+        -- Captured here, not borrowed from the side-flip block above: that one is
+        -- scoped to its own `do`, so reaching for its local silently restored
+        -- to nil and leaked a moved UIParent.__right into every later test.
+        local uiPrev = REALG.UIParent.__right
+        local prevInvert = REALG.TacoTipConfig.tooltip_portrait_invert_side
+        check("invert portrait side defaults to off",
+            prevInvert == nil or prevInvert == false,
+            "got " .. tostring(prevInvert))
+
+        -- Tooltip anchored past the right edge normally takes the LEFT side.
+        REALG.UIParent.__right = SCREEN_W
+        GT.__right = SCREEN_W + 60
+        REALG.TacoTipConfig.tooltip_portrait_invert_side = false
+        pcall(TT.clearTooltipVisuals, GT)
+        settlePair(2)
+        local normalPoint = currentAnchorPoint()
+
+        -- Ticking the option must move the portrait IMMEDIATELY. The side is
+        -- cached per tooltip, so this only happens if the invert flag is part of
+        -- that cache key -- without it the checkbox looks dead until the user
+        -- changes scale or hovers again.
+        REALG.TacoTipConfig.tooltip_portrait_invert_side = true
+        settlePair(2)
+        local invertedPoint = currentAnchorPoint()
+
+        check("portrait sits at TOPRIGHT when the tooltip is past the right edge",
+            normalPoint == "TOPRIGHT",
+            "got " .. tostring(normalPoint))
+        check("inverting the portrait side moves it",
+            invertedPoint ~= nil and invertedPoint ~= normalPoint,
+            "off=" .. tostring(normalPoint) .. " on=" .. tostring(invertedPoint))
+        check("inverting the portrait side moves it on the very next render",
+            invertedPoint == "TOPLEFT",
+            "got " .. tostring(invertedPoint) .. " (wanted TOPLEFT)")
+
+        -- And back off again.
+        REALG.TacoTipConfig.tooltip_portrait_invert_side = false
+        settlePair(2)
+        check("clearing invert restores the original side",
+            currentAnchorPoint() == normalPoint,
+            "got " .. tostring(currentAnchorPoint()) .. " (wanted " .. tostring(normalPoint) .. ")")
+
+        REALG.TacoTipConfig.tooltip_portrait_invert_side = prevInvert
+        GT.__right = 0
+        REALG.UIParent.__right = uiPrev
+    end
+
     -- ---- FIX 2: SetFont re-applied to every line on every render ---------
     --
     -- applyTooltipFonts walks max(numLines + 4, 20) lines and called SetFont on
@@ -1400,6 +1498,8 @@ do
         local baseFonts = REALG.__fontCalls or 0
         local wantFont = REALG.TacoTip_Forever:GetResolvedTooltipFont()
         local wantSize = REALG.TacoTipConfig.tooltip_font_size
+        -- Line 1 is the NAME and is rendered one step larger than body text.
+        local wantNameSize = wantSize + TOOLTIP_NAME_FONT_SIZE_DELTA
 
         settlePair(PAIR)
         local l1 = line1()
@@ -1409,9 +1509,16 @@ do
             addedFonts == 0,
             "added " .. tostring(addedFonts) .. " SetFont call(s) over " .. tostring(PAIR) .. " renders")
         check("the font WAS applied, so the guard skips a repeat and not everything",
-            l1 ~= nil and l1.__font == wantFont and l1.__fontSize == wantSize,
+            l1 ~= nil and l1.__font == wantFont and l1.__fontSize == wantNameSize,
             "line1 font=" .. tostring(l1 and l1.__font) .. " size=" .. tostring(l1 and l1.__fontSize)
-                .. " (wanted " .. tostring(wantFont) .. " / " .. tostring(wantSize) .. ")")
+                .. " (wanted " .. tostring(wantFont) .. " / " .. tostring(wantNameSize) .. ")")
+
+        -- Body lines must NOT have been dragged up with the name. Without this
+        -- the bump could be applied to every line and still pass the check above.
+        local l2 = lineN(2)
+        check("line 2 stays at the configured body size",
+            l2 ~= nil and l2.__fontSize == wantSize,
+            "line2 size=" .. tostring(l2 and l2.__fontSize) .. " (wanted " .. tostring(wantSize) .. ")")
 
         -- The guard must not be a one-way latch: a changed setting has to write
         -- through on the next render.

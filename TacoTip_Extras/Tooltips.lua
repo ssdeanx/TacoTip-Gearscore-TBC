@@ -567,12 +567,88 @@ local function inlineMetric(label, value, red, green, blue)
     return labelText(label) .. " " .. colorText(value, red, green, blue)
 end
 
-local function makeRows(mode, revision, result, unit, scope)
+local function serverRankEnabled()
+    if type(settings) == "table" and type(settings.tooltip) == "table" then
+        if settings.tooltip.show_server_rank == false
+            or settings.tooltip.showServerRank == false then
+            return false
+        end
+    end
+    local g = _G
+    local legacyCfg = rawget(g, "TacoTipExtrasConfig")
+    if type(legacyCfg) == "table" and legacyCfg.show_server_rank == false then
+        return false
+    end
+    return true
+end
+
+local function getRankRow(guid, unit)
+    if not serverRankEnabled() then
+        return nil
+    end
+    local rankDB = namespace.RankDB
+    if type(rankDB) ~= "table" or type(rankDB.GetPlayerRank) ~= "function" then
+        return nil
+    end
+    local targetGUID = guid
+    if not targetGUID and unit then
+        local g = _G
+        local uGUID = rawget(g, "UnitGUID")
+        if type(uGUID) == "function" then
+            local ok, id = pcall(uGUID, unit)
+            if ok and type(id) == "string" then
+                targetGUID = id
+            end
+        end
+    end
+    if not targetGUID then
+        return nil
+    end
+
+    local overall, _, classRank = rankDB.GetPlayerRank(targetGUID)
+    if not overall then
+        return nil
+    end
+
+    local className
+    local g = _G
+    local uClass = rawget(g, "UnitClass")
+    if type(uClass) == "function" and unit then
+        local ok, locClass = pcall(uClass, unit)
+        if ok and type(locClass) == "string" and locClass ~= "" then
+            className = locClass
+        end
+    end
+
+    local text
+    if classRank and className then
+        text = labelText("Gearscore Rank:") .. " " .. colorText(
+            "#" .. tostring(overall) .. " (#" .. tostring(classRank) .. " " .. className .. ")",
+            NEUTRAL_RED,
+            NEUTRAL_GREEN,
+            NEUTRAL_BLUE
+        )
+    else
+        text = labelText("Gearscore Rank:") .. " " .. colorText(
+            "#" .. tostring(overall),
+            NEUTRAL_RED,
+            NEUTRAL_GREEN,
+            NEUTRAL_BLUE
+        )
+    end
+    return { text = text }
+end
+
+local function makeRows(mode, revision, result, unit, scope, guid)
     local rows = {}
     local metrics = result.metrics
     local suppressed = enhancementMetricsSuppressed(revision)
     local classRed, classGreen, classBlue = playerClassColor(unit)
     local current, currentMetric = completeMetric(metrics, "gearScore")
+    local iLvlRed, iLvlGreen, iLvlBlue = Adapter.GetEquipmentScoreColor(current)
+    if not validColor(iLvlRed, iLvlGreen, iLvlBlue) then
+        iLvlRed, iLvlGreen, iLvlBlue = NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
+    end
     local base, baseMetric = completeMetric(metrics, "baseGS")
     local potential, potentialMetric = completeMetric(metrics, "potentialGS")
     local delta, deltaMetric = completeMetric(metrics, "delta")
@@ -590,13 +666,17 @@ local function makeRows(mode, revision, result, unit, scope)
             parts[#parts + 1] = inlineMetric(
                 "iLvl",
                 displayNumber(averageDisplay),
-                classRed,
-                classGreen,
-                classBlue
+                iLvlRed,
+                iLvlGreen,
+                iLvlBlue
             )
         end
         if #parts > 0 then
             rows[1] = { text = table.concat(parts, "   ") }
+        end
+        local rankRow = getRankRow(guid, unit)
+        if rankRow then
+            rows[#rows + 1] = rankRow
         end
         return rows
     end
@@ -610,9 +690,9 @@ local function makeRows(mode, revision, result, unit, scope)
             primary[#primary + 1] = inlineMetric(
                 "iLvl",
                 displayNumber(averageDisplay),
-                classRed,
-                classGreen,
-                classBlue
+                iLvlRed,
+                iLvlGreen,
+                iLvlBlue
             )
         end
         if #primary > 0 then
@@ -645,6 +725,10 @@ local function makeRows(mode, revision, result, unit, scope)
         end
         if #secondary > 0 then
             rows[#rows + 1] = { text = table.concat(secondary, "   ") }
+        end
+        local rankRow = getRankRow(guid, unit)
+        if rankRow then
+            rows[#rows + 1] = rankRow
         end
         return rows
     end
@@ -835,9 +919,9 @@ local function makeRows(mode, revision, result, unit, scope)
         averageDisplay,
         averageMetric,
         nil,
-        classRed,
-        classGreen,
-        classBlue
+        iLvlRed,
+        iLvlGreen,
+        iLvlBlue
     )
     addMetric(
         "Unenhanced GS",
@@ -849,6 +933,10 @@ local function makeRows(mode, revision, result, unit, scope)
         classGreen,
         classBlue
     )
+    local rankRow = getRankRow(guid, unit)
+    if rankRow then
+        rows[#rows + 1] = rankRow
+    end
     return rows
 end
 
@@ -910,6 +998,7 @@ local function captureRenderInputs(into, guid, source, mode, unit)
     into.warningColors = settings.tooltip.warningColors == true
     into.restrictToLevel70 =
         settings.tooltip.restrictEnhancementMetricsToLevel70 == true
+    into.showServerRank = serverRankEnabled()
 end
 
 local function renderInputsUnchanged(current, target, guid, source, mode, unit)
@@ -939,6 +1028,7 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
         and current.warningColors == (settings.tooltip.warningColors == true)
         and current.restrictToLevel70
             == (settings.tooltip.restrictEnhancementMetricsToLevel70 == true)
+        and current.showServerRank == serverRankEnabled()
 end
 
 local function renderPlayerTooltip(target)
@@ -988,7 +1078,7 @@ local function renderPlayerTooltip(target)
         end
         rendered = addRows(
             target,
-            makeRows(mode, source.revision, source.result, unit, source.source)
+            makeRows(mode, source.revision, source.result, unit, source.source, guid)
         )
     elseif mode ~= "Disabled" then
         setEnhancementStatus({

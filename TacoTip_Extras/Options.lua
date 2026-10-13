@@ -109,6 +109,18 @@ local HELP = {
             "Shows or hides the movable minimap shortcut. Left-click opens or closes the enhancer Options page, and dragging moves the button.",
         },
     },
+    ShowServerRank = {
+        heading = "Show server leaderboard rank",
+        lines = {
+            "Displays the player's server GearScore ranking and class standing on tooltips when available from the background sync engine.",
+        },
+    },
+    openLeaderboard = {
+        heading = "Open Server Leaderboard",
+        lines = {
+            "Opens the TacoTip GearScore Server Leaderboard window (/tt ranks) to browse realm-wide standings.",
+        },
+    },
     restore = {
         heading = "Restore TacoTip settings",
         lines = {
@@ -264,15 +276,22 @@ local controls = {}
 local equipmentControls = {}
 local activeHelpOwner
 
+-- Author credit shown in the Options panel footer.
+--
+-- This is a SECOND credit site, independent of Core.lua's WELCOME_CREDIT. It was
+-- missed when the login banner was corrected, so the banner and the options
+-- footer disagreed about who wrote the add-on. Keep the two in sync.
+local AUTHOR_CREDIT = "AcidBomb"
+
 local function versionCredit()
     local core = namespace.Core
     if type(core) == "table" and type(core.GetVersion) == "function" then
         local ok, value = pcall(core.GetVersion)
         if ok and type(value) == "string" then
-            return "v" .. value .. " - NS"
+            return "v" .. value .. " - " .. AUTHOR_CREDIT
         end
     end
-    return "v? - NS"
+    return "v? - " .. AUTHOR_CREDIT
 end
 
 local function hideHelp(owner)
@@ -1045,10 +1064,10 @@ local function restoreTacoTipSettings()
     return true
 end
 
-local function createActionButton(name, text, x, callback, helpKey)
+local function createActionButton(name, text, x, callback, helpKey, y)
     local button = CreateFrame("Button", name, panel, "UIPanelButtonTemplate")
     button:SetSize(210, 24)
-    button:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -350)
+    button:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y or -350)
     button:SetText(text)
     button:SetScript("OnClick", callback)
     attachHelp(button, helpKey)
@@ -1151,6 +1170,35 @@ local function createPanel()
         end
     end, 500)
 
+    createCheckbox(
+        "ShowServerRank",
+        "Show server leaderboard rank",
+        290,
+        -266,
+        function(value)
+            local tooltip = tooltipSettings()
+            if tooltip then
+                tooltip.show_server_rank = value
+                tooltip.showServerRank = value
+                applyTooltipSettings()
+            end
+        end,
+        240
+    )
+
+    controls.openLeaderboard = createActionButton(
+        addonName .. "OpenLeaderboardButton",
+        "Open Server Leaderboard",
+        290,
+        function()
+            if namespace.RankBrowser and type(namespace.RankBrowser.Toggle) == "function" then
+                namespace.RankBrowser.Toggle()
+            end
+        end,
+        "openLeaderboard",
+        -44
+    )
+
     controls.restore = createActionButton(
         addonName .. "RestoreTacoTipButton",
         "Restore TacoTip settings",
@@ -1171,7 +1219,7 @@ local function createPanel()
         "ARTWORK",
         "GameFontNormal"
     )
-    explanationTitle:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -388)
+    explanationTitle:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -416)
     explanationTitle:SetText("How these scores work")
     controls.scoreExplanationTitle = explanationTitle
 
@@ -1570,6 +1618,13 @@ function Options.Refresh()
     )
     setChecked(controls.WarningColors, tooltip and tooltip.warningColors)
     setChecked(controls.ShowMinimap, minimap and minimap.show)
+    local showRank = true
+    if tooltip then
+        if tooltip.show_server_rank == false or tooltip.showServerRank == false then
+            showRank = false
+        end
+    end
+    setChecked(controls.ShowServerRank, showRank)
     setChecked(
         equipmentControls.EquipmentShowUnenhanced,
         equipmentDisplay and equipmentDisplay.showUnenhanced

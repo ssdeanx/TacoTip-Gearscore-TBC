@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.1"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.2"
 
 
 
@@ -736,6 +736,11 @@ local function ensureTooltipPortrait(tooltip)
     return tooltip.TacoTipPortrait
 end
 
+-- Line 1 is the NAME (player on a unit tooltip, item on an item tooltip); the
+-- rest is body. This used to apply one size to every line, flattening the name
+-- to body size.
+local TOOLTIP_NAME_FONT_SIZE_DELTA = 2
+
 local function applyTooltipFonts(tooltip)
     if (not tooltip) then
         return
@@ -743,6 +748,7 @@ local function applyTooltipFonts(tooltip)
     local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()) or TacoTipConfig.tooltip_font or
         "Fonts\\FRIZQT__.TTF"
     local fontSize = TacoTipConfig.tooltip_font_size or 12
+    local nameSize = fontSize + TOOLTIP_NAME_FONT_SIZE_DELTA
     local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
     for i = 1, math.max(numLines + 4, 20) do
         local left = getTooltipLeftLine(tooltip, i)
@@ -759,16 +765,17 @@ local function applyTooltipFonts(tooltip)
         -- not been fonted yet carries a nil field, which never compares equal
         -- to a font, so a line the pool has just handed out is picked up on the
         -- next render by itself.
+        local lineSize = (i == 1) and nameSize or fontSize
         if (left) then
-            if (left._tacoTipFont ~= fontPath or left._tacoTipFontSize ~= fontSize) then
-                callLabeled("applyTooltipFonts", left, "SetFont", fontPath, fontSize)
-                left._tacoTipFont, left._tacoTipFontSize = fontPath, fontSize
+            if (left._tacoTipFont ~= fontPath or left._tacoTipFontSize ~= lineSize) then
+                callLabeled("applyTooltipFonts", left, "SetFont", fontPath, lineSize)
+                left._tacoTipFont, left._tacoTipFontSize = fontPath, lineSize
             end
         end
         if (right) then
-            if (right._tacoTipFont ~= fontPath or right._tacoTipFontSize ~= fontSize) then
-                callLabeled("applyTooltipFonts", right, "SetFont", fontPath, fontSize)
-                right._tacoTipFont, right._tacoTipFontSize = fontPath, fontSize
+            if (right._tacoTipFont ~= fontPath or right._tacoTipFontSize ~= lineSize) then
+                callLabeled("applyTooltipFonts", right, "SetFont", fontPath, lineSize)
+                right._tacoTipFont, right._tacoTipFontSize = fontPath, lineSize
             end
         end
     end
@@ -1091,8 +1098,10 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
 
     local portrait = ensureTooltipPortrait(tooltip)
     local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
-    local portraitW = math.floor(72 * portraitScale)
-    local portraitH = math.floor(96 * portraitScale)
+    -- 66 x 88 (was 72 x 96). Still exact 3:4, still exact integers at every
+    -- slider stop: 33x44, 66x88, 99x132, 132x176.
+    local portraitW = math.floor(66 * portraitScale)
+    local portraitH = math.floor(88 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
             -- Anchor once per side, not once per render.
@@ -1113,7 +1122,11 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- tooltip is still correct.
             local cachedSide = getTooltipState(tooltip).portraitSide
             local shown = (not tooltip.IsShown) or tooltip:IsShown()
+            local invertSide = TacoTipConfig.tooltip_portrait_invert_side and true or false
+            -- Invert is in the cache key for the same reason scale is: without
+            -- it, ticking the option does nothing until the next scale change.
             if (cachedSide == nil or portrait._tacoTipScale ~= portraitScale
+                    or portrait._tacoTipInvert ~= invertSide
                     or (shown and not getTooltipState(tooltip).portraitAnchored)) then
                 local tooltipRight = tooltip:GetRight() or 0
                 local screenWidth = (UIParent and UIParent:GetRight())
@@ -1122,11 +1135,19 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 -- the left-hand side, which is the correct default for a tooltip
                 -- anchored on the right of the screen.
                 cachedSide = (tooltipRight > 0 and tooltipRight >= screenWidth) and "left" or "right"
+                -- Inverted before the side-to-anchor mapping below, so that
+                -- mapping stays in one place. Off by default, so nobody who
+                -- never touches the option sees any change.
+                if invertSide then
+                    cachedSide = (cachedSide == "left") and "right" or "left"
+                end
                 ---@diagnostic disable-next-line: inject-field
                 getTooltipState(tooltip).portraitSide = cachedSide
                 ---@diagnostic disable-next-line: inject-field
                 getTooltipState(tooltip).portraitAnchored = shown
                 portrait._tacoTipScale = portraitScale
+                ---@diagnostic disable-next-line: inject-field
+                portrait._tacoTipInvert = invertSide
                 portrait:ClearAllPoints()
                 portrait:SetSize(portraitW, portraitH)
                 TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1

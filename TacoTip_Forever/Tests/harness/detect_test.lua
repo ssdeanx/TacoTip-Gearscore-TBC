@@ -183,6 +183,46 @@ do
         "same_table=" .. tostring(alias == ci) .. " minor=" .. tostring(minor))
 end
 
+-- lib:CanInspect range gate. CanInspect() answers true at any distance on the
+-- Classic family, so there CheckInteractDistance must also pass; on Retail and
+-- Forever either signal suffices (that is what made hover inspection work).
+do
+    local function gate(projectId, iface, canInspect, nearby)
+        local ci = run(projectId, iface, "slot4", CONSTS)
+        _G.UnitExists = function() return true end
+        _G.UnitIsConnected = function() return true end
+        _G.UnitIsDeadOrGhost = function() return false end
+        _G.UnitIsPlayer = function() return true end
+        _G.UnitIsUnit = function() return false end
+        _G.CanInspect = function() return canInspect end
+        _G.CheckInteractDistance = function() return nearby end
+        return ci:CanInspect("mouseover")
+    end
+    local classicProjects = {
+        { "Classic Era", P.WOW_PROJECT_CLASSIC, 11509 },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506 },
+        { "Titanforge", P.WOW_PROJECT_WRATH_CLASSIC, 38002 },
+    }
+    for _, c in ipairs(classicProjects) do
+        check("CanInspect " .. c[1] .. ": out of range rejected",
+            gate(c[2], c[3], true, false) == false)
+        check("CanInspect " .. c[1] .. ": in range accepted",
+            gate(c[2], c[3], true, true) == true)
+    end
+    local mainline = {
+        { "Forever", P.WOW_PROJECT_MAINLINE, 16001 },
+        { "Retail", P.WOW_PROJECT_MAINLINE, 120100 },
+    }
+    for _, c in ipairs(mainline) do
+        check("CanInspect " .. c[1] .. ": CanInspect alone accepted",
+            gate(c[2], c[3], true, false) == true)
+        check("CanInspect " .. c[1] .. ": range alone accepted",
+            gate(c[2], c[3], false, true) == true)
+        check("CanInspect " .. c[1] .. ": neither rejected",
+            gate(c[2], c[3], false, false) == false)
+    end
+end
+
 STD.io.write(table.concat(results, "\n") .. "\n")
 STD.io.write("\n" .. (allok and "ALL PASS" or "*** FAILURES ***") .. "\n")
 STD.os.exit(allok and 0 or 1)

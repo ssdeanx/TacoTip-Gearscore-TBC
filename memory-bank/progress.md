@@ -1,14 +1,23 @@
 # Progress
 
-## 2026-10-12 - v0.8.1: LibForeverInspector Performance & Proactive Pre-Caching Overhaul + TacoTip Extras 1.0.1
+## 2026-10-12 - v0.8.2: Inspect regression fixes (Classic range gate, stale-not-zero cache)
 
+- `LibForeverInspector:CanInspect`: Classic family requires CanInspect AND CheckInteractDistance(unit,1); Retail/Forever keep either-signal. Pinned in `detect_test.lua`.
+- `UNIT_INVENTORY_CHANGED` sets `cache.stale` (via `isCacheFresh`) instead of `time = 0`, so GS/iLvl persist during re-inspect.
+
+## 2026-10-12 - v0.8.1: LibForeverInspector Performance & Proactive Pre-Caching Overhaul + TacoTip Extras 1.0.1 (Server Leaderboard & P2P Sync)
+
+- **TacoTip Extras 1.0.1: Server-Wide GearScore Rank Browser & P2P Sync Engine (HonorSpy Style):**
+  - Built `RankDB.lua`: dirty-flag caching (`all`, `alliance`, `horde`, `byClass`), $O(1)$ player lookup map `rankIndexByGUID`, 60-day prune cycle (`PruneStaleRecords`), 5,000 player capacity cap with lowest-GS eviction, and last-write-wins timestamp arbitration.
+  - Built `RankSync.lua`: peer-to-peer sync engine using hidden background channel `ttgssync` (silenced via `ChatFrame_RemoveChannelGroup`) with fallback broadcasts over `GUILD`, `PARTY`, and `RAID`. Token-bucket rate limiter (1 pkt / 1.5s, burst max 3).
+  - Built `RankBrowser.lua`: 580×440 standalone UI frame (`TacoTipRankFrame`) accessible via `/tt ranks`, `/ttrank`, `/ttleaderboard`, and Options button. 3 faction tabs (`[All Realm]`, `[Alliance]`, `[Horde]`), real-time class filtering, live search editbox, FauxScrollFrame with 10 reusable row frames, top-3 medal colors, and personal rank standing footer banner.
+  - Updated `Tooltips.lua`: renders `|cFFFFFFFFRank: |r#X (#Y Class)` on player tooltips, toggleable via `show_server_rank` in Options.
+  - Fixed remote inspect equipment scanning deadlock across Retail and WoW Forever in `Scanner.lua`.
 - **Proactive Target & Mouseover Inspection Pre-Caching:** Registered `PLAYER_TARGET_CHANGED`, `UPDATE_MOUSEOVER_UNIT`, `GROUP_ROSTER_UPDATE`, and `UNIT_INVENTORY_CHANGED` in `LibForeverInspector`. Automatically and proactively queues inspections for player targets and 3D world mouseovers so GearScore and item level data are computed before user hover or inspect interactions.
-- **Queue Priority:** Ensured active player target has priority ahead of background group iterations in `inspectQueueTick`.
-- **Latency & Interval Tightening:** Reduced `INSPECT_DELAY` to `0.8s` for Retail and WoW Forever (`1.0s` on Classic/TBC/WotLK), down from `1.5s`. Reduced background ticker interval from `1.5s` to `0.5s`.
+- **Queue Priority & Latency:** Ensured active player target has priority ahead of background group iterations in `inspectQueueTick`. Reduced `INSPECT_DELAY` to `0.8s` for Retail and WoW Forever (`1.0s` on Classic/TBC/WotLK). Reduced background ticker interval from `1.5s` to `0.5s`.
 - **Immediate Chained Dispatch:** Upon receiving `INSPECT_READY`, the inspection queue tick is chained immediately once cooldown permits, eliminating idle pauses between queue items.
 - **Resilient Range Check Fallback:** Expanded `CanInspect(unit)` to accept units if either `_G.CanInspect(unit)` or `_G.CheckInteractDistance(unit, 1)` succeeds, eliminating range/mount false negatives.
-- **TacoTip Extras 1.0.1 Changelog:** Created dedicated `TacoTip_Extras/CHANGELOG.md` tracking `1.0.1` and `1.0.0` releases.
-- **Version Bump:** Synchronously bumped version to `0.8.1` across `TacoTip_Forever/TacoTip.toc`, `TacoTip_Forever/main.lua`, `TacoTip_Forever/options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, `AGENTS.md`, and memory bank.
+- **Synchronous Release Verification:** 100% test pass rate across `TacoTip_Forever` (54 tests) and `TacoTip_Extras` (36 tests across `lua5.1`, `lua5.4`, `luajit`). 0 warnings / 0 errors under `luacheck` across both packages.
 
 ## 2026-10-11 - v0.8.0: GearScore Two-Handed & Titan's Grip Math Correctness + TacoTip Extras 1.0.0
 
@@ -28,7 +37,7 @@
   - InspectGearScore and InspectAvgItemLvl fontstrings fully operational on `InspectPaperDollFrame`.
 - **Eradicated Interface\None & Added Verified Native Borders:** Removed placeholder `Interface\None` and added verified Blizzard FrameXML borders (`UI-Arena-Border`, `UI-SliderBar-Border`, `UI-Toast-Border`, `TextPanel-Border`, `UI-TutorialFrame-CalloutGlow`).
 - **UnitFrame Hover Stabilization:** Fixed 200ms periodic teardown flicker on Retail `PlayerFrame`/`TargetFrame` via `isUnitFramePeriodicUpdate`.
-- **Quality Gates:** 51/51 test harness passes; zero luacheck warnings across 31 files; 100% localization parity across all 11 languages (261 keys).
+- **Quality Gates:** 51/51 test harness passes; zero luacheck warnings across 31 files; 100% localization parity across all 11 languages (263 keys).
 
 ## 2026-09-21 - TacoTip Forever: Universal Cross-Client Architecture & Test Hardening
 
@@ -46,7 +55,7 @@
 
 ## 2026-09-13 - v0.7.6: Enterprise Audit, 3D Portrait Resizing & Performance Optimization
 
-- **3D Portrait Resizing:** Enlarged 3D character portrait base dimensions from `60x80` to `72x96` (clean integer scaling at all stops: 36x48, 72x96, 108x144, 144x192). Throttled model `OnUpdate` alpha sync to 20Hz (0.05s).
+- **3D Portrait Resizing:** 3D character portrait base dimensions are `66x88` (clean integer scaling at all stops: 33x44, 66x88, 99x132, 132x176). Throttled model `OnUpdate` alpha sync to 20Hz (0.05s).
 - **Zero-Allocation Tooltip Pipeline:** Pre-allocated pooled buffers (`pooledLinesToAdd`, `pooledTooltipText`) in `main.lua` and zero-allocation `scoreFromItemValues` in `gearscore.lua` eliminating GC churn on unit hover.
 - **SharedMedia Resolution Caching:** Added lazy caching layer in `options.lua` with invalidation hooks, converting $O(N \log N)$ sorting into $O(1)$ table lookups.
 - **Event Lifecycle Hardening:** TacoTipPowerBar event handling gated on `IsShown()` and dynamically unregistered on ticker stop; deduplicated GameTooltip hooks; gated `UNIT_TARGET` handling.

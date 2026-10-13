@@ -24,8 +24,8 @@ local WELCOME_DELAY_SECONDS = 3.1
 local welcomeScheduled = false
 local welcomePrinted = false
 
-local WELCOME_NAME = "|cffd4a84bTacoTip|r |cffbcc3ccGS|r |cff9a76d2Enhancer|r"
-local WELCOME_CREDIT = "|cffbcc3ccv%s - NS|r"
+local WELCOME_NAME = "|cffd4a84bTacoTip|r |cffbcc3ccExtras|r"
+local WELCOME_CREDIT = "|cffbcc3ccv%s - AcidBomb|r"
 local WELCOME_PUN = "|cffd4a84bMay your upgrades be spicy!|r"
 
 local VALID_TOOLTIP_MODES = {
@@ -193,7 +193,7 @@ local function normalizeSettings(runtime)
 
     local tooltipSettings = runtime.tooltip
     if not VALID_TOOLTIP_MODES[tooltipSettings.mode] then
-        tooltipSettings.mode = "Detailed"
+        tooltipSettings.mode = "Compact"
     end
     defaultBoolean(tooltipSettings, "shiftToDetailed", true)
     defaultBoolean(
@@ -202,6 +202,8 @@ local function normalizeSettings(runtime)
         true
     )
     defaultBoolean(tooltipSettings, "warningColors", true)
+    defaultBoolean(tooltipSettings, "show_server_rank", true)
+    defaultBoolean(tooltipSettings, "showServerRank", true)
     if type(tooltipSettings.fields) ~= "table" then
         tooltipSettings.fields = {}
     end

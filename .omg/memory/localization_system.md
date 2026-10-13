@@ -2,7 +2,7 @@
 
 ## 1. Source of Truth & Fallback Merge
 
-- `Locale/enUS.lua` is the definitive source of truth containing exactly **261 base translation keys**.
+- `Locale/enUS.lua` is the definitive source of truth containing exactly **263 base translation keys**.
 - All localized tables (`deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`) inherit English values via the metatable fallback merge:
 
   ```lua
@@ -13,7 +13,7 @@
 
 ## 2. Parity & Safety Invariants
 
-- **100% Key Parity:** Every locale file must define all 261 keys with no missing entries.
+- **100% Key Parity:** Every locale file must define all 263 keys with no missing entries.
 - **Format Specifier Safety:** If an English string contains `%s` or `%d`, all translated versions must contain the exact same count and types of format tokens.
 - **Maintainer Integrity:** Maintainer credit strings (`TEXT_HELP_WELCOME`) preserve the standard author signature `AcidBomb (Pilsung)`.
 

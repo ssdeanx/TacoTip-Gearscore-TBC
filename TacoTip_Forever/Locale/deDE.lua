@@ -203,6 +203,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Skaliert das Porträt, das neben Einheiten-Tooltips angezeigt wird.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "3D-Porträt anzeigen",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Verwendet ein Live-3D-Modell anstelle einer 2D-Porträttextur.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Portraeterseite umkehren",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Vertauscht die Portraetseite auf die gegenueberliegende Seite des Tooltips.",
     ["OPTIONS_TOOLTIP_FONT"] = "Tooltip-Schriftart",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Wähle die Schriftart für den Tooltip-Text. SharedMedia-Schriften aus Paketen wie Merfin Plus werden automatisch eingebunden, wenn sie verfügbar sind.",

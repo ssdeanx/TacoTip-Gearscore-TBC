@@ -208,6 +208,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Изменяет размер портрета, отображаемого рядом с подсказками существ.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Показывать 3D-портрет",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Использовать живую 3D-модель вместо 2D-текстуры портрета.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Инвертировать сторону портрета",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Перемещает портрет на противоположную сторону подсказки.",
     ["OPTIONS_TOOLTIP_FONT"] = "Шрифт подсказки",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Выберите шрифт для текста подсказки. Шрифты SharedMedia из пакетов вроде Merfin Plus автоматически добавляются при наличии.",

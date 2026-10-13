@@ -203,6 +203,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Ajusta a escala do retrato mostrado ao lado das dicas de unidade.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostrar retrato 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa um modelo 3D em tempo real em vez de uma textura de retrato 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Inverter lado do retrato",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Move o retrato para o lado oposto do tooltip.",
     ["OPTIONS_TOOLTIP_FONT"] = "Fonte da dica",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Escolha a fonte usada pelo texto da dica. Fontes SharedMedia de pacotes como Merfin Plus são incluídas automaticamente quando disponíveis.",

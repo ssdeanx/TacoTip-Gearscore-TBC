@@ -3,7 +3,7 @@
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1741092
-## Version: 1.0.0
+## Version: 1.2.0
 ## Dependencies: TacoTip
 ## SavedVariables: TacoTipExtrasDB
 ## IconTexture: Interface\AddOns\TacoTip_Extras\tt-2.tga
@@ -11,9 +11,12 @@
 Core.lua
 Scoring.lua
 Cache.lua
+RankDB.lua
+RankSync.lua
 Scanner.lua
 TacoTipAdapter.lua
 Tooltips.lua
 Frames.lua
+RankBrowser.lua
 Minimap.lua
 Options.lua

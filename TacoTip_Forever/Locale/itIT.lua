@@ -206,6 +206,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Ridimensiona il ritratto mostrato accanto ai tooltip delle unità.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostra ritratto 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa un modello 3D dal vivo al posto di una struttura di ritratto 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Inverti lato del ritratto",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Sposta il ritratto sul lato opposto del tooltip.",
     ["OPTIONS_TOOLTIP_FONT"] = "Carattere del tooltip",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Scegli il carattere usato dal testo del tooltip. I caratteri SharedMedia di pacchetti come Merfin Plus vengono inclusi automaticamente quando disponibili.",

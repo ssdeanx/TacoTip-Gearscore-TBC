@@ -11,7 +11,7 @@ TacoTip loads modules in strict dependency sequence defined in `TacoTip.toc`:
    - `Libs/LibClassicInspector/LibClassicInspector.lua` — Talent/equipment inspection engine
 
 2. **Localization:**
-   - `Locale/enUS.lua` — Source of truth (261 base keys)
+   - `Locale/enUS.lua` — Source of truth (263 base keys)
    - `Locale/*.lua` — 10 translated languages inheriting fallback from `enUS`
 
 3. **Core Subsystems:**

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.1"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.2"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -92,6 +92,7 @@ local DEFAULTS = {
     tooltip_portrait = true,
     tooltip_portrait_scale = 1,
     tooltip_portrait_3d = true,
+    tooltip_portrait_invert_side = false,
     tooltip_portrait_zoom = 0.7,
     tooltip_font = "Fonts\\FRIZQT__.TTF",
     tooltip_font_size = 12,
@@ -166,6 +167,7 @@ function TT:SafeSanitizeConfig(config)
         "show_class_icon", "show_pvp_icon", "guild_rank_alt_style",
         "show_hp_bar", "show_power_bar", "shaman_blue", "tooltip_border_use_class",
         "tooltip_background_use_class", "tooltip_portrait", "tooltip_portrait_3d",
+        "tooltip_portrait_invert_side",
         "instant_fade", "anchor_mouse", "anchor_mouse_world",
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_honor_rank", "show_ilvl_inline", "show_realm",
@@ -2267,6 +2269,17 @@ local function buildTooltipsPage()
     controls.tooltipPortrait3D:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 34
 
+    controls.tooltipPortraitInvertSide = createOptionsCheckbox(content, nil,
+        L["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] or "Invert portrait side",
+        L["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] or
+        "Swap the portrait to the opposite side of the tooltip.",
+        function(_, value)
+            TacoTipConfig.tooltip_portrait_invert_side = value
+            modernGetConfig()
+        end)
+    controls.tooltipPortraitInvertSide:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 34
+
     controls.tooltipPortraitZoom = createOptionsSlider(content, nil, L["OPTIONS_PORTRAIT_ZOOM"] or "Portrait zoom",
         L["OPTIONS_PORTRAIT_ZOOM_DESC"] or
         "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face.",
@@ -2391,6 +2404,7 @@ local function buildTooltipsPage()
         controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
         controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.tooltipPortrait3D:SetChecked(TacoTipConfig.tooltip_portrait_3d)
+        controls.tooltipPortraitInvertSide:SetChecked(TacoTipConfig.tooltip_portrait_invert_side)
         controls.tooltipPortrait3D:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitZoom:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_zoom or 0.7) * 100 + 0.5))
         controls.tooltipPortraitZoom:SetDisabled(not TacoTipConfig.tooltip_portrait)

@@ -215,14 +215,24 @@ local function extractPayload(nativeLink)
         end
         return nativeLink
     end
-    local payload = string.match(
-        nativeLink,
-        "^|c%x%x%x%x%x%x%x%x|H(item:[^|]+)|h[^|]*|h|r$"
-    )
-    if payload then
-        return payload
+    -- Retail item links are coloured with a NAMED colour escape of the form
+    -- "|cnIQx" (e.g. "|cnIQ6|Hitem:...") instead of the legacy
+    -- "|cAARRGGBB" colour code, and every other client family keeps the
+    -- legacy prefix. Matching on the colour code (or its absence) therefore
+    -- rejected every equipped item on Retail. The item payload itself always
+    -- begins with "item:" and contains no "|", so pull it out directly.
+    local payload = string.match(nativeLink, "item:[^|]+")
+    if payload and string.find(nativeLink, "item:", 1, true) then
+        -- Scope the match to a real item link: require the "|H...|h" anchor
+        -- (or the classic colour prefix) so a stray "item:" in display text
+        -- cannot be mistaken for an item.
+        if string.find(nativeLink, "|H", 1, true)
+            or string.find(nativeLink, "|h", 1, true)
+            or string.sub(nativeLink, 1, 2) == "|c" then
+            return payload
+        end
     end
-    return string.match(nativeLink, "^|H(item:[^|]+)|h[^|]*|h$")
+    return nil
 end
 
 function Scoring.ParseEquippedLink(nativeLink, expectedItemID)

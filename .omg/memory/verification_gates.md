@@ -15,7 +15,7 @@
   1. `TacoTip-Core`: Namespace loading, public API presence, version metadata, interface IDs.
   2. `TacoTip-Config`: Default keys, Shaman Blue override, boolean sanitization, numeric bounds.
   3. `TacoTip-Borders`: Class-color border painting, non-unit border isolation, SharedMedia resolution caching.
-  4. `TacoTip-Portrait`: 3:4 aspect ratio (`72x96`), integer scaling (50%–200%), `OnUpdate` alpha sync tracking.
+  4. `TacoTip-Portrait`: 3:4 aspect ratio (`66x88`), integer scaling (50%–200%), `OnUpdate` alpha sync tracking.
   5. `TacoTip-Guild`: Fallback parser regex, `<Guild> Rank` format, hide suppression.
   6. `TacoTip-Stats`: Nil-safe GearScore / Pawn calculations, `LibClassicInspector` presence, dual-spec reachability.
   7. `TacoTip-Mover`: Mover handle sync, options UI refresh nil-safety, custom position initialization.

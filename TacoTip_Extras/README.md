@@ -1,11 +1,41 @@
-# TacoTip Extras
+```
+   _____               ______                  _
+  |_   _|             |  ____|                | |
+    | | |__   __ _  __| |__ ___  __ _ _ __ ___| | _____ _   _
+    | | '_ \ / _` |/ _`\___ \ \/ _` | '_ ` _ \| |/ / _ \ | | |
+    | | | | | (_| | (_|____) |> (_| | | | | | |   <|  __/ |_| |
+    |_|_| |_|\__, |\__,_|_____/ \__,_|_| |_| |_|_|\_\___|\__,_|
+             __/ |
+            |___/          companion add-on for TacoTip
+```
 
-**TacoTip Extras** is an optional companion add-on for [TacoTip](https://www.curseforge.com/wow/classic-addons/tacotip). It adds enhancement-aware GearScore information to genuine player tooltips and to summaries in the Character and Inspect equipment windows. TacoTip stays separately installed and keeps providing everything else it does.
+```yaml
+name: TacoTip Extras
+version: 1.2.0
+author: AcidBomb
+maintainer: AcidBomb (Pilsung)
+license: MIT  # see LICENSE
+curseforge_id: 1741092
+project_url: https://www.curseforge.com/wow/addons/tacotip-extras/preview
+tacotip_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
+requires: [TacoTip]
+clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
+interfaces: ["11509", "20506", "38002", "16001", "120100"]
+tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
+status: unreleased
+updated: 2026-10-13
+```
+
+
+**TacoTip Extras** is an optional companion add-on for [TacoTip](https://www.curseforge.com/wow/addons/tacotip-gearscore). It adds enhancement-aware GearScore information to genuine player tooltips and to summaries in the Character and Inspect equipment windows. TacoTip stays separately installed and keeps providing everything else it does.
+
+- **TacoTip** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (required dependency)
+- **TacoTip Extras** — <https://www.curseforge.com/wow/addons/tacotip-extras/preview> (this add-on)
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing, to follow. It is not a fork of TacoTip, not maintained by the TacoTip author, and it implies no endorsement by either.
 
-**Version:** 1.0.0
-**Original author:** NS
+**Version:** 1.2.0
+**Author:** AcidBomb (Pilsung)
 
 ## Requirements
 
@@ -27,6 +57,9 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 
 ## Features
 
+- Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with dedicated background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
+- Interactive Leaderboard window (`/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`) covering the **whole realm**, opening centred on your own rank, with class filtering, live search, `▲ Top` / `▼ My Rank` navigation, and personal rank standing.
+- Automatic tooltip rank display (`Gearscore Rank: #14 (#2 Warrior)`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
 - One shared equipment-summary mode with separately saved Character and Inspect positions.
@@ -52,7 +85,29 @@ Potential GS, Delta, and Completion appear only when their required item and soc
 - **Compact:** shows up to two concise rows using `GS` for Current GS, optional Average iLvl, useful positive Delta, and Completion when available. It omits Potential GS, Unenhanced GS, and the completion fraction.
 - **Detailed:** shows each enabled, available metric on a separately labelled row in this relative order: Current GS, Potential GS, Delta, Completion, Average iLvl, then Unenhanced GS when explicitly enabled.
 
-When **Shift for Detailed** is enabled, holding Shift temporarily changes Minimal or Compact to Detailed with the same ordering. Detailed and Disabled are unchanged.
+## Server-Wide GearScore Leaderboard & P2P Sync
+
+TacoTip Extras features a decentralized, HonorSpy-style peer-to-peer sync engine that continuously aggregates player GearScores across your realm:
+
+- **Interactive Leaderboard Window:** Access via `/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`, or via the **Open Server Leaderboard** button in Options.
+  - Ranks the **whole realm**. There is no Alliance/Horde split — a faction filter would only hide the players you want to compare yourself against.
+  - **Opens on your own rank.** The window scrolls to your position and centres you on the middle visible row every time it opens, honouring the active class filter and search.
+  - **`▼ My Rank`** re-centres you at any time; **`▲ Top`** jumps back to `#1`.
+  - **Sort** by clicking the `GEARSCORE`, `iLVL` or `LAST SEEN` headers. The active column is underlined and the current order is stated on screen. The `#` column always stays the **GearScore rank**, whichever way the list is sorted, so sorting never makes standing look like it moved.
+  - **Hover any row** for full detail: spec, GearScore, Average iLvl, realm rank and last-seen.
+  - **Escape closes the browser**, on every supported client.
+  - Filter by class from the **class dropdown**, or type a name fragment into the search box for live filtering.
+  - Your own row carries a **highlight and a `YOU` marker**, so you can see at a glance which row is you.
+  - Top players get Gold (`#1`), Silver (`#2`) and Bronze (`#3`) podium badges; every row has a thin class-colour bar, hover highlighting, and muted spec / last-seen columns.
+  - Footer banner shows your character's personal Overall, Faction, and Class ranks.
+- **Tooltip Rank Display:**
+  - Renders a clean rank line on player tooltips: `Gearscore Rank: #14 (#2 Warrior)`.
+  - Can be toggled on/off in the Options panel (`Show server leaderboard rank`).
+- **Silent Background Sync:**
+  - Automatically exchanges inspection records over the hidden chat channel `ttgssync` with fallback broadcasts to `GUILD`, `PARTY`, and `RAID`.
+  - Channel output is silenced from chat windows with zero chat clutter.
+  - Rate-limited with a token bucket (1 msg / 1.5s, burst max 3) to prevent disconnects.
+  - Stale data is automatically pruned after 60 days, with a 5,000 player capacity cap.
 
 ## Character and Inspect summaries
 
@@ -240,6 +295,6 @@ can be argued with instead of guessed at.
 
 ## Credits and license
 
-TacoTip Extras is independently written by NS and released under the MIT License. See [LICENSE](LICENSE).
+TacoTip Extras is written and maintained by **AcidBomb (Pilsung)** and is released under the MIT License — see [LICENSE](LICENSE), © 2026 AcidBomb.
 
 TacoTip is a required external dependency; it is not bundled, modified, redistributed or forked, and this project does not imply endorsement by TacoTip or its author.

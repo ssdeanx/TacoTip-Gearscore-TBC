@@ -208,6 +208,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Ajuste l'échelle du portrait affiché à côté des infobulles d'unité.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Afficher le portrait 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Utilise un modèle 3D animé au lieu d'une texture de portrait 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Inverser le cote du portrait",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Deplace le portrait du cote oppose de l'infobulle.",
     ["OPTIONS_TOOLTIP_FONT"] = "Police de l'infobulle",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Choisissez la police utilisée pour le texte des infobulles. Les polices SharedMedia de packs tels que Merfin Plus sont incluses automatiquement lorsqu'elles sont disponibles.",

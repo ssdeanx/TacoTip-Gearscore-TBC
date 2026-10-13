@@ -4,7 +4,7 @@
 
 - Lua addon for World of Warcraft Classic-family clients only.
 - Supported interface versions: `11509`, `20506`, `38001` (`30405` deprecated).
-- 3D portrait base dimensions: `72 × 96` (3:4 aspect ratio).
+- 3D portrait base dimensions: `66 × 88` (3:4 aspect ratio).
 - Saved variable: `TacoTipConfig`.
 
 ## Bundled libraries and manifests

@@ -24,6 +24,11 @@ local SCOPE_CAPABLE_WEAPON_SUBCLASSES = {
     [3] = true,
     [18] = true,
 }
+local CLASS_IDS = {
+    WARRIOR = 1, PALADIN = 2, HUNTER = 3, ROGUE = 4, PRIEST = 5,
+    DEATHKNIGHT = 6, SHAMAN = 7, MAGE = 8, WARLOCK = 9, MONK = 10,
+    DRUID = 11, DEMONHUNTER = 12, EVOKER = 13,
+}
 local generation = 0
 local initialized = false
 local pendingItems = {}
@@ -102,6 +107,85 @@ local function capturePlayerIdentity()
         return nil, "player-guid-unavailable"
     end
     return guid
+end
+
+local function queueRankSync(guid, unit, classToken, result, sourceTag)
+    local rankSync = namespace.RankSync
+    if type(rankSync) ~= "table" or type(rankSync.QueueInspectRecord) ~= "function" then
+        return
+    end
+    if type(guid) ~= "string" or guid == "" then
+        return
+    end
+    local gs = type(result) == "table"
+        and type(result.metrics) == "table"
+        and type(result.metrics.gearScore) == "table"
+        and result.metrics.gearScore.status == "complete"
+        and result.metrics.gearScore.value
+    if type(gs) ~= "number" or gs <= 0 then
+        return
+    end
+
+    local avgMetric = result.metrics.averageItemLevel
+    local ilvl = 0
+    if type(avgMetric) == "table" and avgMetric.status == "complete" and type(avgMetric.value) == "table" then
+        ilvl = avgMetric.value.raw or avgMetric.value.display or 0
+    end
+
+    local g = _G
+    local pName
+    local uName = rawget(g, "UnitName")
+    if type(uName) == "function" and unit then
+        local ok, n = pcall(uName, unit)
+        if ok and type(n) == "string" and n ~= "" then
+            pName = n
+        end
+    end
+
+    local pFaction = "Unknown"
+    local uFaction = rawget(g, "UnitFactionGroup")
+    if type(uFaction) == "function" and unit then
+        local ok, f = pcall(uFaction, unit)
+        if ok and (f == "Alliance" or f == "Horde") then
+            pFaction = f
+        end
+    end
+
+    local cToken = (type(classToken) == "table" and classToken.value)
+        or (type(classToken) == "string" and classToken)
+        or "UNKNOWN"
+    local specName, specIcon
+    if inspector and unit then
+        if type(inspector.GetLocalizedSpecName) == "function" then
+            local ok, sName = pcall(inspector.GetLocalizedSpecName, inspector, unit)
+            if ok and type(sName) == "string" then
+                specName = sName
+            end
+        end
+        if type(inspector.GetLocalizedSpecIcon) == "function" then
+            local ok, sIcon = pcall(inspector.GetLocalizedSpecIcon, inspector, unit)
+            if ok and sIcon then
+                specIcon = sIcon
+            end
+        end
+    end
+
+    local now = rawget(g, "time")
+    local ts = (type(now) == "function" and now()) or 0
+
+    rankSync.QueueInspectRecord({
+        guid = guid,
+        name = pName or "Unknown",
+        faction = pFaction,
+        class = cToken,
+        classID = CLASS_IDS[cToken] or 0,
+        specName = specName or "",
+        specIcon = specIcon,
+        gs = gs,
+        ilvl = ilvl,
+        timestamp = ts,
+        source = sourceTag or "inspect",
+    })
 end
 
 local function capturePlayerCells(unit)
@@ -530,6 +614,10 @@ local function capture(targetGeneration)
         revision = revision,
         result = result,
     })
+    local playerGUID = capturePlayerIdentity()
+    if playerGUID then
+        queueRankSync(playerGUID, "player", classToken, result, "self")
+    end
 end
 
 local function isRemotePlayerGUID(guid)
@@ -697,6 +785,7 @@ local function captureRemote(context)
     )
     if published then
         remoteContexts[context.guid] = nil
+        queueRankSync(context.guid, unit, classToken, result, "inspect")
     end
     return published
 end

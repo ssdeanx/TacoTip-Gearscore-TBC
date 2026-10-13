@@ -209,6 +209,8 @@ local L = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Escala el retrato que se muestra junto a los tooltips de unidad.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostrar retrato 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa un modelo 3D en vivo en lugar de una textura de retrato 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Invertir lado del retrato",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Mueve el retrato al lado opuesto del tooltip.",
     ["OPTIONS_TOOLTIP_FONT"] = "Fuente del tooltip",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Elige la fuente usada por el texto del tooltip. Las fuentes SharedMedia de paquetes como Merfin Plus se incluyen automáticamente cuando están disponibles.",

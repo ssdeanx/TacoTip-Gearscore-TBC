@@ -1,5 +1,5 @@
 ## Interface: 11509, 20506, 38002, 16001, 120100
-## Version: 0.8.1
+## Version: 0.8.2
 ## Title: TacoTip
 ## Notes: TacoTip (GearScore | Talents | Pawn Integration | Class Colors | 3D PlayerPortrait | Options) for WoW Forever and Retail
 ## IconTexture: Interface\AddOns\TacoTip\tt.tga

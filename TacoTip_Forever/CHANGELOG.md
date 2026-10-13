@@ -4,11 +4,60 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `0.8.2` | `2026-10-13` | **Typography, portrait sizing, and a portrait-side control.** The tooltip name line is rendered 2pt larger than body text (it was previously flattened to the body size, which is why the name read as just another row). Portrait base reduced from `72x96` to `66x88` — still an exact 3:4 ratio and still exact integers at every slider stop (`33x44`, `66x88`, `99x132`, `132x176`). New **Invert portrait side** option (default off) to pin the 3D/2D portrait to either side of the tooltip; the side cache is keyed on the flag so the change applies on the very next render. Localization extended to 263 keys across all 11 locales. | **Inspect regression fixes.** Classic Era / SoD / TBC Anniversary / Titanforge again require `CheckInteractDistance(unit, 1)` in addition to `CanInspect` (CanInspect is range-agnostic there, so 0.8.1 fired `NotifyInspect` at out-of-range players and stalled the queue); Retail/Forever keep the either-signal rule unchanged. `UNIT_INVENTORY_CHANGED` now flags a cache entry `stale` instead of zeroing its timestamp, so GearScore/iLvl no longer vanish from the tooltip while a re-inspect is pending (or if it cannot run). TacoTip Extras' remote-result cache freshness raised from 10s to 300s (the library's refresh window) so Extras rows no longer disappear seconds after appearing. | **Inspect regression fixes.** Classic Era / SoD / TBC Anniversary / Titanforge again require `CheckInteractDistance(unit, 1)` in addition to `CanInspect` (CanInspect is range-agnostic there, so 0.8.1 fired `NotifyInspect` at out-of-range players and stalled the queue); Retail/Forever keep the either-signal rule unchanged. `UNIT_INVENTORY_CHANGED` now flags a cache entry `stale` instead of zeroing its timestamp, so GearScore/iLvl no longer vanish from the tooltip while a re-inspect is pending (or if it cannot run). TacoTip Extras' remote-result cache freshness raised from 10s to 300s (the library's refresh window) so Extras rows no longer disappear seconds after appearing.
 | `0.8.1` | `2026-10-12` | **Inspection engine performance, proactive pre-caching, and range responsiveness.** Pre-caches player gear/talents immediately on target selection (`PLAYER_TARGET_CHANGED`) and 3D world mouseover (`UPDATE_MOUSEOVER_UNIT`). Triggers dynamic inspection on group roster updates (`GROUP_ROSTER_UPDATE`) and gear swaps (`UNIT_INVENTORY_CHANGED`). Accelerates queue processing with a 0.5s ticker, an adaptive 0.8s throttle on Retail/Forever, and instant next-inspect dispatch upon `INSPECT_READY`. Prioritizes actively targeted players. Fixes max-range inspect dead zones by accepting either `CanInspect` or `CheckInteractDistance`. Resolves inspect frame "Scanning equipment..." deadlock by firing full `INVENTORY_READY` parameters `(guid, true, unit)`, binding `InspectFrame.unit` fallback tokens, and handling remote uncached item IDs. |
 | `0.8.0` | `2026-10-11` | **GearScore correctness — the first release whose suite asserts a GearScore *value*.** Corrects two-handed weapon weighting so standalone 2H weapons retain their full 2.0x weight (`SlotMOD = 2.0`, balancing with 1H+Shield wielders), while strictly applying the `0.5` dampening factor to Titan's Grip dual-wielding where an offhand item is equipped alongside a 2H weapon. Hardens asynchronous item loading against uncached nil returns, standardizes Hunter weapon scaling, and accurately maps item quality colour bands via `ITEM_BAND_SCALE`. |
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+---
+
+## [0.8.2] — 2026-10-13
+
+> Typography, portrait sizing, a portrait-side control, and the inspect
+> regression fixes that closed out the 0.8.1 queue behaviour.
+
+### Changed
+
+- **The tooltip name is 2pt larger than body text.** `applyTooltipFonts` applied
+  a single size to every line, so line 1 — the player's name on a unit tooltip,
+  the item's name on an item tooltip — was flattened to body size and read as
+  just another row. Line 1 now renders at `tooltip_font_size + 2`; body lines
+  are unchanged, so the relationship holds at any size the user picks. The
+  per-line `SetFont` guard is unchanged, so a settled re-render still issues
+  **zero** `SetFont` calls.
+- **Portrait base is now `66 x 88`** (was `72 x 96`). Still an exact 3:4 ratio,
+  and still an exact integer at every slider stop — `33x44`, `66x88`, `99x132`,
+  `132x176`. Both base numbers are even on purpose: the slider runs 50–200 in
+  steps of 5, so a half-stop and a 1.5-stop are both reachable, and an odd base
+  would round and drift off ratio at those stops.
+
+### Added
+
+- **TacoTip is now licensed under the MIT License**, matching TacoTip Extras.
+  The full text ships in `LICENSE`. `THIRD_PARTY_NOTICES.md` credits the four
+  bundled libraries, which keep their own terms and are explicitly **not**
+  covered by TacoTip's MIT grant: LibStub (Public Domain), CallbackHandler-1.0
+  (MIT, Icedragon), LibDetours-1.0 (MIT, kebabstorm) and LibForeverInspector
+  (MIT, part of this project).
+- **`Invert portrait side`** option, default **off**, next to `Show 3D portrait`.
+  Pins the portrait to the opposite side of the tooltip for anyone whose
+  tooltips anchor somewhere the automatic rule picks wrong.
+  - The resolved side is cached per tooltip, so the flag is part of that cache
+    key — without it the checkbox would appear dead until the next scale change.
+  - Applies to both the 3D `PlayerModel` and the 2D texture, which share one
+    anchor path.
+
+### Fixed
+
+- **Inspect regression fixes.** Classic Era / SoD / TBC Anniversary / Titanforge again require `CheckInteractDistance(unit, 1)` in addition to `CanInspect` (CanInspect is range-agnostic there, so 0.8.1 fired `NotifyInspect` at out-of-range players and stalled the queue); Retail/Forever keep the either-signal rule unchanged. `UNIT_INVENTORY_CHANGED` now flags a cache entry `stale` instead of zeroing its timestamp, so GearScore/iLvl no longer vanish from the tooltip while a re-inspect is pending (or if it cannot run). TacoTip Extras' remote-result cache freshness raised from 10s to 300s (the library's refresh window) so Extras rows no longer disappear seconds after appearing.
+
+### Verification
+
+16 new assertions in `tooltip_test.lua`, covering portrait dimensions at all
+four slider stops, an exact `4w == 3h` ratio check per stop, the name/body font
+split, and invert off → on → off including the immediate re-anchor.
 
 ---
 

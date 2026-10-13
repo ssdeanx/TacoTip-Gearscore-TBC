@@ -1,8 +1,38 @@
-# TacoTip
+```
+   _____              _____ _____
+  |_   _|            |_   _|__  / __|
+    | | |__   __ _  __  | |  / /|  _\
+    | | '_ \ / _` |/ _` | | / / | |  \ 
+    | | | | | (_| | (_| | |/ /__| |_) |
+    |_|_| |_|\__, |\__,_|_/_____|____/
+             __/ |
+            |___/
+```
+
+```yaml
+name: TacoTip
+version: 0.8.2
+author: AcidBomb
+maintainer: AcidBomb (Pilsung)
+license: MIT  # see LICENSE; bundled Libs/ keep their own terms
+curseforge_id: 1555962
+project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
+clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
+interfaces: ["11509", "20506", "38002", "16001", "120100"]
+tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
+requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
+optional: [WoWUnit]
+status: unreleased
+updated: 2026-10-13
+```
+
 
 TacoTip is a character, item and guild tooltip enhancement that runs on **every**
 World of Warcraft engine family from one build — no per-client downloads, no
 "which version do I install" question:
+
+- **CurseForge** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
+- **Companion** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview), optional, separately installed
 
 | Client | Interface |
 | :--- | :--- |
@@ -16,6 +46,16 @@ World of Warcraft engine family from one build — no per-client downloads, no
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## What's New in 0.8.2
+
+- **Classic range gate restored:** Classic Era / SoD / TBC / Titanforge require both `CanInspect` and `CheckInteractDistance(unit, 1)`; Retail / Forever still accept either.
+- **GearScore / iLvl no longer vanish:** gear-change events mark cached data stale rather than erasing it, so values stay on screen until fresh data replaces them.
+- **The tooltip name is 2pt larger than body text.** Previously one size was applied to every line, which flattened the name — the player's on a unit tooltip, the item's on an item tooltip — to body size.
+- **Smaller 3D portrait:** the base is now `66 x 88` (was `72 x 96`). Still an exact 3:4 ratio, and still exact integers at every scale stop — `33x44`, `66x88`, `99x132`, `132x176`.
+- **New `Invert portrait side` option** (default off) to pin the portrait to the other side of the tooltip.
 
 ---
 
@@ -82,7 +122,7 @@ Portrait, inspect, unit-frame hover, and border correctness across all five clie
   missing, no delivery path hooked — plus event counters for call frequency.
 - **100% Localization parity across all 11 languages.** All 11 shipped locales
   (`enUS`, `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`)
-  contain 100% key coverage (261/261 keys) with verified syntax and matching `%s`/`%d` format tokens.
+  contain 100% key coverage (263/263 keys) with verified syntax and matching `%s`/`%d` format tokens.
 - **The power bar is off by default.** Enable it in settings; its colours are
   correct for mana, rage, energy and every other power type on all five clients.
 
@@ -292,3 +332,29 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
   - `TacoTip-Client` (detection, alias, locale registry, override including the
     Titanforge `zhCN` pin, font filter, and cross-engine talent point / spec
     index / active-group invariants)
+
+---
+
+## License and credits
+
+TacoTip is licensed under the **MIT License**. The full text ships in
+[LICENSE](LICENSE).
+
+Bundled libraries under `Libs/` keep their **own** licenses and are **not**
+covered by TacoTip's MIT terms — MIT permission does not extend to them:
+
+| Library | License | Author |
+| :--- | :--- | :--- |
+| `LibStub` | Public Domain | Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel, joshborke |
+| `CallbackHandler-1.0` | MIT | Icedragon and contributors |
+| `LibDetours-1.0` | MIT | kebabstorm |
+| `LibForeverInspector` | MIT | AcidBomb (part of this project) |
+
+Every one of them is permissive and MIT-compatible. Full attribution is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+GearScore scoring behavior derives from GearScoreTBCClassic; see the notices in
+[TacoTip Extras' THIRD_PARTY_NOTICES.md](../TacoTip_Extras/THIRD_PARTY_NOTICES.md)
+for the retained attribution and required license text.
+
+Author and maintainer: **AcidBomb (Pilsung)**.
