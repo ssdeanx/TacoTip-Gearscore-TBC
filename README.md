@@ -1,32 +1,4 @@
----
-name: TacoTip
-version: 0.8.2
-author: AcidBomb
-maintainer: AcidBomb (Pilsung)
-license: MIT  # see LICENSE; bundled Libs/ keep their own terms
-curseforge_id: 1555962
-project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
-clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
-interfaces: ["11509", "20506", "38002", "16001", "120100"]
-tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
-requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-optional: [WoWUnit]
-status: unreleased
-updated: 2026-10-13
----
-
 # TacoTip
-
-```ascii
-   _____              _____ _____
-  |_   _|            |_   _|__  / __|
-    | | |__   __ _  __  | |  / /|  _\
-    | | '_ \ / _` |/ _` | | / / | |  \ 
-    | | | | | |_| | (_| | |/ /__| |_) |
-    |_|_| |_|\__, |\__,_|_/_____|____/
-             __/ |
-            |___/
-```
 
 ![Logo](image.png)
 
