@@ -6,8 +6,8 @@
 
 --]]
 
-if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "frFR") then return end
-_G.TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALES = _G.TACOTIP_LOCALES or {}
+local L = {
     ["Player"] = "Joueur",
     ["Pet"] = "Familier",
     ["Target"] = "Cible",
@@ -26,9 +26,6 @@ _G.TACOTIP_LOCALE = {
     ["Drag to Move"] = "Glisser pour déplacer",
     ["Change Anchor"] = "Changer l'ancrage",
     ["Save Position"] = "Enregistrer la position",
-    [" the Kingslayer"] = " le Régicide",
-    ["Undead"] = "Mort-vivant",
-    ["Unit Tooltips"] = "Infobulles d'unité",
     ["Class Color"] = "Couleur de classe",
     ["Color class names in tooltips"] = "Colorer les noms par classe dans les infobulles",
     ["Title"] = "Titre",
@@ -38,8 +35,6 @@ _G.TACOTIP_LOCALE = {
     ["Guild Rank"] = "Rang de guilde",
     ["Show guild rank in tooltips"] = "Afficher le rang de guilde dans les infobulles",
     ["Show talents and specialization in tooltips"] = "Afficher les talents et la spécialisation dans les infobulles",
-    ["Show player's GearScore in tooltips"] = "Afficher le GearScore du joueur dans les infobulles",
-    ["Show player's PawnScore in tooltips (may affect performance)"] =
     "Afficher le PawnScore du joueur dans les infobulles (peut affecter les performances)",
     ["requires Pawn"] = "Nécessite Pawn",
     ["Show unit's target in tooltips"] = "Afficher la cible de l'unité dans les infobulles",
@@ -47,7 +42,6 @@ _G.TACOTIP_LOCALE = {
     ["Show player's faction icon (Horde/Alliance) in tooltips"] =
     "Afficher l'icône de faction du joueur (Horde/Alliance) dans les infobulles",
     ["Class Icon"] = "Icône de classe",
-    ["Show player's class icon next to the faction icon in tooltips"] =
     "Afficher l'icône de classe du joueur à côté de l'icône de faction dans les infobulles",
     ["PVP Icon"] = "Icône JcJ",
     ["Show player's pvp flag status as icon instead of text"] =
@@ -56,31 +50,20 @@ _G.TACOTIP_LOCALE = {
     ["Show unit's health bar under tooltip"] = "Afficher la barre de vie de l'unité sous l'infobulle",
     ["Power Bar"] = "Barre de puissance",
     ["Show unit's power bar under tooltip"] = "Afficher la barre de puissance de l'unité sous l'infobulle",
-    ["Character Frame"] = "Fiche de personnage",
-    ["Show GearScore in character frame"] = "Afficher le GearScore sur la fiche de personnage",
-    ["Average iLvl"] = "Niveau d'objet moyen",
-    ["Show Average Item Level in character frame"] = "Afficher le niveau d'objet moyen sur la fiche de personnage",
-    ["Lock Position"] = "Verrouiller la position",
-    ["Lock GearScore and Average Item Level positions in character frame"] =
     "Verrouiller les positions du GearScore et du niveau d'objet moyen sur la fiche de personnage",
-    ["Extra"] = "Supplémentaire",
     ["Show Item Level"] = "Afficher le niveau d'objet",
     ["Display item level in the tooltip for certain items."] =
     "Afficher le niveau d'objet dans l'infobulle pour certains objets.",
     ["Show Item GearScore"] = "Afficher le GearScore de l'objet",
     ["Show GearScore in item tooltips"] = "Afficher le GearScore dans les infobulles des objets",
     ["HunterScore"] = "Score du chasseur",
-    ["Always show HunterScore in item tooltips"] =
     "Toujours afficher le score du chasseur dans les infobulles des objets",
     ["Enhanced Tooltips"] = "Infobulles améliorées",
-    ["Disable In Combat"] = "Désactiver en combat",
-    ["Disable gearscore & talents in combat"] = "Désactiver le GearScore et les talents en combat",
     ["Chat Class Colors"] = "Couleurs de classe dans le chat",
     ["Color names by class in chat windows"] = "Colorer les noms par classe dans les fenêtres de chat",
     ["Instant Fade"] = "Disparition instantanée",
     ["Fade out unit tooltips instantly"] = "Faire disparaître instantanément les infobulles d'unité",
     ["Custom Tooltip Position"] = "Position personnalisée de l'infobulle",
-    ["Set a custom position for tooltips"] = "Définir une position personnalisée pour les infobulles",
     ["Tooltip Style"] = "Style d'infobulle",
     ["FULL"] = "COMPLET",
     ["Always FULL"] = "Toujours COMPLET",
@@ -92,9 +75,6 @@ _G.TACOTIP_LOCALE = {
     ["Default MINI, hold SHIFT for FULL"] = "Par défaut MINI, maintenez MAJ pour COMPLET",
     ["MINI"] = "MINI",
     ["Always MINI"] = "Toujours MINI",
-    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Large, double spécialisation, GearScore, niveau d'objet moyen",
-    ["Narrow, Active Spec, GearScore"] = "Étroit, spécialisation active, GearScore",
-    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Étroit, spécialisation active, GearScore, niveau d'objet moyen",
     ["Reset configuration"] = "Réinitialiser la configuration",
     ["Configuration has been reset to default."] = "La configuration a été réinitialisée aux valeurs par défaut.",
     ["Custom tooltip position enabled."] = "Position personnalisée des infobulles activée.",
@@ -106,9 +86,7 @@ _G.TACOTIP_LOCALE = {
     ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
     "Ancrer à la souris uniquement dans WorldFrame\nIgnore les cadres de raid / groupe",
     ["Anchor Spells to Mouse"] = "Ancrer les sorts à la souris",
-    ["Anchor spell tooltips to mouse cursor"] = "Ancrer les infobulles des sorts au curseur de la souris",
     ["Show Achievement Points"] = "Afficher les points de succès",
-    ["Show total achievement points in tooltips"] = "Afficher le total des points de succès dans les infobulles",
     ["Mover"] = "Poignée de déplacement",
     ["TEXT_OPT_DESC"] =
     "Meilleures infobulles joueur - couleurs de classe, talents/spécialisation,\nGearScore, rangs de guilde",
@@ -208,6 +186,8 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Ajuste l'échelle du portrait affiché à côté des infobulles d'unité.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Afficher le portrait 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Utilise un modèle 3D animé au lieu d'une texture de portrait 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Inverser le cote du portrait",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Deplace le portrait du cote oppose de l'infobulle.",
     ["OPTIONS_TOOLTIP_FONT"] = "Police de l'infobulle",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Choisissez la police utilisée pour le texte des infobulles. Les polices SharedMedia de packs tels que Merfin Plus sont incluses automatiquement lorsqu'elles sont disponibles.",
@@ -257,7 +237,7 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Ignore les ajouts de talents et de type GearScore de TacoTip pour les joueurs tant que vous êtes en combat.",
     ["OPTIONS_ACHIEVEMENT_DESC"] =
-    "Disponible uniquement sur les clients Wrath Classic où les données de hauts faits existent.",
+    "Affiche les points de hauts faits du joueur dans les info-bulles et les informations de personnage.",
     ["FORMAT_GUILD_RANK_1"] = "%s %s",
     ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
     ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
@@ -318,9 +298,9 @@ _G.TACOTIP_LOCALE = {
     ["Realm"] = "Royaume",
     ["OPTIONS_SHAMAN_BLUE"] = "Chaman Bleu",
     ["OPTIONS_SHAMAN_BLUE_DESC"] =
-    "Utilise le bleu au lieu du rose pour la couleur de classe du chaman sur Classic Era / SoD.",
+    "Utilise le bleu au lieu du rose pour la couleur de classe du chaman.",
     ["OPTIONS_OFFSET_EDIT_DESC"] = "Saisissez un décalage en pixels précis et appuyez sur Entrée pour l'appliquer.",
     ["OPTIONS_OFFSET_SLIDER_DESC"] = "Faites glisser pour affiner ce décalage. Le champ numérique reste synchronisé.",
-    ["RANK_TITLE"] = "Champion",
-    ["REALM"] = "Royaume",
 }
+
+_G.TACOTIP_LOCALES["frFR"] = L

@@ -1,6 +1,6 @@
 # TacoTip-Gearscore-TBC — Enterprise Project Memory
 
-> **Version:** `0.8.2` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120100` (Retail)  
+> **Version:** `0.8.3` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120100` (Retail)  
 > **Repository:** `ssdeanx/TacoTip-Gearscore-TBC` | **Maintainer:** Pilsung (AcidBomb) | **Architecture:** Five-client cross-engine, single build
 
 ---
@@ -20,7 +20,7 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
 | **Dual Spec & Inspection** | [dual_spec_inspect.md](file:///.omg/memory/dual_spec_inspect.md) | `LibClassicInspector` runtime integration, TBC Anniversary / SoD dual-spec resolution, dynamic spec update events, zero-alpha tooltip alignment. |
 | **Tooltip Lifecycle & Visuals** | [tooltip_lifecycle.md](file:///.omg/memory/tooltip_lifecycle.md) | `clearTooltipVisuals` non-unit isolation, 3D portrait `OnUpdate` alpha sync (20Hz), `ClearModel` GPU purging, deferred timer generation counters (`_borderDeferralGen`). |
 | **Options UI & Configuration** | [options_ui_system.md](file:///.omg/memory/options_ui_system.md) | Dual modern Canvas (`Settings.RegisterCanvasLayoutCategory`) + legacy `InterfaceOptions` fallback, SavedVariables migration, modal media picker, media resolution caching. |
-| **Localization Engine** | [localization_system.md](file:///.omg/memory/localization_system.md) | 100% parity across all 11 locales (263/263 keys), format specifier safety, runtime locale override. |
+| **Localization Engine** | [localization_system.md](file:///.omg/memory/localization_system.md) | 100% parity across all 11 locales (239/239 keys), format specifier safety, runtime locale override, and a `load_test` assertion that every `L["Key"]` lookup actually resolves. |
 | **Quality & Verification Gates** | [verification_gates.md](file:///.omg/memory/verification_gates.md) | Strict zero-warning static analysis gate (`luacheck .`), WoWUnit automated test suite (`TacoTip_Tests.lua`), multi-client runner mocks. |
 
 ---
@@ -31,7 +31,7 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
 - [02-framexml-api-discipline.md](file:///.omg/rules/02-framexml-api-discipline.md) — Research `/home/sam/wow-ui-source` before modifying API calls; no Retail bleed.
 - [03-non-unit-visual-isolation.md](file:///.omg/rules/03-non-unit-visual-isolation.md) — Synchronous visual purging (`clearTooltipVisuals`) across all non-unit/map hover transitions.
 - [04-dual-spec-inspect-handling.md](file:///.omg/rules/04-dual-spec-inspect-handling.md) — Multi-client dual-spec detection, query struct fallbacks, nil-safe arithmetic, zero-alpha prefix alignment.
-- [05-locale-parity-standards.md](file:///.omg/rules/05-locale-parity-standards.md) — Strict 263-key coverage across all 11 languages with matched format tokens.
+- [05-locale-parity-standards.md](file:///.omg/rules/05-locale-parity-standards.md) — Strict 239-key coverage across all 11 languages with matched format tokens.
 - [06-version-release-bumping.md](file:///.omg/rules/06-version-release-bumping.md) — Synchronous 6-point version bump protocol (`TOC`, `main`, `options`, `README`, `CHANGELOG`, `AGENTS`).
 
 ---

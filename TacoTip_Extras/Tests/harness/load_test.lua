@@ -1342,8 +1342,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.0",
-    "TOC ## Version is 1.2.0", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.1",
+    "TOC ## Version is 1.2.1", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -1363,9 +1363,23 @@ check((tocMeta.Interface or "") == WANTED_INTERFACES or (tocMeta.Interface or ""
     "TOC ## Interface lists all supported clients",
     "got '" .. tostring(tocMeta.Interface) .. "'")
 
-check(tocFiles[1] == "Core.lua", "Core.lua is first in the TOC",
+-- Load order has three invariants, not one:
+--
+--   * every Locale/*.lua precedes every file that binds
+--     `local L = _G.TACOEXTRAS_LOCALE` at file scope (a bound local cannot be
+--     rebound, so a locale file loaded afterwards is never seen);
+--   * Locale/enUS.lua is LAST among the locales, because it defines
+--     TacoExtrasApplyLocale() and performs the initial merge, so it needs every
+--     other locale already registered;
+--   * the reviewed 12-file addon order is unchanged after that block.
+check(tocFiles[1] == "Locale/deDE.lua", "first TOC entry is the first locale file",
     "got " .. tostring(tocFiles[1]))
-local ORDER = { "Core.lua", "Scoring.lua", "Cache.lua", "RankDB.lua",
+
+local ORDER = {
+    "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",
+    "Locale/itIT.lua", "Locale/koKR.lua", "Locale/ptBR.lua", "Locale/ruRU.lua",
+    "Locale/zhCN.lua", "Locale/zhTW.lua", "Locale/enUS.lua",
+    "Core.lua", "Scoring.lua", "Cache.lua", "RankDB.lua",
     "RankSync.lua", "Scanner.lua", "TacoTipAdapter.lua", "Tooltips.lua",
     "Frames.lua", "RankBrowser.lua", "Minimap.lua", "Options.lua" }
 local orderOK, orderDetail = true, ""
@@ -1382,7 +1396,7 @@ for index = 1, #tocFiles do
         break
     end
 end
-check(orderOK, "TOC load order is the reviewed 12-file order", orderDetail)
+check(orderOK, "TOC load order is the 11-locale block followed by the reviewed 12-file order", orderDetail)
 
 -- ---------------------------------------------------------------------------
 -- Load
@@ -1508,6 +1522,393 @@ for index, relative in ipairs(tocFiles) do
 end
 check(#loadErrors == 0, "no TOC file raised during load",
     table.concat(loadErrors, "\n          "))
+
+-- ---------------------------------------------------------------------------
+-- Localization
+-- ---------------------------------------------------------------------------
+
+out(("\n-- localization --\n"))
+
+local EX = REALG.TACOEXTRAS_LOCALES
+local XL = REALG.TACOEXTRAS_LOCALE
+
+check(type(EX) == "table", "TACOEXTRAS_LOCALES registry exists")
+check(type(XL) == "table", "TACOEXTRAS_LOCALE merged table exists")
+check(type(REALG.TacoExtrasApplyLocale) == "function", "TacoExtrasApplyLocale exposed")
+check(type(REALG.TACOEXTRAS_ACTIVE_LOCALE) == "string", "TACOEXTRAS_ACTIVE_LOCALE recorded",
+    "got " .. tostring(REALG.TACOEXTRAS_ACTIVE_LOCALE))
+
+-- Every shipped locale must be registered. Read from the toc so the list cannot
+-- drift from what actually loads.
+local registered, unregistered = {}, {}
+for index = 1, #tocFiles do
+    local code = tocFiles[index]:match("^Locale/(%a+)%.lua$")
+    if code then
+        registered[#registered + 1] = code
+        if type(EX[code]) ~= "table" then unregistered[#unregistered + 1] = code end
+    end
+end
+check(#registered == 11, "TOC ships 11 locale files",
+    "found " .. #registered .. ": " .. table.concat(registered, " "))
+check(#unregistered == 0, "every locale in the TOC registered a table",
+    "missing: " .. table.concat(unregistered, ", "))
+
+-- Every key the enUS source defines must resolve in the merged table. This is
+-- the invariant that matters, not a key count: it fails when a lookup the code
+-- performs has nothing behind it.
+local unresolved = {}
+for key in pairs(EX["enUS"]) do
+    if XL[key] == nil then unresolved[#unresolved + 1] = key end
+end
+check(#unresolved == 0, "every enUS key resolves in the merged table",
+    table.concat(unresolved, ", "))
+
+-- Locale parity: a shipped table must not carry a key enUS does not define,
+-- which would mean a typo silently replacing a real label with raw text.
+local strayByLocale = {}
+for index = 1, #registered do
+    local code = registered[index]
+    local stray = {}
+    for key in pairs(EX[code]) do
+        if EX["enUS"][key] == nil then stray[#stray + 1] = key end
+    end
+    if #stray > 0 then
+        table.sort(stray)
+        strayByLocale[#strayByLocale + 1] = code .. ": " .. table.concat(stray, " ")
+    end
+end
+check(#strayByLocale == 0, "no locale defines a key enUS does not",
+    table.concat(strayByLocale, "; "))
+
+-- Format-specifier safety: a translation that drops or invents a %d/%s renders
+-- broken output or raises in string.format at the call site.
+local specProblems = {}
+for index = 1, #registered do
+    local code = registered[index]
+    for key, value in pairs(EX[code]) do
+        local base = EX["enUS"][key]
+        if type(base) == "string" and type(value) == "string" then
+            local function count(spec)
+                local total = 0
+                for _ in value:gmatch(spec) do total = total + 1 end
+                return total
+            end
+            local d1, d2 = count("%%?%d"), count("%%?%s")
+            local b1, b2 = count("%%?%d"), count("%%?%s")
+            if value ~= base and (d1 ~= b1 or d2 ~= b2) then
+                specProblems[#specProblems + 1] = code .. "/" .. key
+            end
+        end
+    end
+end
+check(#specProblems == 0, "translations preserve %d/%s specifier counts",
+    table.concat(specProblems, ", "))
+
+-- A shipped translation must actually DIFFER from English. Without this, a file
+-- that silently failed to translate would pass every assertion above.
+local untranslated = {}
+local PROBE = { "MODE_DETAILED", "CURRENT_GS", "AVERAGE_ILVL", "COMPLETION",
+    "MINIMAP_HINT_LEFT", "LB_TITLE", "LB_MY_RANK", "CLASS_WARRIOR",
+    "HELP_ENABLED_HEADING", "OPT_TOOLTIP_MODE", "TIME_JUST_NOW" }
+for index = 1, #registered do
+    local code = registered[index]
+    if code ~= "enUS" then
+        local same = {}
+        for _, key in ipairs(PROBE) do
+            if EX[code][key] == EX["enUS"][key] then same[#same + 1] = key end
+        end
+        if #same == #PROBE then
+            untranslated[#untranslated + 1] = code
+        end
+    end
+end
+check(#untranslated == 0, "each translation differs from English on the probe keys",
+    "still identical: " .. table.concat(untranslated, ", "))
+
+-- Script contamination. Key parity, specifier parity and "differs from English"
+-- all pass on a translation containing a stray character from the WRONG script,
+-- because the string is still non-empty, still has the right key, and still has
+-- no format tokens. Mojibake of that shape is invisible to every other check --
+-- it reached a Spanish file as a CJK glyph during authoring.
+--
+-- Rule per family, on DECODED CODEPOINTS, not on UTF-8 lead bytes.
+--
+-- Lead bytes cannot answer this question. German uses an en-dash, English uses a
+-- typographic apostrophe, Russian uses an em-dash: all of those are General
+-- Punctuation (U+2000-U+206F) and all of them encode as E2 80 xx -- the exact
+-- lead byte CJK uses. A lead-byte rule flags all three as Chinese, and an
+-- earlier version of this check did precisely that. So: decode to codepoints,
+-- then range-check.
+--
+--   latin      -> Latin-1, Latin Extended-A and General Punctuation only.
+--                 Cyrillic / Greek / Han / Hangul are contamination.
+--   cyrillic   -> Cyrillic allowed. Han / Hangul are contamination. Must
+--                 actually contain Cyrillic, or it is English with a flag.
+--   cjk        -> Han, Hangul and CJK punctuation allowed, and Latin too
+--                 (every CJK locale ships "GearScore", "iLvl", "TacoTip"
+--                 untranslated). Cyrillic is contamination. Must actually
+--                 contain Han or Hangul.
+--
+-- General Punctuation is allowed everywhere, including enUS: the apostrophe in
+-- "player's" is U+2019 and predates this check.
+local function decodeCodepoints(text)
+    local points, index, length = {}, 1, #text
+    while index <= length do
+        local lead = text:byte(index)
+        local point, width
+        if lead < 0x80 then
+            point, width = lead, 1
+        elseif lead < 0xE0 then
+            point = (lead - 0xC0) * 0x40 + ((text:byte(index + 1) or 0) - 0x80)
+            width = 2
+        elseif lead < 0xF0 then
+            point = (lead - 0xE0) * 0x1000
+                + (((text:byte(index + 1) or 0) - 0x80) * 0x40)
+                + ((text:byte(index + 2) or 0) - 0x80)
+            width = 3
+        else
+            point = (lead - 0xF0) * 0x40000
+                + (((text:byte(index + 1) or 0) - 0x80) * 0x1000)
+                + (((text:byte(index + 2) or 0) - 0x80) * 0x40)
+                + ((text:byte(index + 3) or 0) - 0x80)
+            width = 4
+        end
+        points[#points + 1] = point
+        index = index + width
+    end
+    return points
+end
+
+local function inRange(point, low, high)
+    return point >= low and point <= high
+end
+
+local function classifyPoint(point)
+    -- Returns "punct", "latin", "cyrillic", "hangul", "han", or "other".
+    if inRange(point, 0x0000, 0x00FF) then return "latin" end
+    if inRange(point, 0x0100, 0x017F) then return "latin" end
+    if inRange(point, 0x2000, 0x206F) then return "punct" end
+    if inRange(point, 0x2070, 0x209F) then return "punct" end
+    if inRange(point, 0x20A0, 0x20BF) then return "punct" end
+    if inRange(point, 0x0400, 0x052F) then return "cyrillic" end
+    if inRange(point, 0x0370, 0x03FF) then return "other" end
+    if inRange(point, 0x1100, 0x11FF) then return "hangul" end
+    if inRange(point, 0x3130, 0x318F) then return "hangul" end
+    if inRange(point, 0xAC00, 0xD7AF) then return "hangul" end
+    if inRange(point, 0x3000, 0x303F) then return "han" end
+    if inRange(point, 0x3400, 0x4DBF) then return "han" end
+    if inRange(point, 0x4E00, 0x9FFF) then return "han" end
+    if inRange(point, 0xF900, 0xFAFF) then return "han" end
+    if inRange(point, 0xFF00, 0xFFEF) then return "han" end
+    -- Script-neutral symbols. Arrows, mathematical operators and geometric
+    -- shapes are used as sort and delta markers, and Blizzard's own ▲/▼ sort
+    -- arrows live in Geometric Shapes (U+25B2 / U+25BC). They read the same in
+    -- every language, so they are legal everywhere and no translation can be
+    -- "wrong script" for containing one.
+    --
+    -- This range check must sit ABOVE the final `return "other"`. A first pass
+    -- checked only lead bytes, which cannot tell General Punctuation (U+2000-
+    -- U+206F: the em dash, the curly apostrophe, German low quotes) from CJK --
+    -- both encode as 0xE2 0x80 xx -- and reported the German and Russian files
+    -- as contaminated.
+    if inRange(point, 0x2190, 0x21FF) then return "symbol" end   -- Arrows
+    if inRange(point, 0x2200, 0x22FF) then return "symbol" end   -- Math operators
+    if inRange(point, 0x25A0, 0x25FF) then return "symbol" end   -- Geometric shapes
+    if inRange(point, 0x2600, 0x26FF) then return "symbol" end   -- Misc symbols
+    if inRange(point, 0x2700, 0x27BF) then return "symbol" end   -- Dingbats
+    return "other"
+end
+
+-- What each family may legitimately contain.
+local SCRIPT_ALLOWED = {
+    latin    = { latin = true, punct = true, symbol = true },
+    cyrillic = { latin = true, punct = true, symbol = true, cyrillic = true },
+    cjk      = { latin = true, punct = true, symbol = true, han = true, hangul = true },
+}
+-- What each family must actually contain, or it is English wearing a flag.
+local SCRIPT_REQUIRED = {
+    latin    = nil,
+    cyrillic = "cyrillic",
+    cjk      = "han",
+}
+-- Hangul alone satisfies koKR, which has no Han at all.
+local SCRIPT_ALT_REQUIRED = { cjk = "hangul" }
+
+local SCRIPT_RULES = {
+    deDE = "latin", esES = "latin", esMX = "latin", frFR = "latin",
+    itIT = "latin", ptBR = "latin", ruRU = "cyrillic",
+    koKR = "cjk", zhCN = "cjk", zhTW = "cjk",
+}
+local contaminated = {}
+for index = 1, #registered do
+    local code = registered[index]
+    local rule = SCRIPT_RULES[code]
+    if rule then
+        local allowed = SCRIPT_ALLOWED[rule]
+        local bad, seen = {}, {}
+        for key, value in pairs(EX[code]) do
+            if type(value) == "string" then
+                for _, point in ipairs(decodeCodepoints(value)) do
+                    local kind = classifyPoint(point)
+                    seen[kind] = (seen[kind] or 0) + 1
+                    if not allowed[kind] then
+                        bad[#bad + 1] = ("%s(U+%04X=%s)"):format(key, point, kind)
+                    end
+                end
+            end
+        end
+        local needed = SCRIPT_REQUIRED[rule]
+        if needed and (not seen[needed])
+            and not (SCRIPT_ALT_REQUIRED[rule] and seen[SCRIPT_ALT_REQUIRED[rule]]) then
+            bad[#bad + 1] = "no " .. needed .. " anywhere"
+        end
+        if #bad > 0 then
+            local unique, counted = {}, {}
+            for _, entry in ipairs(bad) do
+                if not counted[entry] then
+                    counted[entry] = true
+                    unique[#unique + 1] = entry
+                end
+            end
+            table.sort(unique)
+            contaminated[#contaminated + 1] = code .. ": " .. table.concat(unique, " ")
+        end
+    end
+end
+check(#contaminated == 0,
+    "no translation carries a character from the wrong script",
+    table.concat(contaminated, "; "))
+
+-- Damaged text, banned in EVERY file including enUS.
+--
+-- U+FFFD REPLACEMENT CHARACTER is what a decoder writes for a byte it could not
+-- read, so it marks mangled text rather than a translation. A zhTW value shipped
+-- with "���" where one character belonged, and every other check here was green:
+-- the key was present, the format specifiers matched, and U+FFFD lands outside
+-- Han so it reads as damage rather than as Chinese.
+--
+-- "other" is banned for the same reason. Everything WoW needs is Latin,
+-- General Punctuation, Cyrillic or Han/Hangul, so an unclassified codepoint is
+-- never legitimate in any of these locales.
+local damaged = {}
+for index = 1, #registered do
+    local code = registered[index]
+    local bad = {}
+    for key, value in pairs(EX[code]) do
+        if type(value) == "string" then
+            for _, point in ipairs(decodeCodepoints(value)) do
+                if point == 0xFFFD then
+                    bad[#bad + 1] = ("%s(U+FFFD)"):format(key)
+                elseif classifyPoint(point) == "other" then
+                    bad[#bad + 1] = ("%s(U+%04X)"):format(key, point)
+                end
+            end
+        end
+    end
+    if #bad > 0 then
+        table.sort(bad)
+        damaged[#damaged + 1] = code .. ": " .. table.concat(bad, " ")
+    end
+end
+check(#damaged == 0,
+    "no locale file contains damaged or unclassified characters",
+    table.concat(damaged, "; "))
+
+-- Scoring.QualityColor -- the function RankBrowser has always called and that
+-- did not exist.
+--
+-- The bug this guards against is specific: `type(scoring.QualityColor) ~= "function"`
+-- meant every call fell through a defensive guard to a fallback, so the whole
+-- leaderboard rendered in flat white and NOTHING raised. A missing function that
+-- a caller guards for cannot fail loudly. So these assertions pin real return
+-- values, not merely that the function exists.
+do
+    local Scoring = namespace.Scoring
+    check(type(Scoring) == "table" and type(Scoring.QualityColor) == "function",
+        "Scoring.QualityColor exists")
+
+    local function colorAt(fraction)
+        local r, g, b = Scoring.QualityColor(fraction)
+        return ("%.2f,%.2f,%.2f"):format(r or -1, g or -1, b or -1)
+    end
+
+    -- The bands are ordered best-first and must be strictly monotonic: a better
+    -- standing can never produce a lower band.
+    check(colorAt(1.00) == "0.64,0.21,0.93", "fraction 1.00 is the top band", colorAt(1.00))
+    check(colorAt(0.99) == "0.64,0.21,0.93", "fraction 0.99 is still the top band", colorAt(0.99))
+    check(colorAt(0.98) ~= colorAt(0.99), "fraction 0.98 drops below the top band", colorAt(0.98))
+    check(colorAt(0.95) ~= colorAt(0.94), "the 95% band boundary is honoured")
+    check(colorAt(0.90) ~= colorAt(0.89), "the 90% band boundary is honoured")
+    check(colorAt(0.75) ~= colorAt(0.74), "the 75% band boundary is honoured")
+
+    -- No data must be muted, never bright: a wrong confident colour is worse
+    -- than an obviously missing one.
+    check(colorAt(nil) == "0.62,0.62,0.62", "an unknown fraction is muted", colorAt(nil))
+    check(colorAt(0.10) == "0.62,0.62,0.62", "below every band is muted", colorAt(0.10))
+
+    -- Out-of-range input clamps rather than returning nonsense.
+    check(colorAt(5) == colorAt(1), "a fraction above 1 clamps to the top band")
+    check(colorAt(-3) == colorAt(0), "a negative fraction clamps to the bottom")
+
+    -- Percentile: the same rank means different things in different pool sizes.
+    -- 1st of 20 is the top 5%; 1st of 2000 is the top 0.05%. Both are #1, but
+    -- only the second is in the top 1% band -- this is the whole reason the
+    -- scale takes a fraction rather than a rank.
+    local r1 = { Scoring.QualityColor(Scoring.RankFraction(1, 20)) }
+    local r2 = { Scoring.QualityColor(Scoring.RankFraction(1, 2000)) }
+    check(r1[1] ~= nil and r2[1] ~= nil, "RankFraction feeds QualityColor")
+    check(Scoring.RankFraction(1, 100) > Scoring.RankFraction(50, 100),
+        "a better rank yields a larger fraction")
+    check(Scoring.RankFraction(1, 1) == 1, "the only player is the top of the scale")
+    check(Scoring.RankFraction(0, 100) == nil, "rank 0 is not a standing")
+    check(Scoring.RankFraction(1, 0) == nil, "an empty pool has no percentile")
+    check(Scoring.ScoreFraction(700, 700) == 1, "the best score in view is the top of the scale")
+    check(Scoring.ScoreFraction(0, 700) == nil, "a zero score has no fraction")
+    check(Scoring.ScoreFraction(700, 0) == nil, "an empty view has no fraction")
+end
+
+-- In-place mutation. Every addon file binds `local L = _G.TACOEXTRAS_LOCALE` at
+-- file scope, so a loader that REPLACED the table would leave those locals
+-- pointing at a stale copy and the language setting would silently do nothing.
+local boundBefore = XL
+REALG.TacoTipConfig = REALG.TacoTipConfig or {}
+REALG.TacoTipConfig.locale_override = "deDE"
+REALG.TacoExtrasApplyLocale()
+check(REALG.TACOEXTRAS_LOCALE == boundBefore,
+    "ApplyLocale mutates TACOEXTRAS_LOCALE in place rather than replacing it")
+check(REALG.TACOEXTRAS_ACTIVE_LOCALE == "deDE", "override selects deDE",
+    "got " .. tostring(REALG.TACOEXTRAS_ACTIVE_LOCALE))
+check(REALG.TACOEXTRAS_LOCALE["CURRENT_GS"] == EX["deDE"]["CURRENT_GS"],
+    "merged table carries the German translation",
+    "got " .. tostring(REALG.TACOEXTRAS_LOCALE["CURRENT_GS"]))
+
+-- enGB is served by the enUS table.
+REALG.TacoTipConfig.locale_override = "enGB"
+REALG.TacoExtrasApplyLocale()
+check(REALG.TACOEXTRAS_ACTIVE_LOCALE == "enUS", "enGB resolves to enUS",
+    "got " .. tostring(REALG.TACOEXTRAS_ACTIVE_LOCALE))
+
+-- A language we do not ship must fall back to English, never to raw keys.
+REALG.TacoTipConfig.locale_override = "xxXX"
+REALG.TacoExtrasApplyLocale()
+check(REALG.TACOEXTRAS_ACTIVE_LOCALE == "enUS", "unshipped locale falls back to enUS",
+    "got " .. tostring(REALG.TACOEXTRAS_ACTIVE_LOCALE))
+check(REALG.TACOEXTRAS_LOCALE["CURRENT_GS"] == EX["enUS"]["CURRENT_GS"],
+    "fallback yields English text, not nil")
+
+-- A PARTIAL table must degrade key by key, not wholesale.
+REALG.TACOEXTRAS_LOCALES["xxXX"] = { CURRENT_GS = "ONLY-ONE-KEY" }
+REALG.TacoTipConfig.locale_override = "xxXX"
+REALG.TacoExtrasApplyLocale()
+check(REALG.TACOEXTRAS_LOCALE["CURRENT_GS"] == "ONLY-ONE-KEY",
+    "partial locale supplies the keys it defines")
+check(REALG.TACOEXTRAS_LOCALE["COMPLETION"] == EX["enUS"]["COMPLETION"],
+    "partial locale inherits English for keys it omits")
+
+-- Restore the client default for the tests that follow.
+REALG.TACOEXTRAS_LOCALES["xxXX"] = nil
+REALG.TacoTipConfig.locale_override = nil
+REALG.TacoExtrasApplyLocale()
 
 out(("\n-- namespace resolution --\n"))
 for _, key in ipairs({ "Core", "Scanner", "Scoring", "Cache", "TacoTipAdapter",
@@ -2623,6 +3024,70 @@ do
         "RankSync.DeserializeRecord reconstructs record perfectly",
         "name=" .. tostring(restoredRec and restoredRec.name))
 
+    -- EMPTY FIELDS. The round-trip above uses a record with every field filled,
+    -- which is why it passed for a whole release while the parser was silently
+    -- discarding records that had a blank one.
+    --
+    -- The parser used `gmatch("([^;]+)")`, and `+` requires one or more
+    -- characters -- so an empty field was SKIPPED rather than returned. specName
+    -- is routinely empty (a player whose spec could not be read) and faction is
+    -- empty when unknown, and a skipped field shifts every later field and takes
+    -- the part count under the minimum, so the WHOLE record was rejected.
+    --
+    -- Measured before the fix: "R;P1;Bob;Horde;1;WARRIOR;;3821;124.5;1759..."
+    -- (empty spec) returned nil.
+    local emptySpec = {
+        guid = "Player-2-002", name = "Spec Less", faction = "Horde",
+        classID = 1, class = "WARRIOR", specName = "",
+        gs = 3821, ilvl = 124.5, timestamp = testNow - 60,
+    }
+    local back = RankSync.DeserializeRecord(RankSync.SerializeRecord(emptySpec))
+    check(type(back) == "table",
+        "an empty specName does not discard the record",
+        "payload=" .. tostring(RankSync.SerializeRecord(emptySpec)))
+    check(type(back) == "table" and back.specName == "",
+        "an empty specName round-trips as empty, not as the next field",
+        "spec=" .. tostring(back and back.specName))
+    check(type(back) == "table" and back.gs == emptySpec.gs
+        and back.ilvl == emptySpec.ilvl and back.timestamp == emptySpec.timestamp,
+        "an empty specName does not shift every later field",
+        type(back) == "table"
+            and ("gs=%s ilvl=%s ts=%s"):format(back.gs, back.ilvl, back.timestamp) or "nil")
+
+    local emptyFaction = {
+        guid = "Player-3-003", name = "No Faction", faction = "",
+        classID = 1, class = "WARRIOR", specName = "Arms",
+        gs = 2900, ilvl = 110, timestamp = testNow - 70,
+    }
+    local backFaction = RankSync.DeserializeRecord(RankSync.SerializeRecord(emptyFaction))
+    check(type(backFaction) == "table" and backFaction.faction == "",
+        "an empty faction does not discard the record",
+        type(backFaction) == "table" and ("faction=%q"):format(backFaction.faction) or "nil")
+
+    -- Two blanks in a row is the case a naive split gets wrong twice over.
+    local twoBlanks = {
+        guid = "Player-4-004", name = "Double Blank", faction = "",
+        classID = 1, class = "WARRIOR", specName = "",
+        gs = 1500, ilvl = 90, timestamp = testNow - 80,
+    }
+    local backBlanks = RankSync.DeserializeRecord(RankSync.SerializeRecord(twoBlanks))
+    check(type(backBlanks) == "table"
+        and backBlanks.faction == "" and backBlanks.specName == ""
+        and backBlanks.gs == 1500,
+        "two consecutive empty fields round-trip",
+        type(backBlanks) == "table"
+            and ("faction=%q spec=%q gs=%s"):format(backBlanks.faction, backBlanks.specName, backBlanks.gs)
+            or "nil")
+
+    -- A genuinely malformed payload must still be refused, so the fix did not
+    -- turn the parser into one that accepts anything.
+    check(RankSync.DeserializeRecord("R;only;three") == nil,
+        "a short payload is still refused")
+    check(RankSync.DeserializeRecord("X;a;b;c;d;e;f;g;h;i;j") == nil,
+        "a payload without the R marker is still refused")
+    check(RankSync.DeserializeRecord(nil) == nil,
+        "a nil payload is refused rather than raising")
+
     local badPayload = "R;invalid;short"
     local corruptRec = RankSync.DeserializeRecord(badPayload)
     check(corruptRec == nil, "RankSync.DeserializeRecord safely rejects corrupt payload", "got " .. tostring(corruptRec))
@@ -2641,6 +3106,177 @@ do
     RankSync.QueueInspectRecord(syncInspectRec)
     local mogRank = RankDB.GetPlayerRank("Player-1-999", queueSyncRealm)
     check(mogRank == 1, "RankSync.QueueInspectRecord immediately registers player in RankDB", "rank=" .. tostring(mogRank))
+end
+
+do
+    out(("\n-- RankSync: query / response protocol --\n"))
+    local RankSync = namespace.RankSync
+    local RankDB = namespace.RankDB
+
+    -- Capture everything the add-on puts on the wire, and make C_Timer.After
+    -- run immediately. The harness's real stub is a no-op that returns true, so
+    -- without this the deferred response path is unreachable and the tests below
+    -- would pass while proving nothing about it.
+    local sent = {}
+    local realAfter = REALG.C_Timer and REALG.C_Timer.After
+    REALG.C_ChatInfo = REALG.C_ChatInfo or {}
+    REALG.C_ChatInfo.SendAddonMessage = function(prefix, msg, chatType, target)
+        sent[#sent + 1] = {
+            prefix = prefix, msg = msg, chatType = chatType, target = target,
+        }
+    end
+    REALG.C_ChatInfo.RegisterAddonMessagePrefix = function() return true end
+    REALG.JoinChannelByName = function() return 1 end
+    REALG.GetChannelName = function() return 7 end
+    REALG.C_Timer = REALG.C_Timer or {}
+    REALG.C_Timer.After = function(_, fn)
+        if type(fn) == "function" then fn() end
+        return true
+    end
+
+    local function drain()
+        local msgs = {}
+        for index = 1, #sent do
+            msgs[index] = sent[index].msg
+        end
+        sent = {}
+        return msgs
+    end
+
+    local function countPrefix(msgs, prefix)
+        local n = 0
+        for index = 1, #msgs do
+            if msgs[index]:sub(1, #prefix) == prefix then n = n + 1 end
+        end
+        return n
+    end
+
+    -- Seed our own record so the response path has something to send.
+    --
+    -- Without this the assertion below depends on the adapter having completed a
+    -- scan, and two variants deliberately prevent that (an ancient TacoTip, and
+    -- an inspector missing a capability). The test would then be asserting the
+    -- ADAPTER's capability while claiming to test the protocol -- which is
+    -- exactly how a suite goes green on one variant and red on another for a
+    -- reason nobody can read off the failure.
+    if HARNESS_PLAYER_GUID then
+        RankDB.StoreRecord({
+            guid = HARNESS_PLAYER_GUID,
+            name = "Tester",
+            faction = "Alliance",
+            classID = 1,
+            class = "WARRIOR",
+            specName = "Arms",
+            gs = 6000,
+            ilvl = 150,
+            timestamp = REALG.time and REALG.time() or 1000000,
+        })
+    end
+
+    -- SyncNow joins the channel (GetChannelName -> 7) and then asks.
+    -- Forced: the load path already fired a resync, so the 30-second throttle
+    -- is armed and an unforced call would correctly do nothing.
+    RankSync.SyncNow(true)
+    local first = drain()
+    check(countPrefix(first, "Q;") >= 1,
+        "a resync sends a Q query",
+        table.concat(first, " | "))
+
+    -- A query from someone else must produce our own record plus a digest.
+    RankSync.HandlePayload("Q;abc123")
+    local answer = drain()
+    check(countPrefix(answer, "S;") >= 1,
+        "an inbound Q produces an S carrying our own record",
+        table.concat(answer, " | "))
+
+    -- Every message must fit the 255-byte addon message limit. A payload that
+    -- merely looks right but cannot be sent is the failure this catches.
+    local longest = 0
+    for index = 1, #answer do
+        if #answer[index] > longest then longest = #answer[index] end
+    end
+    check(longest > 0 and longest <= 255,
+        "no response exceeds the 255-byte addon message limit",
+        "longest=" .. longest)
+
+    -- Flood control. A second query inside the window must be ignored, or ten
+    -- clients joining together produce ten rounds of answers.
+    RankSync.HandlePayload("Q;second")
+    local second = drain()
+    check(countPrefix(second, "S;") == 0,
+        "a second query inside the respond interval is not answered",
+        table.concat(second, " | "))
+
+    -- A response carrying one record must be ingested. This is the assertion
+    -- that pins the 10-field stride: reading element 3 of a flat split yields
+    -- the bare letter "R" and stores nothing, silently.
+    local peerRecord = {
+        guid = "Player-9-777", name = "Peer", faction = "Horde",
+        classID = 1, class = "WARRIOR", specName = "",  -- empty on purpose
+        gs = 4321, ilvl = 130.5, timestamp = REALG.time and REALG.time() or 1000000,
+    }
+    local peerPayload = RankSync.SerializeRecord(peerRecord)
+    RankSync.HandlePayload("S;reqid;" .. peerPayload)
+    local stored = RankDB.GetRecord("Player-9-777")
+    check(type(stored) == "table" and stored.name == "Peer",
+        "an S response is ingested",
+        "stored=" .. tostring(stored and stored.name))
+    check(type(stored) == "table" and stored.gs == 4321,
+        "an S response keeps the record's GearScore",
+        "gs=" .. tostring(stored and stored.gs))
+    check(type(stored) == "table" and stored.specName == "",
+        "an S response with an empty spec still ingests",
+        "spec=" .. tostring(stored and stored.specName))
+
+    -- Two records in one T message: the stride has to advance by exactly ten
+    -- fields per record or the second one lands on garbage.
+    local recA = {
+        guid = "Player-9-778", name = "Alpha", faction = "Alliance",
+        classID = 1, class = "WARRIOR", specName = "Arms",
+        gs = 5100, ilvl = 140, timestamp = (REALG.time and REALG.time() or 1000000) + 1,
+    }
+    local recB = {
+        guid = "Player-9-779", name = "Beta", faction = "Alliance",
+        classID = 3, class = "HUNTER", specName = "",
+        gs = 4900, ilvl = 138, timestamp = (REALG.time and REALG.time() or 1000000) + 2,
+    }
+    RankSync.HandlePayload("T;reqid;"
+        .. RankSync.SerializeRecord(recA) .. ";"
+        .. RankSync.SerializeRecord(recB))
+    local storedA = RankDB.GetRecord("Player-9-778")
+    local storedB = RankDB.GetRecord("Player-9-779")
+    check(type(storedA) == "table" and storedA.name == "Alpha"
+        and storedA.gs == 5100 and storedA.specName == "Arms",
+        "the FIRST record of a T message is ingested",
+        "A=" .. tostring(storedA and storedA.name) .. "/" .. tostring(storedA and storedA.gs))
+    check(type(storedB) == "table" and storedB.name == "Beta"
+        and storedB.gs == 4900 and storedB.specName == "",
+        "the SECOND record of a T message is ingested",
+        "B=" .. tostring(storedB and storedB.name) .. "/" .. tostring(storedB and storedB.gs))
+
+    -- A T containing one record only: the loop must not read past the end.
+    RankSync.HandlePayload("T;reqid;" .. RankSync.SerializeRecord({
+        guid = "Player-9-780", name = "Solo", faction = "Horde",
+        classID = 1, class = "WARRIOR", specName = "Fury",
+        gs = 3000, ilvl = 100, timestamp = (REALG.time and REALG.time() or 1000000) + 3,
+    }))
+    check(type(RankDB.GetRecord("Player-9-780")) == "table",
+        "a single-record T message is ingested")
+
+    -- Malformed input must be ignored quietly, never raise: this runs on every
+    -- addon message from anyone on the realm.
+    for _, bad in ipairs({ "", "Q", "S;", "S;;;;;", "T;id", "Z;1;2;3",
+        "R;short", "S;id;R;only;two", "Q;id;extra" }) do
+        local ok = pcall(RankSync.HandlePayload, bad)
+        if not ok then
+            check(false, "a malformed payload does not raise", ("payload=%q"):format(bad))
+            break
+        end
+    end
+    check(true, "no malformed payload raises")
+
+    -- Restore.
+    if REALG.C_Timer then REALG.C_Timer.After = realAfter end
 end
 
 do

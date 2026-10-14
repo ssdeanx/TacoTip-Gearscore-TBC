@@ -32,6 +32,11 @@ read_globals = {
     "GetTime",
     "GetWeaponEnchantInfo",
     "GUIDIsPlayer",
+    -- WoW's wall clock. RankDB stamps records with it and RankBrowser renders
+    -- relative times from it. It is a Blizzard global, not a missing local:
+    -- the root .luacheckrc declares it too, and reaching the local config from
+    -- `cd TacoTip_Extras && luacheck .` is what made it look undeclared.
+    "time",
     "UIDropDownMenu_AddButton",
     "UIDropDownMenu_CreateInfo",
     "UIDropDownMenu_Initialize",
@@ -95,3 +100,11 @@ local harness = {
 
 files["Tests/harness/*.lua"] = harness
 files["TacoTip_Extras/Tests/harness/*.lua"] = harness
+
+-- Locale files are DATA, not code. A translated help paragraph is one long
+-- string by design: splitting it to satisfy a 500-column limit would put line
+-- breaks inside a sentence that is rendered as one line in game. The measured
+-- effect is that the same paragraph is 1000+ columns in Russian.
+files["Locale/*.lua"] = {
+    max_line_length = false,
+}

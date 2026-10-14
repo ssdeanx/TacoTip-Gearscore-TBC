@@ -1,28 +1,17 @@
 --[[
 
-    TacoTip GearScore module by kebabstorm
-    for Classic/TBC/WOTLK
-
-    Based on original GearScoreLite by Mirrikat45 & others
-
-    Module is WIP and currently part of TacoTip, but it will be released as a public module on a later date
+    TacoTip GearScore module
+    for WoW Forever & Retail
 
 --]]
 
 local addOnName = ...
 
-local interfaceVersion = select(4, GetBuildInfo()) or 0
-local clientBuildMajor = math.floor(interfaceVersion / 10000)
--- load only on the Classic-era client families TacoTip supports (Vanilla/TBC/Wrath)
-if (clientBuildMajor < 1 or clientBuildMajor > 3) then
-    return
-end
-
 assert(LibStub, "TacoTip requires LibStub")
-assert(LibStub:GetLibrary("LibClassicInspector", true), "TacoTip requires LibClassicInspector")
+assert(LibStub:GetLibrary("LibForeverInspector", true), "TacoTip requires LibForeverInspector")
 assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-1.0")
 
-local CI = LibStub("LibClassicInspector")
+local CI = LibStub("LibForeverInspector")
 local TT = _G[addOnName]
 local L = _G.TACOTIP_LOCALE
 
@@ -85,28 +74,90 @@ end
 
 registerBootstrapSlash()
 
+-- Re-run locale selection once SavedVariables are readable.
+--
+-- The per-locale files cannot honour TacoTipConfig.locale_override themselves:
+-- addon files execute BEFORE WoW populates SavedVariables, so TacoTipConfig is
+-- still an empty table while Locale/*.lua runs and the selection necessarily
+-- falls back to GetLocale(). Re-applying here -- after ADDON_LOADED, when the
+-- override is actually readable -- is what makes the language dropdown do
+-- anything. TacoTipApplyLocale mutates _G.TACOTIP_LOCALE in place, so the
+-- `local L` bindings in this file, main.lua and options.lua pick the change up.
+if (TacoTipConfig) then
+    local localeLoader = CreateFrame("Frame")
+    localeLoader:RegisterEvent("ADDON_LOADED")
+    localeLoader:SetScript("OnEvent", function(_, _, addonName)
+        if (addonName == addOnName and _G.TacoTipApplyLocale) then
+            _G.TacoTipApplyLocale()
+        end
+    end)
+end
+
 local function fallbackGUIDIsPlayer(guid)
     return type(guid) == "string" and string.find(guid, "Player-", 1, true) == 1
 end
 
 local GUIDIsPlayer = (_G.C_PlayerInfo and _G.C_PlayerInfo.GUIDIsPlayer) or fallbackGUIDIsPlayer
-local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
+local rawRequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
+local ITEM_REQUEST_COOLDOWN = 2.0
+local function RequestLoadItemDataByID(itemID)
+    if (not rawRequestLoadItemDataByID or not itemID) then
+        return
+    end
+    local TT_GS = rawget(_G, "TT_GS")
+    if (TT_GS) then
+        TT_GS._itemRequestTime = TT_GS._itemRequestTime or {}
+        local last = TT_GS._itemRequestTime[itemID]
+        local now = (type(GetTime) == "function") and GetTime() or 0
+        if (last and now >= last and (now - last) < ITEM_REQUEST_COOLDOWN) then
+            return
+        end
+        TT_GS._itemRequestTime[itemID] = now
+    end
+    pcall(rawRequestLoadItemDataByID, itemID)
+end
+local function GetItemInfo(...)
+    if not ... then return nil end
+    local fn = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+    if fn then
+        return fn(...)
+    end
+end
 local floor = math.floor
 
 _G.TT_GS = {}
-local TT_GS = TT_GS
+local TT_GS = _G.TT_GS
+TT_GS._itemRequestTime = TT_GS._itemRequestTime or {}
 
+-- Quality bracket per client family.
+--
+-- This is purely a mapping: GS_Quality below is keyed off BRACKET_SIZE at load
+-- time and scoreFromItemValues passes ItemLevel through raw, so selecting the
+-- right bracket restores that client's colour ramp and leaves the iLvl average
+-- untouched. No formula change is involved.
+--
+--   Classic Era / WoW Forever  200   level cap 60, Classic-like item levels
+--   TBC Anniversary            400
+--   Titanforge / Retail       1000
+--
+-- WoW Forever used to fall through to the 1000 default, which inflated every
+-- score 5x and collapsed the whole ramp into the "Common" white band. It is
+-- called out explicitly rather than left to a default so that an unrecognised
+-- client is visible instead of silently inheriting a value.
 local BRACKET_SIZE = 1000
 
-if (CI:IsWotlk()) then
-    BRACKET_SIZE = 1000
-elseif (CI:IsTBC()) then
+if (CI.IsClassic and CI:IsClassic()) then
+    BRACKET_SIZE = 200
+elseif (CI.IsTBC and CI:IsTBC()) then
     BRACKET_SIZE = 400
-elseif (CI:IsClassic()) then
+elseif (CI.IsForever and CI:IsForever()) then
     BRACKET_SIZE = 200
 end
 
 local MAX_SCORE = BRACKET_SIZE * 7
+
+TT_GS.BRACKET_SIZE = BRACKET_SIZE
+TT_GS.MAX_SCORE = MAX_SCORE
 
 local GS_ItemTypes = {
     ["INVTYPE_RELIC"] = { ["SlotMOD"] = 0.3164, ["ItemSlot"] = 18, ["Enchantable"] = false },
@@ -190,6 +241,24 @@ function TT_GS:GetQuality(ItemScore)
     return 0.5, 0.5, 0.5, "Trash"
 end
 
+-- Item colour band scale.
+--
+-- The colour of an ITEM tooltip must be a pure function of the number printed
+-- beside it. It used not to be: the band was computed from the slot-mod-FREE
+-- base -- the hardcoded `* 1` stood in for SlotMOD -- while the score shown to
+-- the user multiplied that base by GS_ItemTypes[].SlotMOD. A 2H and a head of
+-- identical item level therefore shared a colour while displaying different
+-- scores, so the band never described the number next to it. Upstream GearScore
+-- 3.1.20 decouples them the same way with 12.25; the constant change to 11.25
+-- is ours, and the decoupling was carried over with it.
+--
+-- The ~11x rescale is kept deliberately. Applied to the raw score, a trinket at
+-- a current item level would read as "Trash" -- the bands are sized for a
+-- character total, and per-item scores are a different, smaller domain. Same
+-- reason the character TOTAL in main.lua is passed to GetQuality unrescaled:
+-- totals and items are separate domains and are NOT unified.
+local ITEM_BAND_SCALE = 11.25
+
 -- Resolves the raw item data GearScore needs from a pre-fetched GetItemInfo
 -- result table. Callers that already hold the info (e.g. tooltip hooks) MUST
 -- prefer TT_GS:GetItemScoreFromInfo so one hover performs exactly one
@@ -234,10 +303,12 @@ local function scoreFromItemValues(itemLinkOut, ItemRarity, ItemLevel, ItemEquip
             Table = GS_Formula["A"]
         end
         if ((ItemRarity >= 2) and (ItemRarity <= 4)) then
-            local Red, Green, Blue = TT_GS:GetQuality((floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) * 1 * Scale)) *
-                11.25)
             GearScore = floor(((ItemLevel - Table[ItemRarity].A) / Table[ItemRarity].B) *
                 GS_ItemTypes[ItemEquipLoc].SlotMOD * Scale * QualityScale)
+            -- Band from the score actually displayed, so the two can never
+            -- disagree. Order matters: the clamp below rewrites GearScore, and
+            -- the band is taken from the clamped value.
+            local Red, Green, Blue = TT_GS:GetQuality(GearScore * ITEM_BAND_SCALE)
             if (ItemLevel == 187.05) then
                 ItemLevel = 0
             end
@@ -258,7 +329,7 @@ end
 -- @param info result of GetItemInfo(itemLink) (may be nil while uncached)
 -- @return number gearScore, number itemLevel, number r, number g, number b, string|nil equipLoc
 local function scoreFromItemInfo(info, itemLinkFallback)
-    if (not info) then
+    if (not info or type(info) ~= "table") then
         if (itemLinkFallback and RequestLoadItemDataByID) then
             local itemID = tonumber(string.match(itemLinkFallback, "item:(%d+)"))
             if (itemID) then
@@ -297,9 +368,12 @@ function TT_GS:GetItemHunterScore(ItemLink, info)
     else
         GearScore, ItemLevel, Red, Green, Blue, ItemEquipLoc = TT_GS:GetItemScore(ItemLink)
     end
+    if (not GearScore or GearScore == 0) then
+        return 0, ItemLevel or 0, Red or 0.1, Green or 0.1, Blue or 0.1, ItemEquipLoc
+    end
     if ((ItemEquipLoc == "INVTYPE_2HWEAPON") or (ItemEquipLoc == "INVTYPE_WEAPONMAINHAND") or (ItemEquipLoc == "INVTYPE_WEAPONOFFHAND") or (ItemEquipLoc == "INVTYPE_WEAPON") or (ItemEquipLoc == "INVTYPE_HOLDABLE")) then
         GearScore = floor(GearScore * 0.3164)
-    elseif ((ItemEquipLoc == "INVTYPE_RANGEDRIGHT") or (ItemEquipLoc == "INVTYPE_RANGED")) then
+    elseif ((ItemEquipLoc == "INVTYPE_RANGEDRIGHT") or (ItemEquipLoc == "INVTYPE_RANGED") or (ItemEquipLoc == "INVTYPE_THROWN")) then
         GearScore = floor(GearScore * 5.3224)
     end
     return GearScore, ItemLevel, Red, Green, Blue, ItemEquipLoc
@@ -419,23 +493,29 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
 
+        -- Titan Grip: In WotLK, Fury Warriors can dual-wield 2-handed weapons.
+        -- When an offhand item is equipped alongside a 2H weapon (or both are 2H),
+        -- each 2H weapon is scaled by 0.5 (reducing SlotMOD from 2.0 to 1.0) so
+        -- dual-wielding 2H weapons balances with 1H dual wielders (1.0 + 1.0 = 2.0).
+        -- Standalone 2H weapons (no offhand equipped) retain full 2.0x weight.
+        local OffHandTitanGrip = 1
         if (mainHandLink and offHandLink) then
-            local ItemEquipLoc = select(9, GetItemInfo(mainHandLink))
-            if (ItemEquipLoc == "INVTYPE_2HWEAPON") then
+            local mhEquipLoc = select(9, GetItemInfo(mainHandLink))
+            local ohEquipLoc = select(9, GetItemInfo(offHandLink))
+            if (mhEquipLoc == "INVTYPE_2HWEAPON") then
                 TitanGrip = 0.5
+            end
+            if (ohEquipLoc == "INVTYPE_2HWEAPON") then
+                OffHandTitanGrip = 0.5
             end
         end
 
         if (offHandLink) then
-            local ItemEquipLoc = select(9, GetItemInfo(offHandLink))
-            if (ItemEquipLoc == "INVTYPE_2HWEAPON") then
-                TitanGrip = 0.5
-            end
             local TempScore, ItemLevel = TT_GS:GetItemScore(offHandLink)
             if (PlayerEnglishClass == "HUNTER") then
                 TempScore = TempScore * 0.3164
             end
-            GearScore = GearScore + TempScore * TitanGrip
+            GearScore = GearScore + TempScore * OffHandTitanGrip
             ItemCount = ItemCount + 1
             LevelTotal = LevelTotal + ItemLevel
         end

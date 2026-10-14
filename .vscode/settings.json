@@ -143,5 +143,9 @@
         "SETTINGS_SEARCH_RESULTS",
         "SETTINGS_BIND_KEY_TO_COMMAND_OR_CANCEL",
         "SETTINGS_SEARCH_NOTHING_FOUND"
-    ]
+    ],
+    "chat.tools.terminal.autoApprove": {
+        "git ls-tree": true,
+        "git checkout": true
+    }
 }

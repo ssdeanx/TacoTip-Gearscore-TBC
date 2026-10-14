@@ -7,7 +7,22 @@ end
 local RankDB = {}
 namespace.RankDB = RankDB
 
-local MAX_CAPACITY = 5000
+-- 20000 players per realm, measured rather than guessed.
+--
+-- A stored record serialises to ~276 bytes as WoW writes SavedVariables (Lua
+-- table source, so every key name, quote and comma counts). The field limits in
+-- ValidateRecord are guid 128, name 64, specName 64, class 32, faction 16:
+--
+--      5000 records ->  1.3 MB   (the old cap)
+--     20000 records ->  5.3 MB   (this cap)
+--     50000 records -> 13.2 MB
+--
+-- 5 MB is a deliberate ceiling, not an accident. WoW writes the whole file
+-- synchronously at logout and reads it at login, so an unbounded leaderboard
+-- trades a slow login for standings nobody will scroll to. 20000 covers a full
+-- Classic realm population with room to spare and keeps the file at a size
+-- every client handles without a hitch.
+local MAX_CAPACITY = 20000
 local MAX_AGE_SECONDS = 60 * 24 * 3600 -- 60 days
 local MAX_GEARSCORE = 15000
 local MAX_ILVL = 1500
@@ -62,6 +77,16 @@ local function sanitizeString(val, maxLen)
     if s == "" then return nil end
     if maxLen and #s > maxLen then
         s = s:sub(1, maxLen)
+        -- Never cut inside a UTF-8 multibyte sequence; drop stray
+        -- continuation bytes from the tail.
+        while #s > 0 do
+            local b = s:byte(#s)
+            if b >= 0x80 and b < 0xC0 then
+                s = s:sub(1, #s - 1)
+            else
+                break
+            end
+        end
     end
     return s
 end
@@ -137,12 +162,31 @@ function RankDB.StoreRecord(record, realm)
     local db, realmKey = getDB(realm or record.realm)
     local existing = db[clean.guid]
 
-    if existing and type(existing.timestamp) == "number" and existing.timestamp >= clean.timestamp then
+    if existing and type(existing.timestamp) == "number" and existing.timestamp > clean.timestamp then
         return true, "up-to-date"
     end
 
     db[clean.guid] = clean
     dirtyFlags[realmKey] = true
+
+    -- Enforce the documented capacity without changing the caller-visible
+    -- pruning semantics: age pruning stays in PruneStaleRecords, where direct
+    -- calls and the 60-day default remain testable.
+    local capacityEntries = {}
+    for guid, entry in pairs(db) do
+        capacityEntries[#capacityEntries + 1] = {
+            guid = guid,
+            timestamp = (type(entry) == "table" and tonumber(entry.timestamp)) or 0,
+        }
+    end
+    if #capacityEntries > MAX_CAPACITY then
+        table.sort(capacityEntries, function(a, b)
+            return a.timestamp < b.timestamp
+        end)
+        for i = 1, #capacityEntries - MAX_CAPACITY do
+            db[capacityEntries[i].guid] = nil
+        end
+    end
 
     return true, "stored"
 end
@@ -254,6 +298,50 @@ function RankDB.GetPlayerRank(guid, realm)
     end
 
     return lk.overallRank, lk.factionRank, lk.classRank, indices.total or 0
+end
+
+-- The raw stored record for one GUID, or nil.
+--
+-- Needed by the sync engine: a query asks peers to re-send what they know, and
+-- the most useful thing we can send back is our OWN record (we always have it,
+-- it is always current, and it costs one message) plus a short digest of the
+-- best few we hold. The rank indices cannot supply that -- they carry ranks,
+-- not records.
+function RankDB.GetRecord(guid, realm)
+    if type(guid) ~= "string" or guid == "" then
+        return nil
+    end
+    local db = getDB(realm)
+    local entry = db[guid]
+    if type(entry) ~= "table" then
+        return nil
+    end
+    return entry
+end
+
+-- The highest-GearScore records we hold, newest first on a tie.
+--
+-- `limit` is clamped: this feeds a network digest where every record costs
+-- roughly 90 of the 255 bytes an addon message allows, so an unbounded call
+-- would build a payload that cannot be sent. The clamp is the contract, not a
+-- courtesy.
+function RankDB.GetTopRecords(limit, realm)
+    local count = tonumber(limit) or 0
+    if count <= 0 then
+        return {}
+    end
+    if count > 10 then
+        count = 10
+    end
+    local list = RankDB.GetLeaderboard(realm, "All", "ALL", nil)
+    local top = {}
+    for index = 1, math.min(count, #(list or {})) do
+        local entry = list[index]
+        if type(entry) == "table" then
+            top[#top + 1] = entry
+        end
+    end
+    return top
 end
 
 function RankDB.GetLeaderboard(realm, tab, classFilter, searchQuery)

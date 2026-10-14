@@ -1,17 +1,17 @@
-## Interface: 11509, 20506, 38001
-## Version: 0.7.7
-## Title: TacoTip Gearscore TBC
-## Notes: TacoTip (GearScore | Talents | Pawn Integration | Class Colors | 3D PlayerPortrait | Options)
-## IconTexture: Interface\Icons\INV_Misc_Spyglass_01
+## Interface: 11509, 20506, 38002, 16001, 120100
+## Version: 0.8.3
+## Title: TacoTip
+## Notes: TacoTip (GearScore | Talents | Pawn Integration | Class Colors | 3D PlayerPortrait | Options) for WoW Forever, Retail, Classic Era, TBC Anniversary, and WoTLK Titanforge
+## IconTexture: Interface\AddOns\TacoTip\tt.tga
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1555962
 ## SavedVariables: TacoTipConfig
-## OptionalDependencies: LibStub, CallbackHandler-1.0, LibDetours-1.0, LibClassicInspector, LibClassicGearScore, Pawn, LibSharedMedia-3.0, SharedMedia, WoWUnit
+## OptionalDependencies: LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia
 
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDetours-1.0\LibDetours-1.0.lua
-Libs\LibClassicInspector\LibClassicInspector.lua
+Libs\LibForeverInspector\LibForeverInspector.lua
 
 Locale\deDE.lua
 Locale\esES.lua
@@ -30,4 +30,3 @@ pawn.lua
 textures.lua
 options.lua
 main.lua
-TacoTip_Tests.lua

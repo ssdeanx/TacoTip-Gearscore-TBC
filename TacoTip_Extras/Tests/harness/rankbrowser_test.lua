@@ -224,6 +224,20 @@ local function newRegion(kind, name, parent, template)
         return newRegion("FontString", fname, region, ftemplate or layer)
     end
 
+    -- StatusBar primitives: the scan progress rails on the browser and on the
+    -- Options panel are real StatusBars, so a gap here crashes CreateUI before
+    -- any behaviour is checked.
+    function R.SetMinMaxValues(_, low, high) region.__min, region.__max = low, high end
+    function R.GetMinMaxValues() return region.__min or 0, region.__max or 1 end
+    function R.SetValue(_, value) region.__value = value end
+    function R.GetValue() return region.__value or 0 end
+    function R.SetStatusBarTexture() end
+    function R.GetStatusBarTexture() return nil end
+    function R.SetStatusBarColor(_, r, g, b) region.__statusColor = { r = r, g = g, b = b } end
+    function R.SetOrientation() end
+    function R.SetReverseFill() end
+    function R.SetStatusBarColor(_, r, g, b) region.__statusColor = { r = r, g = g, b = b } end
+
     for k, v in pairs(R) do region[k] = v end
     return region
 end
@@ -343,14 +357,7 @@ loadFile("RankBrowser.lua")
 
 -- Deterministic, obviously-fake quality ramp so colour assertions can pin
 -- exact values instead of "roughly warm".
-namespace.Scoring = {
-    QualityColor = function(score)
-        if score >= 500 then return 1.00, 0.00, 0.00 end  -- legendary
-        if score >= 300 then return 1.00, 0.50, 0.00 end  -- epic
-        if score >= 150 then return 0.00, 0.00, 1.00 end  -- rare
-        return 1.00, 1.00, 1.00                            -- common
-    end,
-}
+namespace.Scoring = loadFile("Scoring.lua")
 
 local RankDB = namespace.RankDB
 local RankBrowser = namespace.RankBrowser
@@ -726,9 +733,9 @@ end
 
 RankBrowser.ScrollToTop()
 
--- Rank 1 has GearScore 700, which the shim maps to legendary red.
+-- Rank 1 is the best in view, so its fraction is 1.0 -> the epic band.
 local gr, gg, gb = rows[1].gsText:GetTextColor()
-check(near(gr, 1.00) and near(gg, 0.00) and near(gb, 0.00),
+check(near(gr, 0.64) and near(gg, 0.21) and near(gb, 0.93),
     "the leader's GearScore uses the legendary colour",
     tostring(gr) .. "," .. tostring(gg) .. "," .. tostring(gb))
 
@@ -795,8 +802,6 @@ for i = 2, #gsOrder do
     end
 end
 check(descending, "the default order is GearScore descending", table.concat(gsOrder, ","))
-
-local topGSRank = rows[1] and rows[1].rankText:GetText()
 
 if ilvlHeader then
     ilvlHeader.Fire("OnClick")

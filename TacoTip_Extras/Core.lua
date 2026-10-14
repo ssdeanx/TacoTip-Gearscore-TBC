@@ -102,19 +102,28 @@ end
 
 function Core.GetVersion()
     local addOns = _G.C_AddOns
-    if type(addOns) ~= "table"
-        or type(addOns.GetAddOnMetadata) ~= "function" then
-        return nil
+    if type(addOns) == "table"
+        and type(addOns.GetAddOnMetadata) == "function" then
+        local ok, value = pcall(
+            addOns.GetAddOnMetadata,
+            addonName,
+            "Version"
+        )
+        if ok
+            and type(value) == "string"
+            and string.match(value, "^%d+%.%d+%.%d+$") then
+            return value
+        end
     end
-    local ok, value = pcall(
-        addOns.GetAddOnMetadata,
-        addonName,
-        "Version"
-    )
-    if ok
-        and type(value) == "string"
-        and string.match(value, "^%d+%.%d+%.%d+$") then
-        return value
+
+    local getMeta = rawget(_G, "GetAddOnMetadata")
+    if type(getMeta) == "function" then
+        local ok, value = pcall(getMeta, addonName, "Version")
+        if ok
+            and type(value) == "string"
+            and string.match(value, "^%d+%.%d+%.%d+$") then
+            return value
+        end
     end
     return nil
 end

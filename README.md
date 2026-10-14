@@ -1,10 +1,33 @@
-# TacoTip
+```
+   _____              _____ _____
+  |_   _|            |_   _|__  / __|
+    | | |__   __ _  __  | |  / /|  _\
+    | | '_ \ / _` |/ _` | | / / | |  \ 
+    | | | | | (_| | (_| | |/ /__| |_) |
+    |_|_| |_|\__, |\__,_|_/_____|____/
+             __/ |
+            |___/
+```
 
-![Logo](image.png)
+```yaml
+name: TacoTip
+version: 0.8.3
+author: AcidBomb
+maintainer: AcidBomb (Pilsung)
+license: MIT  # see LICENSE; bundled Libs/ keep their own terms
+curseforge_id: 1555962
+project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
+clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
+interfaces: ["11509", "20506", "38002", "16001", "120100"]
+tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
+requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
+optional: [WoWUnit]
+status: unreleased
+updated: 2026-10-13
+```
 
----
 
-**TacoTip is a character, item and guild tooltip enhancement that runs on **every**
+TacoTip is a character, item and guild tooltip enhancement that runs on **every**
 World of Warcraft engine family from one build — no per-client downloads, no
 "which version do I install" question:
 
@@ -23,6 +46,21 @@ World of Warcraft engine family from one build — no per-client downloads, no
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## What's New in 0.8.3
+
+Proactive GearScore collection for everyone standing near you, plus the hardening that makes it safe to run unattended.
+
+- **Proximity world scan.** Every ~2 seconds the library walks the visible nameplates, distance-gates each player with the rule that is correct for your client, and inspects the ones in range — so GearScore and item level for someone standing next to you are already cached when you hover them. One inspect request per tick, skipped in combat, and never re-requested while the data is still fresh.
+- **Correct range handling on all five clients.** Classic Era / SoD / TBC / Titanforge require *both* `CanInspect` and `CheckInteractDistance`; Retail and WoW Forever accept either. A single shared constant now drives the range index everywhere.
+- **No more queue deadlocks.** If an inspect request never comes back, a watchdog releases the pending slot after 3 seconds instead of stalling every other player behind it.
+- **Stable at the mount and elevation boundary.** A player inspected in the last 5 seconds is not dropped by a single flickering range check, which is what made borderline 28-yard targets lose their scores.
+- **Cache timestamps come from `GetTime()` (uptime) instead of `time()` (wall clock)**, so a system clock change can no longer make fresh data look expired. The clock read is guarded so a missing API degrades instead of silently killing the inspect pipeline.
+- **`/tacotip diag` now reports the inspect engine:** notify count, inspects completed, watchdog timeouts, scan-enqueued, and scan-skipped-by-range.
+
+Full detail, including two test-suite bugs this work uncovered, is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -99,7 +137,7 @@ Portrait, inspect, unit-frame hover, and border correctness across all five clie
   missing, no delivery path hooked — plus event counters for call frequency.
 - **100% Localization parity across all 11 languages.** All 11 shipped locales
   (`enUS`, `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`)
-  contain 100% key coverage (263/263 keys) with verified syntax and matching `%s`/`%d` format tokens.
+  contain 100% key coverage (239/239 keys) with verified syntax and matching `%s`/`%d` format tokens.
 - **The power bar is off by default.** Enable it in settings; its colours are
   correct for mana, rage, energy and every other power type on all five clients.
 

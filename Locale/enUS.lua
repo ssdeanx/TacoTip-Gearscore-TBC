@@ -23,9 +23,6 @@ local defaults = {
     ["Drag to Move"] = "Drag to Move",
     ["Change Anchor"] = "Change Anchor",
     ["Save Position"] = "Save Position",
-    [" the Kingslayer"] = " the Kingslayer",
-    ["Undead"] = "Undead",
-    ["Unit Tooltips"] = "Unit Tooltips",
     ["Class Color"] = "Class Color",
     ["Color class names in tooltips"] = "Color class names in tooltips",
     ["Title"] = "Title",
@@ -35,8 +32,6 @@ local defaults = {
     ["Guild Rank"] = "Guild Rank",
     ["Show guild rank in tooltips"] = "Show guild rank in tooltips",
     ["Show talents and specialization in tooltips"] = "Show talents and specialization in tooltips",
-    ["Show player's GearScore in tooltips"] = "Show player's GearScore in tooltips",
-    ["Show player's PawnScore in tooltips (may affect performance)"] =
     "Show player's PawnScore in tooltips (may affect performance)",
     ["requires Pawn"] = "requires Pawn",
     ["Show unit's target in tooltips"] = "Show unit's target in tooltips",
@@ -44,7 +39,6 @@ local defaults = {
     ["Show player's faction icon (Horde/Alliance) in tooltips"] =
     "Show player's faction icon (Horde/Alliance) in tooltips",
     ["Class Icon"] = "Class Icon",
-    ["Show player's class icon next to the faction icon in tooltips"] =
     "Show player's class icon next to the faction icon in tooltips",
     ["PVP Icon"] = "PVP Icon",
     ["Show player's pvp flag status as icon instead of text"] = "Show player's pvp flag status as icon instead of text",
@@ -52,29 +46,18 @@ local defaults = {
     ["Show unit's health bar under tooltip"] = "Show unit's health bar under tooltip",
     ["Power Bar"] = "Power Bar",
     ["Show unit's power bar under tooltip"] = "Show unit's power bar under tooltip",
-    ["Character Frame"] = "Character Frame",
-    ["Show GearScore in character frame"] = "Show GearScore in character frame",
-    ["Average iLvl"] = "Average iLvl",
-    ["Show Average Item Level in character frame"] = "Show Average Item Level in character frame",
-    ["Lock Position"] = "Lock Position",
-    ["Lock GearScore and Average Item Level positions in character frame"] =
     "Lock GearScore and Average Item Level positions in character frame",
-    ["Extra"] = "Extra",
     ["Show Item Level"] = "Show Item Level",
     ["Display item level in the tooltip for certain items."] = "Display item level in the tooltip for certain items.",
     ["Show Item GearScore"] = "Show Item GearScore",
     ["Show GearScore in item tooltips"] = "Show GearScore in item tooltips",
     ["HunterScore"] = "HunterScore",
-    ["Always show HunterScore in item tooltips"] = "Always show HunterScore in item tooltips",
     ["Enhanced Tooltips"] = "Enhanced Tooltips",
-    ["Disable In Combat"] = "Disable In Combat",
-    ["Disable gearscore & talents in combat"] = "Disable gearscore & talents in combat",
     ["Chat Class Colors"] = "Chat Class Colors",
     ["Color names by class in chat windows"] = "Color names by class in chat windows",
     ["Instant Fade"] = "Instant Fade",
     ["Fade out unit tooltips instantly"] = "Fade out unit tooltips instantly",
     ["Custom Tooltip Position"] = "Custom Tooltip Position",
-    ["Set a custom position for tooltips"] = "Set a custom position for tooltips",
     ["Tooltip Style"] = "Tooltip Style",
     ["FULL"] = "FULL",
     ["Always FULL"] = "Always FULL",
@@ -86,9 +69,6 @@ local defaults = {
     ["Default MINI, hold SHIFT for FULL"] = "Default MINI, hold SHIFT for FULL",
     ["MINI"] = "MINI",
     ["Always MINI"] = "Always MINI",
-    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Wide, Dual Spec, GearScore, Average iLvl",
-    ["Narrow, Active Spec, GearScore"] = "Narrow, Active Spec, GearScore",
-    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Narrow, Active Spec, GearScore, Average iLvl",
     ["Reset configuration"] = "Reset configuration",
     ["Configuration has been reset to default."] = "Configuration has been reset to default.",
     ["Custom tooltip position enabled."] = "Custom tooltip position enabled.",
@@ -100,9 +80,7 @@ local defaults = {
     ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
     "Anchor to mouse only in WorldFrame\nSkips raid / party frames",
     ["Anchor Spells to Mouse"] = "Anchor Spells to Mouse",
-    ["Anchor spell tooltips to mouse cursor"] = "Anchor spell tooltips to mouse cursor",
     ["Show Achievement Points"] = "Show Achievement Points",
-    ["Show total achievement points in tooltips"] = "Show total achievement points in tooltips",
     ["Mover"] = "Mover",
     ["TEXT_OPT_DESC"] = "Better player tooltips - class colors, talents/specialization,\n     gearscore, guild ranks",
     ["TEXT_OPT_UBERTIPS"] = "Show enhanced tooltips for spells (\"UberTooltips\")",
@@ -120,7 +98,7 @@ local defaults = {
     ["OPTIONS_PAGE_CHARACTER_INSPECT"] = "Character & Inspect",
 
     ["OPTIONS_ROOT_DESCRIPTION"] =
-    "TacoTip now organizes its settings into focused child pages so tooltip, positioning, and overlay controls are easier to find on Classic-era clients.",
+    "TacoTip now organizes its settings into focused child pages so tooltip, positioning, and overlay controls are easier to find.",
     ["OPTIONS_ROOT_BEHAVIOR_HEADER"] = "Behavior & client settings",
     ["OPTIONS_ROOT_QUICK_ACTIONS"] = "Quick Actions",
     ["OPTIONS_LANGUAGE_LABEL"] = "Addon language",
@@ -151,7 +129,7 @@ local defaults = {
     "Choose how much detail TacoTip shows by default. Hybrid styles show their compact layout by default and expand to full while Shift is held.",
     ["OPTIONS_SECTION_UNIT_TOOLTIPS"] = "Unit tooltip content",
     ["OPTIONS_SHAMAN_BLUE"] = "Shaman Blue",
-    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Use blue instead of pink for Shaman class color on Classic Era / SoD.",
+    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Use blue instead of pink for Shaman class color.",
     ["OPTIONS_SECTION_ITEM_TOOLTIPS"] = "Item tooltip data",
     ["OPTIONS_SECTION_VISUAL_STYLE"] = "Visual style",
     ["OPTIONS_SECTION_BACKDROP_MEDIA"] = "Backdrop colors & textures",
@@ -195,13 +173,15 @@ local defaults = {
     "Choose the tooltip border texture. SharedMedia border packs such as Merfin Plus are picked up automatically when installed, with Blizzard's tooltip border used as the fallback.",
     ["OPTIONS_TOOLTIP_BORDER_THICKNESS"] = "Border thickness",
     ["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] =
-    "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 14px.",
+    "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 16px.",
     ["OPTIONS_TOOLTIP_PORTRAIT"] = "Show unit portrait",
     ["OPTIONS_TOOLTIP_PORTRAIT_DESC"] = "Show a small portrait texture next to player and NPC unit tooltips.",
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE"] = "Portrait scale",
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Scale the portrait shown next to unit tooltips.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Show 3D portrait",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Use a live 3D model instead of a 2D portrait texture.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Invert portrait side",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Swap the portrait to the opposite side of the tooltip.",
     ["OPTIONS_PORTRAIT_ZOOM"] = "Portrait zoom",
     ["OPTIONS_PORTRAIT_ZOOM_DESC"] =
     "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face.",
@@ -271,7 +251,7 @@ local defaults = {
     ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Suppress inspection details in combat",
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Skips TacoTip's talents and GearScore-style player additions while you are in combat.",
-    ["OPTIONS_ACHIEVEMENT_DESC"] = "Only available on Wrath Classic clients where achievement data exists.",
+    ["OPTIONS_ACHIEVEMENT_DESC"] = "Display player achievement points in tooltips and character info.",
     ["FORMAT_GUILD_RANK_1"] = "%s %s",
     ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
     ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
@@ -307,16 +287,91 @@ local defaults = {
     ["INSPECT_FRAME_ILVL_VALUE_YPOS"] = 153,
     ["OPTIONS_OFFSET_EDIT_DESC"] = "Type a precise pixel offset and press Enter to apply it.",
     ["OPTIONS_OFFSET_SLIDER_DESC"] = "Drag to fine-tune this offset. The numeric field stays synchronized.",
-    ["RANK_TITLE"] = "Champion",
-    ["REALM"] = "Realm",
 }
 
 
 
-_G.TACOTIP_LOCALE = TACOTIP_LOCALE or {}
+_G.TACOTIP_LOCALES = _G.TACOTIP_LOCALES or {}
+_G.TACOTIP_LOCALES["enUS"] = defaults
 
-for key, value in pairs(defaults) do
-    if (TACOTIP_LOCALE[key] == nil) then
-        TACOTIP_LOCALE[key] = value
+-- Locale selection.
+--
+-- Every Locale/*.lua file registers its table into _G.TACOTIP_LOCALES under its
+-- own code; none of them writes _G.TACOTIP_LOCALE directly. This function is the
+-- single place that decides which one is live: the requested language layered
+-- over the English base, first-wins, so English fills any key a translation has
+-- not shipped.
+--
+-- Resolution order:
+--   1. TacoTipConfig.locale_override -- always wins, for every client.
+--   2. WotLK Titanforge -> zhCN. Titanforge is the Chinese build of WotLK, so it
+--      is pinned to Simplified Chinese rather than trusting GetLocale() to
+--      report zhCN. This is the one client where the default is not English.
+--   3. The client language, when we ship a table for it.
+--   4. English.
+--
+-- English is therefore the "main locale": it is both the default and the base
+-- every other language falls back through key by key.
+--
+-- It MUTATES _G.TACOTIP_LOCALE in place instead of replacing it. main.lua,
+-- gearscore.lua and options.lua each bind `local L = _G.TACOTIP_LOCALE` at file
+-- scope, so replacing the table would leave those locals pointing at a stale
+-- copy and the override would appear to do nothing.
+--
+-- Exposed as a function (rather than a one-shot loop) because the language
+-- override lives in TacoTipConfig, which is still EMPTY while addon files
+-- execute -- WoW only populates SavedVariables after the files have run. So it
+-- is called once here for the client locale, then again from gearscore.lua on
+-- ADDON_LOADED once TacoTipConfig is readable and the override can be honoured.
+local function pickDefaultLocale()
+    -- LibForeverInspector is listed before every Locale file in the toc, so the
+    -- client family is already resolved here. Guarded anyway so a locale file
+    -- loaded standalone cannot error.
+    local ok, CI = pcall(LibStub, "LibForeverInspector", true)
+    if (ok and CI and CI.IsWotlk and CI:IsWotlk()) then
+        return "zhCN"
     end
+    if (GetLocale) then
+        return GetLocale()
+    end
+    return "enUS"
 end
+
+function _G.TacoTipApplyLocale()
+    local locales = _G.TACOTIP_LOCALES or {}
+
+    local requested = TacoTipConfig and TacoTipConfig.locale_override
+    if (type(requested) ~= "string" or requested == "") then
+        requested = pickDefaultLocale()
+    end
+    -- Locale/enUS.lua is the source of truth for both enUS and enGB.
+    if (requested == "enGB") then
+        requested = "enUS"
+    end
+
+    local pick = requested
+
+    local base = locales[pick] or locales["enUS"] or defaults
+
+    local target = _G.TACOTIP_LOCALE
+    if (type(target) ~= "table") then
+        target = {}
+        _G.TACOTIP_LOCALE = target
+    end
+    for key in pairs(target) do
+        target[key] = nil
+    end
+    for key, value in pairs(base) do
+        target[key] = value
+    end
+    for key, value in pairs(defaults) do
+        if (target[key] == nil) then
+            target[key] = value
+        end
+    end
+
+    _G.TACOTIP_ACTIVE_LOCALE = base == defaults and "enUS" or pick
+    return target
+end
+
+_G.TacoTipApplyLocale()

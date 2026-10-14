@@ -7,19 +7,27 @@ end
 local Options = {}
 namespace.Options = Options
 
-local CATEGORY_NAME = "TacoTip Extras"
-local EQUIPMENT_CATEGORY_NAME = "Equipment Windows"
+-- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
+-- replacing it, so the reference stays live across a language change.
+local L = _G.TACOEXTRAS_LOCALE or {}
+
+-- The add-on title and the settings-page titles come straight from the locale.
+-- CATEGORY_NAME is what the settings list shows, so it is the most visible
+-- string in the file.
+local CATEGORY_NAME = L["CATEGORY_NAME"] or "TacoTip Extras"
+local EQUIPMENT_CATEGORY_NAME = L["EQUIPMENT_CATEGORY_NAME"] or "Equipment Windows"
 local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\tt-2"
 local SUCCESS_RED, SUCCESS_GREEN, SUCCESS_BLUE = 0.45, 0.82, 0.55
 local NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE = 0.58, 0.56, 0.64
 local WARNING_RED, WARNING_GREEN, WARNING_BLUE = 0.95, 0.72, 0.30
 local FOOTER_RED, FOOTER_GREEN, FOOTER_BLUE = 0.55, 0.52, 0.62
 
-local INTRO_TEXT = "A TacoTip companion that adds enhancement-aware GearScore, "
+local INTRO_TEXT = L["INTRO"]
+    or "A TacoTip companion that adds enhancement-aware GearScore, "
     .. "Average iLvl, and Completion to player tooltips."
 
-local SCORE_EXPLANATION =
-[[Current GS is the players present GearScore in this addon and the headline value shown in Compact mode. Use Current GS when referring to the players current GearScore. It includes equipped items plus supported bonuses from installed permanent enchants and gems.
+local SCORE_EXPLANATION = L["SCORE_EXPLANATION"]
+    or [[Current GS is the players present GearScore in this addon and the headline value shown in Compact mode. Use Current GS when referring to the players current GearScore. It includes equipped items plus supported bonuses from installed permanent enchants and gems.
 
 Unenhanced GS is an optional comparison using the same equipment with only those counted installed bonuses removed. It shows how much those enhancements already contribute; it is not the player’s current GearScore.
 
@@ -121,6 +129,13 @@ local HELP = {
             "Opens the TacoTip GearScore Server Leaderboard window (/tt ranks) to browse realm-wide standings.",
         },
     },
+    scanNow = {
+        heading = "Scan now",
+        lines = {
+            "Re-reads your own equipped items and republishes your GearScore to the realm. Use it after changing gear or enchants when you want your standing updated without waiting for the next sync.",
+            "Only your own character is scanned. Other players are recorded as they are seen, and scanning them is not possible from here.",
+        },
+    },
     restore = {
         heading = "Restore TacoTip settings",
         lines = {
@@ -132,7 +147,7 @@ local HELP = {
         heading = "Reset enhancer settings",
         lines = {
             "Restores TacoTip Extras settings to their defaults, including tooltip preferences and minimap visibility and position.",
-            "It does not reset TacoTip or delete or modify player data, because no player data is persisted.",
+            "It does not reset TacoTip. It also does not touch the saved leaderboard: realm standings live in TacoTipExtrasDB and survive this reset.",
         },
     },
     integrationStatus = {
@@ -318,6 +333,36 @@ local function hideHelp(owner)
     activeHelpOwner = nil
 end
 
+-- Resolve a HELP entry through the locale, falling back to the English text in
+-- the table above.
+--
+-- The table stays the readable, English source of truth and the locale file
+-- overrides it key by key, so a partially translated language shows translated
+-- strings where it has them and English everywhere else. Keys are derived from
+-- the table key: HELP_<KEY>_HEADING and HELP_<KEY>_<lineNumber>.
+--
+-- The same helper feeds the control labels, because a checkbox label and its
+-- help heading are the same words -- that is what made them drift apart before.
+local function localizedHelp(helpKey)
+    local entry = HELP[helpKey]
+    if type(entry) ~= "table" then
+        return nil, nil
+    end
+    local upper = tostring(helpKey):upper()
+    local heading = L["HELP_" .. upper .. "_HEADING"] or entry.heading
+    local lines = {}
+    local source = type(entry.lines) == "table" and entry.lines or {}
+    for index = 1, #source do
+        lines[index] = L[("HELP_%s_%d"):format(upper, index)] or source[index]
+    end
+    return heading, lines
+end
+
+local function helpHeading(helpKey)
+    local heading = localizedHelp(helpKey)
+    return heading
+end
+
 local function showHelp(owner, helpKey, anchorPolicy)
     local help = HELP[helpKey]
     local tooltip = _G.GameTooltip
@@ -345,8 +390,9 @@ local function showHelp(owner, helpKey, anchorPolicy)
     else
         tooltip:SetOwner(owner, "ANCHOR_RIGHT")
     end
-    tooltip:SetText(help.heading, 1, 1, 1)
-    for _, line in ipairs(help.lines) do
+    local heading, lines = localizedHelp(helpKey)
+    tooltip:SetText(heading or help.heading, 1, 1, 1)
+    for _, line in ipairs(lines or help.lines) do
         tooltip:AddLine(line, 0.82, 0.82, 0.82, true)
     end
     activeHelpOwner = owner
@@ -597,7 +643,10 @@ local function createCheckbox(id, text, x, y, callback, helpWidth)
 
     local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     label:SetPoint("LEFT", check, "RIGHT", 2, 1)
-    label:SetText(text)
+    -- The label comes from the locale, keyed by the SAME id the help popup uses.
+    -- Label and help heading are the same words, so deriving both from one place
+    -- is what stops them drifting apart; `text` stays as the English fallback.
+    label:SetText(helpHeading(id) or text)
     check.optionLabel = label
     check:SetScript("OnClick", function(self)
         callback(self:GetChecked() == true)
@@ -644,7 +693,7 @@ end
 local function createModeDropdown()
     local label = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     label:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -108)
-    label:SetText("Tooltip mode")
+    label:SetText(helpHeading("mode") or "Tooltip mode")
     createHelpRegion("ModeLabel", 14, -104, 112, 22, "mode")
 
     local dropDown = CreateFrame(
@@ -701,7 +750,10 @@ local function createEquipmentCheckbox(id, text, y, callback)
     check:SetPoint("TOPLEFT", equipmentPanel, "TOPLEFT", 16, y)
     local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     label:SetPoint("LEFT", check, "RIGHT", 2, 1)
-    label:SetText(text)
+    -- The label comes from the locale, keyed by the SAME id the help popup uses.
+    -- Label and help heading are the same words, so deriving both from one place
+    -- is what stops them drifting apart; `text` stays as the English fallback.
+    label:SetText(helpHeading(id) or text)
     check.optionLabel = label
     check:SetScript("OnClick", function(self)
         callback(self:GetChecked() == true)
@@ -735,7 +787,7 @@ local function createEquipmentModeDropdown()
         "GameFontNormal"
     )
     label:SetPoint("TOPLEFT", equipmentPanel, "TOPLEFT", 16, -62)
-    label:SetText("Character & Inspect summary")
+    label:SetText(helpHeading("equipmentMode") or "Character & Inspect summary")
     createEquipmentHelpRegion(
         "ModeLabel",
         14,
@@ -1068,7 +1120,9 @@ local function createActionButton(name, text, x, callback, helpKey, y)
     local button = CreateFrame("Button", name, panel, "UIPanelButtonTemplate")
     button:SetSize(210, 24)
     button:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y or -350)
-    button:SetText(text)
+    -- Same rule as the checkboxes: the label is the help heading, so a button
+    -- and its help popup can never say different things.
+    button:SetText(helpHeading(helpKey) or text)
     button:SetScript("OnClick", callback)
     attachHelp(button, helpKey)
     return button
@@ -1118,7 +1172,7 @@ local function createPanel()
 
     local fieldsTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     fieldsTitle:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -162)
-    fieldsTitle:SetText("Tooltip fields")
+    fieldsTitle:SetText(helpHeading("fields") or "Tooltip fields")
     createHelpRegion("FieldsTitle", 14, -158, 112, 22, "fields")
 
     createFieldCheckbox("GearScore", "Show Current GS", "gearScore", 16, -184)
@@ -1186,17 +1240,25 @@ local function createPanel()
         240
     )
 
+    -- Top-right of the page, on the title row.
+    --
+    -- It used to sit at (290, -44), which is ON TOP of the description text:
+    -- the description is 520 wide starting at x=70, so it spans 70..590 and the
+    -- button landed in the middle of that band. Overlapping the paragraph is
+    -- both ugly and a poor click target, which is why it read as hard to hit.
+    -- Moving it up clears the description entirely: the title is short and the
+    -- button starts at 376, so nothing shares those pixels.
     controls.openLeaderboard = createActionButton(
         addonName .. "OpenLeaderboardButton",
         "Open Server Leaderboard",
-        290,
+        376,
         function()
             if namespace.RankBrowser and type(namespace.RankBrowser.Toggle) == "function" then
                 namespace.RankBrowser.Toggle()
             end
         end,
         "openLeaderboard",
-        -44
+        -14
     )
 
     controls.restore = createActionButton(
@@ -1213,6 +1275,71 @@ local function createPanel()
         resetEnhancerSettings,
         "reset"
     )
+
+    -- Scan control, mirroring the leaderboard header's.
+    --
+    -- Placed on its own row below Restore/Reset rather than beside them: two
+    -- 210-wide buttons already span x=16..452 of a 590-wide page, so a third
+    -- would run off the edge. It calls the same RankBrowser.StartScan the
+    -- header does, so there is one implementation of "start a scan", not two
+    -- that can drift.
+    controls.scanNow = createActionButton(
+        addonName .. "ScanNowButton",
+        "Scan now",
+        16,
+        function()
+            local browser = namespace.RankBrowser
+            if type(browser) == "table" and type(browser.StartScan) == "function" then
+                browser.StartScan()
+            end
+        end,
+        "scanNow",
+        -384
+    )
+
+    -- Progress rail for the same scan. Both surfaces read
+    -- RankBrowser.RefreshProgress, so they cannot show different numbers.
+    local scanBar = CreateFrame("StatusBar", addonName .. "ScanBar", panel)
+    scanBar:SetSize(436, 14)
+    scanBar:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -414)
+    if type(scanBar.SetStatusBarTexture) == "function" then
+        scanBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    end
+    if type(scanBar.SetStatusBarColor) == "function" then
+        scanBar:SetStatusBarColor(0.66, 0.48, 0.86)
+    end
+    scanBar:SetMinMaxValues(0, 1)
+    scanBar:SetValue(0)
+    scanBar:Hide()
+    controls.scanBar = scanBar
+
+    -- Drive the rail from the same Scanner.GetProgress the browser uses. The
+    -- poll is cheap and returns immediately when the page is hidden or there is
+    -- no scan, so an open settings window does not cost frame time at idle.
+    local scanAccum = 0
+    panel:SetScript("OnUpdate", function(_, elapsed)
+        if type(panel.IsShown) == "function" and not panel:IsShown() then
+            return
+        end
+        scanAccum = scanAccum + (elapsed or 0)
+        if scanAccum < 0.25 then
+            return
+        end
+        scanAccum = 0
+        local scanner = namespace.Scanner
+        if type(scanner) ~= "table" or type(scanner.GetProgress) ~= "function" then
+            scanBar:Hide()
+            return
+        end
+        local progress = scanner.GetProgress()
+        if type(progress) ~= "table"
+            or (progress.percent <= 0 and not progress.active) then
+            scanBar:Hide()
+            return
+        end
+        scanBar:Show()
+        scanBar:SetValue(progress.percent)
+    end)
 
     local explanationTitle = panel:CreateFontString(
         nil,

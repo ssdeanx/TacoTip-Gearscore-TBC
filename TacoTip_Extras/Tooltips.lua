@@ -13,6 +13,10 @@ local Adapter = namespace.TacoTipAdapter
 local Tooltips = {}
 namespace.Tooltips = Tooltips
 
+-- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
+-- replacing it, so the reference stays live across a language change.
+local L = _G.TACOEXTRAS_LOCALE or {}
+
 local MODES = {
     Disabled = true,
     Minimal = true,
@@ -376,7 +380,13 @@ local function currentText(value, label)
     if not displayed then
         return nil
     end
-    local red, green, blue = Adapter.GetCurrentScoreColor(value)
+    local red, green, blue
+    if type(Adapter.GetCurrentScoreColor) == "function" then
+        local ok, r, g, b = pcall(Adapter.GetCurrentScoreColor, value)
+        if ok then
+            red, green, blue = r, g, b
+        end
+    end
     if not validColor(red, green, blue) then
         red, green, blue = NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
     end
@@ -605,7 +615,7 @@ local function getRankRow(guid, unit)
         return nil
     end
 
-    local overall, _, classRank = rankDB.GetPlayerRank(targetGUID)
+    local overall, _, classRank, totalRanked = rankDB.GetPlayerRank(targetGUID)
     if not overall then
         return nil
     end
@@ -620,21 +630,40 @@ local function getRankRow(guid, unit)
         end
     end
 
+    -- Rank numbers are coloured by PERCENTILE, so "#1" is the top brand colour
+    -- and "#400 of 4000" is not the same colour as "#400 of 400". Both the
+    -- overall rank and the class rank use the same scale -- the class standing
+    -- is measured against the class pool the database reports.
+    local scoring = namespace.Scoring
+    local function rankColor(rank, total)
+        local place, count = tonumber(rank), tonumber(total)
+        if scoring and type(scoring.QualityColor) == "function"
+            and place and count and count > 0 and place > 0 then
+            if place > count then place = count end
+            local r, gg, b = scoring.QualityColor((count - place + 1) / count)
+            if r and gg and b then
+                return r, gg, b
+            end
+        end
+        return NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
+    end
+
+    local orr, org, orb = rankColor(overall, totalRanked)
+    local crr, crg, crb = rankColor(classRank or overall, totalRanked)
+    local classRed, classGreen, classBlue = playerClassColor(unit)
+
     local text
     if classRank and className then
-        text = labelText("Gearscore Rank:") .. " " .. colorText(
-            "#" .. tostring(overall) .. " (#" .. tostring(classRank) .. " " .. className .. ")",
-            NEUTRAL_RED,
-            NEUTRAL_GREEN,
-            NEUTRAL_BLUE
-        )
+        -- [#2 Warrior] -- square brackets, class rank and name inside, overall
+        -- rank outside. The class NAME is drawn in the class colour so it reads
+        -- at a glance, while the numbers carry standing.
+        text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
+            .. colorText("#" .. tostring(overall), orr, org, orb) .. " "
+            .. colorText("[#" .. tostring(classRank), crr, crg, crb) .. " "
+            .. colorText(className, classRed, classGreen, classBlue) .. "]"
     else
-        text = labelText("Gearscore Rank:") .. " " .. colorText(
-            "#" .. tostring(overall),
-            NEUTRAL_RED,
-            NEUTRAL_GREEN,
-            NEUTRAL_BLUE
-        )
+        text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
+            .. colorText("#" .. tostring(overall), orr, org, orb)
     end
     return { text = text }
 end
@@ -645,7 +674,13 @@ local function makeRows(mode, revision, result, unit, scope, guid)
     local suppressed = enhancementMetricsSuppressed(revision)
     local classRed, classGreen, classBlue = playerClassColor(unit)
     local current, currentMetric = completeMetric(metrics, "gearScore")
-    local iLvlRed, iLvlGreen, iLvlBlue = Adapter.GetEquipmentScoreColor(current)
+    local iLvlRed, iLvlGreen, iLvlBlue
+    if type(Adapter.GetEquipmentScoreColor) == "function" then
+        local ok, r, g, b = pcall(Adapter.GetEquipmentScoreColor, current)
+        if ok then
+            iLvlRed, iLvlGreen, iLvlBlue = r, g, b
+        end
+    end
     if not validColor(iLvlRed, iLvlGreen, iLvlBlue) then
         iLvlRed, iLvlGreen, iLvlBlue = NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
     end
@@ -718,7 +753,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         end
         if not suppressed and fieldEnabled("completion") and completion then
             secondary[#secondary + 1] = inlineMetric(
-                "Complete",
+                L["COMPLETE"],
                 completion.compactText,
                 completionColor(completion.ratio)
             )
@@ -770,7 +805,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
             rows[#rows + 1] = {
                 text = labelText(label .. ":") .. " "
                     .. colorText(
-                        "unavailable",
+                        L["UNAVAILABLE"],
                         NEUTRAL_RED,
                         NEUTRAL_GREEN,
                         NEUTRAL_BLUE
@@ -786,9 +821,9 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         end
         analysisAdded = true
         rows[#rows + 1] = {
-            text = labelText("Enhancement analysis:") .. " "
+            text = labelText(L["TOOLTIP_LABEL_ENHANCEMENT"]) .. " "
                 .. colorText(
-                    "unavailable",
+                    L["UNAVAILABLE"],
                     NEUTRAL_RED,
                     NEUTRAL_GREEN,
                     NEUTRAL_BLUE
@@ -800,7 +835,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         rows[#rows + 1] = { text = currentText(current, "Current GS:") }
     elseif fieldEnabled("gearScore") and type(currentMetric) == "table" then
         addMetric(
-            "Current GS",
+            L["CURRENT_GS"],
             "gearScore",
             nil,
             currentMetric,
@@ -814,7 +849,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         if fieldEnabled("potentialGS") then
             if potential ~= nil then
                 addMetric(
-                    "Potential GS",
+                    L["POTENTIAL_GS"],
                     "potentialGS",
                     potential,
                     potentialMetric,
@@ -827,7 +862,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
                 addUnavailableAnalysis()
             else
                 addMetric(
-                    "Potential GS",
+                    L["POTENTIAL_GS"],
                     "potentialGS",
                     nil,
                     potentialMetric,
@@ -853,7 +888,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
                         POSITIVE_BLUE
                 end
                 addMetric(
-                    "Delta",
+                    L["DELTA"],
                     "delta",
                     delta,
                     deltaMetric,
@@ -866,7 +901,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
                 addUnavailableAnalysis()
             elseif not potentialUnavailable then
                 addMetric(
-                    "Delta",
+                    L["DELTA"],
                     "delta",
                     nil,
                     deltaMetric,
@@ -882,7 +917,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         if completion then
             rows[#rows + 1] = {
                 text = inlineMetric(
-                    "Completion:",
+                    L["COMPLETION"] .. ":",
                     completion.detailedText,
                     completionColor(completion.ratio)
                 ),
@@ -892,9 +927,9 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         elseif type(completionMetric) == "table"
             and completionMetric.status == "complete" then
             rows[#rows + 1] = {
-                text = labelText("Completion:") .. " "
+                text = labelText(L["TOOLTIP_LABEL_COMPLETION"]) .. " "
                     .. colorText(
-                        "no eligible opportunities",
+                        L["GEAR_NO_OPPORTUNITIES"],
                         NEUTRAL_RED,
                         NEUTRAL_GREEN,
                         NEUTRAL_BLUE
@@ -902,7 +937,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
             }
         elseif type(completionMetric) == "table" then
             addMetric(
-                "Completion",
+                L["COMPLETION"],
                 "completion",
                 nil,
                 completionMetric,
@@ -914,7 +949,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         end
     end
     addMetric(
-        "Average iLvl",
+        L["AVERAGE_ILVL"],
         "averageItemLevel",
         averageDisplay,
         averageMetric,
@@ -924,7 +959,7 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         iLvlBlue
     )
     addMetric(
-        "Unenhanced GS",
+        L["UNENHANCED_GS"],
         "baseGS",
         base,
         baseMetric,
@@ -960,7 +995,8 @@ local function addRows(target, rows)
             row.text,
             row.red or 1,
             row.green or 1,
-            row.blue or 1
+            row.blue or 1,
+            false
         )
     end
     return true
@@ -995,9 +1031,10 @@ local function captureRenderInputs(into, guid, source, mode, unit)
     into.fieldDelta = fieldEnabled("delta")
     into.fieldAverageItemLevel = fieldEnabled("averageItemLevel")
     into.fieldCompletion = fieldEnabled("completion")
-    into.warningColors = settings.tooltip.warningColors == true
+    local t = settings.tooltip or {}
+    into.warningColors = t.warningColors == true
     into.restrictToLevel70 =
-        settings.tooltip.restrictEnhancementMetricsToLevel70 == true
+        t.restrictEnhancementMetricsToLevel70 == true
     into.showServerRank = serverRankEnabled()
 end
 

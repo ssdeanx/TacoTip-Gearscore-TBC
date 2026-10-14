@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-10-13 - v0.8.3: Proximity world scan, range hardening, uptime timestamps
+
+- Proactive scan of nearby players added to `LibForeverInspector` via `GetNamePlates()`, throttled and range-gated per client family; 1 inspect per tick, combat-safe, fresh-cache aware. **Additive, not a replacement** — the pre-existing party/raid roster scan on the queue ticker is unchanged, and is now guarded by a regression test that runs on all five clients with `GetNamePlates` forced absent.
+- Range index centralised (`INSPECT_INTERACT_DISTANCE_INDEX`); a 3s watchdog, per-plate fault isolation and a nameplate fallback added.
+- **"Not in Range" popup fixed:** `NotifyInspect` wrapped in `pcall`; refused GUID blacklisted 10s; per-family learned range ceiling. The 5s Classic hysteresis added earlier this release was **removed** — it bypassed the distance check and caused the very error it was meant to prevent.
+- Cache timestamps switched from wall-clock `time()` to `GetTime()` uptime via a guarded `uptimeSeconds()` helper.
+- `GetInspectStats()` + `SetScanEnabled()` added and surfaced in `/tacotip diag`.
+- Harness: `detect_test.lua` gained an env-patch hook, all-five-client scan coverage, the classic range gate (recency is **not** an exemption), ticker, watchdog and `GetTime`-absent tests; `next` and varargs `xpcall` added to the mock environment; `gearscore_test.lua` gained `GetTime`.
+- 54/54 harness invocations pass. Seven behaviours verified by revert-to-fail mutation.
+- Docs synced: `.toc`, `main.lua`, `options.lua`, both READMEs, `MEMORY.md`, both `AGENTS.md`, this file, `activeContext.md`, `CHANGELOG.md`.
+
 ## 2026-10-12 - v0.8.2: Inspect regression fixes (Classic range gate, stale-not-zero cache)
 
 - `LibForeverInspector:CanInspect`: Classic family requires CanInspect AND CheckInteractDistance(unit,1); Retail/Forever keep either-signal. Pinned in `detect_test.lua`.

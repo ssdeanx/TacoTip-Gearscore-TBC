@@ -8,8 +8,8 @@
 
 --]]
 
-if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "ruRU") then return end
-_G.TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALES = _G.TACOTIP_LOCALES or {}
+local L = {
     ["Player"] = "Игрок",
     ["Pet"] = "Питомец",
     ["Target"] = "Цель",
@@ -28,9 +28,6 @@ _G.TACOTIP_LOCALE = {
     ["Drag to Move"] = "Перетащить для перемещения",
     ["Change Anchor"] = "Изменить точку прикрепления",
     ["Save Position"] = "Сохранить позицию",
-    [" the Kingslayer"] = ", свергнувший Короля",
-    ["Undead"] = "Нежить",
-    ["Unit Tooltips"] = "Подсказки существ",
     ["Class Color"] = "Цвет класса",
     ["Color class names in tooltips"] = "Окрашивать имя игрока цветом класса во всплывающей подсказке",
     ["Title"] = "Звание игрока",
@@ -40,8 +37,6 @@ _G.TACOTIP_LOCALE = {
     ["Guild Rank"] = "Звание в гильдии",
     ["Show guild rank in tooltips"] = "Отображать гильдейское звание во всплывающей подсказке",
     ["Show talents and specialization in tooltips"] = "Отображать таланты и специализацию во всплывающей подсказке",
-    ["Show player's GearScore in tooltips"] = "Отображать GearScore игрока во всплывающей подсказке",
-    ["Show player's PawnScore in tooltips (may affect performance)"] =
     "Отображать PawnScore игрока. Может влиять на производительность",
     ["requires Pawn"] = "Нужен Pawn",
     ["Show unit's target in tooltips"] = "Отображать цель существа во всплывающей подсказке",
@@ -49,7 +44,6 @@ _G.TACOTIP_LOCALE = {
     ["Show player's faction icon (Horde/Alliance) in tooltips"] =
     "Отображать значок фракции (Альянс/Орда) во всплывающей подсказке",
     ["Class Icon"] = "Значок класса",
-    ["Show player's class icon next to the faction icon in tooltips"] =
     "Отображать значок класса рядом со значком фракции во всплывающей подсказке",
     ["PVP Icon"] = "Значок PVP",
     ["Show player's pvp flag status as icon instead of text"] =
@@ -58,30 +52,19 @@ _G.TACOTIP_LOCALE = {
     ["Show unit's health bar under tooltip"] = "Отображать полосу здоровья под всплывающей подсказкой",
     ["Power Bar"] = "Полоса ресурса",
     ["Show unit's power bar under tooltip"] = "Отображать полосу ресурса под всплывающей подсказкой",
-    ["Character Frame"] = "Окно персонажа",
-    ["Show GearScore in character frame"] = "Отображать GearScore (очки экипировки) в окне персонажа",
-    ["Average iLvl"] = "Средний iLvl",
-    ["Show Average Item Level in character frame"] = "Отображать средний iLvl (уровень экипировки) в окне персонажа",
-    ["Lock Position"] = "Блокировка",
-    ["Lock GearScore and Average Item Level positions in character frame"] =
     "Заблокировать позиции GearScore (очки экипировки) и среднего iLvl (уровень экипировки) в окне персонажа",
-    ["Extra"] = "Дополнительно",
     ["Show Item Level"] = "Уровень предмета",
     ["Display item level in the tooltip for certain items."] =
     "Отображать уровень предмета (iLvl) во всплывающей подсказке для определённых предметов.",
     ["Show Item GearScore"] = "GearScore предмета",
     ["Show GearScore in item tooltips"] = "Отображать GearScore (очки экипировки) предмета во всплывающей подсказке",
     ["HunterScore"] = "Очки охотника",
-    ["Always show HunterScore in item tooltips"] = "Всегда показывать очки охотника во всплывающих подсказках предметов",
     ["Enhanced Tooltips"] = "Расширенные подсказки",
-    ["Disable In Combat"] = "Выключить в бою",
-    ["Disable gearscore & talents in combat"] = "Отключать GearScore и таланты в бою",
     ["Chat Class Colors"] = "Цвета классов в чате",
     ["Color names by class in chat windows"] = "Окрашивать имена игроков цветом класса в чатах",
     ["Instant Fade"] = "Мгновенное затухание",
     ["Fade out unit tooltips instantly"] = "Мгновенное затухание всплывающей подсказки при убирании курсора",
     ["Custom Tooltip Position"] = "Пользовательская позиция подсказки",
-    ["Set a custom position for tooltips"] = "Установить пользовательскую позицию всплывающей подсказки",
     ["Tooltip Style"] = "Стиль подсказки",
     ["FULL"] = "Полный",
     ["Always FULL"] = "Всегда полный",
@@ -93,9 +76,6 @@ _G.TACOTIP_LOCALE = {
     ["Default MINI, hold SHIFT for FULL"] = "По умолчанию мини, удерживайте Shift для полного",
     ["MINI"] = "Мини",
     ["Always MINI"] = "Всегда мини",
-    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Широкий, двойная спец., GS, средний iLvl",
-    ["Narrow, Active Spec, GearScore"] = "Узкий, текущая спец., GS",
-    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Узкий, текущая спец., GS, средний iLvl",
     ["Reset configuration"] = "Сброс настроек",
     ["Configuration has been reset to default."] = "Настройки сброшены на значения по умолчанию.",
     ["Custom tooltip position enabled."] = "Пользовательская позиция подсказки включена.",
@@ -107,9 +87,7 @@ _G.TACOTIP_LOCALE = {
     ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
     "Привязывать к курсору только в WorldFrame\nНе затрагивает рейдовые и групповые рамки",
     ["Anchor Spells to Mouse"] = "Привязка заклинаний к курсору",
-    ["Anchor spell tooltips to mouse cursor"] = "Привязать всплывающие подсказки заклинаний к курсору мыши",
     ["Show Achievement Points"] = "Очки достижений",
-    ["Show total achievement points in tooltips"] =
     "Отображать количество очков достижений игрока во всплывающей подсказке",
     ["Mover"] = "Перемещатель",
     ["TEXT_OPT_DESC"] =
@@ -208,6 +186,8 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Изменяет размер портрета, отображаемого рядом с подсказками существ.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Показывать 3D-портрет",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Использовать живую 3D-модель вместо 2D-текстуры портрета.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Инвертировать сторону портрета",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Перемещает портрет на противоположную сторону подсказки.",
     ["OPTIONS_TOOLTIP_FONT"] = "Шрифт подсказки",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Выберите шрифт для текста подсказки. Шрифты SharedMedia из пакетов вроде Merfin Plus автоматически добавляются при наличии.",
@@ -253,7 +233,7 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Скрывать данные осмотра в бою",
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Отключает добавление талантов и информации в стиле GearScore в подсказки игроков, пока вы находитесь в бою.",
-    ["OPTIONS_ACHIEVEMENT_DESC"] = "Доступно только на клиентах Wrath Classic, где существуют данные достижений.",
+    ["OPTIONS_ACHIEVEMENT_DESC"] = "Отображать очки достижений игрока во всплывающих подсказках и данных персонажа.",
     ["FORMAT_GUILD_RANK_1"] = "%s %s",
     ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
     ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
@@ -312,9 +292,9 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_MAX_WIDTH_DESC"] = "Устанавливает максимальную ширину подсказки. 0 = без ограничений.",
     ["Realm"] = "Сервер",
     ["OPTIONS_SHAMAN_BLUE"] = "Синий Шаман",
-    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Использовать синий цвет вместо розового для класса Шаман в Classic Era / SoD.",
+    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Использовать синий цвет вместо розового для класса Шаман.",
     ["OPTIONS_OFFSET_EDIT_DESC"] = "Введите точное смещение в пикселях и нажмите Enter для применения.",
     ["OPTIONS_OFFSET_SLIDER_DESC"] = "Перетащите для точной настройки смещения. Численное поле синхронизируется.",
-    ["RANK_TITLE"] = "Чемпион",
-    ["REALM"] = "Сервер",
 }
+
+_G.TACOTIP_LOCALES["ruRU"] = L

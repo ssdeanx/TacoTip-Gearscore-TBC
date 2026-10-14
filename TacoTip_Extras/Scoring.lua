@@ -446,7 +446,7 @@ end
 
 local function calculateBaseItem(item, classToken, classBlocker, equipLoc, equipLocBlocker)
     local blocker = mergeBlocker(classBlocker, equipLocBlocker)
-    local slotPolicy = SLOT_POLICIES[equipLoc]
+    local slotPolicy = SLOT_POLICIES[(type(equipLoc) == "string" and string.upper(equipLoc)) or equipLoc]
     local nativeLink, linkBlocker = readCell(
         item.nativeLink,
         "native-link",
@@ -507,7 +507,7 @@ local function readPotentialEnchantEligibility(item, equipLoc, equipLocBlocker)
         return nil, equipLocBlocker
     end
 
-    local slotPolicy = SLOT_POLICIES[equipLoc]
+    local slotPolicy = SLOT_POLICIES[(type(equipLoc) == "string" and string.upper(equipLoc)) or equipLoc]
     if not slotPolicy or slotPolicy.potentialEnchant == false then
         return false, nil
     end
@@ -899,6 +899,74 @@ function Scoring.Evaluate(revision, policy)
     gateItemEnhancementMetrics(result, socketCapabilityBlocker, itemPolicyBlocker)
 
     return result
+end
+
+-- ---------------------------------------------------------------------------
+-- Quality colour
+-- ---------------------------------------------------------------------------
+--
+-- RankBrowser has called Scoring.QualityColor(score) since it was written and
+-- the function was NEVER DEFINED here. `type(scoring.QualityColor)` was
+-- therefore never "function", every call fell through the guard, and every
+-- GearScore and iLvl value in the leaderboard rendered WHITE. A missing
+-- function that a caller guards for fails silently by construction -- the guard
+-- the caller added to be safe is what hid it.
+--
+-- The argument is a FRACTION in 0..1, not a raw score, because a raw score has
+-- no absolute meaning across item levels and expansions: 450 is excellent on
+-- Classic Era and mediocre on Retail. A fraction is comparable everywhere, and
+-- callers make one from either a score divided by the best score in the current
+-- view, or from a rank divided by the size of the pool.
+--
+-- The bands follow item-quality colours because they are the vocabulary every
+-- player already reads: purple is best, then blue, green, white, grey.
+local QUALITY_BANDS = {
+    { threshold = 0.99, r = 0.64, g = 0.21, b = 0.93 }, -- top 1%   epic
+    { threshold = 0.95, r = 0.00, g = 0.44, b = 0.87 }, -- top 5%   rare
+    { threshold = 0.90, r = 0.12, g = 1.00, b = 0.00 }, -- top 10%  uncommon
+    { threshold = 0.75, r = 1.00, g = 1.00, b = 1.00 }, -- top 25%  common
+}
+
+-- Returns r, g, b. Grey when the fraction is unknown or below every band, so a
+-- caller with no data gets the muted colour rather than a wrong bright one.
+function Scoring.QualityColor(fraction)
+    local value = tonumber(fraction)
+    if value == nil then
+        return 0.62, 0.62, 0.62
+    end
+    if value > 1 then
+        value = 1
+    elseif value < 0 then
+        value = 0
+    end
+    for index = 1, #QUALITY_BANDS do
+        local band = QUALITY_BANDS[index]
+        if value >= band.threshold then
+            return band.r, band.g, band.b
+        end
+    end
+    return 0.62, 0.62, 0.62
+end
+
+-- Fraction helpers, so every caller computes "how good is this" the same way.
+function Scoring.ScoreFraction(value, best)
+    local score, top = tonumber(value), tonumber(best)
+    if not score or not top or top <= 0 or score <= 0 then
+        return nil
+    end
+    return score / top
+end
+
+-- Rank 1 of `total` is a 1.0 fraction; the last place is just above 0.
+function Scoring.RankFraction(rank, total)
+    local place, count = tonumber(rank), tonumber(total)
+    if not place or not count or count <= 0 or place <= 0 then
+        return nil
+    end
+    if place > count then
+        place = count
+    end
+    return (count - place + 1) / count
 end
 
 return Scoring

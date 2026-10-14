@@ -3,10 +3,22 @@
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1741092
-## Version: 1.2.0
+## Version: 1.2.1
 ## Dependencies: TacoTip
 ## SavedVariables: TacoTipExtrasDB
 ## IconTexture: Interface\AddOns\TacoTip_Extras\tt-2.tga
+
+Locale/deDE.lua
+Locale/esES.lua
+Locale/esMX.lua
+Locale/frFR.lua
+Locale/itIT.lua
+Locale/koKR.lua
+Locale/ptBR.lua
+Locale/ruRU.lua
+Locale/zhCN.lua
+Locale/zhTW.lua
+Locale/enUS.lua
 
 Core.lua
 Scoring.lua

@@ -24,6 +24,18 @@
 
 ---
 
+## 2b. Offline Harness Fidelity Rules (`Tests/harness/`)
+
+Learned the hard way in 0.8.3. The offline harness runs stock `lua5.1`, which is **not** the interpreter WoW ships. Three divergences already produced green tests that asserted nothing:
+
+1. **`xpcall` varargs.** WoW's Lua accepts `xpcall(f, handler, ...)`; stock 5.1 accepts exactly two arguments. Blizzard's own FrameXML depends on it and so does `CallbackHandler-1.0` v7 `Dispatch`, which passes the event name and payload through it. `detect_test.lua` now shims it (`xpcallWithArgs`) so handlers receive their arguments. Without the shim every handler gets **zero** arguments.
+2. **The wiped global environment must list every standard the bundled libs capture.** `run()` wipes all of `_G` and restores a fixed list. `next` was missing, so `CallbackHandler` captured `local next = nil` and **every `callbacks:Fire()` raised inside `Dispatch`** — invisibly, because no test fired a callback until 0.8.3.
+3. **Frame scripts take `self` first.** `function(self, event, ...)`. Calling `handler("INSPECT_READY", guid)` puts the event name in the `self` slot, the branch never runs, and the assertion passes because nothing happened. Always pass the frame.
+
+General rule: a harness that never exercises a code path cannot report on it, and `baseEnv`'s `CreateFrame` originally discarded `SetScript` handlers — making the whole event handler unreachable. Tests that need an event must supply a `CreateFrame` that retains scripts.
+
+---
+
 ## 3. Mock Teardown Discipline
 
 In tests, every global mock (e.g. `GetGuildInfo`, `UnitExists`, `GameTooltip.GetUnit`) must be cleaned up in a guaranteed teardown (`pcall` wrapper with `ClearReplaces()`) so subsequent test runs are never polluted.

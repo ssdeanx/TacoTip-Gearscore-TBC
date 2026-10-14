@@ -6,8 +6,8 @@
 
 --]]
 
-if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "esMX") then return end
-_G.TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALES = _G.TACOTIP_LOCALES or {}
+local L = {
     ["Player"] = "Jugador",
     ["Pet"] = "Mascota",
     ["Target"] = "Objetivo",
@@ -26,9 +26,6 @@ _G.TACOTIP_LOCALE = {
     ["Drag to Move"] = "Arrastra para mover",
     ["Change Anchor"] = "Cambiar ancla",
     ["Save Position"] = "Guardar posición",
-    [" the Kingslayer"] = " el Matarreyes",
-    ["Undead"] = "No-muerto",
-    ["Unit Tooltips"] = "Descripciones emergentes de unidad",
     ["Class Color"] = "Color de clase",
     ["Color class names in tooltips"] = "Colorear los nombres por clase en las descripciones emergentes",
     ["Title"] = "Título",
@@ -39,8 +36,6 @@ _G.TACOTIP_LOCALE = {
     ["Show guild rank in tooltips"] = "Mostrar el rango de hermandad en las descripciones emergentes",
     ["Show talents and specialization in tooltips"] =
     "Mostrar talentos y especialización en las descripciones emergentes",
-    ["Show player's GearScore in tooltips"] = "Mostrar el GearScore del jugador en las descripciones emergentes",
-    ["Show player's PawnScore in tooltips (may affect performance)"] =
     "Mostrar el PawnScore del jugador en las descripciones emergentes (puede afectar el rendimiento)",
     ["requires Pawn"] = "Requiere Pawn",
     ["Show unit's target in tooltips"] = "Mostrar el objetivo de la unidad en las descripciones emergentes",
@@ -48,7 +43,6 @@ _G.TACOTIP_LOCALE = {
     ["Show player's faction icon (Horde/Alliance) in tooltips"] =
     "Mostrar el icono de facción del jugador (Horda/Alianza) en las descripciones emergentes",
     ["Class Icon"] = "Icono de clase",
-    ["Show player's class icon next to the faction icon in tooltips"] =
     "Mostrar el icono de clase del jugador junto al icono de facción en las descripciones emergentes",
     ["PVP Icon"] = "Icono JcJ",
     ["Show player's pvp flag status as icon instead of text"] =
@@ -58,31 +52,20 @@ _G.TACOTIP_LOCALE = {
     "Mostrar la barra de salud de la unidad debajo de la descripción emergente",
     ["Power Bar"] = "Barra de poder",
     ["Show unit's power bar under tooltip"] = "Mostrar la barra de poder de la unidad debajo de la descripción emergente",
-    ["Character Frame"] = "Marco de personaje",
-    ["Show GearScore in character frame"] = "Mostrar el GearScore en el marco de personaje",
-    ["Average iLvl"] = "iLvl promedio",
-    ["Show Average Item Level in character frame"] = "Mostrar el nivel de objeto promedio en el marco de personaje",
-    ["Lock Position"] = "Bloquear posición",
-    ["Lock GearScore and Average Item Level positions in character frame"] =
     "Bloquear las posiciones del GearScore y del nivel de objeto promedio en el marco de personaje",
-    ["Extra"] = "Extra",
     ["Show Item Level"] = "Mostrar nivel de objeto",
     ["Display item level in the tooltip for certain items."] =
     "Mostrar el nivel de objeto en la descripción emergente para ciertos objetos.",
     ["Show Item GearScore"] = "Mostrar GearScore del objeto",
     ["Show GearScore in item tooltips"] = "Mostrar GearScore en las descripciones emergentes de los objetos",
     ["HunterScore"] = "Puntuación del cazador",
-    ["Always show HunterScore in item tooltips"] =
     "Mostrar siempre la puntuación del cazador en las descripciones emergentes de los objetos",
     ["Enhanced Tooltips"] = "Descripciones mejoradas",
-    ["Disable In Combat"] = "Desactivar en combate",
-    ["Disable gearscore & talents in combat"] = "Desactivar el GearScore y los talentos en combate",
     ["Chat Class Colors"] = "Colores de clase en el chat",
     ["Color names by class in chat windows"] = "Colorear los nombres por clase en las ventanas de chat",
     ["Instant Fade"] = "Desvanecimiento instantáneo",
     ["Fade out unit tooltips instantly"] = "Desvanecer instantáneamente las descripciones emergentes de unidad",
     ["Custom Tooltip Position"] = "Posición personalizada de la descripción emergente",
-    ["Set a custom position for tooltips"] = "Establecer una posición personalizada para las descripciones emergentes",
     ["Tooltip Style"] = "Estilo de la descripción emergente",
     ["FULL"] = "COMPLETO",
     ["Always FULL"] = "Siempre COMPLETO",
@@ -94,9 +77,6 @@ _G.TACOTIP_LOCALE = {
     ["Default MINI, hold SHIFT for FULL"] = "Predeterminado MINI, mantén SHIFT para COMPLETO",
     ["MINI"] = "MINI",
     ["Always MINI"] = "Siempre MINI",
-    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Ancho, doble especialización, GearScore, iLvl promedio",
-    ["Narrow, Active Spec, GearScore"] = "Estrecho, especialización activa, GearScore",
-    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Estrecho, especialización activa, GearScore, iLvl promedio",
     ["Reset configuration"] = "Restablecer configuración",
     ["Configuration has been reset to default."] = "La configuración se ha restablecido a los valores predeterminados.",
     ["Custom tooltip position enabled."] = "Posición personalizada de la descripción emergente activada.",
@@ -108,9 +88,7 @@ _G.TACOTIP_LOCALE = {
     ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
     "Anclar al mouse solo en WorldFrame\nOmitir marcos de banda / grupo",
     ["Anchor Spells to Mouse"] = "Anclar hechizos al mouse",
-    ["Anchor spell tooltips to mouse cursor"] = "Anclar las descripciones emergentes de hechizos al cursor del mouse",
     ["Show Achievement Points"] = "Mostrar puntos de logro",
-    ["Show total achievement points in tooltips"] = "Mostrar el total de puntos de logro en las descripciones emergentes",
     ["Mover"] = "Control de movimiento",
     ["TEXT_OPT_DESC"] =
     "Mejores descripciones para jugadores - colores de clase, talentos/especialización,\nGearScore, rangos de hermandad",
@@ -208,6 +186,8 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Escala el retrato que se muestra junto a los tooltips de unidad.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostrar retrato 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa un modelo 3D en vivo en lugar de una textura de retrato 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Invertir lado del retrato",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Mueve el retrato al lado opuesto del tooltip.",
     ["OPTIONS_TOOLTIP_FONT"] = "Fuente del tooltip",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Elige la fuente usada por el texto del tooltip. Las fuentes SharedMedia de paquetes como Merfin Plus se incluyen automáticamente cuando están disponibles.",
@@ -253,7 +233,7 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Ocultar detalles de inspección en combate",
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Omite los añadidos de talentos y estilo GearScore de TacoTip para los jugadores mientras estás en combate.",
-    ["OPTIONS_ACHIEVEMENT_DESC"] = "Solo disponible en clientes de Wrath Classic donde existan datos de logros.",
+    ["OPTIONS_ACHIEVEMENT_DESC"] = "Muestra puntos de logros del jugador en descripciones emergentes e información de personaje.",
     ["FORMAT_GUILD_RANK_1"] = "%s %s",
     ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
     ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
@@ -315,10 +295,10 @@ _G.TACOTIP_LOCALE = {
     "Establece un ancho máximo para la descripción emergente. Establece en 0 para sin límite.",
     ["Realm"] = "Reino",
     ["OPTIONS_SHAMAN_BLUE"] = "Chamán Azul",
-    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Usa azul en lugar de rosa para el color de clase del chamán en Era Clásica / SoD.",
+    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Usa azul en lugar de rosa para el color de clase del chamán.",
     ["OPTIONS_OFFSET_EDIT_DESC"] = "Escribe un desplazamiento de píxeles preciso y presiona Enter para aplicarlo.",
     ["OPTIONS_OFFSET_SLIDER_DESC"] =
     "Arrastra para ajustar este desplazamiento. El campo numérico se mantendrá sincronizado.",
-    ["RANK_TITLE"] = "Campeón",
-    ["REALM"] = "Reino",
 }
+
+_G.TACOTIP_LOCALES["esMX"] = L

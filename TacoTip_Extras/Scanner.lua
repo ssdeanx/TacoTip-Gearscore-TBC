@@ -911,6 +911,51 @@ function Scanner.GetCurrent()
     return currentState
 end
 
+-- Scan progress, for the status bars.
+--
+-- The signal already existed and was simply not published: transition() records
+-- `pendingItemCount` on every state change, and the status says whether a scan
+-- is running. Two callers (the leaderboard header and the Options page) need the
+-- same shape, so it is computed once here rather than twice from internals.
+--
+-- `REQUIRED_SLOTS` is the denominator, not the number of pending ITEM ids: one
+-- slot resolves to one item, so counting items against slots is the same scale.
+-- The completeness rule matters -- a scan with nothing pending is COMPLETE even
+-- if the status has not flipped yet, because otherwise the bar sits at 99% and
+-- looks stuck.
+function Scanner.GetProgress()
+    local state = currentState or {}
+    local status = state.status or "idle"
+    local pending = tonumber(state.pendingItemCount) or 0
+    local total = #REQUIRED_SLOTS
+    if total <= 0 then
+        total = 1
+    end
+
+    local done = total - pending
+    if done < 0 then done = 0 end
+    if done > total then done = total end
+
+    local percent
+    if pending == 0 and (status == "complete" or status == "unavailable") then
+        percent = 1
+    elseif status == "idle" then
+        percent = 0
+    else
+        percent = done / total
+    end
+
+    return {
+        status = status,
+        generation = state.generation or 0,
+        pending = pending,
+        total = total,
+        done = done,
+        percent = percent,
+        active = (status == "pending"),
+    }
+end
+
 function Scanner.Subscribe(listener)
     if type(listener) ~= "function" then
         return false

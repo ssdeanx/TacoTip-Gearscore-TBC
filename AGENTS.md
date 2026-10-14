@@ -65,7 +65,7 @@
 
 ## Commands & Workflow
 
-- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, and `AGENTS.md` simultaneously. Current version: `0.8.2`.
+- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, and `AGENTS.md` simultaneously. Current version: `0.8.3`.
 
   The live addon is `TacoTip_Forever/`; the repo root holds a stale 0.7.7-era copy (`gearscore.lua`, `main.lua`, `options.lua`, `TacoTip.toc`, `TacoTip_Tests.lua`, and a root `TacoTip.toc` still listing the deprecated interface `38001`). It is **not** what ships. Bump the `TacoTip_Forever/` copies only; do not "helpfully sync" the dead copy. Also keep `memory-bank/activeContext.md` current — root `AGENTS.md` sat at `0.7.7` for two releases because only the `TacoTip_Forever/` copies were bumped.
 - **Testing:** Add test cases into `TacoTip_Tests.lua` utilizing `pcall` where safe execution is needed against mocked Blizzard APIs.
@@ -76,7 +76,7 @@
     3. Relevant rule packs under `.omg/rules/*.md`
     4. `memory-bank/*.md` (`activeContext.md`, `progress.md`, `systemPatterns.md`)
     5. `README.md` and `CHANGELOG.md`
-  - Verify that all documentation accurately reflects real code parameters (e.g. 3D portrait dimensions `66x88`, default border edge size `14px`, 263 locale keys, interface IDs `11509`, `20506`, `38001`).
+  - Verify that all documentation accurately reflects real code parameters (e.g. 3D portrait dimensions `66x88`, default border edge size `14px`, 239 locale keys, interface IDs `11509`, `20506`, `38001`).
 
 ## API Research & Verification
 

@@ -1,31 +1,22 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.7.7"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.3"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
 local tinsert = tinsert or table.insert
 
-local interfaceVersion = select(4, GetBuildInfo()) or 0
-local clientBuildMajor = math.floor(interfaceVersion / 10000)
--- load only on the Classic-era client families TacoTip supports (Vanilla/TBC/Wrath)
-if (clientBuildMajor < 1 or clientBuildMajor > 3) then
-    return
-end
 
-assert(LibStub, "TacoTip requires LibStub")
-assert(LibStub:GetLibrary("LibClassicInspector", true), "TacoTip requires LibClassicInspector")
-assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-1.0")
---assert(LibStub:GetLibrary("LibClassicGearScore", true), "TacoTip requires LibClassicGearScore")
 
--- SoD-era Pawn does not expose PawnClassicLastUpdatedVersion, so the old
--- version-only gate disabled Pawn on SoD.  Also accept Pawn's public API.
 local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and
     type(_G.PawnGetScaleColor) == "function"
-local isPawnLoaded = (_G.PawnClassicLastUpdatedVersion and _G.PawnClassicLastUpdatedVersion >= 2.0538) or pawnApiPresent
+local pawnClassicVer = rawget(_G, "PawnClassicLastUpdatedVersion")
+local pawnRetailVer = rawget(_G, "PawnLastUpdatedVersion")
+local isPawnLoaded = (pawnClassicVer and pawnClassicVer >= 2.0538) or (pawnRetailVer and pawnRetailVer >= 2.0) or
+    pawnApiPresent
 
 local Detours = LibStub("LibDetours-1.0")
-local CI = LibStub("LibClassicInspector")
+local CI = LibStub("LibForeverInspector")
 
 local L = _G.TACOTIP_LOCALE
 local TT = _G[addOnName]
@@ -56,75 +47,87 @@ local function clampFrameLevel(level)
     return math.floor(level + 0.5)
 end
 
+-- File-local so SafeSanitizeConfig and the options Refresh can read single
+-- fields without allocating a 60-key table per call. GetDefaults hands out a
+-- shallow COPY: resetCfg assigns its result straight to TacoTipConfig and then
+-- writes conf_version into it, so a shared table would let a reset mutate the
+-- defaults themselves.
+local DEFAULTS = {
+    color_class = true,
+    show_titles = true,
+    show_guild_name = true,
+    show_guild_rank = true,
+    show_talents = true,
+    show_gs_player = true,
+    show_gs_character = true,
+    show_gs_items = true,
+    show_gs_items_hs = false,
+    show_avg_ilvl = true,
+    hide_in_combat = false,
+    show_item_level = true,
+    tip_style = 2,
+    show_target = true,
+    show_pawn_player = true,
+    show_team = true,
+    show_class_icon = true,
+    class_icon_size = 20,
+    show_pvp_icon = false,
+    guild_rank_alt_style = true,
+    show_hp_bar = true,
+    show_power_bar = false,
+    shaman_blue = true,
+    tooltip_border_use_class = true,
+    tooltip_background_use_class = false,
+    tooltip_border_color_r = 1,
+    tooltip_border_color_g = 1,
+    tooltip_border_color_b = 1,
+    tooltip_border_alpha = 0.85,
+    tooltip_background_color_r = 0,
+    tooltip_background_color_g = 0,
+    tooltip_background_color_b = 0,
+    tooltip_background_alpha = 0.85,
+    tooltip_background_texture = "Interface\\Tooltips\\UI-Tooltip-Background",
+    tooltip_border_texture = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tooltip_border_edge_size = 18,
+    tooltip_portrait = true,
+    tooltip_portrait_scale = 1,
+    tooltip_portrait_3d = true,
+    tooltip_portrait_invert_side = false,
+    tooltip_portrait_zoom = 0.7,
+    tooltip_font = "Fonts\\FRIZQT__.TTF",
+    tooltip_font_size = 12,
+    tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
+    instant_fade = false,
+    anchor_mouse = false,
+    anchor_mouse_world = true,
+    anchor_mouse_spells = false,
+    inspect_gs_offset_x = 0,
+    inspect_gs_offset_y = 0,
+    inspect_ilvl_offset_x = 0,
+    inspect_ilvl_offset_y = 0,
+    character_gs_offset_x = 0,
+    character_gs_offset_y = 0,
+    character_ilvl_offset_x = 0,
+    character_ilvl_offset_y = 0,
+    locale_override = nil,
+    unlock_info_position = false,
+    show_achievement_points = false,
+    show_honor_rank = false,
+    show_ilvl_inline = false,
+    show_realm = false,
+    show_role_icon = true,
+    show_separators = false,
+    tooltip_delay = 0,
+    tooltip_max_width = 0,
+    custom_anchor = "TOPLEFT",
+}
+
 function TT:GetDefaults()
-    return {
-        color_class = true,
-        show_titles = true,
-        show_guild_name = true,
-        show_guild_rank = true,
-        show_talents = true,
-        show_gs_player = true,
-        show_gs_character = true,
-        show_gs_items = true,
-        show_gs_items_hs = false,
-        show_avg_ilvl = true,
-        hide_in_combat = false,
-        show_item_level = true,
-        tip_style = 2,
-        show_target = true,
-        show_pawn_player = true,
-        show_team = true,
-        show_class_icon = true,
-        class_icon_size = 20,
-        show_pvp_icon = false,
-        guild_rank_alt_style = true,
-        show_hp_bar = true,
-        show_power_bar = false,
-        shaman_blue = true,
-        tooltip_border_use_class = true,
-        tooltip_background_use_class = false,
-        tooltip_border_color_r = 1,
-        tooltip_border_color_g = 1,
-        tooltip_border_color_b = 1,
-        tooltip_border_alpha = 0.85,
-        tooltip_background_color_r = 0,
-        tooltip_background_color_g = 0,
-        tooltip_background_color_b = 0,
-        tooltip_background_alpha = 0.85,
-        tooltip_background_texture = "Interface\\Tooltips\\UI-Tooltip-Background",
-        tooltip_border_texture = "Tooltip enlarged",
-        tooltip_border_edge_size = 14,
-        tooltip_portrait = true,
-        tooltip_portrait_scale = 1,
-        tooltip_portrait_3d = true,
-        tooltip_portrait_zoom = 0.7,
-        tooltip_font = "Fonts\\FRIZQT__.TTF",
-        tooltip_font_size = 12,
-        tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
-        instant_fade = false,
-        anchor_mouse = false,
-        anchor_mouse_world = true,
-        anchor_mouse_spells = false,
-        inspect_gs_offset_x = 0,
-        inspect_gs_offset_y = 0,
-        inspect_ilvl_offset_x = 0,
-        inspect_ilvl_offset_y = 0,
-        character_gs_offset_x = 0,
-        character_gs_offset_y = 0,
-        character_ilvl_offset_x = 0,
-        character_ilvl_offset_y = 0,
-        locale_override = nil,
-        unlock_info_position = false,
-        show_achievement_points = false,
-        show_honor_rank = false,
-        show_ilvl_inline = false,
-        show_realm = false,
-        show_role_icon = true,
-        show_separators = false,
-        tooltip_delay = 0,
-        tooltip_max_width = 0,
-        custom_anchor = "TOPLEFT",
-    }
+    local copy = {}
+    for k, v in pairs(DEFAULTS) do
+        copy[k] = v
+    end
+    return copy
 end
 
 function TT:ApplyConfigDefaults(config)
@@ -151,7 +154,7 @@ function TT:SafeSanitizeConfig(config)
         return
     end
 
-    local defaults = self:GetDefaults()
+    local defaults = DEFAULTS
 
     -- Type-check known boolean keys and reset to default if they are not
     -- actually a boolean.  WoW's saved-variable system sometimes serialises
@@ -164,6 +167,7 @@ function TT:SafeSanitizeConfig(config)
         "show_class_icon", "show_pvp_icon", "guild_rank_alt_style",
         "show_hp_bar", "show_power_bar", "shaman_blue", "tooltip_border_use_class",
         "tooltip_background_use_class", "tooltip_portrait", "tooltip_portrait_3d",
+        "tooltip_portrait_invert_side",
         "instant_fade", "anchor_mouse", "anchor_mouse_world",
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_honor_rank", "show_ilvl_inline", "show_realm",
@@ -209,6 +213,9 @@ function TT:SafeSanitizeConfig(config)
     end
     if (type(config.tooltip_max_width) ~= "number" or config.tooltip_max_width < 0 or config.tooltip_max_width > 500) then
         config.tooltip_max_width = defaults.tooltip_max_width
+    end
+    if (config.tooltip_border_texture == "Tooltip enlarged" or config.tooltip_border_texture == nil) then
+        config.tooltip_border_texture = defaults.tooltip_border_texture
     end
     -- Character/inspect overlay offsets: typed edit boxes historically wrote
     -- unclamped integers; repair out-of-range or corrupt saved values to the
@@ -286,6 +293,15 @@ local function resetCfg()
     if (hadConfig) then
         TacoTipConfig.conf_version = addOnVersion
     end
+    -- Invalidated here, at the choke point, because the two reset routes do NOT
+    -- agree: the reset button goes on to call RefreshOptionsUI -> modernGetConfig
+    -- (which invalidates), while /tacotip reset only refreshes the root page. So
+    -- the memoised font/bar/background/border stayed applied for the rest of the
+    -- session after a slash-command reset.
+    if (TT.InvalidateResolvedMediaCache) then
+        TT:InvalidateResolvedMediaCache()
+    end
+
     if (PersonalGearScore and PersonalGearScore.RefreshPosition) then
         PersonalGearScore:RefreshPosition()
     end
@@ -332,7 +348,16 @@ local function showTooltipMover()
     if (TacoTip_CustomPosEnable) then
         TacoTip_CustomPosEnable(true)
     else
-        print("|cff59f0dcTacoTip:|r Tooltip mover is not ready yet. Try /reload.")
+        -- This is not a timing problem. TacoTip_CustomPosEnable is defined at the
+        -- very end of main.lua, the last file in the toc, so it can only be
+        -- missing because loading raised an error before reaching it. Telling the
+        -- user to /reload would be advice that cannot possibly help, so name the
+        -- actual stage that was reached instead.
+        print("|cff59f0dcTacoTip:|r Tooltip mover unavailable: main.lua stopped loading.")
+        if (TT and TT.LOAD_STAGE) then
+            print("|cff59f0dcTacoTip:|r Last stage reached: " .. tostring(TT.LOAD_STAGE))
+        end
+        print("|cff59f0dcTacoTip:|r Run /tacotip diag for the full report.")
     end
 end
 
@@ -400,6 +425,18 @@ local function registerSlashCommands()
             else
                 print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_ANCHOR"])
             end
+        elseif (cmd == "diag" or cmd == "diagnostics") then
+            -- Load report. Exists because the mover and the tooltip pipeline are
+            -- both defined at the very end of main.lua, so a single load-time
+            -- error disables them while leaving the options frame fully
+            -- functional -- a state that is otherwise impossible to explain from
+            -- the UI. See TT:PrintDiagnostics in main.lua.
+            if (TT and TT.PrintDiagnostics) then
+                TT:PrintDiagnostics()
+            else
+                print("|cff59f0dcTacoTip:|r main.lua did not finish loading, so diagnostics are unavailable.")
+                print("|cff59f0dcTacoTip:|r Enable a Lua error handler (BugSack/Swatter) and /reload.")
+            end
         else
             if (openOptionsPanel) then
                 openOptionsPanel()
@@ -414,7 +451,7 @@ registerSlashCommands()
 
 -- main frame
 optionsFrame = CreateFrame("Frame", "TacoTipOptions")
-optionsFrame.name = addOnTitle or "TacoTip Gearscore TBC"
+optionsFrame.name = addOnTitle or "TacoTip"
 optionsFrame:SetSize(640, 400)
 local optionsPages = {
     root = optionsFrame,
@@ -443,8 +480,15 @@ local function ensureSettingsUI()
         return true
     end
     if (LoadAddOn) then
+        -- "Blizzard_Settings" / "Blizzard_SettingsDefinitions" only exist on
+        -- Retail. The Classic clients (and Forever) ship Blizzard_Settings_Shared
+        -- and Blizzard_SettingsDefinitions_Shared instead, and all of these are
+        -- already non-LoadOnDemand, so this is belt-and-braces rather than a
+        -- hard requirement.
         pcall(LoadAddOn, "Blizzard_Settings")
+        pcall(LoadAddOn, "Blizzard_Settings_Shared")
         pcall(LoadAddOn, "Blizzard_SettingsDefinitions")
+        pcall(LoadAddOn, "Blizzard_SettingsDefinitions_Shared")
     end
     return _G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory
 end
@@ -564,7 +608,6 @@ openOptionsPanel = function()
             pcall(_G.InterfaceOptionsFrame_Show)
         end
         pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
-        pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
         return
     end
     print("|cff59f0dcTacoTip:|r Options panel is unavailable on this client. Use /tacotip custom to move the tooltip.")
@@ -664,13 +707,31 @@ local function sortMediaChoices(choices)
 end
 
 local function buildTexturePreviewText(texturePath, label)
-    if (not texturePath or texturePath == "" or texturePath == "Interface\\None") then
+    if (not texturePath or texturePath == "") then
         return label
     end
     return string.format("|T%s:132:14:0:0|t %s", texturePath, label)
 end
 
+-- Choice lists are memoised alongside the resolved values. Only the resolved
+-- values used to be, so every options-panel Refresh -- fired by ~16 different
+-- controls, and by every hover in the Tooltips page -- reallocated ~207 tables
+-- and re-sorted four lists. Safe to hand out the SAME instance: the consumers
+-- (dropDown:SetValues, SetValue, toggleMediaPicker) only replace or read the
+-- reference, and a SharedMedia registration invalidates through the same call.
+local cachedFontChoices, cachedBarChoices, cachedBackgroundChoices, cachedBorderChoices
+
+local function invalidateCachedChoiceLists()
+    cachedFontChoices = nil
+    cachedBarChoices = nil
+    cachedBackgroundChoices = nil
+    cachedBorderChoices = nil
+end
+
 function TT:GetTooltipFontChoices()
+    if (cachedFontChoices) then
+        return cachedFontChoices
+    end
     local media = getSharedMediaLibrary()
     local seen = {}
     local choices = {}
@@ -699,10 +760,14 @@ function TT:GetTooltipFontChoices()
         end
     end
 
-    return sortMediaChoices(choices)
+    cachedFontChoices = sortMediaChoices(choices)
+    return cachedFontChoices
 end
 
 function TT:GetTooltipStatusBarTextureChoices()
+    if (cachedBarChoices) then
+        return cachedBarChoices
+    end
     local media = getSharedMediaLibrary()
     local seen = {}
     local choices = {}
@@ -723,10 +788,14 @@ function TT:GetTooltipStatusBarTextureChoices()
         end
     end
 
-    return sortMediaChoices(choices)
+    cachedBarChoices = sortMediaChoices(choices)
+    return cachedBarChoices
 end
 
 function TT:GetTooltipBackgroundChoices()
+    if (cachedBackgroundChoices) then
+        return cachedBackgroundChoices
+    end
     local media = getSharedMediaLibrary()
     local seen = {}
     local choices = {}
@@ -747,18 +816,31 @@ function TT:GetTooltipBackgroundChoices()
         end
     end
 
-    return sortMediaChoices(choices)
+    cachedBackgroundChoices = sortMediaChoices(choices)
+    return cachedBackgroundChoices
 end
 
 function TT:GetTooltipBorderChoices()
+    if (cachedBorderChoices) then
+        return cachedBorderChoices
+    end
     local media = getSharedMediaLibrary()
     local seen = {}
     local choices = {}
 
     for _, entry in ipairs(TT.builtinTooltipBorders) do
         seen[entry.value] = true
+        -- edgeSize is carried per entry. Verified tooltip borders are not all the
+        -- same size -- UI-Tooltip-Border is 128x16 (slices at 16) while the themed
+        -- Azerite / Corrupted / Maw borders are 256x32 (slices at 32) -- so one
+        -- global edge size cannot draw all of them correctly.
         table.insert(choices,
-            { value = entry.value, text = entry.text, menuText = buildTexturePreviewText(entry.value, entry.text) })
+            {
+                value = entry.value,
+                text = entry.text,
+                edgeSize = entry.edgeSize,
+                menuText = buildTexturePreviewText(entry.value, entry.text)
+            })
     end
 
     if (media and media.HashTable) then
@@ -771,7 +853,8 @@ function TT:GetTooltipBorderChoices()
         end
     end
 
-    return sortMediaChoices(choices)
+    cachedBorderChoices = sortMediaChoices(choices)
+    return cachedBorderChoices
 end
 
 local function resolveConfiguredMediaValue(choices, configuredValue, fallbackValue)
@@ -790,11 +873,33 @@ local cachedResolvedBar = nil
 local cachedResolvedBackground = nil
 local cachedResolvedBorder = nil
 
-function TT:InvalidateResolvedMediaCache()
+-- The declared edge size is a property of the border CHOICE, not of the player's
+-- config, so it is cached against the resolved border path. It has to be: the
+-- resolver is called from the backdrop signature check on every mouseover, and
+-- an uncached lookup rebuilt and re-sorted the whole border list each time --
+-- ~110 allocations per hover, on the frame the player is waiting for.
+local cachedDeclaredEdgeSize, cachedDeclaredEdgeSizeFor = nil, nil
+
+-- The resolved values depend on TacoTipConfig, so they are cleared by every
+-- options interaction.
+function TT:InvalidateResolvedTooltipValues()
     cachedResolvedFont = nil
     cachedResolvedBar = nil
     cachedResolvedBackground = nil
     cachedResolvedBorder = nil
+    cachedDeclaredEdgeSize = nil
+    cachedDeclaredEdgeSizeFor = nil
+end
+
+-- The FULL clear, for the one thing the choice lists actually depend on: a new
+-- SharedMedia registration, which main.lua's RegisterCallback routes here. An
+-- options interaction must NOT reach this -- the lists are derived from the
+-- builtin tables and the media registry, neither of which changes when the
+-- player moves a slider, so clearing them per interaction would rebuild and
+-- re-sort all four lists on every click for nothing.
+function TT:InvalidateResolvedMediaCache()
+    TT:InvalidateResolvedTooltipValues()
+    invalidateCachedChoiceLists()
 end
 
 function TT:GetResolvedTooltipFont()
@@ -828,9 +933,61 @@ function TT:GetResolvedTooltipBorder()
     if (not cachedResolvedBorder) then
         cachedResolvedBorder = resolveConfiguredMediaValue(self:GetTooltipBorderChoices(),
             TacoTipConfig and TacoTipConfig.tooltip_border_texture,
-            "Interface\\Tooltips\\UI-Tooltip-Border")
+            (TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder())
+            or "Interface\\Tooltips\\UI-Tooltip-Border")
     end
     return cachedResolvedBorder
+end
+
+-- The edge size to actually draw with. A choice may declare its own (the themed
+-- tooltip borders are 256x32 and need 32); otherwise the player's own setting is
+-- used. Resolution lives here rather than at the draw site so the backdrop code
+-- never has to know that a border can carry its own geometry.
+function TT:GetResolvedTooltipBorderEdgeSize()
+    local borderTexture = TT.GetResolvedTooltipBorder and TT:GetResolvedTooltipBorder()
+    if (borderTexture) then
+        if (borderTexture == cachedDeclaredEdgeSizeFor) then
+            -- Same choice as last time, so the answer cannot have changed.
+            -- Only a border that DECLARES a size is memoised; the config fallback
+            -- below must stay live so the thickness slider keeps working.
+            if (cachedDeclaredEdgeSize) then
+                return cachedDeclaredEdgeSize
+            end
+        else
+            local ok, choices = pcall(function() return TT:GetTooltipBorderChoices() end)
+            if (ok and choices) then
+                for _, entry in ipairs(choices) do
+                    if (entry.value == borderTexture and entry.edgeSize) then
+                        cachedDeclaredEdgeSize = entry.edgeSize
+                        cachedDeclaredEdgeSizeFor = borderTexture
+                        return entry.edgeSize
+                    end
+                end
+            end
+            cachedDeclaredEdgeSize, cachedDeclaredEdgeSizeFor = nil, borderTexture
+        end
+    end
+    local configured = TacoTipConfig and TacoTipConfig.tooltip_border_edge_size
+    if (type(configured) == "number" and configured >= 4 and configured <= 48) then
+        -- The slider is integer-stepped, but a hand-edited SavedVariables value
+        -- can carry a fraction and SetBackdrop edge sizes must be whole pixels.
+        -- A per-entry edgeSize literal is already integral, so flooring here
+        -- cannot change a declared size.
+        return math.floor(configured)
+    end
+    return 16
+end
+
+-- The edge size a border choice declares for itself, or nil when it defers to
+-- the player's setting. The options UI asks this so the thickness slider can
+-- disable itself for the themed 256x32 borders, which slice at 32 and ignore it
+-- entirely -- otherwise the control advertises authority it does not have.
+function TT:GetDeclaredTooltipBorderEdgeSize()
+    -- Prime the cache rather than duplicating the lookup: this is called from the
+    -- options Refresh, which the resolver result is what we actually want to
+    -- report on.
+    TT:GetResolvedTooltipBorderEdgeSize()
+    return cachedDeclaredEdgeSize
 end
 
 local function setFontState(fontString, enabled, enabledFont)
@@ -875,12 +1032,14 @@ local function attachHoverTooltip(frame, title, text)
     if (frame.EnableMouse) then
         frame:EnableMouse(true)
     end
-    frame:SetScript("OnEnter", function(self)
-        showHoverTooltip(self, title, text)
-    end)
-    frame:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
+    if (frame.SetScript) then
+        frame:SetScript("OnEnter", function(self)
+            showHoverTooltip(self, title, text)
+        end)
+        frame:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+    end
 end
 
 local function createWrappedText(parent, fontObject, width, text)
@@ -908,8 +1067,10 @@ end
 local function createOptionsCheckbox(parent, globalName, label, tooltipDescription, onClick)
     globalName = globalName or nextModernWidgetName("Check")
     local check = CreateFrame("CheckButton", globalName, parent, "InterfaceOptionsCheckButtonTemplate")
-    check.label = _G[check:GetName() .. "Text"]
-    check.label:SetText(label)
+    check.label = _G[check:GetName() .. "Text"] or check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    if (check.label and check.label.SetText) then
+        check.label:SetText(label)
+    end
     if (tooltipDescription and tooltipDescription ~= "") then
         check.tooltipText = label
         check.tooltipRequirement = tooltipDescription
@@ -1095,7 +1256,7 @@ local function toggleMediaPicker(dropDown)
         btn.check:SetShown(isSelected)
 
         local textureSet = false
-        if (type(val) == "string" and val:len() > 0 and val ~= "Interface\\None") then
+        if (type(val) == "string" and val:len() > 0) then
             if (val:find("\\") or val:find("/")) then
                 local isBorderChoice = (controls and dropDown == controls.tooltipBorderTextureChoice) or
                     (val:find("Border") or val:find("border") or val:find("Edge") or val:find("edge"))
@@ -1217,7 +1378,7 @@ local function createOptionsDropdown(parent, globalName, label, description, val
         self.selectedValue = value
         _G.UIDropDownMenu_SetSelectedValue(self, value)
         for _, option in ipairs(self.values or values or {}) do
-            if (option.value == value) then
+            if (option.value == value or option.text == value) then
                 _G.UIDropDownMenu_SetText(self, option.selectedText or option.text or option.menuText or "")
                 return
             end
@@ -1295,9 +1456,18 @@ local function createOptionsSlider(parent, globalName, label, tooltipDescription
     end
     slider:SetWidth(180)
     slider:EnableMouseWheel(true)
-    slider.label = _G[slider:GetName() .. "Text"]
-    slider.low = _G[slider:GetName() .. "Low"]
-    slider.high = _G[slider:GetName() .. "High"]
+    -- OptionsSliderTemplate provides Text/Low/High on every client we ship to,
+    -- but a missing one would abort the whole page build (the caller is
+    -- safeCall-wrapped, so the symptom is a silently blank options page that
+    -- re-fails on every OnShow). Create fallbacks instead, matching what the
+    -- checkbox builder at createOptionsCheckbox already does.
+    local sname = slider:GetName()
+    slider.label = _G[sname .. "Text"]
+        or slider:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    slider.low = _G[sname .. "Low"]
+        or slider:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    slider.high = _G[sname .. "High"]
+        or slider:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     slider.label:SetText(label)
     slider.low:SetText(tostring(minValue))
     slider.high:SetText(tostring(maxValue))
@@ -1345,7 +1515,7 @@ local function createOptionsSlider(parent, globalName, label, tooltipDescription
     return slider
 end
 
-local function openClassicColorPicker(initialR, initialG, initialB, onChanged)
+local function openColorPicker(initialR, initialG, initialB, onChanged)
     local colorPickerFrame = _G.ColorPickerFrame
     if (not colorPickerFrame) then
         return
@@ -1375,7 +1545,13 @@ local function openClassicColorPicker(initialR, initialG, initialB, onChanged)
 
     pcall(rawset, colorPickerFrame, "hasOpacity", false)
     pcall(rawset, colorPickerFrame, "opacity", 1)
-    pcall(rawset, colorPickerFrame, "func", applyCurrentColor)
+    -- The Classic ColorPickerFrame.xml reads "swatchFunc", not "func"
+    -- (Blizzard_FrameXML/Classic/ColorPickerFrame.xml:81-83). The previous
+    -- rawsets used "func", so this fallback would have done nothing if it were
+    -- ever reached. It is currently unreachable -- SetupColorPickerAndShow
+    -- exists on all five clients, so the modern branch above always wins -- but
+    -- it should be correct in case that changes.
+    pcall(rawset, colorPickerFrame, "swatchFunc", applyCurrentColor)
     pcall(rawset, colorPickerFrame, "opacityFunc", nil)
     pcall(rawset, colorPickerFrame, "cancelFunc", cancelColor)
     colorPickerFrame:SetColorRGB(originalR, originalG, originalB)
@@ -1433,7 +1609,7 @@ local function createColorSwatchControl(parent, globalName, label, description, 
     end
 
     control.button:SetScript("OnClick", function()
-        openClassicColorPicker(control.r, control.g, control.b, function(r, g, b)
+        openColorPicker(control.r, control.g, control.b, function(r, g, b)
             control:SetColor(r, g, b)
             onColorChanged(r, g, b)
         end)
@@ -1682,7 +1858,7 @@ local function buildRootPage()
     controls.rootChatClassColors:SetPoint("TOPLEFT", controls.rootHideInCombat, "BOTTOMLEFT", 0, -8)
 
     controls.rootShowAchievementPoints = createOptionsCheckbox(panel, nil, L["Show Achievement Points"],
-        L["OPTIONS_ACHIEVEMENT_DESC"] or "Only available on Wrath Classic clients where achievement data exists.",
+        L["OPTIONS_ACHIEVEMENT_DESC"] or "Display player's total achievement points.",
         function(_, value)
             TacoTipConfig.show_achievement_points = value
         end)
@@ -1696,15 +1872,12 @@ local function buildRootPage()
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
-        if (CI:IsWotlk()) then
+        local hasAchievements = CI and
+            ((CI.IsWotlk and CI:IsWotlk()) or (CI.IsRetail and CI:IsRetail()) or (CI.IsForever and CI:IsForever()))
+        if (hasAchievements) then
             controls.rootShowAchievementPoints:SetChecked(TacoTipConfig.show_achievement_points)
             controls.rootShowAchievementPoints:SetDisabled(false)
         else
-            -- Non-Wrath clients: the feature is unavailable in-game, but the
-            -- saved preference is preserved so it survives a later WotLK
-            -- session. The disabled control simply reflects the off state;
-            -- the tooltip render path is gated on CI:IsWotlk() anyway, so a
-            -- stale saved true on Era/TBC can never display anything.
             controls.rootShowAchievementPoints:SetChecked(false)
             controls.rootShowAchievementPoints:SetDisabled(true)
         end
@@ -1780,7 +1953,7 @@ local function buildTooltipsPage()
         end)
     controls.useClassColors:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     controls.shamanBlue = createOptionsCheckbox(content, nil, L["OPTIONS_SHAMAN_BLUE"] or "Shaman Blue",
-        L["OPTIONS_SHAMAN_BLUE_DESC"] or "Use blue instead of pink for Shaman class color on Classic Era / SoD.",
+        L["OPTIONS_SHAMAN_BLUE_DESC"] or "Use blue instead of pink for Shaman class color.",
         function(_, value)
             TacoTipConfig.shaman_blue = value
         end)
@@ -1917,9 +2090,10 @@ local function buildTooltipsPage()
         function(_, value)
             TacoTipConfig.show_power_bar = value
             -- Live sync: apply the power bar visibility change to the current tooltip immediately
-            if (GameTooltip and GameTooltip:IsShown() and TT.ApplyTooltipAppearance) then
-                local _, unit = GameTooltip:GetUnit()
-                if (unit) then
+            if (GameTooltip and GameTooltip:IsShown() and TT.ApplyTooltipAppearance
+                    and type(GameTooltip.GetUnit) == "function") then
+                local ok, _, unit = pcall(GameTooltip.GetUnit, GameTooltip)
+                if (ok and unit) then
                     TT:ApplyTooltipAppearance(GameTooltip, unit)
                 end
             end
@@ -2006,7 +2180,7 @@ local function buildTooltipsPage()
     controls.tooltipBorderEdgeSize = createOptionsSlider(content, nil,
         L["OPTIONS_TOOLTIP_BORDER_THICKNESS"] or "Border thickness",
         L["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] or
-        "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 14px.",
+        "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 16px.",
         function(value)
             TacoTipConfig.tooltip_border_edge_size = value
         end, 4, 48, 1)
@@ -2093,6 +2267,17 @@ local function buildTooltipsPage()
             modernGetConfig()
         end)
     controls.tooltipPortrait3D:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 34
+
+    controls.tooltipPortraitInvertSide = createOptionsCheckbox(content, nil,
+        L["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] or "Invert portrait side",
+        L["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] or
+        "Swap the portrait to the opposite side of the tooltip.",
+        function(_, value)
+            TacoTipConfig.tooltip_portrait_invert_side = value
+            modernGetConfig()
+        end)
+    controls.tooltipPortraitInvertSide:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 34
 
     controls.tooltipPortraitZoom = createOptionsSlider(content, nil, L["OPTIONS_PORTRAIT_ZOOM"] or "Portrait zoom",
@@ -2199,8 +2384,18 @@ local function buildTooltipsPage()
         controls.tooltipBackgroundColor:SetColor(TacoTipConfig.tooltip_background_color_r or 0,
             TacoTipConfig.tooltip_background_color_g or 0, TacoTipConfig.tooltip_background_color_b or 0)
         controls.tooltipBorderAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_border_alpha or 1) * 100 + 0.5))
-        controls.tooltipBorderEdgeSize:SetValueSilently(TacoTipConfig.tooltip_border_edge_size or
-            TT:GetDefaults().tooltip_border_edge_size)
+        -- The slider only has authority when the selected border does not carry
+        -- its own edge size. The three themed 256x32 borders declare 32, so the
+        -- player's stored value was being shown on an enabled slider that then
+        -- did nothing when dragged.
+        local declaredEdgeSize = TT.GetDeclaredTooltipBorderEdgeSize
+            and TT:GetDeclaredTooltipBorderEdgeSize()
+        controls.tooltipBorderEdgeSize:SetValueSilently(
+            declaredEdgeSize or TacoTipConfig.tooltip_border_edge_size
+            or DEFAULTS.tooltip_border_edge_size)
+        if (controls.tooltipBorderEdgeSize.SetDisabled) then
+            controls.tooltipBorderEdgeSize:SetDisabled(declaredEdgeSize ~= nil)
+        end
         controls.tooltipBackgroundAlpha:SetValueSilently(math.floor((TacoTipConfig.tooltip_background_alpha or 0.85) *
             100 + 0.5))
         controls.tooltipBackgroundTextureChoice:SetValue(TT:GetResolvedTooltipBackground())
@@ -2209,6 +2404,7 @@ local function buildTooltipsPage()
         controls.tooltipPortraitScale:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_scale or 1) * 100 + 0.5))
         controls.tooltipPortraitScale:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.tooltipPortrait3D:SetChecked(TacoTipConfig.tooltip_portrait_3d)
+        controls.tooltipPortraitInvertSide:SetChecked(TacoTipConfig.tooltip_portrait_invert_side)
         controls.tooltipPortrait3D:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.tooltipPortraitZoom:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_zoom or 0.7) * 100 + 0.5))
         controls.tooltipPortraitZoom:SetDisabled(not TacoTipConfig.tooltip_portrait)
@@ -2227,7 +2423,7 @@ local function buildTooltipsPage()
     modernOptionsState.pages.tooltipsBuilt = true
 end
 
-local function setOffsetValue(key, value)
+local function setOffsetValue(key, value, silent)
     -- Clamp keyboard-entered offsets so a typo cannot push an overlay
     -- permanently offscreen (sliders are bounded by their range; these
     -- edit boxes previously stored any integer verbatim).
@@ -2250,7 +2446,19 @@ local function setOffsetValue(key, value)
         slider:SetValueSilently(value)
     end
 
-    refreshOverlayPositions()
+    -- `silent` is for the bulk refresh in the Character/Inspect page Refresh,
+    -- which writes all eight offsets. Repositioning inside each of those made one
+    -- refresh cost 8 x (8 RefreshPosition + a GearScore recompute), and the
+    -- movers that call RefreshOptionsUI are parented to the paper doll -- so the
+    -- IsShown guards passed exactly when the player was dragging one.
+    -- `silent` is for the bulk refresh in the Character/Inspect page Refresh,
+    -- which writes all eight offsets. Repositioning inside each of those made one
+    -- refresh cost 8 x (8 RefreshPosition + a GearScore recompute), and the
+    -- movers that call RefreshOptionsUI are parented to the paper doll -- so the
+    -- IsShown guards passed exactly when the player was dragging one.
+    if (not silent) then
+        refreshOverlayPositions()
+    end
 end
 
 local function setOffsetControlEnabled(key, enabled)
@@ -2533,14 +2741,16 @@ local function buildCharacterInspectPage()
         controls.averageItemLevel:SetChecked(TacoTipConfig.show_avg_ilvl)
         controls.unlockInfoPosition:SetChecked(TacoTipConfig.unlock_info_position)
 
-        setOffsetValue("character_gs_offset_x", TacoTipConfig.character_gs_offset_x or 0)
-        setOffsetValue("character_gs_offset_y", TacoTipConfig.character_gs_offset_y or 0)
-        setOffsetValue("character_ilvl_offset_x", TacoTipConfig.character_ilvl_offset_x or 0)
-        setOffsetValue("character_ilvl_offset_y", TacoTipConfig.character_ilvl_offset_y or 0)
-        setOffsetValue("inspect_gs_offset_x", TacoTipConfig.inspect_gs_offset_x or 0)
-        setOffsetValue("inspect_gs_offset_y", TacoTipConfig.inspect_gs_offset_y or 0)
-        setOffsetValue("inspect_ilvl_offset_x", TacoTipConfig.inspect_ilvl_offset_x or 0)
-        setOffsetValue("inspect_ilvl_offset_y", TacoTipConfig.inspect_ilvl_offset_y or 0)
+        setOffsetValue("character_gs_offset_x", TacoTipConfig.character_gs_offset_x or 0, true)
+        setOffsetValue("character_gs_offset_y", TacoTipConfig.character_gs_offset_y or 0, true)
+        setOffsetValue("character_ilvl_offset_x", TacoTipConfig.character_ilvl_offset_x or 0, true)
+        setOffsetValue("character_ilvl_offset_y", TacoTipConfig.character_ilvl_offset_y or 0, true)
+        setOffsetValue("inspect_gs_offset_x", TacoTipConfig.inspect_gs_offset_x or 0, true)
+        setOffsetValue("inspect_gs_offset_y", TacoTipConfig.inspect_gs_offset_y or 0, true)
+        setOffsetValue("inspect_ilvl_offset_x", TacoTipConfig.inspect_ilvl_offset_x or 0, true)
+        setOffsetValue("inspect_ilvl_offset_y", TacoTipConfig.inspect_ilvl_offset_y or 0, true)
+        -- Once for all eight, not eight times.
+        refreshOverlayPositions()
 
         modernRefreshLockPositionToggle()
     end
@@ -2553,8 +2763,11 @@ local function buildCharacterInspectPage()
 end
 
 modernGetConfig = function()
-    if (TT.InvalidateResolvedMediaCache) then
-        TT:InvalidateResolvedMediaCache()
+    -- Only the resolved VALUES: this runs on every options interaction, and the
+    -- choice lists do not depend on the config, so rebuilding them here would
+    -- undo their memoisation.
+    if (TT.InvalidateResolvedTooltipValues) then
+        TT:InvalidateResolvedTooltipValues()
     end
     if (modernOptionsState.pages.rootBuilt and optionsFrame.Refresh) then
         optionsFrame:Refresh()
@@ -2601,15 +2814,38 @@ local function onOptionsFrameShow(panel)
     modernGetConfig()
 end
 
-optionsPages.tooltips:SetScript("OnShow", function(panel, ...)
-    return safeCall(onPageShow, panel, ...)
-end)
-optionsPages.positioning:SetScript("OnShow", function(panel, ...)
-    return safeCall(onPageShow, panel, ...)
-end)
-optionsPages.characterInspect:SetScript("OnShow", function(panel, ...)
-    return safeCall(onPageShow, panel, ...)
-end)
+-- Retail / WoW Forever drive the canvas pages through three OPTIONAL frame
+-- handlers, documented in Blizzard_Settings_Shared/Blizzard_ImplementationReadme.lua:
+--
+--   OnRefresh  called when the settings panel is shown
+--   OnDefault  called when the panel's "restore defaults" is used
+--   OnCommit   called when the panel's Apply is used
+--
+-- The addon previously relied on OnShow alone. OnShow fires when the canvas
+-- frame becomes visible, but the Settings panel controls that visibility and
+-- reuses an already-shown frame, so a page can be re-selected without OnShow
+-- ever firing -- which leaves the controls showing stale values.
+--
+-- These are METHODS, not scripts. Blizzard calls `frame:OnRefresh()`,
+-- `frame:OnDefault()` and `frame:OnCommit()` directly
+-- (Blizzard_SettingsPanel.lua:8, :2, :557) and never SetScripts them, so they
+-- must be assigned as function fields. SetScript("OnRefresh", ...) is rejected
+-- by the C API with "bad argument #2 to 'SetScript'" -- these three names are
+-- reserved canvas handlers, not script slots. OnShow is kept because the classic
+-- InterfaceOptions_AddCategory path has no such handlers and relies on it.
+local PAGES_WITH_REFRESH = { optionsPages.tooltips, optionsPages.positioning, optionsPages.characterInspect }
+for _, page in ipairs(PAGES_WITH_REFRESH) do
+    page:SetScript("OnShow", function(panel, ...)
+        return safeCall(onPageShow, panel, ...)
+    end)
+    page.OnRefresh = onPageShow
+    page.OnDefault = onPageShow
+    page.OnCommit = onPageShow
+end
+
 optionsFrame:SetScript("OnShow", function(panel, ...)
     return safeCall(onOptionsFrameShow, panel, ...)
 end)
+optionsFrame.OnRefresh = onOptionsFrameShow
+optionsFrame.OnDefault = onOptionsFrameShow
+optionsFrame.OnCommit = onOptionsFrameShow

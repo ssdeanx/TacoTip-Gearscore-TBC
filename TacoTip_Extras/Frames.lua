@@ -10,6 +10,10 @@ end
 local Scanner = namespace.Scanner
 local Cache = namespace.Cache
 local Adapter = namespace.TacoTipAdapter
+
+-- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
+-- replacing it, so the reference stays live across a language change.
+local L = _G.TACOEXTRAS_LOCALE or {}
 local Frames = {}
 namespace.Frames = Frames
 
@@ -320,9 +324,9 @@ local function completionRow(value)
         return nil
     end
     if value.opportunities == 0 then
-        return labelText("Completion:") .. " "
+        return labelText(L["COMPLETION"] .. ":") .. " "
             .. colorText(
-                "no eligible opportunities",
+                L["GEAR_NO_OPPORTUNITIES"],
                 NEUTRAL_RED,
                 NEUTRAL_GREEN,
                 NEUTRAL_BLUE
@@ -352,7 +356,7 @@ local function completionRow(value)
         value.filled,
         value.opportunities
     )
-    return labelText("Completion:") .. " " .. colorText(text, red, green, blue)
+    return labelText(L["COMPLETION"] .. ":") .. " " .. colorText(text, red, green, blue)
 end
 
 local function enhancementSuppressed(metrics)
@@ -379,14 +383,15 @@ local function makeRows(mode, result, unit)
 
     if type(current) == "number" then
         local red, green, blue = currentScoreColor(current)
-        rows[#rows + 1] = metricRow(
-            "Current GS",
+        local _metric = metricRow(
+            L["CURRENT_GS"],
             current,
             nil,
             red,
             green,
             blue
         )
+        if _metric then rows[#rows + 1] = _metric end
     end
 
     if mode == "Detailed" then
@@ -399,14 +404,15 @@ local function makeRows(mode, result, unit)
             and type(delta) == "number"
             and type(completionText) == "string"
         if not suppressed and analysisComplete then
-            rows[#rows + 1] = metricRow(
-                "Potential GS",
+            local _potential = metricRow(
+                L["POTENTIAL_GS"],
                 potential,
                 nil,
                 GOLD_RED,
                 GOLD_GREEN,
                 GOLD_BLUE
             )
+            if _potential then rows[#rows + 1] = _potential end
             local deltaRed, deltaGreen, deltaBlue = NEUTRAL_RED,
                 NEUTRAL_GREEN,
                 NEUTRAL_BLUE
@@ -415,7 +421,7 @@ local function makeRows(mode, result, unit)
                     POSITIVE_GREEN,
                     POSITIVE_BLUE
             end
-            rows[#rows + 1] = metricRow(
+            local _delta = metricRow(
                 "Delta",
                 delta,
                 signedNumber,
@@ -423,13 +429,14 @@ local function makeRows(mode, result, unit)
                 deltaGreen,
                 deltaBlue
             )
+            if _delta then rows[#rows + 1] = _delta end
             rows[#rows + 1] = completionText
         elseif not suppressed then
             local hasEvidence = type(potentialMetric) == "table"
                 or type(deltaMetric) == "table"
                 or type(completionMetric) == "table"
             if hasEvidence then
-                rows[#rows + 1] = labelText("Enhancement analysis:") .. " "
+                rows[#rows + 1] = labelText(L["ENHANCEMENT_ANALYSIS"] .. ":") .. " "
                     .. colorText(
                         "Unavailable",
                         MUTED_RED,
@@ -445,28 +452,30 @@ local function makeRows(mode, result, unit)
         if not validColor(avgRed, avgGreen, avgBlue) then
             avgRed, avgGreen, avgBlue = NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
         end
-        rows[#rows + 1] = metricRow(
-            "Average iLvl",
+        local _average = metricRow(
+            L["AVERAGE_ILVL"],
             averageDisplay,
             nil,
             avgRed,
             avgGreen,
             avgBlue
         )
+        if _average then rows[#rows + 1] = _average end
     end
 
     local equipment = equipmentSettings()
     if mode == "Detailed" and equipment and equipment.showUnenhanced == true then
         local base = completeMetric(metrics, "baseGS")
         if type(base) == "number" then
-            rows[#rows + 1] = metricRow(
-                "Unenhanced GS",
+            local _base = metricRow(
+                L["UNENHANCED_GS"],
                 base,
                 nil,
                 classRed,
                 classGreen,
                 classBlue
             )
+            if _base then rows[#rows + 1] = _base end
         end
     end
     return rows
@@ -795,7 +804,7 @@ end
 local function renderComplete(context, result, unit)
     local rows = makeRows(currentMode(), result, unit)
     if #rows == 0 then
-        setStateRow(context, "Equipment data unavailable")
+        setStateRow(context, L["GEAR_UNAVAILABLE"])
         context.state = "unavailable"
     else
         setRows(context, rows)
@@ -807,10 +816,10 @@ end
 local function renderState(context, state)
     cancelInspectExpiry(context)
     if state == "pending" or state == "idle" then
-        setStateRow(context, "Scanning equipment...")
+        setStateRow(context, L["GEAR_SCANNING"])
         context.state = "pending"
     else
-        setStateRow(context, "Equipment data unavailable")
+        setStateRow(context, L["GEAR_UNAVAILABLE"])
         context.state = "unavailable"
     end
     showContextBlock(context)

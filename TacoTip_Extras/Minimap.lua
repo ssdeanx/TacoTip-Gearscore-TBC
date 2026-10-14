@@ -7,6 +7,10 @@ end
 local MinimapButton = {}
 namespace.Minimap = MinimapButton
 
+-- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
+-- replacing it, so the reference stays live across a language change.
+local L = _G.TACOEXTRAS_LOCALE or {}
+
 local ICON_PATH = "Interface\\AddOns\\TacoTip_Extras\\tt-2"
 local BORDER_PATH = "Interface\\Minimap\\MiniMap-TrackingBorder"
 local HIGHLIGHT_PATH = "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight"
@@ -122,12 +126,22 @@ local function onDragStop(self)
 end
 
 local function onClick(_, mouseButton)
+    -- Left opens the leaderboard, right opens settings. Both are guarded: either
+    -- module can be absent if its file failed to load, and a click must never
+    -- raise just because the other half of the addon is missing.
+    if mouseButton == "RightButton" then
+        local options = namespace.Options
+        if type(options) == "table" and type(options.Toggle) == "function" then
+            return options.Toggle()
+        end
+        return false
+    end
     if mouseButton ~= nil and mouseButton ~= "LeftButton" then
         return false
     end
-    local options = namespace.Options
-    if type(options) == "table" and type(options.Toggle) == "function" then
-        return options.Toggle()
+    local browser = namespace.RankBrowser
+    if type(browser) == "table" and type(browser.Toggle) == "function" then
+        return browser.Toggle()
     end
     return false
 end
@@ -141,9 +155,10 @@ local function onEnter(self)
         return
     end
     tooltip:SetOwner(self, "ANCHOR_LEFT")
-    tooltip:SetText("TacoTip Extras", 1, 1, 1)
-    tooltip:AddLine("Left-click to toggle settings")
-    tooltip:AddLine("Drag to move")
+    tooltip:SetText(L["MINIMAP_HINT"] or "TacoTip Extras", 1, 1, 1)
+    tooltip:AddLine(L["MINIMAP_HINT_LEFT"] or "Left-click: leaderboard")
+    tooltip:AddLine(L["MINIMAP_HINT_RIGHT"] or "Right-click: settings")
+    tooltip:AddLine(L["MINIMAP_HINT_DRAG"] or "Drag to move")
     if type(tooltip.Show) == "function" then
         tooltip:Show()
     end
@@ -181,7 +196,11 @@ local function createButton()
         and type(minimap.GetFrameLevel) == "function" then
         button:SetFrameLevel(minimap:GetFrameLevel() + 5)
     end
-    button:RegisterForClicks("LeftButtonUp")
+    -- BOTH buttons, or the right-click branch in onClick() is unreachable: WoW
+    -- only delivers the mouse buttons a frame has registered for, so a button
+    -- registered for LeftButtonUp alone receives no right-click event at all.
+    -- That is a silent failure -- the handler is correct and simply never runs.
+    button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
 
     local background = button:CreateTexture(nil, "BACKGROUND")

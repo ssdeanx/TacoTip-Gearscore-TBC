@@ -1,0 +1,325 @@
+--[[
+
+    TacoTip Localization: esES
+
+    Translators:
+
+        - Yorkylizado
+
+--]]
+
+if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "esES") then return end
+_G.TACOTIP_LOCALE = {
+    ["Player"] = "Jugador",
+    ["Pet"] = "Mascota",
+    ["Target"] = "Objetivo",
+    ["None"] = "Ninguno",
+    ["Self"] = "Sí mismo",
+    ["You"] = "Tú",
+    ["Talents"] = "Talentos",
+    ["Style"] = "Estilo",
+    ["Guild"] = "Hermandad",
+    ["Rank"] = "Rango",
+    ["Level"] = "Nivel",
+    ["Item Level"] = "Nivel de Objeto",
+    ["Left-Click"] = "Clic izquierdo",
+    ["Middle-Click"] = "Clic central",
+    ["Right-Click"] = "Clic derecho",
+    ["Drag to Move"] = "Arrastrar para Mover",
+    ["Change Anchor"] = "Cambiar Ancla",
+    ["Save Position"] = "Guardar Posición",
+    [" the Kingslayer"] = " el Matarreyes",
+    ["Undead"] = "No-muerto",
+    ["Unit Tooltips"] = "Descripciones emergentes de unidad",
+    ["Class Color"] = "Color de Clase",
+    ["Color class names in tooltips"] = "Colorear los nombres por clase en las descripciones emergentes",
+    ["Title"] = "Título",
+    ["Show player's title in tooltips"] = "Mostrar el título del jugador en la descripción emergente",
+    ["Guild Name"] = "Nombre de hermandad",
+    ["Show guild name in tooltips"] = "Mostrar el nombre de la hermandad en la descripción emergente",
+    ["Guild Rank"] = "Rango de hermandad",
+    ["Show guild rank in tooltips"] = "Mostrar el rango de hermandad en la descripción emergente",
+    ["Show talents and specialization in tooltips"] = "Mostrar talentos y especialización en la descripción emergente",
+    ["Show player's GearScore in tooltips"] = "Mostrar el GearScore del jugador en la descripción emergente",
+    ["Show player's PawnScore in tooltips (may affect performance)"] =
+    "Mostrar el PawnScore del jugador en la descripción emergente (puede afectar al rendimiento)",
+    ["requires Pawn"] = "Requiere Pawn",
+    ["Show unit's target in tooltips"] = "Mostrar el objetivo de la unidad en la descripción emergente",
+    ["Faction Icon"] = "Icono de Facción",
+    ["Show player's faction icon (Horde/Alliance) in tooltips"] =
+    "Mostrar el icono de facción del jugador (Horda/Alianza) en la descripción emergente",
+    ["Class Icon"] = "Icono de Clase",
+    ["Show player's class icon next to the faction icon in tooltips"] =
+    "Mostrar el icono de clase del jugador junto al icono de facción en la descripción emergente",
+    ["PVP Icon"] = "Icono JcJ",
+    ["Show player's pvp flag status as icon instead of text"] =
+    "Mostrar el estado JcJ del jugador como icono en lugar de texto",
+    ["Health Bar"] = "Barra de Salud",
+    ["Show unit's health bar under tooltip"] = "Mostrar la barra de salud de la unidad bajo la descripción emergente",
+    ["Power Bar"] = "Barra de Poder",
+    ["Show unit's power bar under tooltip"] = "Mostrar la barra de poder de la unidad bajo la descripción emergente",
+    ["Character Frame"] = "Marco de Personaje",
+    ["Show GearScore in character frame"] = "Mostrar el GearScore en el marco de personaje",
+    ["Average iLvl"] = "Promedio de iLvl",
+    ["Show Average Item Level in character frame"] = "Mostrar el promedio de nivel de objeto en el marco de personaje",
+    ["Lock Position"] = "Bloquear Posición",
+    ["Lock GearScore and Average Item Level positions in character frame"] =
+    "Bloquear las posiciones del GearScore y del iLvl medio en el marco de personaje",
+    ["Extra"] = "Extra",
+    ["Show Item Level"] = "Mostrar nivel de objeto",
+    ["Display item level in the tooltip for certain items."] =
+    "Mostrar el nivel de objeto en la descripción emergente de ciertos objetos.",
+    ["Show Item GearScore"] = "Mostrar GearScore del objeto",
+    ["Show GearScore in item tooltips"] = "Mostrar GearScore en la descripción emergente de los objetos",
+    ["HunterScore"] = "Puntuación de cazador",
+    ["Always show HunterScore in item tooltips"] =
+    "Mostrar siempre la puntuación de cazador en la descripción emergente de los objetos",
+    ["Enhanced Tooltips"] = "Descripciones Mejoradas",
+    ["Disable In Combat"] = "Deshabilitar En Combate",
+    ["Disable gearscore & talents in combat"] = "Deshabilitar GearScore y talentos en combate",
+    ["Chat Class Colors"] = "Colores de Clase en Chat",
+    ["Color names by class in chat windows"] = "Colorear los nombres por clase en las ventanas de chat",
+    ["Instant Fade"] = "Desvanecimiento Instantáneo",
+    ["Fade out unit tooltips instantly"] = "Desvanecer las descripciones emergentes de la unidad instantáneamente",
+    ["Custom Tooltip Position"] = "Posición Personalizada",
+    ["Set a custom position for tooltips"] = "Usar una posición personalizada para las descripciones emergentes",
+    ["Tooltip Style"] = "Estilo de descripción emergente",
+    ["FULL"] = "COMPLETO",
+    ["Always FULL"] = "Siempre COMPLETO",
+    ["COMPACT/FULL"] = "COMPACTO/COMPLETO",
+    ["Default COMPACT, hold SHIFT for FULL"] = "Predeterminado COMPACTO, mantén SHIFT para COMPLETO",
+    ["COMPACT"] = "COMPACTO",
+    ["Always COMPACT"] = "Siempre COMPACTO",
+    ["MINI/FULL"] = "MINI/COMPLETO",
+    ["Default MINI, hold SHIFT for FULL"] = "Predeterminado MINI, mantén SHIFT para COMPLETO",
+    ["MINI"] = "MINI",
+    ["Always MINI"] = "Siempre MINI",
+    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Ancho, Dual Spec, GearScore, Promedio iLvl",
+    ["Narrow, Active Spec, GearScore"] = "Estrecho, Spec Activa, GearScore",
+    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Estrecho, Spec Activa, GearScore, Promedio iLvl",
+    ["Reset configuration"] = "Reiniciar configuración",
+    ["Configuration has been reset to default."] = "La configuración se ha restablecido a los valores predeterminados.",
+    ["Custom tooltip position enabled."] = "Posición personalizada de la descripción emergente habilitada.",
+    ["Custom tooltip position disabled."] = "Posición personalizada de la descripción emergente deshabilitada.",
+    ["Custom position anchor set"] = "Posición de ancla personalizada establecida.",
+    ["Anchor to Mouse"] = "Anclar al Ratón",
+    ["Anchor tooltips to mouse cursor"] = "Ancla la descripción emergente al cursor del ratón",
+    ["Only in WorldFrame"] = "Solo en WorldFrame",
+    ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
+    "Anclar al ratón solo en WorldFrame\nSalta marcos de banda / grupo",
+    ["Anchor Spells to Mouse"] = "Anclar Hechizos al Ratón",
+    ["Anchor spell tooltips to mouse cursor"] = "Ancla la descripción emergente de los hechizos al cursor del ratón",
+    ["Show Achievement Points"] = "Mostrar Puntos de Logros",
+    ["Show total achievement points in tooltips"] =
+    "Mostrar el total de puntos de logros en las descripciones emergentes",
+    ["Mover"] = "Manejador de movimiento",
+    ["TEXT_OPT_DESC"] =
+    "Mejores descripciones de jugador - colores de clase, \ntalentos/especialización, GearScore, \nrangos de hermandad",
+    ["TEXT_OPT_UBERTIPS"] = "Mostrar descripciones mejoradas para los hechizos (\"UberTooltips\")",
+    ["TEXT_HELP_MOVER_SHOWN"] =
+    "El manejador de movimiento está visible. Arrastra el punto amarillo para mover la descripción emergente. Clic central para cambiar el ancla. Clic derecho para guardar.",
+    ["TEXT_HELP_MOVER_SAVED"] =
+    "Posición personalizada de la descripción emergente guardada. El manejador de movimiento está oculto. Escribe '/tacotip custom' para mostrarlo de nuevo.",
+    ["TEXT_HELP_ANCHOR"] =
+    "Uso: /tacotip anchor ANCLA. Los valores válidos de ANCLA son TOPLEFT/TOPRIGHT/BOTTOMLEFT/BOTTOMRIGHT/CENTER.",
+    ["TEXT_HELP_WELCOME"] = "TacoTip cargado por AcidBomb (Pilsung). ¡Buen viaje!",
+    ["TEXT_HELP_FIRST_LOGIN"] = "Escribe /tacotip para establecer tus preferencias.",
+    ["TEXT_DLG_CUSTOM_POS_CONFIRM"] =
+    "\n¿Quieres guardar la posición personalizada de la descripción emergente o restablecerla?\n\n",
+    ["OPTIONS_PAGE_TOOLTIPS"] = "Descripciones emergentes",
+    ["OPTIONS_PAGE_POSITIONING"] = "Posicionamiento",
+    ["OPTIONS_PAGE_CHARACTER_INSPECT"] = "Personaje e inspección",
+    ["OPTIONS_ROOT_DESCRIPTION"] =
+    "TacoTip ahora organiza su configuración en subpáginas claras para que sea más fácil encontrar los controles de descripciones emergentes, posición y superposiciones.",
+    ["OPTIONS_ROOT_BEHAVIOR_HEADER"] = "Comportamiento y ajustes del cliente",
+    ["OPTIONS_ROOT_QUICK_ACTIONS"] = "Acciones rápidas",
+    ["OPTIONS_LANGUAGE_LABEL"] = "Idioma del addon",
+    ["OPTIONS_LANGUAGE_DESC"] =
+    "Usa por defecto el idioma de tu cliente del juego o elige otro idioma compatible con TacoTip. Recarga la interfaz después de cambiar este ajuste.",
+    ["OPTIONS_LANGUAGE_CLIENT_DEFAULT"] = "Predeterminado del cliente (%s)",
+    ["OPTIONS_LANGUAGE_RELOAD_HINT"] = "La preferencia de idioma se ha guardado. Recarga la interfaz para aplicarla.",
+    ["OPTIONS_STATUS_LANGUAGE"] = "Idioma del addon: %s.",
+    ["OPTIONS_OPEN_TOOLTIP_MOVER"] = "Abrir el manejador de movimiento de la descripción emergente",
+    ["OPTIONS_OPEN_TOOLTIP_MOVER_DESC"] =
+    "Muestra el manejador de movimiento de la descripción emergente para que puedas mover y guardar una posición personalizada.",
+    ["OPTIONS_RESET_CONFIGURATION_DESC"] =
+    "Restaura TacoTip a su configuración predeterminada, incluida la apariencia del tooltip y las posiciones de las superposiciones.",
+    ["OPTIONS_ROOT_PAGE_HINT"] =
+    "Usa las subpáginas bajo TacoTip para la configuración de tooltips, posición y superposiciones. Las opciones rápidas de comportamiento están aquí.",
+    ["OPTIONS_STATUS_MOUSE_ANCHOR"] = "Los tooltips están anclados al cursor del ratón.",
+    ["OPTIONS_STATUS_CUSTOM_POSITION"] = "Los tooltips usan tu posición personalizada guardada.",
+    ["OPTIONS_STATUS_DEFAULT_POSITION"] = "Los tooltips usan la posición predeterminada de Blizzard.",
+    ["OPTIONS_STATUS_CHARACTER_GS_ON"] = "Las superposiciones de GearScore de personaje e inspección están activadas.",
+    ["OPTIONS_STATUS_CHARACTER_GS_OFF"] =
+    "Las superposiciones de GearScore de personaje e inspección están desactivadas.",
+    ["OPTIONS_STATUS_CHARACTER_ILVL_ON"] = "Las superposiciones de nivel de objeto medio están activadas.",
+    ["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] = "Las superposiciones de nivel de objeto medio están desactivadas.",
+    ["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] = "Los ajustadores de superposición están desbloqueados.",
+    ["OPTIONS_STATUS_OVERLAYS_LOCKED"] = "Los ajustadores de superposición están bloqueados.",
+    ["OPTIONS_TOOLTIPS_PAGE_DESC"] =
+    "Ajusta los datos extra que TacoTip añade a los tooltips de unidad y objeto.",
+    ["OPTIONS_TOOLTIP_STYLE_DESC"] =
+    "Elige cuántos detalles muestra TacoTip por defecto. Los estilos híbridos muestran su diseño compacto por defecto y se amplían a completo mientras mantengas pulsado Mayús.",
+    ["OPTIONS_SECTION_UNIT_TOOLTIPS"] = "Contenido del tooltip de unidad",
+    ["OPTIONS_SECTION_ITEM_TOOLTIPS"] = "Datos del tooltip de objeto",
+    ["OPTIONS_SECTION_VISUAL_STYLE"] = "Estilo visual",
+    ["OPTIONS_SECTION_BACKDROP_MEDIA"] = "Colores y texturas de fondo",
+    ["OPTIONS_SECTION_TEXT_AND_PORTRAIT"] = "Retrato y texto",
+    ["OPTIONS_SECTION_BAR_MEDIA"] = "Barras del tooltip",
+    ["OPTIONS_SHOW_PLAYER_GS"] = "Mostrar GearScore del jugador",
+    ["OPTIONS_SHOW_PLAYER_GS_DESC"] =
+    "Añade el GearScore a los tooltips de jugador. Los diseños ancho y mini también muestran el nivel de objeto medio en esa misma línea.",
+    ["OPTIONS_SHOW_PLAYER_PAWN"] = "Mostrar puntuaciones de Pawn",
+    ["OPTIONS_SHOW_PLAYER_PAWN_DESC"] =
+    "Añade las puntuaciones de Pawn para los jugadores inspeccionados cuando Pawn está instalado. Esto puede provocar trabajo extra en la caché de objetos.",
+    ["OPTIONS_GUILD_STYLE_DESC"] =
+    "Elige cómo formatea TacoTip el rango de hermandad cuando se muestran tanto el nombre de la hermandad como el rango.",
+    ["OPTIONS_GUILD_STYLE_ONE"] = "%s de <%s>",
+    ["OPTIONS_GUILD_STYLE_TWO"] = "<Hermandad> (Rango)",
+    ["OPTIONS_HUNTERSCORE_DESC"] =
+    "Muestra siempre HunterScore cuando el GearScore de objetos está activado. De lo contrario, seguirá apareciendo para cazadores, al mantener una tecla modificadora o al inspeccionar a un cazador.",
+    ["OPTIONS_BORDER_CLASS_COLOR"] = "Usar borde con color de clase",
+    ["OPTIONS_BORDER_CLASS_COLOR_DESC"] =
+    "Tiñe el borde del tooltip con el color de clase del jugador cuando el tooltip muestra una unidad jugadora.",
+    ["OPTIONS_BACKGROUND_CLASS_COLOR"] = "Usar tinte de fondo con color de clase",
+    ["OPTIONS_BACKGROUND_CLASS_COLOR_DESC"] =
+    "Añade un sutil tinte con color de clase detrás de los tooltips de jugador. Usa el control de alfa para mantenerlo discreto.",
+    ["OPTIONS_BORDER_ALPHA"] = "Alfa del borde",
+    ["OPTIONS_BACKGROUND_ALPHA"] = "Alfa del fondo",
+    ["OPTIONS_PICK_COLOR"] = "Elegir color",
+    ["OPTIONS_TOOLTIP_BORDER_COLOR"] = "Color del borde",
+    ["OPTIONS_TOOLTIP_BACKGROUND_COLOR"] = "Color del fondo",
+    ["OPTIONS_BORDER_ALPHA_DESC"] =
+    "Ajusta la intensidad del tinte del borde del tooltip. Los valores bajos mantienen el color de clase más discreto.",
+    ["OPTIONS_BACKGROUND_ALPHA_DESC"] =
+    "Ajusta la intensidad del tinte del fondo del tooltip. Los valores bajos mantienen el tooltip más legible.",
+    ["OPTIONS_TOOLTIP_BORDER_COLOR_DESC"] =
+    "Elige el color base del borde del tooltip. Si los bordes con color de clase están activados, ese color de clase lo reemplaza en los tooltips de jugador.",
+    ["OPTIONS_TOOLTIP_BACKGROUND_COLOR_DESC"] =
+    "Elige el color base del fondo del tooltip. Si los fondos con color de clase están activados, ese color de clase lo reemplaza en los tooltips de jugador.",
+    ["OPTIONS_TOOLTIP_BACKGROUND_TEXTURE"] = "Textura de fondo del tooltip",
+    ["OPTIONS_TOOLTIP_BACKGROUND_TEXTURE_DESC"] =
+    "Elige la textura de fondo del tooltip. Los paquetes de fondos SharedMedia como Merfin Plus se detectan automáticamente si están instalados, y se usa el fondo de tooltip de Blizzard como alternativa.",
+    ["OPTIONS_TOOLTIP_BORDER_TEXTURE"] = "Textura del borde del tooltip",
+    ["OPTIONS_TOOLTIP_BORDER_TEXTURE_DESC"] =
+    "Elige la textura del borde del tooltip. Los paquetes de bordes SharedMedia como Merfin Plus se detectan automáticamente si están instalados, y se usa el borde de tooltip de Blizzard como alternativa.",
+    ["OPTIONS_TOOLTIP_PORTRAIT"] = "Mostrar retrato de la unidad",
+    ["OPTIONS_TOOLTIP_PORTRAIT_DESC"] = "Muestra un pequeño retrato junto a los tooltips de jugadores y PNJ.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_SCALE"] = "Escala del retrato",
+    ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Escala el retrato que se muestra junto a los tooltips de unidad.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostrar retrato 3D",
+    ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa un modelo 3D en vivo en lugar de una textura de retrato 2D.",
+    ["OPTIONS_TOOLTIP_FONT"] = "Fuente del tooltip",
+    ["OPTIONS_TOOLTIP_FONT_DESC"] =
+    "Elige la fuente usada por el texto del tooltip. Las fuentes SharedMedia de paquetes como Merfin Plus se incluyen automáticamente cuando están disponibles.",
+    ["OPTIONS_TOOLTIP_FONT_SIZE"] = "Tamaño del texto del tooltip",
+    ["OPTIONS_TOOLTIP_FONT_SIZE_DESC"] = "Cambia el tamaño del texto del tooltip sin afectar al resto de la interfaz.",
+    ["OPTIONS_STATUSBAR_TEXTURE"] = "Textura de barras de salud y poder",
+    ["OPTIONS_STATUSBAR_TEXTURE_DESC"] =
+    "Usa una única textura tanto para la barra de salud como para la de poder. El menú desplegable previsualiza cada textura con una barra completa y su nombre, y los paquetes SharedMedia como Merfin Plus aparecen automáticamente cuando registran medios.",
+    ["OPTIONS_POSITIONING_PAGE_DESC"] =
+    "Elige cómo coloca TacoTip el tooltip principal y controla el flujo del manejador de movimiento usado para guardar una ubicación personalizada.",
+    ["OPTIONS_SECTION_TOOLTIP_POSITION"] = "Modo de posición del tooltip",
+    ["OPTIONS_SECTION_TOOLTIP_BEHAVIOR"] = "Comportamiento del tooltip",
+    ["OPTIONS_CUSTOM_POSITION_DESC"] =
+    "Guarda y reutiliza una ubicación personalizada en pantalla para el tooltip en lugar del ancla predeterminada de Blizzard.",
+    ["OPTIONS_ANCHOR_MOUSE_SPELLS_DESC"] =
+    "Ancla los tooltips de hechizos y botones de acción al cursor del ratón en lugar de a tu posición guardada de TacoTip.",
+    ["OPTIONS_CUSTOM_ANCHOR_LABEL"] = "Ancla personalizada del tooltip",
+    ["OPTIONS_CUSTOM_ANCHOR_DESC"] = "Elige qué punto de la posición guardada del tooltip actúa como ancla del tooltip.",
+    ["OPTIONS_ANCHOR_TOPLEFT"] = "Arriba izquierda",
+    ["OPTIONS_ANCHOR_TOPLEFT_DESC"] = "Ancla el tooltip usando su esquina superior izquierda.",
+    ["OPTIONS_ANCHOR_TOPRIGHT"] = "Arriba derecha",
+    ["OPTIONS_ANCHOR_TOPRIGHT_DESC"] = "Ancla el tooltip usando su esquina superior derecha.",
+    ["OPTIONS_ANCHOR_BOTTOMLEFT"] = "Abajo izquierda",
+    ["OPTIONS_ANCHOR_BOTTOMLEFT_DESC"] = "Ancla el tooltip usando su esquina inferior izquierda.",
+    ["OPTIONS_ANCHOR_BOTTOMRIGHT"] = "Abajo derecha",
+    ["OPTIONS_ANCHOR_BOTTOMRIGHT_DESC"] = "Ancla el tooltip usando su esquina inferior derecha.",
+    ["OPTIONS_ANCHOR_CENTER"] = "Centro",
+    ["OPTIONS_ANCHOR_CENTER_DESC"] = "Ancla el tooltip usando su punto central.",
+    ["OPTIONS_CHARACTER_PAGE_DESC"] =
+    "Controla las etiquetas superpuestas del marco de personaje y del marco de inspección, y luego ajusta sus desplazamientos X/Y con campos numéricos o deslizadores.",
+    ["OPTIONS_CHARACTER_GS_LABEL"] = "Mostrar superposiciones de GearScore",
+    ["OPTIONS_CHARACTER_GS_DESC"] = "Muestra el GearScore tanto en el marco de personaje como en el de inspección.",
+    ["OPTIONS_CHARACTER_ILVL_LABEL"] = "Mostrar superposiciones de nivel de objeto medio",
+    ["OPTIONS_CHARACTER_ILVL_DESC"] =
+    "Muestra el nivel medio de objeto tanto en el marco de personaje como en el de inspección.",
+    ["OPTIONS_UNLOCK_OVERLAYS_LABEL"] = "Activar ajustadores manuales de superposición",
+    ["OPTIONS_UNLOCK_OVERLAYS_DESC"] =
+    "Muestra asas de arrastre en las superposiciones del marco para que puedas colocarlas manualmente además de usar los desplazamientos numéricos de abajo.",
+    ["OPTIONS_CHARACTER_GS_OFFSETS"] = "Desplazamientos de GearScore del personaje",
+    ["OPTIONS_CHARACTER_ILVL_OFFSETS"] = "Desplazamientos de iLvl del personaje",
+    ["OPTIONS_INSPECT_GS_OFFSETS"] = "Desplazamientos de GearScore de inspección",
+    ["OPTIONS_INSPECT_ILVL_OFFSETS"] = "Desplazamientos de iLvl de inspección",
+    ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Ocultar detalles de inspección en combate",
+    ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
+    "Omite los añadidos de talentos y estilo GearScore de TacoTip para jugadores mientras estás en combate.",
+    ["OPTIONS_ACHIEVEMENT_DESC"] = "Solo disponible en clientes de Wrath Classic donde existan datos de logros.",
+    ["FORMAT_GUILD_RANK_1"] = "%s %s",
+    ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
+    ["CHARACTER_FRAME_GS_TITLE_XPOS"] = 72,
+    ["CHARACTER_FRAME_GS_TITLE_YPOS"] = 248,
+    ["CHARACTER_FRAME_GS_VALUE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["CHARACTER_FRAME_GS_VALUE_FONT_SIZE"] = 10,
+    ["CHARACTER_FRAME_GS_VALUE_XPOS"] = 72,
+    ["CHARACTER_FRAME_GS_VALUE_YPOS"] = 260,
+    ["CHARACTER_FRAME_ILVL_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["CHARACTER_FRAME_ILVL_TITLE_FONT_SIZE"] = 10,
+    ["CHARACTER_FRAME_ILVL_TITLE_XPOS"] = 270,
+    ["CHARACTER_FRAME_ILVL_TITLE_YPOS"] = 248,
+    ["CHARACTER_FRAME_ILVL_VALUE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["CHARACTER_FRAME_ILVL_VALUE_FONT_SIZE"] = 10,
+    ["CHARACTER_FRAME_ILVL_VALUE_XPOS"] = 270,
+    ["CHARACTER_FRAME_ILVL_VALUE_YPOS"] = 260,
+    ["INSPECT_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["INSPECT_FRAME_GS_TITLE_FONT_SIZE"] = 10,
+    ["INSPECT_FRAME_GS_TITLE_XPOS"] = 72,
+    ["INSPECT_FRAME_GS_TITLE_YPOS"] = 141,
+    ["INSPECT_FRAME_GS_VALUE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["INSPECT_FRAME_GS_VALUE_FONT_SIZE"] = 10,
+    ["INSPECT_FRAME_GS_VALUE_XPOS"] = 72,
+    ["INSPECT_FRAME_GS_VALUE_YPOS"] = 153,
+    ["INSPECT_FRAME_ILVL_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["INSPECT_FRAME_ILVL_TITLE_FONT_SIZE"] = 10,
+    ["INSPECT_FRAME_ILVL_TITLE_XPOS"] = 270,
+    ["INSPECT_FRAME_ILVL_TITLE_YPOS"] = 141,
+    ["INSPECT_FRAME_ILVL_VALUE_FONT"] = "Fonts\\FRIZQT__.TTF",
+    ["INSPECT_FRAME_ILVL_VALUE_FONT_SIZE"] = 10,
+    ["INSPECT_FRAME_ILVL_VALUE_XPOS"] = 270,
+    ["INSPECT_FRAME_ILVL_VALUE_YPOS"] = 153,
+    ["Honor Rank"] = "Rango de honor",
+    ["OPTIONS_PORTRAIT_ZOOM"] = "Zoom del retrato",
+    ["OPTIONS_PORTRAIT_ZOOM_DESC"] =
+    "Controla cuán cerca aparece la cámara del retrato. Valores bajos alejan la vista, valores altos la acercan.",
+    ["OPTIONS_SHOW_HONOR_RANK"] = "Mostrar rango de honor",
+    ["OPTIONS_SHOW_HONOR_RANK_DESC"] = "Muestra el título de rango de honor JcJ del jugador en la descripción emergente.",
+    ["OPTIONS_SHOW_ILVL_INLINE"] = "Mostrar iLvl en línea",
+    ["OPTIONS_SHOW_ILVL_INLINE_DESC"] =
+    "Muestra el nivel de objeto medio en la misma línea que el GearScore en lugar de en una línea separada.",
+    ["OPTIONS_SHOW_REALM"] = "Mostrar reino",
+    ["OPTIONS_SHOW_REALM_DESC"] = "Muestra el nombre del reino para jugadores de otros servidores (entre reinos).",
+    ["OPTIONS_SHOW_ROLE_ICON"] = "Mostrar icono de rol",
+    ["OPTIONS_SHOW_ROLE_ICON_DESC"] =
+    "Muestra el icono de rol (Tanque, Sanador, DPS) para los miembros del grupo en la descripción emergente.",
+    ["OPTIONS_SHOW_SEPARATORS"] = "Mostrar separadores",
+    ["OPTIONS_SHOW_SEPARATORS_DESC"] =
+    "Añade líneas separadoras entre las secciones de la descripción emergente para mejorar la legibilidad.",
+    ["OPTIONS_TOOLTIP_BORDER_THICKNESS"] = "Grosor del borde",
+    ["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] =
+    "Controla el grosor aparente del borde de la descripción emergente. Valores altos hacen el borde más ancho.",
+    ["OPTIONS_TOOLTIP_DELAY"] = "Retraso de la descripción emergente (ms)",
+    ["OPTIONS_TOOLTIP_DELAY_DESC"] =
+    "Añade un breve retraso antes de que aparezca la descripción emergente. 0 = sin retraso.",
+    ["OPTIONS_TOOLTIP_MAX_WIDTH"] = "Anchura máxima de la descripción emergente",
+    ["OPTIONS_TOOLTIP_MAX_WIDTH_DESC"] =
+    "Establece una anchura máxima para la descripción emergente. Establece 0 para sin límite.",
+    ["Realm"] = "Reino",
+    ["OPTIONS_SHAMAN_BLUE"] = "Chamán Azul",
+    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Usa azul en lugar de rosa para el color de clase del chamán en Era Clásica / SoD.",
+    ["OPTIONS_OFFSET_EDIT_DESC"] = "Escribe un desplazamiento de píxeles preciso y presiona Enter para aplicarlo.",
+    ["OPTIONS_OFFSET_SLIDER_DESC"] =
+    "Arrastra para ajustar este desplazamiento. El campo numérico se mantendrá sincronizado.",
+    ["RANK_TITLE"] = "Campeón",
+    ["REALM"] = "Reino",
+}

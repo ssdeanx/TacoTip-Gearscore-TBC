@@ -7,6 +7,14 @@ end
 local RankBrowser = {}
 namespace.RankBrowser = RankBrowser
 
+-- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
+-- replacing it, so the reference stays live across a language change.
+--
+-- The COLUMNS and SORTS tables below store locale KEYS rather than display text
+-- because they are built at load time, before a language can change. Everything
+-- that reads them resolves through L at render time.
+local L = _G.TACOEXTRAS_LOCALE or {}
+
 -- ---------------------------------------------------------------------------
 -- Layout constants
 -- ---------------------------------------------------------------------------
@@ -28,13 +36,19 @@ local TEXT_R, TEXT_G, TEXT_B = 0.90, 0.90, 0.92
 -- Column geometry, shared by the row renderer and the header strip so the two
 -- can never drift apart. x is the offset from the row's left edge; numeric
 -- columns are LEFT-anchored with a RIGHT justify so their digits line up.
+-- Columns. `label` is a LOCALE KEY and `fallback` is the English text.
+--
+-- The key alone is not enough: `L[key] or key` renders the literal string
+-- "LB_COL_GS" when the locale table is missing, which is exactly what a test
+-- harness that loads this file without Locale/ gets. The fallback keeps the
+-- header readable in that case and in game.
 local COLUMNS = {
-    { key = "rank", x = 8, width = 36, justify = "LEFT", label = "RANK", template = "GameFontHighlightSmall" },
-    { key = "name", x = 48, width = 200, justify = "LEFT", label = "PLAYER", template = "GameFontNormal" },
-    { key = "spec", x = 252, width = 150, justify = "LEFT", label = "SPEC / CLASS", template = "GameFontHighlightSmall" },
-    { key = "gs", x = 406, width = 64, justify = "RIGHT", label = "GEARSCORE", template = "GameFontHighlight" },
-    { key = "ilvl", x = 482, width = 56, justify = "RIGHT", label = "iLVL", template = "GameFontHighlightSmall" },
-    { key = "seen", x = 550, width = 76, justify = "RIGHT", label = "LAST SEEN", template = "GameFontDisableSmall" },
+    { key = "rank", x = 8, width = 36, justify = "LEFT", label = "LB_COL_RANK", fallback = "RANK", template = "GameFontHighlightSmall" },
+    { key = "name", x = 48, width = 200, justify = "LEFT", label = "LB_COL_PLAYER", fallback = "PLAYER", template = "GameFontNormal" },
+    { key = "spec", x = 252, width = 150, justify = "LEFT", label = "LB_COL_SPECCLASS", fallback = "SPEC / CLASS", template = "GameFontHighlightSmall" },
+    { key = "gs", x = 406, width = 64, justify = "RIGHT", label = "LB_COL_GS", fallback = "GEARSCORE", template = "GameFontHighlight" },
+    { key = "ilvl", x = 482, width = 56, justify = "RIGHT", label = "LB_COL_ILVL", fallback = "iLVL", template = "GameFontHighlightSmall" },
+    { key = "seen", x = 550, width = 76, justify = "RIGHT", label = "LB_COL_LASTSEEN", fallback = "LAST SEEN", template = "GameFontDisableSmall" },
 }
 
 local CLASS_COLORS = {
@@ -86,35 +100,74 @@ local function getClassColor(class)
 end
 
 local function formatRelativeTime(timestamp)
-    if not timestamp or timestamp <= 0 then return "Unknown" end
+    if not timestamp or timestamp <= 0 then return L["TIME_UNKNOWN"] or "Unknown" end
     local now = time and time() or 0
     local diff = now - timestamp
-    if diff < 60 then return "Just now" end
-    if diff < 3600 then return tostring(math.floor(diff / 60)) .. "m ago" end
-    if diff < 86400 then return tostring(math.floor(diff / 3600)) .. "h ago" end
+    if diff < 60 then return L["TIME_JUST_NOW"] or "Just now" end
+    if diff < 3600 then
+        return string.format(L["TIME_MIN_AGO"] or "%d min ago", math.floor(diff / 60))
+    end
+    if diff < 86400 then
+        return string.format(L["TIME_HOUR_AGO"] or "%d hr ago", math.floor(diff / 3600))
+    end
     local days = math.floor(diff / 86400)
-    if days == 1 then return "Yesterday" end
-    return tostring(days) .. "d ago"
+    if days == 1 then return L["TIME_YESTERDAY"] or "Yesterday" end
+    return string.format(L["TIME_DAY_AGO"] or "%d d ago", days)
 end
 
-local function getGSQualityColor(score)
+-- Colour by where the value sits in the CURRENT view, not by its raw number.
+-- A raw GearScore has no absolute meaning across clients -- 450 is excellent on
+-- Classic Era and ordinary on Retail -- so the best score in view is the 1.0
+-- end of the scale. `best` is supplied by the renderer; without it there is
+-- nothing to compare against and the value stays muted.
+local viewBestGS = 0
+local viewBestILVL = 0
+local viewTotal = 0
+
+local function getGSQualityColor(score, best)
     local scoring = namespace.Scoring
-    if scoring and type(scoring.QualityColor) == "function" then
-        local r, g, b = scoring.QualityColor(score)
+    local value, top = tonumber(score), tonumber(best)
+    if scoring and type(scoring.QualityColor) == "function"
+        and value and top and top > 0 and value > 0 then
+        local fraction = value / top
+        if fraction > 1 then fraction = 1 end
+        local r, g, b = scoring.QualityColor(fraction)
         if r and g and b then
             return r, g, b
         end
     end
-    return 1, 1, 1
+    return 0.62, 0.62, 0.62
 end
 
-local function getRankColor(index)
-    if index == 1 then
+-- The `#` column. Rank 1 of N is the top of the scale, so the bracket is a
+-- PERCENTILE: being 3rd of 40 is a better standing than 3rd of 4000, and a
+-- fixed gold/silver/bronze palette cannot express that. Falls back to the
+-- medal colours when the pool size is unknown.
+local function getRankColor(index, total)
+    local place = tonumber(index)
+    if place == nil then
+        return MUTED_R, MUTED_G, MUTED_B
+    end
+    if total and tonumber(total) and place > 0 and place / tonumber(total) >= 0.95 then
         return 1.00, 0.84, 0.00
-    elseif index == 2 then
+    end
+    if place == 1 then
+        return 1.00, 0.84, 0.00
+    elseif place == 2 then
         return 0.75, 0.75, 0.78
-    elseif index == 3 then
+    elseif place == 3 then
         return 0.80, 0.51, 0.20
+    end
+
+    local scoring = namespace.Scoring
+    local count = tonumber(total)
+    if scoring and type(scoring.QualityColor) == "function"
+        and place and count and count > 0 and place > 0 then
+        if place > count then place = count end
+        local r, g, b = scoring.QualityColor((count - place + 1) / count)
+        if r and g and b then
+            return r, g, b
+        end
     end
     return MUTED_R, MUTED_G, MUTED_B
 end
@@ -174,9 +227,9 @@ end
 -- sort by iLvl reads as though standing itself had changed. So the display
 -- order is chosen here, and a GearScore-rank lookup is built alongside it.
 local SORTS = {
-    gs = "GEARSCORE",
-    ilvl = "iLVL",
-    seen = "LAST SEEN",
+    gs = "SORT_GS_DESC",
+    ilvl = "SORT_ILVL_DESC",
+    seen = "SORT_SEEN_DESC",
 }
 local SORTABLE_COLUMNS = { "gs", "ilvl", "seen" }
 local currentSort = "gs"
@@ -207,8 +260,15 @@ local function sortEntries(data, mode)
             return (a.name or "") < (b.name or "")
         end)
     end
-    -- "gs" needs no re-sort: RankDB already returns GearScore order, and
-    -- re-sorting here would only risk disagreeing with it.
+    if mode == "gs" then
+        table.sort(arr, function(a, b)
+            local ag, bg = tonumber(a.gs) or 0, tonumber(b.gs) or 0
+            if ag ~= bg then return ag > bg end
+            local ai, bi = tonumber(a.ilvl) or 0, tonumber(b.ilvl) or 0
+            if ai ~= bi then return ai > bi end
+            return (a.name or "") < (b.name or "")
+        end)
+    end
     return arr
 end
 
@@ -252,24 +312,24 @@ local function showRowTooltip(row, entry)
         end
     end
 
-    add(entry.name or "Unknown", c[1], c[2], c[3])
+    add(entry.name or L["LB_TIP_UNKNOWN"], c[1], c[2], c[3])
 
     local specName = entry.specName
     if type(specName) ~= "string" or specName == "" then
         specName = entry.class or ""
     end
-    add(specName ~= "" and specName or "Unknown spec", MUTED_R, MUTED_G, MUTED_B)
+    add(specName ~= "" and specName or L["LB_TIP_UNKNOWNSPEC"], MUTED_R, MUTED_G, MUTED_B)
 
-    local gr, gg, gb = getGSQualityColor(entry.gs)
-    add(string.format("GearScore: %d", entry.gs or 0), gr, gg, gb)
+    local gr, gg, gb = getGSQualityColor(entry.gs, viewBestGS)
+    add(string.format(L["LB_TIP_GS"] or "GearScore: %d", entry.gs or 0), gr, gg, gb)
 
-    local ir, ig, ib = getGSQualityColor(entry.ilvl)
-    add(string.format("Average iLvl: %.1f", entry.ilvl or 0), ir, ig, ib)
+    local ir, ig, ib = getGSQualityColor(entry.ilvl, viewBestILVL)
+    add(string.format(L["LB_TIP_ILVL"] or "Average iLvl: %.1f", entry.ilvl or 0), ir, ig, ib)
 
     if row.gsRank then
-        add(string.format("GearScore rank: #%d", row.gsRank), TEXT_R, TEXT_G, TEXT_B)
+        add(string.format(L["LB_TIP_RANK"] or "GearScore rank: %d", row.gsRank), TEXT_R, TEXT_G, TEXT_B)
     end
-    add("Last seen: " .. formatRelativeTime(entry.timestamp), MUTED_R, MUTED_G, MUTED_B)
+    add(string.format(L["LB_TIP_LASTSEEN"] or "Last seen: %s", formatRelativeTime(entry.timestamp)), MUTED_R, MUTED_G, MUTED_B)
     if type(entry.faction) == "string" and entry.faction ~= "" then
         add(entry.faction, MUTED_R, MUTED_G, MUTED_B)
     end
@@ -339,13 +399,13 @@ local function renderRow(row, entry, index, gsRank, myGUID)
 
     -- Rank. This is the GEARSCORE rank, not the row's position, so it does not
     -- shuffle when the list is re-sorted by iLvl or last-seen.
-    local rr, rg, rb = getRankColor(gsRank or index)
+    local rr, rg, rb = getRankColor(gsRank or index, viewTotal)
     row.rankText:SetText("#" .. tostring(gsRank or index))
     row.rankText:SetTextColor(rr, rg, rb)
 
     -- Name in class colour, plus a thin class bar down the left edge.
     local c = getClassColor(entry.class)
-    row.nameText:SetText(entry.name or "Unknown")
+    row.nameText:SetText(entry.name or L["LB_TIP_UNKNOWN"])
     row.nameText:SetTextColor(c[1], c[2], c[3])
     row.classBar:SetColorTexture(c[1], c[2], c[3], 0.85)
 
@@ -359,7 +419,7 @@ local function renderRow(row, entry, index, gsRank, myGUID)
 
     -- GearScore and iLvl share the score's quality colour.
     local gs = entry.gs or 0
-    local gr, gg, gb = getGSQualityColor(gs)
+    local gr, gg, gb = getGSQualityColor(gs, viewBestGS)
     row.gsText:SetText(tostring(gs))
     row.gsText:SetTextColor(gr, gg, gb)
     row.ilvlText:SetText(string.format("%.1f", entry.ilvl or 0))
@@ -382,6 +442,240 @@ end
 -- ---------------------------------------------------------------------------
 -- Public: scroll control
 -- ---------------------------------------------------------------------------
+
+-- Start an equipment scan from any surface that offers the control.
+--
+-- Guarded rather than assumed: the Scanner can be absent when its file fails to
+-- load, and a button must never raise for that. Returns whether a scan was
+-- actually started so a caller can tell the difference between "started" and
+-- "nothing happened".
+function RankBrowser.StartScan()
+    local scanner = namespace.Scanner
+    if type(scanner) ~= "table" then
+        return false
+    end
+    if type(scanner.BeginGeneration) == "function" then
+        scanner.BeginGeneration("leaderboard")
+    elseif type(scanner.RunGeneration) == "function" then
+        scanner.RunGeneration()
+    else
+        return false
+    end
+    RankBrowser.RefreshProgress()
+    return true
+end
+
+-- Paint the progress bar from Scanner.GetProgress.
+--
+-- Hidden when there is nothing to show, so the window carries no dead rail when
+-- idle. Kept visible and full at 100% until the scan reports inactive, because
+-- hiding it the instant it fills reads as "the scan failed".
+function RankBrowser.RefreshProgress()
+    local f = rankFrame
+    if not f or type(f.progressBar) ~= "table" then
+        return false
+    end
+    local scanner = namespace.Scanner
+    if type(scanner) ~= "table" or type(scanner.GetProgress) ~= "function" then
+        f.progressBar:Hide()
+        f.scanning = false
+        return false
+    end
+    local progress = scanner.GetProgress()
+    if type(progress) ~= "table" then
+        f.progressBar:Hide()
+        f.scanning = false
+        return false
+    end
+    f.scanning = progress.active == true
+    if progress.percent <= 0 and not f.scanning then
+        f.progressBar:Hide()
+        return true
+    end
+    f.progressBar:Show()
+    f.progressBar:SetValue(progress.percent)
+    if type(f.progressBar.text) == "table" then
+        f.progressBar.text:SetText(string.format(
+            L["SCAN_PROGRESS"] or "%d / %d",
+            progress.done or 0,
+            progress.total or 0))
+    end
+    if f.scanButton and type(f.scanButton.SetText) == "function" then
+        f.scanButton:SetText(f.scanning
+            and (L["LB_SCAN_BUSY"] or "Scanning...")
+            or (L["LB_SCAN"] or "Scan now"))
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Gear panel
+-- ---------------------------------------------------------------------------
+--
+-- Slot labels come from the CLIENT, not from our locale files: Blizzard's
+-- INVTYPE_* strings are already translated in every language the game ships, so
+-- using them means the panel is localized in locales this add-on has never been
+-- translated into. Verified present on classic_era, classic_era anniversary,
+-- titanforge, forever and live.
+local SLOT_ROWS = {
+    { slot = 1,  global = "INVTYPE_HEAD",            fallback = "Head" },
+    { slot = 2,  global = "INVTYPE_NECK",            fallback = "Neck" },
+    { slot = 3,  global = "INVTYPE_SHOULDER",        fallback = "Shoulder" },
+    { slot = 15, global = "INVTYPE_CLOAK",           fallback = "Back" },
+    { slot = 5,  global = "INVTYPE_CHEST",           fallback = "Chest" },
+    { slot = 9,  global = "INVTYPE_WRIST",           fallback = "Wrist" },
+    { slot = 10, global = "INVTYPE_HANDS",           fallback = "Hands" },
+    { slot = 6,  global = "INVTYPE_WAIST",           fallback = "Waist" },
+    { slot = 7,  global = "INVTYPE_LEGS",            fallback = "Legs" },
+    { slot = 8,  global = "INVTYPE_FEET",            fallback = "Feet" },
+    { slot = 11, global = "INVTYPE_FINGER",          fallback = "Finger" },
+    { slot = 12, global = "INVTYPE_FINGER",          fallback = "Finger" },
+    { slot = 13, global = "INVTYPE_TRINKET",         fallback = "Trinket" },
+    { slot = 14, global = "INVTYPE_TRINKET",         fallback = "Trinket" },
+    { slot = 16, global = "INVTYPE_WEAPONMAINHAND",  fallback = "Main Hand" },
+    { slot = 17, global = "INVTYPE_WEAPONOFFHAND",   fallback = "Off Hand" },
+    { slot = 18, global = "INVTYPE_RANGED",          fallback = "Ranged" },
+}
+
+local gearFrame
+
+local function slotLabel(row)
+    local g = _G
+    local text = rawget(g, row.global)
+    if type(text) == "string" and text ~= "" then
+        return text
+    end
+    return row.fallback
+end
+
+-- The item link is rendered AS A LINK rather than as a name, so the client
+-- supplies the quality colour and the hover tooltip for free. Re-implementing
+-- either would be a second source of truth that drifts from the game's.
+local function slotValueText(slot)
+    if type(slot) ~= "table" then
+        return nil
+    end
+    if slot.state == "confirmed-empty" then
+        return nil
+    end
+    local link = slot.nativeLink
+    if type(link) == "table" and type(link.value) == "string" and link.value ~= "" then
+        return link.value
+    end
+    local itemID = slot.itemID
+    if type(itemID) == "table" and type(itemID.value) == "number" then
+        return "|cffffffffitem:" .. tostring(itemID.value) .. "|r"
+    end
+    return nil
+end
+
+function RankBrowser.CloseGear()
+    if gearFrame then
+        gearFrame:Hide()
+    end
+end
+
+function RankBrowser.ShowGear(entry)
+    if type(entry) ~= "table" then
+        return false
+    end
+    local g = _G
+    if type(g.CreateFrame) ~= "function" then
+        return false
+    end
+
+    if not gearFrame then
+        local f = g.CreateFrame("Frame", "TacoTipGearPanel", g.UIParent or nil)
+        f:SetSize(400, 470)
+        f:SetPoint("CENTER", 0, 0)
+        f:SetFrameStrata("DIALOG")
+        if type(f.SetClampedToScreen) == "function" then
+            f:SetClampedToScreen(true)
+        end
+        if f.SetBackdrop then
+            f:SetBackdrop({
+                bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+                edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                tile = true, tileSize = 32, edgeSize = 24,
+                insets = { left = 8, right = 8, top = 8, bottom = 8 },
+            })
+        end
+        if type(f.EnableMouse) == "function" then
+            f:EnableMouse(true)
+        end
+        if type(f.SetMovable) == "function" then
+            f:SetMovable(true)
+            f:RegisterForDrag("LeftButton")
+            f:SetScript("OnDragStart", f.StartMoving)
+            f:SetScript("OnDragStop", f.StopMovingOrSizing)
+        end
+
+        local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        title:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -16)
+        f.title = title
+
+        local close = g.CreateFrame("Button", nil, f, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
+        f.close = close
+
+        f.rows = {}
+        for index = 1, #SLOT_ROWS do
+            local row = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            row:SetPoint("TOPLEFT", f, "TOPLEFT", 18, -46 - (index - 1) * 22)
+            row:SetWidth(360)
+            row:SetJustifyH("LEFT")
+            f.rows[index] = row
+        end
+
+        local note = f:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        note:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 18, 16)
+        note:SetWidth(360)
+        note:SetJustifyH("LEFT")
+        f.note = note
+
+        -- Escape closes it, the same three-route registration the browser uses.
+        RankBrowser.RegisterEscapeClose(f)
+        gearFrame = f
+    end
+
+    local name = entry.name or L["LB_TIP_UNKNOWN"] or "Unknown"
+    gearFrame.title:SetText(string.format(L["GEAR_TITLE"] or "%s's Gear", name))
+
+    -- The Scanner cache is in-memory only, so a player scanned in a previous
+    -- session has no gear to show. That is stated rather than shown as empty
+    -- rows, because eleven blank lines read as a bug.
+    local scanner = namespace.Scanner
+    local cached = type(scanner) == "table"
+        and type(scanner.GetRemote) == "function"
+        and scanner.GetRemote(entry.guid)
+        or nil
+    local slots = type(cached) == "table"
+        and type(cached.revision) == "table"
+        and cached.revision.slots
+        or nil
+
+    local anyItem = false
+    for index = 1, #SLOT_ROWS do
+        local spec = SLOT_ROWS[index]
+        local value = type(slots) == "table" and slotValueText(slots[spec.slot]) or nil
+        if value then
+            anyItem = true
+            gearFrame.rows[index]:SetText(slotLabel(spec) .. ":  " .. value)
+        else
+            gearFrame.rows[index]:SetText("|cff808080" .. slotLabel(spec) .. "|r")
+        end
+    end
+
+    if not anyItem then
+        gearFrame.note:SetText(L["GEAR_NOT_SCANNED"]
+            or "This player has not been scanned yet, so no gear is available.")
+    else
+        gearFrame.note:SetText("")
+    end
+
+    gearFrame:Show()
+    return true
+end
 
 function RankBrowser.ScrollToTop()
     local f = rankFrame
@@ -426,6 +720,21 @@ function RankBrowser.UpdateUI()
     -- thing.
     local gsRanks = buildGearScoreRanks(data)
     local view = (currentSort == "gs") and data or sortEntries(data, currentSort)
+
+    -- Best-in-view, so a colour means "how good is this HERE". Computed from
+    -- the whole filtered set, not the visible page, so scrolling does not
+    -- re-colour the same player. `totalCount` is the pool the percentile rank
+    -- is measured against.
+    viewBestGS, viewBestILVL, viewTotal = 0, 0, totalCount
+    for index = 1, #data do
+        local entry = data[index]
+        if type(entry) == "table" then
+            local gs = tonumber(entry.gs)
+            local ilvl = tonumber(entry.ilvl)
+            if gs and gs > viewBestGS then viewBestGS = gs end
+            if ilvl and ilvl > viewBestILVL then viewBestILVL = ilvl end
+        end
+    end
 
     local scrollFrame = rankFrame.scrollFrame
     local maxOffset = getMaxOffset(totalCount)
@@ -487,12 +796,14 @@ function RankBrowser.UpdateUI()
         end
         if ovRank then
             rankFrame.footerText:SetText(string.format(
-                "Your Standing: #%d Overall | #%d Faction | #%d Class  -  %d players tracked",
+                L["LB_FOOTER_STANDING"]
+                    or "Your Standing: #%d Overall | #%d Faction | #%d Class  -  %d players tracked",
                 ovRank, fRank or ovRank, cRank or ovRank, totalTracked or 0))
             rankFrame.footerText:SetTextColor(TEXT_R, TEXT_G, TEXT_B)
         else
             rankFrame.footerText:SetText(string.format(
-                "%d players tracked - you have no ranking yet", totalTracked or totalCount))
+                L["LB_FOOTER_NO_RANK"] or "%d players tracked - you have no ranking yet",
+                totalTracked or totalCount))
             rankFrame.footerText:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
         end
     end
@@ -553,7 +864,7 @@ local function createRow(parent, index)
     youTag:SetPoint("LEFT", row, "LEFT", 626, 0)
     youTag:SetWidth(32)
     youTag:SetJustifyH("CENTER")
-    youTag:SetText("YOU")
+    youTag:SetText(L["LB_YOU"] or "YOU")
     youTag:SetTextColor(BRAND_R, BRAND_G, BRAND_B)
     youTag:Hide()
     row.youTag = youTag
@@ -570,6 +881,13 @@ local function createRow(parent, index)
         self.hovered = false
         applyRowOverlay(self)
         hideRowTooltip()
+    end)
+
+    -- Click opens the gear panel. The row keeps its own entry, so the handler
+    -- needs no lookup and cannot open the wrong player after a re-sort -- the
+    -- classic bug with index-based handlers.
+    row:SetScript("OnClick", function(self)
+        return RankBrowser.ShowGear(self.entry)
     end)
 
     return row
@@ -595,14 +913,17 @@ local function refreshSortHeaders()
     end
     if sortHint then
         local arrow = (currentSort == "seen") and ARROW_UP or ARROW_DOWN
-        sortHint:SetText(string.format("Sorted by %s %s", SORTS[currentSort] or "", arrow))
+        sortHint:SetText(string.format(
+            L["LB_SORTED_BY"] or "Sorted by %s %s",
+            SORTS[currentSort] and (L[SORTS[currentSort]] or "") or "",
+            arrow))
     end
 end
 
 local function refreshClassFilterLabel()
     if not classFilterButton then return end
     if type(_G.UIDropDownMenu_SetText) == "function" then
-        _G.UIDropDownMenu_SetText(classFilterButton, currentClass == "ALL" and "All Classes" or currentClass)
+        _G.UIDropDownMenu_SetText(classFilterButton, currentClass == "ALL" and (L["LB_FILTER_ALL"] or "All Classes") or currentClass)
     end
 end
 
@@ -611,7 +932,11 @@ function RankBrowser.CreateUI()
     local g = _G
     if type(g.CreateFrame) ~= "function" then return nil end
 
-    local f = g.CreateFrame("Frame", "TacoTipRankFrame", g.UIParent, "BackdropTemplate")
+    local ok, f = pcall(g.CreateFrame, "Frame", "TacoTipRankFrame", g.UIParent, "BackdropTemplate")
+    if not ok or type(f) ~= "table" then
+        ok, f = pcall(g.CreateFrame, "Frame", "TacoTipRankFrame", g.UIParent)
+    end
+    if not ok or type(f) ~= "table" then return nil end
     f:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
     f:SetPoint("CENTER", g.UIParent, "CENTER", 0, 0)
     f:SetMovable(true)
@@ -635,7 +960,7 @@ function RankBrowser.CreateUI()
     -- Title.
     local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOP", f, "TOP", 0, -14)
-    title:SetText("TacoTip GearScore Leaderboard")
+    title:SetText(L["LB_TITLE"] or "TacoTip GearScore Leaderboard")
 
     local close = g.CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
@@ -645,7 +970,7 @@ function RankBrowser.CreateUI()
     -- hide the players you want to compare yourself against.
     local scopeLabel = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     scopeLabel:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT, CONTROL_TOP)
-    scopeLabel:SetText("Whole Realm")
+    scopeLabel:SetText(L["LB_REALM"] or "Whole Realm")
 
     -- Active-scope underline, sitting under the scope label.
     tabHighlight = f:CreateTexture(nil, "ARTWORK")
@@ -667,7 +992,7 @@ function RankBrowser.CreateUI()
     end)
     local searchLabel = f:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     searchLabel:SetPoint("RIGHT", search, "LEFT", -8, 0)
-    searchLabel:SetText("Search:")
+    searchLabel:SetText(L["LB_SEARCH"] or "Search:")
 
     -- Class filter dropdown, between the tabs and the search box.
     local classDD = g.CreateFrame("Frame", "TacoTipRankClassFilter", f, "UIDropDownMenuTemplate")
@@ -689,7 +1014,7 @@ function RankBrowser.CreateUI()
                     end,
                 }
             end
-            g.UIDropDownMenu_AddButton(entryFor("All Classes", "ALL"))
+            g.UIDropDownMenu_AddButton(entryFor(L["LB_FILTER_ALL"] or "All Classes", "ALL"))
             for _, className in ipairs(CLASS_ORDER) do
                 g.UIDropDownMenu_AddButton(entryFor(className, className))
             end
@@ -711,7 +1036,7 @@ function RankBrowser.CreateUI()
             header = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
             header:SetSize(col.width, 20)
             header:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT + col.x, HEADER_TOP + 4)
-            header:SetText(col.label)
+            header:SetText(L[col.label] or col.fallback or col.label)
             header:SetScript("OnClick", function()
                 currentSort = col.key
                 refreshSortHeaders()
@@ -747,7 +1072,7 @@ function RankBrowser.CreateUI()
             header:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT + col.x, HEADER_TOP)
             header:SetWidth(col.width)
             header:SetJustifyH(col.justify)
-            header:SetText(col.label)
+            header:SetText(L[col.label] or col.fallback or col.label)
         end
         col.header = header
     end
@@ -784,20 +1109,20 @@ function RankBrowser.CreateUI()
     -- Empty-state message, shown only when the current filters match nobody.
     emptyStateText = f:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     emptyStateText:SetPoint("TOP", sf, "TOP", 0, -80)
-    emptyStateText:SetText("No players match the current filters.")
+    emptyStateText:SetText(L["LB_EMPTY_FILTERS"] or "No players match the current filters.")
     emptyStateText:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
     emptyStateText:Hide()
 
     -- Footer: personal standing (left) and navigation buttons (right).
     local footer = f:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     footer:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", ROW_LEFT, 14)
-    footer:SetText("Loading rankings...")
+    footer:SetText(L["LB_LOADING"] or "Loading rankings...")
     f.footerText = footer
 
     local topButton = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     topButton:SetSize(80, 22)
     topButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -122, 12)
-    topButton:SetText("▲ Top")
+    topButton:SetText(L["LB_TOP"] or "Top")
     topButton:SetScript("OnClick", function()
         RankBrowser.ScrollToTop()
     end)
@@ -805,15 +1130,68 @@ function RankBrowser.CreateUI()
     local meButton = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     meButton:SetSize(90, 22)
     meButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 12)
-    meButton:SetText("▼ My Rank")
+    meButton:SetText(L["LB_MY_RANK_ARROW"] or "My Rank")
     meButton:SetScript("OnClick", function()
         RankBrowser.TrackToPlayer()
     end)
+
+    -- Scan entry point. The Options page carries the same control and both call
+    -- RankBrowser.StartScan / read RankBrowser.RefreshProgress, so the two
+    -- surfaces cannot disagree about whether a scan is running.
+    local scanButton = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    scanButton:SetSize(100, 22)
+    scanButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -222, 12)
+    scanButton:SetText(L["LB_SCAN"] or "Scan now")
+    scanButton:SetScript("OnClick", function()
+        RankBrowser.StartScan()
+    end)
+    f.scanButton = scanButton
+
+    -- Progress bar, above the footer row. Hidden when idle so the window does
+    -- not carry a dead grey rail at all times.
+    local bar = g.CreateFrame("StatusBar", nil, f)
+    bar:SetSize(ROW_WIDTH, 12)
+    bar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", ROW_LEFT, 36)
+    -- SetStatusBarTexture is a real StatusBar method, but a guarded call costs
+    -- nothing and this window must never fail to open because one method was
+    -- absent -- the same rule the rest of this file follows for frame methods.
+    if type(bar.SetStatusBarTexture) == "function" then
+        bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    end
+    if type(bar.SetStatusBarColor) == "function" then
+        bar:SetStatusBarColor(0.66, 0.48, 0.86)
+    end
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(0)
+    bar:Hide()
+    f.progressBar = bar
+
+    local progressText = bar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    progressText:SetPoint("LEFT", bar, "LEFT", 2, 0)
+    progressText:SetText("")
+    bar.text = progressText
 
     -- Every open lands on the player's own rank.
     f:SetScript("OnShow", function()
         jumpToPlayerPending = true
         RankBrowser.UpdateUI()
+        RankBrowser.RefreshProgress()
+    end)
+
+    -- Poll progress ONLY while a scan runs. An always-on OnUpdate on a window
+    -- that stays open would cost frame time for a bar that is not moving, so
+    -- the handler returns immediately unless RefreshProgress reports a scan in
+    -- flight.
+    f:SetScript("OnUpdate", function(self, elapsed)
+        if not self.scanning then
+            return
+        end
+        self.progressAccum = (self.progressAccum or 0) + (elapsed or 0)
+        if self.progressAccum < 0.25 then
+            return
+        end
+        self.progressAccum = 0
+        RankBrowser.RefreshProgress()
     end)
 
     rankFrame = f
@@ -845,7 +1223,15 @@ function RankBrowser.RegisterEscapeClose(frame)
     if escapeFrame or type(frame) ~= "table" then return end
     escapeFrame = frame
 
+    -- Closes the TOPMOST window first. The gear panel opens over the browser, so
+    -- Escape must dismiss it and leave the leaderboard up -- closing both at
+    -- once would throw away the scroll position the player was reading.
     local function closeIfShown()
+        local panel = gearFrame
+        if panel and panel:IsShown() then
+            panel:Hide()
+            return true
+        end
         local f = rankFrame
         if f and f:IsShown() then
             f:Hide()
@@ -881,12 +1267,14 @@ function RankBrowser.RegisterEscapeClose(frame)
     end
 
     -- Belt-and-braces: the modern event. Harmless where it never fires.
+    local registered = false
     if type(frame.RegisterEvent) == "function" then
-        frame:RegisterEvent("KEY_ESCAPE")
+        local ok = pcall(frame.RegisterEvent, frame, "KEY_ESCAPE")
+        registered = ok == true
     end
     if type(frame.SetScript) == "function" then
         frame:SetScript("OnEvent", function(_, event)
-            if event == "KEY_ESCAPE" then
+            if registered and event == "KEY_ESCAPE" then
                 closeIfShown()
             end
         end)

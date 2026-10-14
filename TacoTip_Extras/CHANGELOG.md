@@ -4,31 +4,12 @@ All notable changes to TacoTip Extras are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `1.2.1` | `2026-10-13` | **Sync now asks.** Until this release a client only received what other clients happened to broadcast — which is when their own gear changed — so a fresh install stayed empty until enough people re-geared near it. There is now a query/response protocol (`Q` asks, `S` returns the sender's own record, `T` a short digest of their best), flood-controlled by a 20-second per-client respond interval and a 1–4s random jitter, and sized against the 255-byte addon-message limit. **Click a leaderboard row to open a gear panel** for that player, rendering the cached per-slot items as real item links so the client supplies quality colour and hover tooltips. Slot labels use Blizzard's own `INVTYPE_*` strings, so the panel is translated into languages this add-on has never been translated into. Sync no longer discards records with an empty field: the deserializer used `gmatch("([^;]+)")`, which skips empty fields and therefore rejected every record whose `specName` or `faction` was blank — a routine case, and a silent one. Eleven-language localization (deDE, esES, esMX, frFR, itIT, koKR, ptBR, ruRU, zhCN, zhTW over an enUS source of truth) wired through every user-facing string, following TacoTip's own language setting. Minimap button now opens the leaderboard on left-click and settings on right-click. Options' "Open Server Leaderboard" moved off the description text to the top-right. Rank numbers are coloured by percentile through `Scoring.QualityColor` — a function the leaderboard had always called and that did not exist, so every GearScore and iLvl value had rendered white. Tooltip rank line reads `[#2 Warrior]` with the ranking number coloured by standing and the class name in its class colour. A scan button on both the leaderboard header and the Options page drives one shared scan, with a progress rail fed by the new `Scanner.GetProgress()`. Per-realm capacity raised to 20000 records, measured at ~5.3 MB of SavedVariables. Sync re-driven on login, reload, instance transitions and open-world zoning, throttled to once per 30 seconds. Cross-client hardening folded into this release: legacy `GetAddOnMetadata` fallback in `Core.GetVersion`, guarded `BackdropTemplate`/`KEY_ESCAPE` browser setup, UTF-8-safe truncation and capacity enforcement in `RankDB`, explicit `gs` sorting, lowercase/uppercase equip-location normalization, nil-safe metric-row inserts, guarded adapter color access, and tooltip `AddLine` wrap flag. |
 | `1.2.0` | `2026-10-13` | Authorship unified on AcidBomb across LICENSE, TOC metadata, and both in-game credit strings. The login banner now prints "TacoTip Extras" rather than the retired "TacoTip GS Enhancer". | Leaderboard browser upgraded: click-to-sort columns, per-row hover tooltips, specialization icons, Escape-to-close fixed for the Classic family, `/tt lb`, and a labelling pass. |
 | `1.1.0` | `2026-10-13` | Leaderboard browser rebuilt: whole-realm ranking with no faction split, opens centred on your own rank, `▲ Top` / `▼ My Rank` navigation, class filter and live search, and a modernized row treatment (class colour bar, podium rank badges, hover highlight, `YOU` marker). Adds a focused offline harness that drives the browser and asserts what it rendered. |
 | `1.0.2` | `2026-10-13` | Polish release: renamed the player-tooltip rank label to `Gearscore Rank:`, restyled it to match the add-on's brand palette, recolored Average iLvl values from class colors to GearScore quality colors across tooltips, equipment windows and the server browser, and fixed the leaderboard window not opening from the Options button / slash commands on all clients. |
 | `1.0.1` | `2026-10-12` | Server-wide GearScore Rank Browser & P2P Sync Engine (HonorSpy style) in background channel `ttgssync` + GUILD/PARTY/RAID fallbacks, interactive Leaderboard UI (`/tt ranks`, `/ttrank`, `/ttleaderboard`), player tooltip rank line (`Rank: #X (#Y Class)`), and remote inspect equipment scanning deadlock fix across Retail and WoW Forever. |
 | `1.0.0` | `2026-10-11` | Initial release of TacoTip Extras companion addon. Full equipment and enhancement auditing, modern retail engine compatibility (variable-length bonus ID item links, 16-slot average item level, CharacterModelScene support), Detailed display mode default, and 100% zero-warning static analysis. |
-
----
-
-## [Unreleased]
-
-### Fixed
-
-- Escape-close of the GearScore browser no longer raises
-  `Cannot assign script handler for 'OnEscapePressed'` on Retail: a bare Frame has
-  no `OnEscapePressed` script type, so the assignment is now pcall-guarded while
-  the `UISpecialFrames` route keeps the key working.
-- Retail no longer reports "Equipment data unavailable": equipped links on Retail are
-  coloured with the named escape `|cnIQx` instead of the legacy `|cAARRGGBB` color code,
-  so `Scoring.extractPayload` now extracts the payload by its `item:[^|]+` signature
-  rather than anchoring on the legacy color code. Classic links are unaffected.
-
-### Changed
-
-- The "Open Server Leaderboard" button in the Options panel moved to the top-right of
-  the panel so it is easier to reach.
 
 ## [1.2.0] — 2026-10-13
 

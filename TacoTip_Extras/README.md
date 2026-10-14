@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.2.0
+version: 1.2.1
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE
@@ -34,7 +34,7 @@ updated: 2026-10-13
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing, to follow. It is not a fork of TacoTip, not maintained by the TacoTip author, and it implies no endorsement by either.
 
-**Version:** 1.2.0
+**Version:** 1.2.1
 **Author:** AcidBomb (Pilsung)
 
 ## Requirements
@@ -59,7 +59,7 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 
 - Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with dedicated background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
 - Interactive Leaderboard window (`/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`) covering the **whole realm**, opening centred on your own rank, with class filtering, live search, `▲ Top` / `▼ My Rank` navigation, and personal rank standing.
-- Automatic tooltip rank display (`Gearscore Rank: #14 (#2 Warrior)`) on player hover.
+- Automatic tooltip rank display (`Gearscore Rank: #14 [#2 Warrior]`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
 - One shared equipment-summary mode with separately saved Character and Inspect positions.
@@ -98,16 +98,21 @@ TacoTip Extras features a decentralized, HonorSpy-style peer-to-peer sync engine
   - **Escape closes the browser**, on every supported client.
   - Filter by class from the **class dropdown**, or type a name fragment into the search box for live filtering.
   - Your own row carries a **highlight and a `YOU` marker**, so you can see at a glance which row is you.
-  - Top players get Gold (`#1`), Silver (`#2`) and Bronze (`#3`) podium badges; every row has a thin class-colour bar, hover highlighting, and muted spec / last-seen columns.
+  - **Click any row** to open a **gear panel** for that player: their 17 equipped slots, each rendered as a real item link so the game supplies quality colour and hover tooltips. Slot labels use Blizzard's own `INVTYPE_*` strings, so the panel is translated in every language the client ships. Players not scanned this session show a plain explanation rather than blank rows.
+  - Top players get percentile-coloured rank numbers: `#1` is the top band because it *is* the highest GearScore. The class-rank number in the tooltip line uses the same scale against the class pool.
+  - Every row has a thin class-colour bar, hover highlighting, and muted spec / last-seen columns.
   - Footer banner shows your character's personal Overall, Faction, and Class ranks.
 - **Tooltip Rank Display:**
-  - Renders a clean rank line on player tooltips: `Gearscore Rank: #14 (#2 Warrior)`.
+  - Renders a rank line on player tooltips: `Gearscore Rank: #14 [#2 Warrior]`, with the numbers coloured by percentile and the class name in its class colour.
   - Can be toggled on/off in the Options panel (`Show server leaderboard rank`).
 - **Silent Background Sync:**
   - Automatically exchanges inspection records over the hidden chat channel `ttgssync` with fallback broadcasts to `GUILD`, `PARTY`, and `RAID`.
+  - **Asks for data instead of only listening.** A client that has just logged in sends a `Q` query; peers answer with `S` (their own current record) and `T` (a short digest of the best records they hold). Without this a fresh install stayed empty until enough players happened to re-gear near it.
+  - **Flood-controlled on both sides.** Each client answers at most one query per 20 seconds, and answers are jittered by a random 1–4 seconds so a group logging in together does not answer in the same instant. Responses are sized against the 255-byte addon-message limit.
+  - Re-driven on login, `/reload`, instance transitions and open-world zone changes, throttled to one round per 30 seconds.
   - Channel output is silenced from chat windows with zero chat clutter.
   - Rate-limited with a token bucket (1 msg / 1.5s, burst max 3) to prevent disconnects.
-  - Stale data is automatically pruned after 60 days, with a 5,000 player capacity cap.
+  - Stale data is automatically pruned after 60 days, with a 20,000 player capacity cap (measured at ~5.3 MB of SavedVariables).
 
 ## Character and Inspect summaries
 
@@ -153,9 +158,11 @@ A fresh profile starts with both player tooltips and equipment summaries in Deta
 
 ## Saved variables
 
-Preferences are stored in `TacoTipExtrasDB`. Before 1.0.0 the add-on stored them in `TacoTipGearScoreEnhancerDB`; that name is retired and old tables are ignored rather than migrated, so a pre-1.0.0 profile starts from defaults on first load after upgrading. Nothing errors on the missing table.
+Preferences are stored in `TacoTipExtrasDB`, **and so is the leaderboard**. Realm standings are written to `TacoTipExtrasDB.ranks[<realm>]`, keyed by GUID, so the board survives logging out: WoW saves the table on exit and loads it at login, and the sync engine then refreshes it against whoever else is online. A record carries name, faction, class, spec, GearScore, average item level and a timestamp — roughly 276 bytes each, which is where the 20,000-record cap and its ~5.3 MB figure come from.
 
-Inspected player names, GUIDs, equipment, scores, diagnostics, scanner revisions, and cache entries remain session-only. The Character/Inspect native-display visibility lease is memory-only.
+Before 1.0.0 the add-on stored preferences in `TacoTipGearScoreEnhancerDB`; that name is retired and old tables are ignored rather than migrated, so a pre-1.0.0 profile starts from defaults on first load after upgrading. Nothing errors on the missing table.
+
+Per-slot equipment detail, scanner revisions and cache entries remain **session-only** — they are what the gear panel reads, which is why the panel can only show players scanned since you logged in.
 
 ## Known limitations
 

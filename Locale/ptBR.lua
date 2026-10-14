@@ -6,8 +6,8 @@
 
 --]]
 
-if (((TacoTipConfig and TacoTipConfig.locale_override) or GetLocale()) ~= "ptBR") then return end
-_G.TACOTIP_LOCALE = {
+_G.TACOTIP_LOCALES = _G.TACOTIP_LOCALES or {}
+local L = {
     ["Player"] = "Jogador",
     ["Pet"] = "Mascote",
     ["Target"] = "Alvo",
@@ -26,9 +26,6 @@ _G.TACOTIP_LOCALE = {
     ["Drag to Move"] = "Arraste para mover",
     ["Change Anchor"] = "Alterar âncora",
     ["Save Position"] = "Salvar posição",
-    [" the Kingslayer"] = " o Regicida",
-    ["Undead"] = "Morto-vivo",
-    ["Unit Tooltips"] = "Dicas de unidade",
     ["Class Color"] = "Cor da classe",
     ["Color class names in tooltips"] = "Colorir os nomes por classe nas dicas",
     ["Title"] = "Título",
@@ -38,8 +35,6 @@ _G.TACOTIP_LOCALE = {
     ["Guild Rank"] = "Patente da guilda",
     ["Show guild rank in tooltips"] = "Mostrar a patente da guilda nas dicas",
     ["Show talents and specialization in tooltips"] = "Mostrar talentos e especialização nas dicas",
-    ["Show player's GearScore in tooltips"] = "Mostrar o GearScore do jogador nas dicas",
-    ["Show player's PawnScore in tooltips (may affect performance)"] =
     "Mostrar o PawnScore do jogador nas dicas (pode afetar o desempenho)",
     ["requires Pawn"] = "Requer Pawn",
     ["Show unit's target in tooltips"] = "Mostrar o alvo da unidade nas dicas",
@@ -47,7 +42,6 @@ _G.TACOTIP_LOCALE = {
     ["Show player's faction icon (Horde/Alliance) in tooltips"] =
     "Mostrar o ícone de facção do jogador (Horda/Aliança) nas dicas",
     ["Class Icon"] = "Ícone de classe",
-    ["Show player's class icon next to the faction icon in tooltips"] =
     "Mostrar o ícone de classe do jogador ao lado do ícone de facção nas dicas",
     ["PVP Icon"] = "Ícone JvJ",
     ["Show player's pvp flag status as icon instead of text"] =
@@ -56,29 +50,18 @@ _G.TACOTIP_LOCALE = {
     ["Show unit's health bar under tooltip"] = "Mostrar a barra de vida da unidade abaixo da dica",
     ["Power Bar"] = "Barra de recurso",
     ["Show unit's power bar under tooltip"] = "Mostrar a barra de recurso da unidade abaixo da dica",
-    ["Character Frame"] = "Quadro do personagem",
-    ["Show GearScore in character frame"] = "Mostrar o GearScore no quadro do personagem",
-    ["Average iLvl"] = "iLvl médio",
-    ["Show Average Item Level in character frame"] = "Mostrar o nível médio do item no quadro do personagem",
-    ["Lock Position"] = "Bloquear posição",
-    ["Lock GearScore and Average Item Level positions in character frame"] =
     "Bloquear as posições do GearScore e do nível médio do item no quadro do personagem",
-    ["Extra"] = "Extra",
     ["Show Item Level"] = "Mostrar nível do item",
     ["Display item level in the tooltip for certain items."] = "Exibir o nível do item na dica de certos itens.",
     ["Show Item GearScore"] = "Mostrar GearScore do item",
     ["Show GearScore in item tooltips"] = "Mostrar o GearScore nas dicas dos itens",
     ["HunterScore"] = "Pontuação do caçador",
-    ["Always show HunterScore in item tooltips"] = "Mostrar sempre a pontuação do caçador nas dicas dos itens",
     ["Enhanced Tooltips"] = "Dicas aprimoradas",
-    ["Disable In Combat"] = "Desativar em combate",
-    ["Disable gearscore & talents in combat"] = "Desativar GearScore e talentos em combate",
     ["Chat Class Colors"] = "Cores de classe no chat",
     ["Color names by class in chat windows"] = "Colorir os nomes por classe nas janelas de chat",
     ["Instant Fade"] = "Desaparecimento instantâneo",
     ["Fade out unit tooltips instantly"] = "Fazer as dicas de unidade desaparecerem instantaneamente",
     ["Custom Tooltip Position"] = "Posição personalizada da dica",
-    ["Set a custom position for tooltips"] = "Definir uma posição personalizada para as dicas",
     ["Tooltip Style"] = "Estilo da dica",
     ["FULL"] = "COMPLETO",
     ["Always FULL"] = "Sempre COMPLETO",
@@ -90,9 +73,6 @@ _G.TACOTIP_LOCALE = {
     ["Default MINI, hold SHIFT for FULL"] = "Padrão MINI, segure SHIFT para COMPLETO",
     ["MINI"] = "MINI",
     ["Always MINI"] = "Sempre MINI",
-    ["Wide, Dual Spec, GearScore, Average iLvl"] = "Largo, dupla especialização, GearScore, iLvl médio",
-    ["Narrow, Active Spec, GearScore"] = "Estreito, especialização ativa, GearScore",
-    ["Narrow, Active Spec, GearScore, Average iLvl"] = "Estreito, especialização ativa, GearScore, iLvl médio",
     ["Reset configuration"] = "Redefinir configuração",
     ["Configuration has been reset to default."] = "A configuração foi redefinida para o padrão.",
     ["Custom tooltip position enabled."] = "Posição personalizada da dica ativada.",
@@ -104,9 +84,7 @@ _G.TACOTIP_LOCALE = {
     ["Anchor to mouse only in WorldFrame\nSkips raid / party frames"] =
     "Ancorar ao mouse somente no WorldFrame\nIgnora frames de grupo / raid",
     ["Anchor Spells to Mouse"] = "Ancorar magias ao mouse",
-    ["Anchor spell tooltips to mouse cursor"] = "Ancorar as dicas de magias ao cursor do mouse",
     ["Show Achievement Points"] = "Mostrar pontos de conquista",
-    ["Show total achievement points in tooltips"] = "Mostrar o total de pontos de conquista nas dicas",
     ["Mover"] = "Movimentador",
     ["TEXT_OPT_DESC"] =
     "Melhores dicas de jogador - cores de classe, talentos/especialização,\nGearScore, cargos da guilda",
@@ -203,6 +181,8 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_PORTRAIT_SCALE_DESC"] = "Ajusta a escala do retrato mostrado ao lado das dicas de unidade.",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D"] = "Mostrar retrato 3D",
     ["OPTIONS_TOOLTIP_PORTRAIT_3D_DESC"] = "Usa um modelo 3D em tempo real em vez de uma textura de retrato 2D.",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE"] = "Inverter lado do retrato",
+    ["OPTIONS_TOOLTIP_PORTRAIT_INVERT_SIDE_DESC"] = "Move o retrato para o lado oposto do tooltip.",
     ["OPTIONS_TOOLTIP_FONT"] = "Fonte da dica",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Escolha a fonte usada pelo texto da dica. Fontes SharedMedia de pacotes como Merfin Plus são incluídas automaticamente quando disponíveis.",
@@ -248,7 +228,7 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Ocultar detalhes de inspeção em combate",
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Ignora os acréscimos de talentos e estilo GearScore do TacoTip para jogadores enquanto você estiver em combate.",
-    ["OPTIONS_ACHIEVEMENT_DESC"] = "Disponível apenas em clientes Wrath Classic onde existam dados de conquistas.",
+    ["OPTIONS_ACHIEVEMENT_DESC"] = "Exibe pontos de conquistas do jogador nas dicas de interface e informações do personagem.",
     ["FORMAT_GUILD_RANK_1"] = "%s %s",
     ["CHARACTER_FRAME_GS_TITLE_FONT"] = "Fonts\\FRIZQT__.TTF",
     ["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"] = 10,
@@ -306,9 +286,9 @@ _G.TACOTIP_LOCALE = {
     ["OPTIONS_TOOLTIP_MAX_WIDTH_DESC"] = "Define uma largura máxima para a dica. Defina como 0 para sem limite.",
     ["Realm"] = "Reino",
     ["OPTIONS_SHAMAN_BLUE"] = "Xamã Azul",
-    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Usa azul em vez de rosa para a cor de classe do xamã no Classic Era / SoD.",
+    ["OPTIONS_SHAMAN_BLUE_DESC"] = "Usa azul em vez de rosa para a cor de classe do xamã.",
     ["OPTIONS_OFFSET_EDIT_DESC"] = "Digite um deslocamento de pixel preciso e pressione Enter para aplicar.",
     ["OPTIONS_OFFSET_SLIDER_DESC"] = "Arraste para ajustar este deslocamento. O campo numérico permanece sincronizado.",
-    ["RANK_TITLE"] = "Campeão",
-    ["REALM"] = "Reino",
 }
+
+_G.TACOTIP_LOCALES["ptBR"] = L
