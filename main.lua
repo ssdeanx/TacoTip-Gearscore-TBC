@@ -1429,6 +1429,15 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
         -- three Classic assertions caught it.
         if (not keepModel) then
             tooltip.TacoTipPortrait3D:Hide()
+            -- Hide() gets a counter of its own, here, on EVERY hide.
+            --
+            -- TT.ev.portraitHide sits inside the retainModel guard two lines
+            -- below, so it counts teardowns and cannot see this call at all --
+            -- and the two assertions named for the portrait blink read
+            -- portraitHide, so moving this Hide() out of its guard left the whole
+            -- suite green. A counter that cannot observe the call it is named
+            -- after is worse than none: it reads as evidence and is not.
+            TT.ev.portraitModelHidden = (TT.ev.portraitModelHidden or 0) + 1
             if (not retainModel) then
                 TT.ev.portraitHide = (TT.ev.portraitHide or 0) + 1
                 TT.ev.portraitDestroy = (TT.ev.portraitDestroy or 0) + 1
@@ -1554,11 +1563,38 @@ local function onTooltipSetUnit(tooltip, data)
         -- the model must survive. A genuinely different guid, or no guid at all,
         -- still tears down as before. Real recycle (OnTooltipCleared/OnHide)
         -- calls clearTooltipVisuals separately and is unaffected.
+        --
+        -- "no guid at all" is the case that had no home. On Retail and WoW
+        -- Forever the postcall supplies data.guid, so "no guid" is rare. On the
+        -- CLASSIC FAMILY it is EVERY render: the OnTooltipSetUnit script hook
+        -- registered below wraps the handler as
+        --   function(tooltip, ...) handleTooltipSetUnit(tooltip) end
+        -- which drops the varargs, so `data` is nil and incomingGUID is nil
+        -- here every single time. keepModel was therefore always false, so the
+        -- retain path (hide, keep the mesh) was always taken -- and this
+        -- function RETURNS without reaching TT:ApplyTooltipAppearance, which is
+        -- the only place in the addon that calls portrait:Show() at :1209. The
+        -- portrait was hidden and nothing in the pipeline could bring it back
+        -- for the rest of that show.
+        --
+        -- The retain path is documented at :1421 as "hide and re-anchor, but
+        -- keep the loaded model", i.e. it is written on the assumption that the
+        -- caller goes on to re-show. This is the only caller that asks to retain,
+        -- and it does not, so the caller owes the re-show. Restored only when
+        -- nothing proved the character changed: a guid that is present AND
+        -- different is a real unit change and the stale portrait must stay gone.
         local unresolvedState = getTooltipState(tooltip)
         local incomingGUID = data and data.guid or nil
+        local portrait = tooltip.TacoTipPortrait3D
+        local portraitWasShown = (portrait and portrait.IsShown) and portrait:IsShown() or false
+        local changeUnproven = (incomingGUID == nil)
+            or (incomingGUID == unresolvedState.currentUnitGUID)
         clearTooltipVisuals(tooltip, nil,
-            (incomingGUID ~= nil and incomingGUID == unresolvedState.currentUnitGUID),
+            (not changeUnproven),
             "unresolved-unit", true)
+        if (changeUnproven and portraitWasShown and portrait and portrait.Show) then
+            portrait:Show()
+        end
         return
     end
 
@@ -3223,7 +3259,7 @@ local function reportEventCounters(line)
     -- diagnostic is reported by the error handler the user just enabled, which
     -- is not a useful outcome.
     local total = (ev.unitRender or 0) + (ev.gsCallback or 0) + (ev.portraitHide or 0)
-        + (ev.portraitDestroy or 0)
+        + (ev.portraitDestroy or 0) + (ev.portraitModelHidden or 0)
     if (total == 0) then
         line("event counters", "no events recorded yet -- hover a character first")
         return
@@ -3233,8 +3269,24 @@ local function reportEventCounters(line)
     line("GearScore callbacks", ev.gsCallback or 0)
     line("  of those, dropped as re-entrant", ev.gsCallbackReentrant or 0)
     line("  of those, wrong unit", ev.gsCallbackWrongUnit or 0)
-    line("portrait hide", ev.portraitHide or 0)
-    line("portrait destroy", ev.portraitDestroy or 0)
+    -- Labels here MUST name what is counted. TT.ev.portraitHide is incremented
+    -- inside the retainModel guard at :1431, so it counts teardowns, not
+    -- Hide() calls, and printing it as "portrait hide" made it look like the
+    -- hide was being measured when nothing could observe that call. Hence the
+    -- separate portraitModelHidden counter, which is incremented on EVERY
+    -- clearTooltipVisuals Hide() and is the number to read for "a clear took
+    -- the frame away".
+    --
+    -- The "(on clear)" in the label is load-bearing, not decoration:
+    -- TT:ApplyTooltipAppearance has its own Hide() at :1211, on the branch taken
+    -- when the portrait option is off or the unit is nil, and that one is NOT
+    -- counted here. A label reading plain "Hide() calls" would claim to see a
+    -- call it cannot.
+    line("portrait Hide() calls (on clear)", ev.portraitModelHidden or 0)
+    -- portraitHide and portraitDestroy are incremented in the same two lines
+    -- and therefore always equal; both are kept so the older name still reads.
+    line("portrait teardowns (hide + ClearModel)", ev.portraitHide or 0)
+    line("portrait destroys (ClearModel)", ev.portraitDestroy or 0)
     line("portrait re-anchor", ev.portraitAnchor or 0)
     -- Name the path that let the model go. A single portrait-hide count could
     -- not distinguish them, and a fix aimed at the wrong one shipped on top of
@@ -3283,10 +3335,103 @@ local function reportEventCounters(line)
             line("  scan skipped (range)", st.scanSkippedDistance or 0)
         end
     end
+    -- The old text here read "portrait destroy should be ~1 for a character and
+    -- 0 for a re-hover of the same one". That is only true for the FIRST unit
+    -- rendered after a /reload: state.currentUnitGUID is assigned at :1586 and
+    -- is NEVER cleared, so it always holds the unit rendered most recently --
+    -- which character you hover first is arbitrary. Re-hovering the same one
+    -- does not destroy, but only when it is the one still recorded; A, then B,
+    -- then A again is three destroys, not two.
     print("|cff59f0dcTo read a rate: note the numbers, hover one frame for 5s,|r")
-    print("|cff59f0dcrun /tt diag again and subtract. Portrait hide should be 0|r")
-    print("|cff59f0dcahead of \"unit renders\"; portrait destroy should be ~1 for|r")
-    print("|cff59f0dca character and 0 for a re-hover of the same one.|r")
+    print("|cff59f0dcrun /tt diag again and subtract. Portrait Hide() calls (on clear)|r")
+    print("|cff59f0dcmust not run AHEAD of unit renders: a steady hover of one|r")
+    print("|cff59f0dccharacter adds renders and no hides. Destroys are 1 for the first|r")
+    print("|cff59f0dcunit after a /reload, plus 1 for every change to a different unit|r")
+    print("|cff59f0dcor a non-unit tooltip; re-rendering the unit already on screen adds none.|r")
+end
+
+-- inspect error attribution (temporary) --
+--
+-- LibForeverInspector carries temporary diagnostic scaffolding for the
+-- out-of-range inspect report: a 50-entry ring of {kind="notify"|"error"} entries
+-- plus GetErrorLog / ClearErrorLog / RemoveErrorFilter. Nothing read it until
+-- now. The question it exists to answer is narrow and single-pass -- when the
+-- server answered "Not in Range", what did WE send it and from how far away --
+-- so it is printed here as the last N entries, one per line, with the delta from
+-- the previous entry. The delta is the part that matters: an error 0.3s after a
+-- request, and an error 40s after one, are different bugs, and a bare list of
+-- timestamps makes the reader do that subtraction in their head.
+--
+-- STRICTLY READ-ONLY. This section never writes, never pushes an entry and never
+-- calls ClearErrorLog: a diagnostic that consumes the evidence it exists to show
+-- is worse than none, and the library marks this scaffolding TO BE REMOVED once
+-- attribution is confirmed -- which means a second /tacotip diag run before the
+-- user has copied the first would otherwise print an already-drained log and look
+-- like the symptom had gone away.
+--
+-- Guarded on CI.GetErrorLog because the library versions separately from this
+-- file, and pcall'd for the reason the counters are totalled arithmetically
+-- rather than with next(): this runs from a slash handler on a user's machine and
+-- must not be the thing that raises. A missing capture prints nothing rather than
+-- printing a failure -- "no section" is the correct output on a build without it.
+local INSPECT_ERROR_LOG_SHOWN = 15
+local function reportInspectErrorLog(line)
+    if (not (CI and type(CI.GetErrorLog) == "function")) then
+        return
+    end
+    local ok, entries = pcall(CI.GetErrorLog, CI)
+    if (not ok or type(entries) ~= "table") then
+        return
+    end
+    print("|cff59f0dc-- inspect error attribution (temporary) --|r")
+    local n = #entries
+    if (n == 0) then
+        line("  no entries", "no NotifyInspect request or UI error has been captured")
+        return
+    end
+    local first = 1
+    if (n > INSPECT_ERROR_LOG_SHOWN) then
+        first = n - INSPECT_ERROR_LOG_SHOWN + 1
+    end
+    line("  captured", n .. " -- showing " .. first .. " to " .. n)
+    -- Two arguments to line(), not one: it is a (label, value) printer, and a
+    -- pre-formatted string handed to it as the label prints a trailing ": nil"
+    -- for the absent value. The index and the delta are the label; what the
+    -- entry says is the value.
+    local prevTime
+    for i = first, n do
+        local e = entries[i]
+        if (type(e) == "table") then
+            local t = tonumber(e.time)
+            local delta
+            if (prevTime and t) then
+                delta = string.format("%.2fs", t - prevTime)
+            else
+                delta = "  --  "
+            end
+            if (e.kind == "notify") then
+                -- distance and interactDistance disagreeing, or canInspect false
+                -- at a distance the client will answer for, is exactly the shape
+                -- that produced the original report, so all three are printed.
+                line(string.format("  [%2d] +%s", i, delta),
+                    string.format("notify %s dist=%s interactDist=%s canInspect=%s",
+                        tostring(e.unit or "?"), tostring(e.distance or "?"),
+                        tostring(e.interactDistance), tostring(e.canInspect)))
+            elseif (e.kind == "error") then
+                -- "<unresolved>" rather than "nil": GetGameMessageInfo is absent
+                -- on some clients, and "nil" in a diagnostic reads as a broken
+                -- value rather than as an API that was not there to ask.
+                line(string.format("  [%2d] +%s", i, delta),
+                    string.format("ERROR msgType=%s %s", tostring(e.messageType),
+                        tostring(e.message or "<message unresolved>")))
+            else
+                line(string.format("  [%2d] +%s %s", i, delta, tostring(e.kind)))
+            end
+            if (t) then
+                prevTime = t
+            end
+        end
+    end
 end
 
 -- Silent-failure checks.
@@ -3304,17 +3449,21 @@ local function reportSilentFailures(line)
     local problems = {}
 
     -- Client detection must be unambiguous. Forever and Retail SHARE
-    -- WOW_PROJECT_MAINLINE, so only the interface band separates them. If that
-    -- band ever lands a build in neither range, every mainline-only path silently
-    -- switches off and nothing raises.
+    -- WOW_PROJECT_MAINLINE, so only the interface band separates them -- and
+    -- three of the five shipped clients are NEITHER Retail nor Forever BY
+    -- DESIGN. The old condition here flagged "is not mainline", so every
+    -- /tacotip diag on Classic Era, TBC Anniversary and Titanforge opened a red
+    -- PROBLEMS section with a false alarm. The signal worth flagging is
+    -- "the family resolved to NOTHING": when that happens every family-only path
+    -- silently switches off and nothing raises.
     if (CI) then
         local projectId = select(2, _G.GetBuildInfo and _G.GetBuildInfo())
         local iv = CI.interfaceVersion or 0
         if (CI.IsRetail and CI.IsRetail() and CI.IsForever and CI.IsForever()) then
             problems[#problems + 1] = "client detected as BOTH Retail and WoW Forever (interface "
                 .. tostring(iv) .. ", project " .. tostring(projectId) .. ")"
-        elseif (not (CI.IsRetail and (CI.IsRetail() or CI:IsForever()))) then
-            problems[#problems + 1] = "client detected as NEITHER Retail nor WoW Forever ("
+        elseif (CI.IsUnknown and CI.IsUnknown()) then
+            problems[#problems + 1] = "client family could not be resolved ("
                 .. "interface " .. tostring(iv) .. ", project " .. tostring(projectId) .. ")"
         end
         -- projectId is the 2nd return of GetBuildInfo on Classic but the 4th on
@@ -3427,6 +3576,7 @@ function TT:PrintDiagnostics()
     line("GearScore bracket", gs and gs.BRACKET_SIZE or "none")
     line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
     reportEventCounters(line)
+    reportInspectErrorLog(line)
     reportSilentFailures(line)
     print("|cff59f0dc================================|r")
 end

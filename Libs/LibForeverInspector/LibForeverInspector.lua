@@ -130,7 +130,14 @@ local isRetail = isMainline and not isForever
 -- and, because the fallback below only runs when no flag is set, it also suppressed
 -- the fallback that would otherwise have classified the client. Hence the `~= nil`
 -- guard on every constant: a constant that was never defined can never match.
-local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC and (clientBuildMajor == 1 or clientBuildMajor == 0))
+-- Classic Era is identified by WOW_PROJECT_ID alone. The previous
+-- `clientBuildMajor == 1 or 0` guard was wrong on real Classic Era clients:
+-- there GetBuildInfo() slot 4 is nil and slot 7 is the BUILD number (e.g.
+-- 61337), so clientBuildMajor came out as 6, never 1, and isClassic stayed
+-- false. That silently routed Classic Era into the mainline "either signal"
+-- CanInspect branch, which let out-of-range units through to NotifyInspect and
+-- produced the "Not in range" popup + sound on hover/selection.
+local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC)
 local isTBC = (WOW_PROJECT_BC_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC) or (clientBuildMajor == 2)
 local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC) or (clientBuildMajor == 3)
 
@@ -339,24 +346,51 @@ end
 
 local inspectPendingUnit = nil
 
--- Inspect-interaction distance index. Verified on every supported branch:
--- 1 maps to the ~28 yard inspect range used by Blizzard's own inspect flow.
+-- Inspect-interaction distance index. Index 1 is the inspect interaction class.
+--
+-- NOT verified in Blizzard's source, and the previous comment here claimed it
+-- was. Read off the real call sites in the mirror, the enum is: 0 = guild/team
+-- operations (promote/kick/leave/disband, Blizzard_UnitPopup/TBC), 2 = trade
+-- (UnitPopupTradeButtonMixin), 3 = duel (UnitPopupDuelButtonMixin and the
+-- Vanilla duel-to-the-death variant), 4 = follow (UnitPopupFollowButtonMixin),
+-- 5 = pet-battle duel (UnitPopupPetBattleDuelButtonMixin), and nil for the base
+-- mixin and the inspect button, which inherit UnitPopupButtonBaseMixin and are
+-- therefore exempt from the CheckInteractDistance gate entirely
+-- (Blizzard_UnitPopupShared/UnitPopupSharedUtils.lua, `if dist and not
+-- CheckInteractDistance(...)`). Index 1 is used by NO button on any branch, so
+-- "1 = inspect" is an INFERENCE BY ELIMINATION, not a verification. It is a
+-- reasonable one and external API docs agree, but treat it as unproven: the
+-- value to trust is whatever CheckInteractDistance actually returns at runtime,
+-- which lib.errorLog records next to the measured distance on every request.
+--
 -- Centralised so per-client drift is changed in one place.
 local INSPECT_INTERACT_DISTANCE_INDEX = 1
 
--- A unit marked out of range is considered reachable again -- for the purpose of
--- lifting that mark -- once it measures at or inside this many yards. Chosen
--- well inside the ~28 yard class that interaction index 1 covers (Blizzard's own
--- COMPARE_ACHIEVEMENTS unit-popup button uses 1, trade 2, duel 3, follow 4), so a
--- unit that has genuinely closed the distance always clears the mark and one
--- that is still far never does. Being generous matters more than being tight:
--- an over-permissive threshold costs one inspect, while an over-tight one delays
--- GearScore for a player who is standing right in front of you.
-local OUT_OF_RANGE_RECHECK_YARDS = isClassic and 20 or 40
-
 -- Yardage at or inside which the hot tick and the proximity scan still consider a
--- candidate worth the full CanInspect chain. Matches the ~28 yard inspect range
--- the interaction index above is documented to cover.
+-- candidate worth the full CanInspect chain.
+--
+-- THIS DOES NOT MATCH THE ~28 YARD RANGE, and the old comment here claimed it
+-- did. 20 is not 28 and 40 is not 28; neither branch matched. What it actually
+-- is: a deliberately conservative pre-filter, STRICTER than the
+-- CheckInteractDistance(unit, 1) gate it protects on the Classic family (20 vs
+-- a documented ~28) and LOOSER on the others (40).
+--
+-- The Classic strictness has a real cost: a player standing 20-28yd away is
+-- perfectly inspectable and will NOT be inspected, because this pre-filter
+-- refuses before lib:CanInspect is ever consulted. That is a missed-inspect
+-- cost, not an error cost -- it cannot produce an out-of-range popup, only
+-- absent data.
+--
+-- TODO(measure): set these from observed client behaviour, not from the
+-- assumption that motivated them. lib:GetErrorLog() records `distance` and
+-- `interactDistance` together on every request that actually goes out; a
+-- request logged with distance in 20-28 while interactDistance is true proves
+-- this threshold is below the server's real refusal point and can be raised.
+--
+-- A refused unit's mark is lifted by the distance signal moving CLOSER than it
+-- was at refusal (see isInspectCoolingDown), never by a fixed yardage: the old
+-- fixed threshold lifted a refused unit the moment it measured inside the
+-- threshold, which re-asked and re-errored once per cooldown.
 local NEARBY_ASK_YARDS = isClassic and 20 or 40
 
 -- Per-unit last successful inspect time, used for hysteresis on mount/elevation
@@ -2991,7 +3025,11 @@ local function getPlayerGUID(arg)
             return arg
         end
     end
-    if (UnitIsPlayer and UnitIsPlayer(arg)) then
+    -- Guarded with type(...) == "function", like every other UnitIsPlayer call
+    -- in this file: the workspace stub declares the global with no parameters,
+    -- so the call is flagged as a redundant-parameter warning.
+    ---@diagnostic disable-next-line: redundant-parameter
+    if (type(UnitIsPlayer) == "function" and UnitIsPlayer(arg)) then
         return UnitGUID(arg)
     end
     return nil
@@ -3156,6 +3194,10 @@ local function getModernSpecData(unit, groupIndex)
     if (not (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization)) then
         return nil
     end
+    -- The workspace stub declares UnitExists with no parameters, so the call
+    -- below is reported as a redundant-parameter warning; same suppression as
+    -- in getPlayerGUID.
+    ---@diagnostic disable-next-line: redundant-parameter
     if (not unit or not UnitExists or not UnitExists(unit)) then
         return nil
     end
@@ -3566,6 +3608,30 @@ local function buildSpecIndexByGroup(unit)
     return out
 end
 
+-- Player-only wrapper around GetInventoryItemLink, used by both the cache write
+-- below and lib:GetInventoryItemMixin.
+--
+-- The API is resolved from _G at CALL time (never latched into a file-scope
+-- local) and invoked through pcall, deliberately, for two independent reasons:
+--   * the workspace's Classic-family declaration of GetInventoryItemLink takes
+--     no parameters, so a direct two-argument call is rejected by the analyzer
+--     ("expects a maximum of 0 argument(s)") -- routing it through pcall keeps
+--     that wrong signature from being baked into the inspect hot path;
+--   * whatever the engine actually exposes this as, the call must not be able
+--     to raise while cacheUnitData is populating the cache straight from the
+--     INSPECT_READY handler.
+-- Anything that is not a string is treated as "no link", so a shim returning
+-- nil/0/false leaves the slot empty instead of poisoning it.
+local function inventoryItemLink(unit, slot)
+    local api = _G.GetInventoryItemLink
+    if (type(api) ~= "function") then return nil end
+    local ok, link = pcall(api, unit, slot)
+    if (ok and type(link) == "string") then
+        return link
+    end
+    return nil
+end
+
 local function cacheUnitData(unit, guid)
     if (not unit or not guid) then return end
     local now = uptimeSeconds()
@@ -3580,7 +3646,7 @@ local function cacheUnitData(unit, guid)
     -- (gearscore.lua, pawn.lua) mirror this range, so changing it here without
     -- changing them would silently double-count.
     for slot = 1, 18 do
-        data.items[slot] = GetInventoryItemLink(unit, slot)
+        data.items[slot] = inventoryItemLink(unit, slot)
     end
 
     -- Modern specialization API (Retail & Forever)
@@ -3638,7 +3704,25 @@ local inspectPendingSince = 0
 
 local inspectQueueTick
 
-frame:SetScript("OnEvent", function(self, event, ...)
+-- Forward declaration. The OnEvent handler below runs the distance pre-filter on
+-- every player target and every player mouseover, but the function itself lives
+-- further down with the rest of the range machinery. A reference to a local that
+-- has not been declared yet compiles as a GLOBAL lookup, so without this line
+-- every player target and every player hover raised
+-- "attempt to call global 'isCloseEnoughToAsk' (a nil value)" and the handler
+-- aborted before it could inspect anything.
+local isCloseEnoughToAsk
+
+-- UnitExists, UnitIsPlayer, UnitIsUnit and C_Timer.After are all declared with
+-- no parameters by the workspace stub, so each of the calls below is reported
+-- as a redundant-parameter warning even though the arguments are required by
+-- every supported client. Suppressed for this handler as a block rather than
+-- one disable-next-line per statement: this handler is one dense chain of those
+-- calls (several of them on continuation lines, where a per-line annotation
+-- cannot reach), and the arity of an engine API is not something this file can
+-- get wrong. Everything outside the handler is still checked normally.
+---@diagnostic disable: redundant-parameter
+frame:SetScript("OnEvent", function(_, event, ...)
     if (event == "INSPECT_READY") then
         local guid = ...
         if (not guid and inspectPendingUnit and UnitExists and UnitExists(inspectPendingUnit)) then
@@ -3674,13 +3758,15 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif (event == "PLAYER_TARGET_CHANGED") then
         if (type(UnitExists) == "function" and UnitExists("target")
             and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))) then
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))
+            and isCloseEnoughToAsk("target")) then
             lib:DoInspect("target")
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (type(UnitExists) == "function" and UnitExists("mouseover")
             and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))) then
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))
+            and isCloseEnoughToAsk("mouseover")) then
             lib:DoInspect("mouseover")
         end
     elseif (event == "GROUP_ROSTER_UPDATE") then
@@ -3691,7 +3777,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local unit = ...
         if (unit and type(UnitExists) == "function" and UnitExists(unit)
             and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
+            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))
+            and isCloseEnoughToAsk(unit)) then
             local guid = type(UnitGUID) == "function" and UnitGUID(unit)
             if (guid and lib.cache[guid]) then
                 -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
@@ -3703,6 +3790,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
     end
 end)
+---@diagnostic enable: redundant-parameter
 frame:RegisterEvent("INSPECT_READY")
 frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
@@ -3825,8 +3913,16 @@ end
 -- UnitDistanceSquared returns a SQUARED distance; sqrt recovers yards. Its
 -- second return is a checkedDistance flag, and a false there means the value is
 -- not trustworthy (unit gone, different map), so it is treated as absent rather
--- than as a very small number. UnitDistance is kept as a fallback for any
--- future client that happens to expose the plain form.
+-- than as a very small number.
+--
+-- The `UnitDistance` fallback below is UNREACHABLE on all five supported
+-- clients. That name appears in the generated API documentation of none of
+-- classic_era, classic_anniversary, classic_titan, forever or live; only
+-- UnitDistanceSquared does (UnitDocumentation.lua:610 on classic_era). Every
+-- apparent hit for the plain form is a substring of UnitDistanceSquared or of
+-- UnitDistanceCheckUpdate -- the same trap as any loose grep. It is retained
+-- only defensively, in case a future build exposes it; do not reason about
+-- behaviour as though this path can execute today.
 local function inspectDistance(unit)
     -- Every comparison happens INSIDE the pcall. The docs mark UnitDistanceSquared
     -- as SecretArguments-only on forever/live (returns are plain numbers), but a
@@ -3933,7 +4029,15 @@ local function noteInspectRejectedImpl(unit, yards, err)
     -- noise is zero while the recovery path stays instant.
     if (guid and isRangeRejection(err)) then
         lib.inspectOutOfRange = lib.inspectOutOfRange or {}
-        lib.inspectOutOfRange[guid] = (type(GetTime) == "function") and GetTime() or 0
+        -- Store the distance at refusal time so the lift condition can require
+        -- the unit to have actually moved closer, not just "still within 20yd".
+        -- The previous code lifted as soon as dist <= 20yd, which for a refused
+        -- unit sitting at 15yd lifted immediately and re-triggered NotifyInspect
+        -- every cooldown -- the spam the user reported on Classic Era.
+        lib.inspectOutOfRange[guid] = {
+            time = (type(GetTime) == "function") and GetTime() or 0,
+            dist = inspectDistance(unit),
+        }
     end
     inspectPendingUnit = nil
     inspectPendingSince = 0
@@ -3962,13 +4066,31 @@ local function isInspectCoolingDownImpl(unit)
     -- interact-distance signal agrees it is reachable, so recovery is instant.
     local outOfRange = lib.inspectOutOfRange and lib.inspectOutOfRange[guid]
     if (outOfRange) then
+        -- Back-compat: older entries were stored as a bare timestamp (number).
+        local storedDist = nil
+        if (type(outOfRange) == "table") then
+            storedDist = outOfRange.dist
+        end
         local dist = inspectDistance(unit)
-        local reachable = (not dist) or (dist <= OUT_OF_RANGE_RECHECK_YARDS)
         local inInteract = true
         if (type(_G.CheckInteractDistance) == "function") then
             inInteract = _G.CheckInteractDistance(unit, INSPECT_INTERACT_DISTANCE_INDEX)
         end
-        if (reachable and inInteract) then
+        -- Lift only when the unit has actually moved closer than when it was
+        -- refused (or was unmeasurable and is now measurable), AND the
+        -- interact-distance signal agrees. A refused unit sitting still at 15yd
+        -- no longer lifts, which is what stops the repeat NotifyInspect.
+        local movedCloser
+        if (storedDist == nil and dist == nil) then
+            movedCloser = true
+        elseif (storedDist == nil and dist ~= nil) then
+            movedCloser = true
+        elseif (storedDist ~= nil and dist == nil) then
+            movedCloser = false
+        else
+            movedCloser = (dist < storedDist)
+        end
+        if (movedCloser and inInteract) then
             lib.inspectOutOfRange[guid] = nil
         else
             return true
@@ -4014,24 +4136,64 @@ local function requestInspectImpl(unit)
     if (isInspectCoolingDown(unit) or exceedsLearnedRange(unit)) then return false end
     -- Measure before the request: afterwards the unit may be gone.
     local yards = inspectDistance(unit)
-    -- THE RANGE GATE BLIZZARD ITSELF USES. All five branches of Blizzard_InspectUI
-    -- gate this exact call with `CanInspect(unit, true)` -- vanilla, TBC, wrath,
-    -- camelot and mainline are line-for-line identical -- and the second argument
-    -- is the range flag. The generated API docs list CanInspect with a single
-    -- argument, which is why this library only ever passed `unit`; but Blizzard's
-    -- own call site passes two, so the engine honours it. Omitting it left a window
-    -- where the tick believed a unit was in range on the strength of
-    -- CheckInteractDistance alone and the server disagreed, raising the very "out
-    -- of range" error the player then saw.
+    -- CanInspect IS NOT A RANGE GATE, AND ITS SECOND ARGUMENT IS NOT ONE.
     --
-    -- Placed here, at the single point NotifyInspect is actually called, rather than
-    -- inside lib:CanInspect: the harness pins lib:CanInspect's mainline "either
-    -- signal is enough" contract, and this gate is strictly additional tightening.
-    -- A client that ignores the second argument is unaffected, because passing it
-    -- can only ever make this stricter, never looser.
+    -- `CanInspect(unit, showError)`: the documented meaning of argument two is
+    -- "if true, display an error message if you cannot inspect that unit", and
+    -- the same entry says in as many words that the function does NOT check
+    -- whether you are close enough -- use CheckInteractDistance for that.
+    -- Passing `true` therefore makes the ENGINE display a message. This call site
+    -- was added to stop an "out of range" popup and was itself a source of one:
+    -- when the gate refused, the popup had already been raised, and the code then
+    -- went on to treat the refusal as distance evidence, which it is not.
+    --
+    -- WHERE THE showError MEANING COMES FROM -- be precise about this, because the
+    -- first version of this comment asserted the evidence was on disk and it was
+    -- not. Two independent EXTERNAL API references give the meaning, in identical
+    -- wording: "If true, the function will display an error message ('You can't
+    -- inspect that unit') if you cannot inspect the specified unit. This function
+    -- doesn't check whether you're close enough to the unit to inspect it; use
+    -- CheckInteractDistance for that."
+    --   * https://warcraft.wiki.gg/wiki/API_CanInspect
+    --   * https://wowwiki-archive.fandom.com/wiki/API_CanInspect
+    -- That is a documented third-party claim, NOT something the local FrameXML
+    -- mirror can prove: the generated API docs list ONE argument on every branch
+    -- this addon supports and say nothing about a second.
+    --
+    -- What the local mirror DOES corroborate is weaker, and is only structural:
+    -- Blizzard_UnitPopupShared/UnitPopupSharedButtonMixins.lua calls the
+    -- ONE-argument form (`CanInspect(contextData.unit)`) to decide whether to grey
+    -- out a popup button, while Blizzard_InspectUI calls the TWO-argument form
+    -- (`CanInspect(unit, true)`) from InspectFrame_Show. Two forms for two
+    -- purposes is consistent with arg2 controlling whether a MESSAGE appears; it
+    -- is not consistent with a range gate, which would have one form. This is
+    -- corroboration, not proof -- it is what makes showError the better reading,
+    -- not what establishes it.
+    --
+    -- Honest status: this call site is FIXED because passing fewer arguments can
+    -- never loosen a gate, so the change is safe even if the reading is wrong. It
+    -- is NOT yet established that this call was the player's actual popup source.
+    -- The attribution capture below settles it.
+    --
+    -- On the generated docs listing a single argument: that is a documentation
+    -- arity gap in the FunctionParameters block, not evidence the flag is absent.
+    -- It was previously read the other way round -- "the docs say one argument,
+    -- therefore the range flag cannot be the whole gate there" -- which is not a
+    -- deduction at all, and the mirror used to justify it had no say in the
+    -- argument's meaning.
+    --
+    -- Blizzard passes `true` from InspectFrame_Show, which is reached only from
+    -- explicit user action (/inspect, right-click -> Inspect). There a message is
+    -- the intended outcome. A library asking on the player's behalf, in response to
+    -- a cursor sweep, must not request one.
+    --
+    -- The real distance gate for this family is CheckInteractDistance(unit, 1) --
+    -- index 1 is the inspect interaction range -- and it is applied below, and
+    -- again in lib:CanInspect. CanInspect stays as the unit-validity check it
+    -- actually is.
     local canOk, canAllowed = true, nil
     if (type(_G.CanInspect) == "function") then
-        canOk, canAllowed = pcall(_G.CanInspect, unit, true)
+        canOk, canAllowed = pcall(_G.CanInspect, unit)
     end
     if (canOk and canAllowed == false) then
         -- Refused for a reason we did not ask for. Count it and apply the per-guid
@@ -4040,6 +4202,18 @@ local function requestInspectImpl(unit)
         -- would tighten the learned range limit to wherever the unit happened to be
         -- -- which then blocked that same unit from being inspected when it was
         -- plainly close. err is omitted, so no out-of-range mark is set either.
+        noteInspectRejected(unit, nil)
+        return false
+    end
+    -- Classic-family distance signal, re-checked at the single point NotifyInspect
+    -- is actually called. This, not CanInspect, is the range gate on this family:
+    -- CheckInteractDistance(unit, 1) is what Blizzard's own unit-popup buttons and
+    -- its inspect flow consult, and it is the same signal lib:CanInspect already
+    -- requires. Re-checking it here means a caller that arrives through the queue
+    -- cannot slip a far unit past it.
+    -- Mainline clients keep Blizzard's either-signal policy untouched.
+    if (not (isRetail or isForever) and type(_G.CheckInteractDistance) == "function"
+        and not _G.CheckInteractDistance(unit, INSPECT_INTERACT_DISTANCE_INDEX)) then
         noteInspectRejected(unit, nil)
         return false
     end
@@ -4061,6 +4235,175 @@ end
 
 requestInspect = requestInspectImpl
 
+--------------------------------------------------------------------------
+-- TEMPORARY attribution capture. REMOVE once the popup's origin is settled.
+--------------------------------------------------------------------------
+-- Why this exists: the counters above (notifies / rejected / lastError) are
+-- cumulative since /reload, so a player who loads and then stands in a field
+-- with nobody near reports them all as zero -- which is equally consistent with
+-- "no inspect was attempted" and with "the inspect was attempted and something
+-- else raised the message". Those two have opposite fixes.
+--
+-- What this answers: does each UI_ERROR_MESSAGE follow an inspect request, or do
+-- errors appear with no request at all? Two entry kinds land in one bounded ring:
+--   kind="notify" -- _G.NotifyInspect was actually invoked, with the unit, its
+--                    GUID, the clock, the measured distance, and the live answers
+--                    of CheckInteractDistance(unit, 1) and CanInspect(unit).
+--   kind="error"  -- a UI_ERROR_MESSAGE filter fired, with the messageType, the
+--                    resolved string when GetGameMessageInfo exists, and the clock.
+-- The filter returns NOTHING so the message still displays; suppressing it would
+-- hide the symptom and fake a fix.
+--
+-- TO REMOVE: delete this whole block, then delete `GetErrorLog` / `ClearErrorLog`
+-- / `RemoveErrorFilter` from main.lua's /tacotip diag print (which was to be
+-- added only after attribution was confirmed, so there may be nothing to remove
+-- there yet). Nothing else in the library reads lib.errorLog.
+local ERROR_LOG_MAX = 50
+
+lib.errorLog = lib.errorLog or {}
+lib.errorLogCount = 0
+lib.errorLogHead = 0
+
+-- Oldest-out first, overwritten at the tail. #log is the live capacity, so the
+-- table can never exceed ERROR_LOG_MAX entries however long the session runs.
+local function errorLogPush(entry)
+    local log = lib.errorLog
+    if (not log or not entry) then return end
+    local n = #log
+    if (n >= ERROR_LOG_MAX) then
+        local head = ((lib.errorLogHead or 0) % ERROR_LOG_MAX) + 1
+        log[head] = entry
+        lib.errorLogHead = head
+    else
+        log[n + 1] = entry
+        lib.errorLogCount = n + 1
+    end
+end
+
+-- Reading the signals must never be able to take the inspect call down with it,
+-- so the whole entry is built inside one pcall and a failure simply records
+-- nothing. Same reasoning as inspectDistance's pcall.
+local function buildNotifyEntry(unit)
+    local ok, entry = pcall(function()
+        local interact
+        if (type(_G.CheckInteractDistance) == "function") then
+            interact = _G.CheckInteractDistance(unit, INSPECT_INTERACT_DISTANCE_INDEX)
+        end
+        local canInspect
+        if (type(_G.CanInspect) == "function") then
+            canInspect = _G.CanInspect(unit)   -- ONE argument, deliberately.
+        end
+        return {
+            kind = "notify",
+            unit = unit,
+            guid = (type(_G.UnitGUID) == "function") and _G.UnitGUID(unit) or nil,
+            time = uptimeSeconds(),
+            distance = inspectDistance(unit),
+            interactDistance = interact,
+            canInspect = canInspect,
+        }
+    end)
+    if (ok) then return entry end
+    return nil
+end
+
+-- Returns the entries oldest-first. A copy is returned when the ring has wrapped,
+-- so a caller printing the result cannot reorder the live buffer.
+function lib:GetErrorLog()
+    local log = lib.errorLog or {}
+    local n = #log
+    if (n < ERROR_LOG_MAX) then return log end
+    local head = ((lib.errorLogHead or 0) % ERROR_LOG_MAX) + 1
+    local out = {}
+    for i = 0, n - 1 do
+        out[i + 1] = log[(((head - 1 + i) % n) + 1)]
+    end
+    return out
+end
+
+function lib:ClearErrorLog()
+    lib.errorLog = {}
+    lib.errorLogCount = 0
+    lib.errorLogHead = 0
+end
+
+-- Wrapper installed over _G.NotifyInspect. Kept on the lib table so the original
+-- is recoverable and so the install is idempotent across a reload.
+lib.originalNotifyInspect = nil
+lib.notifyCaptureInstalled = false
+
+local function installNotifyCapture()
+    if (type(_G.NotifyInspect) ~= "function") then return false end
+    if (lib.notifyCaptureInstalled) then return true end
+    local original = _G.NotifyInspect
+    local wrapper = function(unit, ...)
+        pcall(errorLogPush, buildNotifyEntry(unit))
+        return original(unit, ...)
+    end
+    -- pcall'd because a protected global would otherwise raise here, at file
+    -- scope, and take the whole library down -- the exact failure mode the
+    -- TT.LOAD_STAGE diagnostic exists to name.
+    local ok = pcall(function() _G.NotifyInspect = wrapper end)
+    if (not ok) then return false end
+    lib.originalNotifyInspect = original
+    lib.notifyCaptureInstalled = true
+    return true
+end
+
+lib.uiErrorFilter = nil
+
+local function buildErrorEntry(messageType)
+    local ok, entry = pcall(function()
+        local resolved
+        if (type(_G.GetGameMessageInfo) == "function") then
+            local info = _G.GetGameMessageInfo(messageType)
+            if (type(info) == "table") then resolved = info.message or info.type end
+        end
+        return {
+            kind = "error",
+            messageType = messageType,
+            message = resolved,
+            time = uptimeSeconds(),
+        }
+    end)
+    if (ok) then return entry end
+    return nil
+end
+
+local function installUIErrorFilter()
+    -- ChatFrame_AddMessageEventFilter does not exist on every client, and a
+    -- missing global is nil rather than a raising call, so the type check is the
+    -- guard that matters here.
+    if (type(_G.ChatFrame_AddMessageEventFilter) ~= "function") then return false end
+    if (lib.uiErrorFilter) then return true end
+    local filter = function(messageType, message)
+        pcall(errorLogPush, buildErrorEntry(messageType))
+        -- Deliberately returns nothing. A filter that returned false would
+        -- suppress the message, which destroys the evidence it was added to
+        -- collect.
+    end
+    local ok = pcall(_G.ChatFrame_AddMessageEventFilter, "UI_ERROR_MESSAGE", filter)
+    if (not ok) then return false end
+    lib.uiErrorFilter = filter
+    return true
+end
+
+-- Detaches the UI_ERROR_MESSAGE filter. NotifyInspect capture stays installed;
+-- it is a transparent pass-through and needs no teardown. Re-installing the
+-- filter after this requires a reload.
+function lib:RemoveErrorFilter()
+    if (not lib.uiErrorFilter) then return false end
+    local filter = lib.uiErrorFilter
+    lib.uiErrorFilter = nil
+    if (type(_G.ChatFrame_RemoveMessageEventFilter) == "function") then
+        pcall(_G.ChatFrame_RemoveMessageEventFilter, "UI_ERROR_MESSAGE", filter)
+    end
+    return true
+end
+
+installNotifyCapture()
+installUIErrorFilter()
+
 -- Cheap "is this unit anywhere near me" pre-filter for the hot paths. Separate
 -- from lib:CanInspect on purpose: that answers "is this unit inspectable" and
 -- costs a chain of C calls (CombatLockdown, UnitExists, UnitIsConnected,
@@ -4073,7 +4416,7 @@ requestInspect = requestInspectImpl
 -- An unmeasurable unit returns TRUE, i.e. "near", so the candidate falls through
 -- to lib:CanInspect and the real decision. This can only remove work -- it can
 -- never approve a request that lib:CanInspect would have refused.
-local function isCloseEnoughToAsk(unit)
+isCloseEnoughToAsk = function(unit)
     local distSq = inspectDistanceSquared(unit)
     if (not distSq) then return true end
     return distSq <= (NEARBY_ASK_YARDS * NEARBY_ASK_YARDS)
@@ -4085,7 +4428,16 @@ function lib:DoInspect(unitorguid)
     if (type(unitorguid) == "string" and unitorguid:find("^Player%-")) then
         unit = lib:PlayerGUIDToUnitToken(unitorguid)
     end
-    if (not unit or not lib:CanInspect(unit)) then
+    if (not unit) then return false end
+    -- Distance pre-filter, so callers that invoke DoInspect directly (e.g. the
+    -- tooltip show path in main.lua) cannot bypass the per-client ask range.
+    -- isCloseEnoughToAsk is the single source of truth for "is this unit near
+    -- enough to even try"; without it here, classic-era tooltips on 20-28yd
+    -- units reached NotifyInspect and raised "Not in range".
+    if (not isCloseEnoughToAsk(unit)) then
+        return false
+    end
+    if (not lib:CanInspect(unit)) then
         return false
     end
     local guid = type(UnitGUID) == "function" and UnitGUID(unit)
@@ -4386,8 +4738,15 @@ function lib:GetInventoryItemMixin(unitorguid, slot)
     if (not guid or not slot) then return nil end
     local link
     if (guid == UnitGUID("player")) then
-        if (GetInventoryItemLink) then
-            link = GetInventoryItemLink("player", slot)
+        -- pcall'd, and looked up as a function rather than merely non-nil.
+        -- Whatever the engine exposes this as, the call is not allowed to raise
+        -- on the tooltip path, and the argument list must not be resolved
+        -- against a declaration that takes no parameters.
+        if (type(GetInventoryItemLink) == "function") then
+            local ok, resolved = pcall(GetInventoryItemLink, "player", slot)
+            if (ok) then
+                link = resolved
+            end
         end
     else
         local cached = lib.cache[guid]

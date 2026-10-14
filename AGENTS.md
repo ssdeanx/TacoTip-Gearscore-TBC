@@ -1,87 +1,256 @@
-# Agent Instructions
+# AGENTS.md — TacoTip
 
-## Role & Persona
+## Precedence
 
-- **Role:** Principal Senior Software Engineer & WoW Addon Developer
-- **Objective:** Maintain, debug, and extend the TacoTip-Gearscore-TBC addon across all supported WoW Classic iterations (Classic Era, SoD, TBC Anniversary, Titanforge Chinese Version) focusing on clean architecture, bug-free tooltip integrations, and performance.
-- **Tone:** Concise, deeply technical, and proactive.
+**When anything in this file contradicts the repo, the repo wins.** Record the
+disagreement in `bench/OPEN-ITEMS.md` and fix this file.
 
-## Operational Boundaries & Techniques
+A false instruction is followed just as reliably as a true one, so a wrong claim
+here gets executed with confidence rather than ignored.
 
-- **Research First:** Always search the web for official Blizzard API docs or check the `/home/sam/wow-ui-source` repository before writing API-specific code. Use branch `origin/classic_era` for the current, most up-to-date version and `origin/classic_anniversary` for TBC Anniversary. `/home/sam/wow-ui-source/SKILL.md` has a complete index of all available functions, you can refer to it for more information.
-- **Always do:**
-  - Ensure compatibility with current interface versions (`11509`, `20506`, `38001`) when adding features. Note that `30405` is deprecated.
-  - Test locally via `TacoTip_Tests.lua` and `WoWUnit` when creating new features.
-  - Maintain the existing architecture (shared globals like `TT`, `TT_GS`, `TT_PAWN`, `TacoTipConfig`, `TACOTIP_LOCALE`).
-- **Never do:**
-  - Do not introduce retail-only API calls.
-  - Do not introduce new globals without extreme necessity; use `TT`.
-  - Avoid breaking `luacheck` rules unless explicitly necessary (e.g. ignoring `122` for test mocks).
+**The rule exempts derivable facts only.** The five-client table and the FrameXML
+traps below are *not* derivable from this repo — that knowledge lives in an
+external mirror — so there the mirror wins and verification is required.
 
-## Project Structure & Context
+**Keep this file to invariants, traps and reasoning. Do not put current state,
+defect lists, row numbers, line numbers, file counts or version numbers in it** —
+they go stale, and a stale claim in this file is followed rather than checked.
+Current facts live in `CHANGELOG.md` and `bench/OPEN-ITEMS.md`; name the symbol
+and let the reader grep it.
 
-- **Repo overview:**
-  - WoW Classic-family addon only. Retail is unsupported.
-  - Core runtime load order: `gearscore.lua`, `pawn.lua`, `textures.lua`, `options.lua`, `main.lua` after bundled libs.
-- **Options UI Architecture:**
-  - `options.lua` registers a parent `TacoTip` category with child pages: `Tooltips`, `Positioning`, `Character & Inspect`.
-  - The sparse `Advanced` child page is removed. Its small set of behavior/client toggles lives on the root/general page.
-  - Registration supports both modern `Settings.RegisterCanvasLayoutCategory` + `RegisterCanvasLayoutSubcategory` and legacy `InterfaceOptions_AddCategory` with `childFrame.parent = rootFrame.name`.
-  - The root options category uses the addon's display title from `TacoTip.toc` ("TacoTip Gearscore TBC").
-  - Tooltips page uses a right-side preview column, narrower left-side scroll content, and plain selected dropdown titles while keeping Blizzard popup menus for long media lists.
-  - Scrollable child pages proxy mouse-wheel input through their parent/content frames.
-  - The root/general page includes a saved addon-language dropdown that defaults to the client locale but can override it via `TacoTipConfig.locale_override` on reload.
-- **UI visualization context:**
-  - `memory-bank/visualizationContext.md` stores ASCII and Mermaid snapshots of the intended options layout.
-- **Localization & Docs:**
-  - English (`Locale/enUS.lua`) is the source of truth. All new strings must be added here first.
-  - Other locales inherit English through the existing fallback merge until translated.
-  - All shipped locale files include translated modern options-page `OPTIONS_*` strings, including the language-selector labels/help text used on the root page.
-  - `TEXT_HELP_WELCOME` keeps each locale in its own language while using the current maintainer name `AcidBomb (Pilsung)`.
-  - Keep `README.md`, `CHANGELOG.md`, and `memory-bank/*.md` aligned with future options changes.
-  - The Chinese locale files (`zhCN.lua`, `zhTW.lua`) include the newest options UI labels and help text used by the updated settings pages.
+## What this is
 
-## Runtime Sync Notes
+A WoW tooltip enhancement — GearScore, item level, talents and specializations,
+class colours, a 3D portrait and a health/power bar — running unchanged across
+five clients. One codebase, one release, no per-client forks.
 
-- `main.lua` calls `TT.RefreshOptionsUI()` after tooltip mover and overlay drag/save actions so the options controls stay synchronized.
-- `main.lua` exposes `TT:SyncTooltipMover()` so the options panel can re-anchor the green mover handle after custom-anchor changes and position resets.
-- `TT:ApplyTooltipAppearance()` resolves the current tooltip unit from the live tooltip when callers omit the unit token, which prevents class-colored player borders from reverting to gray.
-- The tooltip mover reset flow keeps the selected custom anchor and resets the saved position back to that anchor's screen corner.
-- Hostile NPC level numbers use Blizzard difficulty coloring via `GetQuestDifficultyColor(level)`.
-- Specialization lines render with class-colored spec names plus per-spec icons derived from `LibClassicInspector` talent data.
-- Tooltip preview and positioning controls intentionally reuse the existing config keys instead of introducing a new settings model.
-- Optional SharedMedia integration is supported for tooltip fonts, statusbar textures, background textures, and border textures.
-- Tooltip appearance settings include portrait display, font choice/size, shared health+power bar textures, selectable tooltip background/border media, and class-tinted border/background styling with adjustable alpha.
-- Media selectors stay as single dropdown lists with expanded Blizzard default choices, wider in-list texture strip previews, hover-help on custom widgets, and a live preview note rather than nested menus.
-- The Tooltips page includes Blizzard color-picker-backed border/background swatches plus mouse-wheel support on reusable scroll frames and sliders.
-- Compact player tooltips add a separate `iLvl` line under GearScore.
-- The live tooltip (`onTooltipSetUnit` → `TT:ApplyTooltipAppearance`) reads and applies `TacoTipConfig.*` appearance and layout keys directly.
-- **Tooltip Text & Color Formatting:** Un-colored text at the start of lines passed to `GameTooltip:AddLine()` defaults to Blizzard's gold font color (`HIGHLIGHT_FONT_COLOR` / `1, 0.82, 0`). Always wrap static label prefixes in explicit inline color codes (e.g. `|cFFFFFFFFLevel|r`).
-- **Level Number Color Rules:** Friendly player level numbers MUST render in clean white (`|cFFFFFFFF<Level>|r`). Difficulty color (`getHostileDifficultyColor`) is strictly reserved for hostile/attackable units (`UnitCanAttack("player", unit)`).
-- **Non-Unit Visual Isolation:** `clearTooltipVisuals` must be nil-safe (`tooltip.GetName and tooltip:GetName()`) and immediately hide all unit-specific overlays (portraits, 3D models, elite frames, power bars) and reset borders on every tooltip show/clear transition so non-unit tooltips (items, spells, bags, map POIs) never inherit stale unit state.
-- **Zero-Allocation Tooltip Pipeline:** Unit tooltip lines and text formatting MUST use static pooled buffers (`pooledLinesToAdd`, `pooledTooltipText`) to eliminate garbage collection pressure on high-frequency mouseovers.
-- **SharedMedia Resolution Caching:** `TT:GetResolvedTooltip*` MUST use cached media lookups via `TT:InvalidateResolvedMediaCache()` rather than rebuilding choices and sorting on every hover.
-- **Event Lifecycle Gating:** `TacoTipPowerBar` and `UNIT_TARGET` handlers must return immediately when the relevant tooltip or bar is not shown to avoid combat event lag.
+The hard part is not the feature set. It is that the five clients do not agree
+on how a tooltip is built, and every compatibility bug in this project traces
+back to an assumption that one of them was the standard.
 
-## Commands & Workflow
+## Where a session starts
 
-- **Version Bumping:** Update `.toc` files (`TacoTip.toc`), `main.lua` `addOnVersion`, `options.lua`, `README.md`, `CHANGELOG.md`, `MEMORY.md`, and `AGENTS.md` simultaneously. Current version: `0.8.3`.
+1. **`CAIRN.md`** — the operating disposition. Evidence vocabulary (**VERIFIED** /
+   **ASSUMED** / **UNKNOWN**; label every claim you write down), the workshop map,
+   and the precedence ladder for when sources disagree. A decision needing a rung
+   below the third is a hands-up.
+2. **`bench/OPEN-ITEMS.md`** — the register of what is **not** resolved: one row
+   per item with an owning desk, a risk, and a closing condition. Read it before
+   starting, not only before calling work done. Rows are **closed, never deleted**;
+   closing means reproducing the condition, writing the evidence into the owning
+   desk's journal, *then* setting the status.
+3. **Your desk's journal** — `desks/tacotip`, `desks/extras`, `desks/api-verification`,
+   `desks/release`. Newest entry at the top, append-only; a correction is a *new*
+   entry saying what it supersedes. A desk is created, never overwritten.
 
-  The live addon is `TacoTip_Forever/`; the repo root holds a stale 0.7.7-era copy (`gearscore.lua`, `main.lua`, `options.lua`, `TacoTip.toc`, `TacoTip_Tests.lua`, and a root `TacoTip.toc` still listing the deprecated interface `38001`). It is **not** what ships. Bump the `TacoTip_Forever/` copies only; do not "helpfully sync" the dead copy. Also keep `memory-bank/activeContext.md` current — root `AGENTS.md` sat at `0.7.7` for two releases because only the `TacoTip_Forever/` copies were bumped.
-- **Testing:** Add test cases into `TacoTip_Tests.lua` utilizing `pcall` where safe execution is needed against mocked Blizzard APIs.
-- **Memory & Documentation Integrity:**
-  - Whenever features, UI dimensions, API signatures, defaults, or architectural rules change, you MUST synchronously update:
-    1. `MEMORY.md` (root index)
-    2. Relevant topic files under `.omg/memory/*.md`
-    3. Relevant rule packs under `.omg/rules/*.md`
-    4. `memory-bank/*.md` (`activeContext.md`, `progress.md`, `systemPatterns.md`)
-    5. `README.md` and `CHANGELOG.md`
-  - Verify that all documentation accurately reflects real code parameters (e.g. 3D portrait dimensions `66x88`, default border edge size `14px`, 239 locale keys, interface IDs `11509`, `20506`, `38001`).
+**Write the journal entry before the session ends**, including a session that
+produced nothing but a dead end. It is the only memory that survives.
 
-## API Research & Verification
+Then per task: `bench/audits/` for the architecture map and the API-verification
+procedure, `bench/README.md` for bench conventions.
 
-- When fixing WoW API bugs (e.g., Guild info, Talents):
-  1. `cd /home/sam/wow-ui-source`
-  2. `git checkout <relevant_branch>` (e.g. `origin/classic_era` for current most up-to-date versions, `origin/classic_anniversary` for TBC Anniversary).
-  3. `git grep -n "API_Name"`
-  4. Compare signatures directly against Blizzard FrameXML code.
+**Working with other sessions:** another desk's files are not yours — leave a note
+in *their* journal rather than editing them. Overlapping claims are a hands-up, not
+a race. One desk, one focus. A version bump touches every file that carries a
+version string; nothing machine-pins TacoTip's, so check all of them before and
+after.
+
+Anything known to be broken lives in `bench/OPEN-ITEMS.md` — **not here**. If you
+find a defect, add a row rather than writing it into this file, because a claim
+here gets followed whether or not it is still true.
+
+## The five clients
+
+| Client | `WOW_PROJECT_ID` | Interface | FrameXML template chain to `NineSlice` |
+| :--- | :--- | :--- | :--- |
+| Classic Era | 2 (`WOW_PROJECT_CLASSIC`) | 11509 | `GameTooltipTemplate` → `TooltipBackdropTemplate` |
+| TBC Anniversary | 5 (`WOW_PROJECT_BURNING_CRUSADE_CLASSIC`) | 20506 | same as Classic Era |
+| WotLK Titanforge | 11 (`WOW_PROJECT_WRATH_CLASSIC`) | 38002 | same as Classic Era |
+| WoW Forever | 1 (`WOW_PROJECT_MAINLINE`) | 16001 | `SharedTooltipTemplate` → `SharedTooltipArtTemplate` |
+| Retail | 1 (`WOW_PROJECT_MAINLINE`) | 120100 | same as WoW Forever |
+
+Two things fall out of this table and both have cost real time:
+
+- **Forever and Retail share a project ID.** Only the interface band separates
+  them — Forever is the sole client in 16000–19999, so the split is
+  `isForever = MAINLINE and 16000 <= interface < 20000`.
+- **The two template chains differ below the shared result.** All five end up with
+  a `NineSlice` child, but `GameTooltipTemplate` carries `mixin="GameTooltipMixin"`
+  on the Classic branches and `mixin="GameTooltipDataMixin"` on mainline, and only
+  the Classic chain inherits `TooltipBackdropTemplate`. So the tooltip *itself*
+  exposes `SetBackdropColor` / `SetBackdropBorderColor` on Classic and **not** on
+  Forever or Retail.
+
+**Never call those methods on the tooltip.** Write to the `TacoTipBackdropFrame`
+overlay the addon creates itself with the `BackdropTemplate` template — `Backdrop.xml`
+is loaded by all five, so that works everywhere.
+
+## Reaching a client's source
+
+`/home/sam/wow-ui-source`, one branch per client. Always `origin/`-qualified; the
+local names alone are not branches, and reading one returns nothing.
+
+| | |
+| :--- | :--- |
+| Classic Era | `git grep -n "PATTERN" origin/classic_era` |
+| TBC Anniversary | `origin/classic_anniversary` |
+| WotLK Titanforge | `origin/classic_titan` |
+| WoW Forever | `origin/forever` |
+| Retail | `origin/live` |
+
+Two traps: `origin/forever` exists only as a remote ref, so a bare `forever`
+silently returns nothing and looks like an absence. And `git grep` counts *call
+sites*, not definitions — **a hit proves Blizzard uses a name, never what an
+argument means, and never that it exists on the branch you are reading.** Confirm
+with `git show`, or read the XML element.
+
+## Reading Blizzard's XML
+
+`inherits` is transitive and runs through every template, so "does this frame have
+method X" is answered by walking the chain to the root and checking `mixin=` at
+each level — not by grepping for the method. Prefer
+`git show origin/<branch>:<path>` and read the element.
+
+Grepping `<On[A-Za-z]+>` is **not** sufficient for script names. It only matches
+self-closing tags and silently misses every `<OnHide function="...">` form, which
+produces a table of scripts that looks plausible and is wrong. Match `<On` and read
+the element.
+
+## Load order
+
+`main.lua` is **last in the toc**, and `TacoTip_CustomPosEnable` is defined at its
+very end. An error before that point kills the mover *and* every feature defined
+after it — and the symptom is deceptive, because `options.lua` loads earlier and
+keeps working, so the player sees a stock tooltip with a fully functional options
+panel.
+
+`main.lua` records `TT.LOAD_STAGE` at ten points and sets `TT.LOAD_OK` at the end:
+
+```
+core → backdrop-mixin → unit-hook → item-hooks → tooltip-hooks
+     → visual-clearing → anchor-hook → status-bar → mover-defined → complete
+```
+
+`/tacotip diag` reports the last stage reached. **When a feature is missing on one
+client, run the diagnostic before reading code** — it names the stage in one
+command instead of bisecting the file.
+
+## Tests
+
+```bash
+bash Tests/harness/run_all.sh
+```
+
+Five clients × both `GetBuildInfo` layouts × both settings registration paths ×
+both Pawn states, plus permutations that blank a Blizzard global to prove the
+file-scope hooks are guarded. Exits non-zero and names the failing invocation. Read
+the count from its output rather than trusting one written down anywhere.
+
+In game: `Tests/TacoTipTests.toc` → `/tttest`. Covers what mocks cannot — Pawn's
+real chat-write behaviour, frame timing, async model loads, alpha.
+
+### A green suite has lied five times
+
+Each of these shipped broken with the full suite passing. Keep the shape when you
+add to this list: name the test, what it asserted, what was actually true.
+
+- **`load_test` mocks Classic as having no `NineSlice`.** The FrameXML contradicts
+  it, so **the suite cannot catch a border regression on Classic** and a green run
+  does not mean the border works there.
+- **The recycle test asserted the opposite contract** (a non-unit recycle
+  *preserves* the model), so it passed while the portrait blinked.
+- **The portrait test drove the unit hook**, which early-returns when the tooltip
+  has no lines — true in the mock, never in game — so it never reached the code it
+  claimed to test.
+- **The mock handed every widget every method**, hiding that a `Texture` is a
+  `Region` and has no `SetFrameLevel`.
+- **`portraitHide` counted teardowns, not `Hide()` calls** — it sat inside a guard
+  the hide did not. Lifting the hide out of that guard, the exact shape of the bug,
+  left both tests named for it green on all five clients.
+
+Every fix is reverted to confirm the test **fails**, then restored. A test that has
+only ever passed is not evidence. Prefer asserting observable behaviour over
+implementation shape: a contract written down wrongly gets encoded into a test and
+then protects itself.
+
+Note that `TooltipDataProcessor` existing proves nothing about TBC or Titanforge —
+both define it, but neither mixes `TooltipDataHandlerMixin` in, so registered
+postcalls never fire. `dataPipelineActive` tests `IsTooltipType` /
+`GetPrimaryTooltipData`, which come from the mixin itself.
+
+## Working rules
+
+Each rule names a failure that actually happened. When you add one, record the
+outcome too — rationale with no outcome hands the next session an unvalidated
+premise to extend.
+
+- **Do not infer an API surface from a loose grep.** Read the element or the
+  definition. *Shipped a fix for the wrong bug twice: `OnShow`/`OnHide` (missed by
+  a self-closing-tag pattern) and `GameTooltip:UpdateTooltip` (grepped as a call
+  site; it is an optional hook Blizzard guards for and defines nowhere).*
+- **Change one thing, then get a command that shows it working.** *Two of this
+  release's fixes were found by reverting a correct-looking change and watching
+  the suite stay green — which is what exposed the wrong contract.*
+- **If a test fails for the wrong reason, fix the test, not the code** — and say so
+  in the changelog. *`local ok, err = _G.NotifyInspect, unit` assigns instead of
+  calling, so the suite stayed green with the fix deleted.*
+- **Record wrong turns in the changelog, not just the final state.** *The
+  `CanInspect(unit, true)` entry is still there describing itself as the fix,
+  immediately followed by its correction. Editing it out would leave a reader
+  finding the correction with no way to know what it corrects.*
+- **Never call `tooltip:GetUnit()` unguarded**, and never assume a global is
+  declared: `GetQuestDifficultyColor`, `IsEquippableItem` and `GetTalentTabInfo`
+  are CVar-gated or deprecation shims that can be nil. Prefer
+  `C_Item.IsEquippableItem`; resolve the others per call. *An unguarded raise
+  aborts the render and the wrapper that catches it swallows the error — the
+  feature is silently absent with nothing logged. This is why `/tacotip diag`
+  exists.*
+- **An item load completing is not a unit change.** `TacoTip_GSCallback` re-enters
+  the pipeline via `SetUnit` for the *same* character. Guard state changes on the
+  unit's GUID, and keep teardown and visibility in the same branch. *Same insight
+  as the Classic unresolved path: nothing proved the character changed, so nothing
+  may be torn down.*
+- **The `## Interface:` line decides whether the addon loads at all.** *Titanforge
+  was listed as `38001` against a real `38002` and the addon simply did not load —
+  no error, no warning.*
+- **Version bump:** `.toc`, `main.lua` `addOnVersion`, `options.lua`, `README.md`,
+  `CHANGELOG.md` and `MEMORY.md` together. Do not write the current number here —
+  read it from `TacoTip.toc`.
+- **The toc filename must equal the addon folder name**, and exactly one `.toc`
+  may ship. *A second, byte-identical `.toc` made WoW load the whole addon twice on
+  every client and register the tooltip hooks twice.*
+
+## Traps that outlive the bug that taught them
+
+These are recorded here rather than in `CHANGELOG.md` because the *shape* of each
+mistake recurs; the specific incident is in the changelog and the desk journals.
+
+- **`CanInspect`'s second argument is `showError`, not a range flag.** Passing
+  `true` asks the engine to *display* a message, and `CanInspect` never tested
+  distance. A "range gate" that was written by reading a call site and inferring
+  what the argument meant — it made the very popup it was written to prevent. The
+  distance gate on the Classic family is `CheckInteractDistance(unit, 1)`, applied
+  where `NotifyInspect` is actually called. **The transferable half: a call site
+  proves a name is used; it says nothing about what an argument means.**
+- **`isClassic` is not "build major is 1".** Classic Era's `GetBuildInfo()` puts
+  `nil` in that slot, so the obvious check misclassifies the real Classic Era
+  client and routes it into the modern branch. Identify clients from
+  `WOW_PROJECT_ID`; use the interface number only to split Forever from Retail.
+- **A promise made in a comment is a contract.** `clearTooltipVisuals`'s
+  `retainModel` argument is documented as "the caller re-shows the portrait" — so
+  the caller that asks to retain *must* re-show. That comment existed while the
+  only caller did not, and the portrait stayed hidden for the rest of the show.
+- **Structurally unreachable code still gets reasoned about.** The runtime range
+  discovery read distance from an API documented on none of the five clients, so
+  it never ran, and everything it was meant to prevent still happened.
+- **A unit that cannot be identified has not changed.** On the Classic family the
+  tooltip hook discards its arguments, so the GUID fallback that rescues this case
+  does not exist there at all. "Nothing proved the character changed" must mean
+  *tear nothing down*.
+
+## Where things stand
+
+Deliberately empty. Read `CHANGELOG.md` for what this release changed and what is
+still outstanding, and `bench/OPEN-ITEMS.md` for what is unresolved and who owns
+it. Do not copy either into this file — that is the failure mode the Precedence
+section exists to prevent.

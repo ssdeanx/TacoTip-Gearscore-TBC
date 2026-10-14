@@ -23,7 +23,7 @@ tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn,
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 optional: [WoWUnit]
 status: unreleased
-updated: 2026-10-13
+updated: 2026-10-14
 ```
 
 
@@ -51,16 +51,22 @@ World of Warcraft engine family from one build — no per-client downloads, no
 
 ## What's New in 0.8.3
 
-Proactive GearScore collection for everyone standing near you, plus the hardening that makes it safe to run unattended.
+Proactive GearScore collection for everyone standing near you, the fix for the repeating "Not in Range" popup, and the portrait fix that only ever showed up on the Classic clients.
 
+- **The repeating "Not in Range" popup is addressed, on every client.** `NotifyInspect` is a *server* request — Blizzard refuses a unit you are not close enough to and raises the error from inside the call, so a player walking out of range with them targeted got the same red text and sound every few seconds. Four separate causes, each independently sufficient to keep it going: distance was measured with `UnitDistance`, which **exists on none of the five supported clients**, so the whole range-learning mechanism was unreachable code; the "don't re-ask" memory was a 10-second *timer* rather than a *state*, so a unit that stayed far was re-asked forever; Classic Era was **misclassified as a modern client** (below), which routed it into the one range policy that permits an out-of-range request; and a refusal no longer lifts just because the unit is merely *still within* 20 yards — it lifts when the unit has actually moved **closer** than it was at the refusal.
+- **Classic Era was being detected as a modern client.** Detection required a build-major of `1`, but Classic Era's `GetBuildInfo()` puts `nil` in that slot and the build number in a later one, so Classic Era fell into the "either signal is enough" branch — the only policy that lets an out-of-range inspect through. Identity now comes from `WOW_PROJECT_ID` alone, which is genuinely distinct per Classic client.
+- **The 3D portrait no longer disappears and stays gone on the Classic clients.** On a render where the tooltip could not resolve its unit, the portrait was hidden, re-anchored, and **never restored** — the branch that shows it again was never reached. The cause is structural: the Classic script hook discards its arguments, so the GUID fallback that rescues this case simply does not exist on that family. Retail and WoW Forever were never affected.
 - **Proximity world scan.** Every ~2 seconds the library walks the visible nameplates, distance-gates each player with the rule that is correct for your client, and inspects the ones in range — so GearScore and item level for someone standing next to you are already cached when you hover them. One inspect request per tick, skipped in combat, and never re-requested while the data is still fresh.
-- **Correct range handling on all five clients.** Classic Era / SoD / TBC / Titanforge require *both* `CanInspect` and `CheckInteractDistance`; Retail and WoW Forever accept either. A single shared constant now drives the range index everywhere.
+- **Correct range handling on all five clients.** Classic Era / SoD / TBC / Titanforge require *both* `CanInspect` and `CheckInteractDistance(unit, 1)`; Retail and WoW Forever accept either. A single shared constant now drives the range index everywhere.
 - **No more queue deadlocks.** If an inspect request never comes back, a watchdog releases the pending slot after 3 seconds instead of stalling every other player behind it.
-- **Stable at the mount and elevation boundary.** A player inspected in the last 5 seconds is not dropped by a single flickering range check, which is what made borderline 28-yard targets lose their scores.
+- **Boundary flicker now costs a skipped inspect instead of an error popup.** An earlier grace period that let a recently-inspected unit through a *failed* distance check was removed: it re-introduced the exact "Not in Range" it was meant to prevent.
 - **Cache timestamps come from `GetTime()` (uptime) instead of `time()` (wall clock)**, so a system clock change can no longer make fresh data look expired. The clock read is guarded so a missing API degrades instead of silently killing the inspect pipeline.
-- **`/tacotip diag` now reports the inspect engine:** notify count, inspects completed, watchdog timeouts, scan-enqueued, and scan-skipped-by-range.
+- **The unit `Level` label is no longer hardcoded English** on any client — it was the one label bypassing the locale system, so it read `Level` in Korean, Russian and Chinese too.
+- **`/tacotip diag` now reports the inspect engine:** notify count, inspects completed, watchdog timeouts, scan-enqueued, scan-skipped-by-range, and separate counters for portrait `Hide()` calls versus full teardowns. It also carries a temporary attribution section that lines up every inspect request against every `UI_ERROR_MESSAGE` the client raises, so the popup's origin can be pinned rather than guessed at.
 
-Full detail, including two test-suite bugs this work uncovered, is in [CHANGELOG.md](CHANGELOG.md).
+> **One correction worth reading.** An earlier revision of this release added `CanInspect(unit, true)` as a range gate, on the belief that the second argument was a range flag. **It is not — it is `showError`.** That call was asking the engine to *display* a message, so the fix for the popup was itself a source of one. It has been reverted, and the full reasoning is in [CHANGELOG.md](CHANGELOG.md) rather than edited away.
+
+Full detail, including the tests that were wrong rather than the addon, is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -188,7 +194,7 @@ Supported clients:
    - Per-client talent data that does **not** depend on the `loadDeprecationFallbacks` CVar:
      - **Classic Era / TBC Anniversary / Titanforge** — points are the sum of each talent's `rank` within a tab, read via `C_SpecializationInfo.GetTalentInfo` (query form `specializationIndex` + `talentIndex`, which is what `Vanilla\TalentFrameBase.lua` uses on all three). This is the algorithm from the known-good Classic addon.
      - **WoW Forever / Retail** — per-specialization `pointsSpent` + `previewPointsSpent` from `C_SpecializationInfo.GetSpecializationInfo`, which has an identical 7-argument signature and 10-value return on all five clients.
-   - **Dual specialization** is gated by `hasDualSpec` (`isWotlk or isTBC or (C_SpecializationInfo ~= nil) or (_G.GetNumTalentGroups ~= nil)`), so it is available on Classic Era, TBC Anniversary and Titanforge and refused where unsupported. The definition matches the known-good Classic addon, with the last term read through `_G` so it is nil-safe.
+   - **Dual specialization** is gated by `hasDualSpec`, which is `isClassic or isTBC or isWotlk` — a *family* test, so it is true on Classic Era, TBC Anniversary and Titanforge and false on WoW Forever and Retail by construction. (An earlier four-term predicate, `(isWotlk or isTBC or (C_SpecializationInfo ~= nil) or (_G.GetNumTalentGroups ~= nil))`, was true on *every* client and so offered dual-spec readout where none exists. That over-claim is the one that shipped.)
    - Per-group data throughout: `GetTalentPoints` / `GetSpecialization` accept a group, the inspect cache holds `talentPoints[group][tab]` and `specIndexByGroup[group]`, and the modern resolver uses `GetSpecialization(isInspect, isPet, groupIndex, 1)` — the only group-aware form, since `GetInspectSpecialization(unit)` takes just a unit and cannot tell group 1 from group 2.
    - `GetActiveTalentGroup` resolves the real active group for self **and** inspected units, so the greyed specialization is always the inactive one.
    - `GetSpecialization` returns a 1-based **index**, not a specID. The modern clients previously returned `GetSpecialization()` (an ID such as `72`), which made `spec_table[class][72]` nil and removed the entire specialization line on Retail and Forever.
@@ -305,7 +311,7 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
   return layouts, so nothing depends on which slot carries the interface number
   on the Classic clients — a question the Blizzard source does not settle.
 
-  To run the whole matrix (50 invocations across all five clients, both
+  To run the whole matrix (54 invocations across all five clients, both
   registration paths and both Pawn states):
 
   ```bash
@@ -369,7 +375,7 @@ Every one of them is permissive and MIT-compatible. Full attribution is in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 GearScore scoring behavior derives from GearScoreTBCClassic; see the notices in
-[TacoTip Extras' THIRD_PARTY_NOTICES.md](../TacoTip_Extras/THIRD_PARTY_NOTICES.md)
+[TacoTip Extras' THIRD_PARTY_NOTICES.md](TacoTip_Extras/THIRD_PARTY_NOTICES.md)
 for the retained attribution and required license text.
 
 Author and maintainer: **AcidBomb (Pilsung)**.

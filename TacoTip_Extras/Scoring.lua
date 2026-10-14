@@ -969,4 +969,50 @@ function Scoring.RankFraction(rank, total)
     return (count - place + 1) / count
 end
 
+-- Medal ramp for the podium, in the same shape as QUALITY_BANDS above so both
+-- scales are read the same way.
+local RANK_MEDALS = {
+    { r = 1.00, g = 0.84, b = 0.00 }, -- gold
+    { r = 0.75, g = 0.75, b = 0.78 }, -- silver
+    { r = 0.80, g = 0.51, b = 0.20 }, -- bronze
+}
+
+-- The colour of a RANK. Two surfaces show a player their standing -- the
+-- leaderboard's `#` column and the tooltip rank line -- and they have to read the
+-- same way, so the scale lives here instead of in either caller; the two drifted
+-- apart once already, and the best possible rank came out purple in the tooltip
+-- while the leaderboard badged it gold.
+--
+-- Rank 1 of N is the top of the scale, so a standing is a PERCENTILE: 3rd of 40 is
+-- a better standing than 3rd of 4000, and a fixed three-medal palette cannot say
+-- that on its own. So the podium keeps gold/silver/bronze, anyone else inside the
+-- top 5% of the pool also reads gold, and the rest take the quality bands.
+--
+-- Returns r, g, b, or nil when the standing is unknown, so each caller keeps its
+-- own muted fallback.
+function Scoring.RankColor(rank, total)
+    local place, count = tonumber(rank), tonumber(total)
+    if not place then
+        return nil
+    end
+    local fraction = Scoring.RankFraction(place, count)
+
+    -- The podium keeps its medals even in a pool small enough that every place is
+    -- inside the top 5%; beyond the podium, a top-5% standing is what gold is for.
+    local medal
+    if place >= 1 and place <= 3 then
+        medal = RANK_MEDALS[place]
+    elseif fraction ~= nil and fraction >= 0.95 then
+        medal = RANK_MEDALS[1]
+    end
+    if medal then
+        return medal.r, medal.g, medal.b
+    end
+
+    if fraction == nil then
+        return nil
+    end
+    return Scoring.QualityColor(fraction)
+end
+
 return Scoring

@@ -1,5 +1,30 @@
 # Active Context
 
+## 2026-10-14 (2) — Red-error triage: FojjiCore, not TacoTip
+
+- **If the operator reports a red error on Classic Era, check `bench/OPEN-ITEMS.md` #11 first.** The recurring one is `INPUT_DEVICE_INTERFACE_TRANSITION` from `FojjiCore/Locale.lua:57` (third-party, in the game folder) — not this repo. Do not chase it inside TacoTip; the evidence chain is in `desks/tacotip/journal.md` (string absent from repo + installed copy; event exists on `origin/forever` only; BugGrabber shows no TacoTip errors since 2026-08-13).
+- **Method that settled it:** read the game's raw `WTF/.../SavedVariables/!BugGrabber.lua` instead of OCR'ing screenshots — it carries message, stack, time and counter. Screenshot OCR of error text was unreliable and abandoned.
+- `/tacotip diag`'s client-detection problem check now flags only `CI:IsUnknown()`; the old `not (IsRetail() or IsForever())` condition was true by design on the three Classic-family clients.
+
+## 2026-10-14 — Development workshop established (desks, bench, evidence rules)
+
+- `CAIRN.md` now defines the workshop: the map (desks / bench / add-on root / Extras / harnesses / `/home/sam/wow-ui-source`), the evidence vocabulary (`VERIFIED` / `ASSUMED` / `UNKNOWN`), the verification loop (both `run_all.sh` invocations + `luacheck` + mutation proof), and the source-of-truth ladder (game → wow-ui-source → code → harnesses → docs).
+- Four desks, each with a journal that is the desk's memory: `tacotip` (core add-on), `extras` (`TacoTip_Extras` adapter/ranks/sync), `api-verification` (Blizzard API truth), `release` (versioning + packaging + blast radius).
+- Bench: three audits (main add-on architecture, Extras companion, wow-ui-source playbook), an open-item register with 9 live entries, and an audit template.
+- **Blizzard API rule of record:** a claim is VERIFIED only with branch + path + line from the mirror; Blizzard's own call sites outrank its generated docs; and absence in the mirror proves nothing (engine strings are invisible there). Worked examples: `CanInspect`'s undocumented second argument, `CheckInteractDistance` index semantics, `UnitDistanceSquared`'s `checkedDistance` flag.
+- **Client → branch map:** `classic_era` (Classic Era), `classic_anniversary` (TBC Anniversary), `classic_titan` (Titanforge), `forever` (WoW Forever), `live` (Retail).
+- **Known open risk:** the add-on root contains the workshop and `OLD/` (with a second `TacoTip.toc`); packaging must use an explicit file list. See `bench/OPEN-ITEMS.md` items 1–2.
+
+## 2026-10-14 — Classic Era event-path fix (0.8.4 notes) + TacoTip Extras 1.2.2
+
+- **The residual Classic Era "out of range" symptom was a Lua error, not a range error.** `LibForeverInspector`'s file-scope `OnEvent` handler referenced `isCloseEnoughToAsk` before its `local` declaration, so the reference resolved as a global lookup: every player target and every player hover raised `attempt to call global 'isCloseEnoughToAsk' (a nil value)` (red text at the top of the screen) and the handler aborted before it could inspect anything. A forward declaration above the handler fixes it; the definition is now an assignment (`isCloseEnoughToAsk = function(unit)`), matching `local requestInspect` in the same file.
+- **Invariant for this file:** any helper used by the file-scope `OnEvent` handler must be forward-declared, because a `local` is only in scope from its declaration onward and an out-of-scope reference compiles to a nil global.
+- **Classic-family choke point:** `requestInspect` re-checks `CheckInteractDistance(unit, 1)` immediately before `NotifyInspect`. Classic Era's published `CanInspect(targetGUID)` takes one argument, so the range flag cannot be the only gate there; mainline clients keep the either-signal policy.
+- **Testing gap closed:** `detect_test.lua` now fires the real `PLAYER_TARGET_CHANGED` / `UPDATE_MOUSEOVER_UNIT` handler (script-retaining `CreateFrame` mock) on Classic Era, TBC Anniversary and Titanforge, asserting no raise, no request out of range, and a request when the unit is reachable. The suite previously claimed to drive that handler and did not — which is why a handler that raised on every hover stayed green.
+- **TacoTip Extras 1.2.2:** `Scoring.RankColor(rank, total)` is the single ranking colour used by both the leaderboard `#` column and the tooltip rank line (podium medals, then gold for the rest of the top 5%, then the quality bands); the tooltip brackets are white; the inverted `place / total >= 0.95` top-5% test is corrected.
+- **Harness note:** pin numeric colours with `("%.2f"):format(...)`, never `tostring(...)` — Lua 5.3+ renders integral floats as `1.0`, so a `tostring` comparison pins the interpreter instead of the value.
+- Verification: 54/54 main invocations, 42/42 Extras invocations (`lua5.1`, `lua5.4`, `luajit`), luacheck clean on changed files.
+
 ## 2026-10-13 - v0.8.3: Proximity world scan, range hardening, uptime timestamps
 
 - **Proximity world scan** (`LibForeverInspector.scanNearby`): walks `GetNamePlates()` every `lib.scanInterval` (2.0s), distance-gates each player through `lib:CanInspect`, enqueues at most `lib.scanBudget` (1) inspect per tick, skips fresh cache entries, and is blocked in combat. Exposed as `lib.ScanNearby()` / `lib:SetScanEnabled(bool)`.

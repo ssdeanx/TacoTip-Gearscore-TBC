@@ -1342,8 +1342,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.1",
-    "TOC ## Version is 1.2.1", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.2",
+    "TOC ## Version is 1.2.2", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -1865,6 +1865,31 @@ do
     check(Scoring.ScoreFraction(700, 700) == 1, "the best score in view is the top of the scale")
     check(Scoring.ScoreFraction(0, 700) == nil, "a zero score has no fraction")
     check(Scoring.ScoreFraction(700, 0) == nil, "an empty view has no fraction")
+
+    -- The RANKING colour, pinned as values. The leaderboard's `#` column and the
+    -- tooltip rank line both resolve through Scoring.RankColor, and a shared
+    -- scale that drifts is exactly how the two disagreed: the tooltip read the
+    -- raw percentile bands, so the best possible rank came out purple while the
+    -- leaderboard badged it gold. Formatted like colorAt above, never with
+    -- tostring: on Lua 5.3+ an integral float stringifies as "1.0", so a
+    -- tostring comparison would pin the interpreter instead of the colour.
+    local function rankColorOf(rank, total)
+        local r, g, b = Scoring.RankColor(rank, total)
+        return ("%.2f,%.2f,%.2f"):format(r or -1, g or -1, b or -1)
+    end
+    check(rankColorOf(1, 4000) == "1.00,0.84,0.00", "rank 1 is gold", rankColorOf(1, 4000))
+    check(rankColorOf(2, 20) == "0.75,0.75,0.78",
+        "rank 2 keeps the silver medal even where every place is top 5%", rankColorOf(2, 20))
+    check(rankColorOf(3, 20) == "0.80,0.51,0.20",
+        "rank 3 keeps the bronze medal", rankColorOf(3, 20))
+    check(rankColorOf(4, 100) == "1.00,0.84,0.00",
+        "the rest of the top 5% is gold too", rankColorOf(4, 100))
+    check(rankColorOf(20, 100) == "1.00,1.00,1.00",
+        "mid-pack takes the percentile band", rankColorOf(20, 100))
+    check(rankColorOf(100, 100) == "0.62,0.62,0.62",
+        "the bottom of a pool is muted, not gold", rankColorOf(100, 100))
+    check(Scoring.RankColor(nil, 10) == nil, "an unknown rank has no colour")
+    check(Scoring.RankColor(9, 0) == nil, "an empty pool has no colour")
 end
 
 -- In-place mutation. Every addon file binds `local L = _G.TACOEXTRAS_LOCALE` at
@@ -3316,6 +3341,36 @@ do
             end
         end
         check(foundRank == true, "Tooltips:ServerRankLine appends Rank line to tooltip", "line=" .. tostring(rankText))
+
+        -- The brackets read as punctuation and the numbers carry the ranking
+        -- scale. Both halves were wrong together: the class rank was drawn as
+        -- "[#1" inside ONE colour code, so the bracket inherited the number's
+        -- colour -- purple, because the number itself was the top of the raw
+        -- percentile bands rather than the top of a standing.
+        check(rankText:find("|cffffffff[|r", 1, true) ~= nil
+                and rankText:find("|cffffffff]|r", 1, true) ~= nil,
+            "Tooltips:ServerRankLine draws both brackets in white",
+            "line=" .. tostring(rankText))
+        check(rankText:find("|cffffffff[|r#", 1, true) == nil,
+            "Tooltips:ServerRankLine keeps the class rank in its own colour",
+            "line=" .. tostring(rankText))
+        local dbForRank = namespace.RankDB
+        local rankScale = namespace.Scoring
+        if dbForRank and type(dbForRank.GetPlayerRank) == "function" then
+            local overall, _, _, totalRanked = dbForRank.GetPlayerRank(HARNESS_PLAYER_GUID)
+            local r, g, b
+            if rankScale and type(rankScale.RankColor) == "function" then
+                r, g, b = rankScale.RankColor(overall, totalRanked)
+            end
+            local swatch = (type(r) == "number" and type(g) == "number" and type(b) == "number")
+                and string.format("|cff%02x%02x%02x#%s|r",
+                    math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5),
+                    math.floor(b * 255 + 0.5), tostring(overall))
+                or nil
+            check(swatch ~= nil and rankText:find(swatch, 1, true) ~= nil,
+                "Tooltips:ServerRankLine colours the overall rank from Scoring.RankColor",
+                "wanted=" .. tostring(swatch) .. " line=" .. tostring(rankText))
+        end
 
         -- Disable rank in settings and re-render
         if REALG.TacoTipExtrasDB and REALG.TacoTipExtrasDB.settings and REALG.TacoTipExtrasDB.settings.tooltip then

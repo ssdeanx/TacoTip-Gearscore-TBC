@@ -836,7 +836,7 @@ do
         local name = c[1]
         local tickA = 5000
         local hitsA, thrownA = {}, 0
-        local far, near, rangeAllowed = false, 6, true
+        local far, near, showErrorRefuses = false, 6, false
 
         -- Distance is served through BOTH shapes on purpose: the docs-published
         -- UnitDistanceSquared, and the other name the code used to read. Using the
@@ -855,15 +855,20 @@ do
                 if (far) then return 40 end
                 return near
             end,
-            -- CanInspect WITHOUT the range flag answers "yes" -- that is the
-            -- Classic-family contract: it validates the unit, not the distance,
-            -- and CheckInteractDistance carries the distance. WITH the flag it
-            -- answers only what rangeAllowed says. Mocked this way because a mock
-            -- returning false for BOTH shapes is already rejected by lib:CanInspect's
-            -- existing CanInspect(unit) call, so the assertion would pass for the
-            -- wrong reason -- exactly the failure mode this suite rules out.
-            CanInspect = function(unit, dist)
-                if (dist ~= nil) then return rangeAllowed end
+            -- CanInspect(unit) -- ONE argument -- answers "yes" unconditionally:
+            -- it validates the unit, not the distance, and CheckInteractDistance
+            -- carries the distance.
+            --
+            -- CanInspect(unit, showError) -- the SECOND argument means "display an
+            -- error message if you cannot inspect this unit", NOT "gate on range".
+            -- This mock models that faithfully: asked the two-argument question it
+            -- refuses and, by the engine's own contract, DISPLAYS a message;
+            -- asked the one-argument question it answers the unit question. The
+            -- library must never send the second argument, because doing so is what
+            -- makes the popup appear. `showErrorRefuses` drives the two-argument
+            -- branch so the assertion can prove the request is made regardless.
+            CanInspect = function(unit, showError)
+                if (showError ~= nil) then return (not showErrorRefuses) end
                 return true
             end,
             CheckInteractDistance = function() return not far end,
@@ -919,43 +924,335 @@ do
             #hitsA == 0,
             "requests=" .. tostring(#hitsA))
 
-        -- 3. CanInspect's range flag, the gate Blizzard itself uses. Simulate a
-        --    client that fails it, with every other signal claiming "in range", so
-        --    the only thing that can block the request is (unit, true).
+        -- 3. The one-argument question, with the two-argument one set to REFUSE. This
+        --    step used to assert the exact opposite -- "CanInspect(unit,true) false
+        --    blocks the request" -- on the belief that the second argument was a
+        --    range gate. It is `showError`: the documented contract is that passing
+        --    it makes the engine DISPLAY an error message, and that CanInspect does
+        --    not test distance at all. So a false answer there means the popup has
+        --    already been shown. The assertion is now the correct contract and is
+        --    STRONGER than the old one: even when the engine would refuse-and-
+        --    display, the request must still go out, because the library is not
+        --    allowed to ask the question that displays anything.
         --    The unit sits at 3 yards here -- strictly inside the 6 yards the client
         --    refused at earlier -- so the learned-range limit cannot be what
-        --    suppresses this request. Without that precaution the assertion below
-        --    passes for the wrong reason, which is the exact failure mode this
-        --    suite exists to catch. It did: the first draft of this test came back
-        --    green against a deliberately broken build because of precisely this.
+        --    suppresses the request. Without that precaution the assertion below
+        --    would pass for the wrong reason, which is the exact failure mode this
+        --    suite exists to catch.
         hitsA = {}
         far = false
         near = 3
-        rangeAllowed = false
+        showErrorRefuses = true
         probeA:DoInspect("target")
         probeA.ScanNearby()
-        check(name .. " range: CanInspect(unit,true) false blocks the request",
-            #hitsA == 0,
+        check(name .. " range: CanInspect's showError refusal does NOT block the request",
+            #hitsA >= 1,
             "requests=" .. tostring(#hitsA))
-        rangeAllowed = true
+        showErrorRefuses = false
 
         -- 4. And recovery: the unit walks back in range and the NEXT tick inspects
         --    it, with no permanent block left behind. Closing distance is measured
-        --    at 3 yards -- clearly inside the 6 yards the client just refused at,
-        --    which is what "walked back into range" actually means.
+        --    at 2 yards -- CLOSER than the 3 yards the client just refused at,
+        --    because step 3 now issues a real request (that was the point) and so
+        --    teaches the learned ceiling 3. "Walked back into range" has to mean
+        --    moved closer than the refusal, which is what the out-of-range memory
+        --    actually requires; asserting 3 would be asserting that memory never
+        --    engages.
         --    The tickA moves past INSPECT_REJECT_COOLDOWN first: step 3 set the
         --    generic 10s per-guid cooldown, and asserting a request inside that
         --    window would be asserting that a cooldown does not work. What is under
         --    test here is that nothing PERMANENT blocks the unit.
         hitsA = {}
         far = false
-        near = 3
+        near = 2
         tickA = tickA + 15
         probeA:DoInspect("target")
         probeA:ScanNearby()
         check(name .. " range: back in range, the unit is inspected again",
             #hitsA >= 1,
             "requests=" .. tostring(#hitsA))
+    end
+end
+
+-- CanInspect IS ASKED WITH ONE ARGUMENT, EVERYWHERE, AND THE ATTRIBUTION CAPTURE
+-- RECORDS BOTH SIDES OF THE QUESTION.
+--
+-- The block above pins the behaviour ("a showError refusal does not block the
+-- request"), but nothing pinned HOW the library asks. A mock of the shape
+-- `function() return true end` accepts any arity, so `CanInspect(unit)` and
+-- `CanInspect(unit, true)` are indistinguishable to every existing test in this
+-- file -- which is exactly how a call that asks the engine to display an error
+-- message shipped with the suite green. The stub here records `select("#", ...)`
+-- and the test asserts on it directly, on all five clients, at every place the
+-- library calls CanInspect on the request path.
+--
+-- The capture assertions come from the same defect: the counters are cumulative
+-- since /reload and read zero when the player is standing away from everyone, so
+-- "no inspect was attempted" and "an inspect was attempted and something else
+-- raised the message" look identical. The ring buffer is what separates them.
+do
+    local CLIENTS = {
+        { "Classic Era",     P.WOW_PROJECT_CLASSIC,                11509 },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506 },
+        { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002 },
+        { "WoW Forever",     P.WOW_PROJECT_MAINLINE,               16001 },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,              120100 },
+    }
+
+    for _, c in ipairs(CLIENTS) do
+        local name = c[1]
+        local capClock = 4000
+        local arities = {}
+        local filter, filterEvent, removedEvent
+        local notified = {}
+
+        local probe = run(c[2], c[3], "slot4", CONSTS, {
+            UnitExists = function() return true end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                return "Player-" .. tostring(u)
+            end,
+            UnitDistanceSquared = function() return 36, true end,   -- 6yd, inside range
+            -- The whole point: this stub is ARITY-SENSITIVE. Every earlier CanInspect
+            -- mock in this file is `function() return true end`, which answers the
+            -- same for one argument and for two, so none of them could see the
+            -- difference the defect was made of.
+            CanInspect = function(...)
+                arities[#arities + 1] = select("#", ...)
+                return true
+            end,
+            CheckInteractDistance = function() return true end,
+            NotifyInspect = function(u)
+                notified[#notified + 1] = u
+                return true
+            end,
+            GetTime = function() return capClock end,
+            GetNamePlates = function() return {} end,
+            ChatFrame_AddMessageEventFilter = function(event, fn)
+                filterEvent, filter = event, fn
+            end,
+            ChatFrame_RemoveMessageEventFilter = function(event, fn)
+                removedEvent = (filter == fn) and event or nil
+            end,
+            GetGameMessageInfo = function(messageType)
+                return { type = "ERR_NOT_IN_RANGE", message = "Not in Range" }
+            end,
+        })
+
+        check(name .. " capture: the UI_ERROR_MESSAGE filter is installed",
+            filterEvent == "UI_ERROR_MESSAGE" and type(filter) == "function",
+            "event=" .. tostring(filterEvent))
+
+        -- Drive the real request path. DoInspect -> requestInspect is the single
+        -- point NotifyInspect is actually called from, so this covers lib:CanInspect
+        -- and requestInspectImpl in one go.
+        probe:DoInspect("target")
+        check(name .. " capture: the request was actually issued",
+            #notified == 1 and notified[1] == "target",
+            "requests=" .. tostring(#notified))
+
+        -- The contract. One argument, every single time, from every call site.
+        local maxArity, total = 0, 0
+        for _, n in ipairs(arities) do
+            total = total + 1
+            if (n > maxArity) then maxArity = n end
+        end
+        check(name .. " capture: CanInspect is called with EXACTLY one argument",
+            (total >= 1 and maxArity == 1),
+            "calls=" .. tostring(total) .. " maxArity=" .. tostring(maxArity))
+
+        -- The notify entry. Fields are asserted individually rather than by
+        -- "is a table", because an entry that exists but records nothing is the
+        -- same failure this whole block exists to detect.
+        local notify
+        for _, e in ipairs(probe:GetErrorLog()) do
+            if (e.kind == "notify") then notify = e break end
+        end
+        check(name .. " capture: a notify entry is recorded",
+            type(notify) == "table",
+            "entries=" .. tostring(#probe:GetErrorLog()))
+        if (type(notify) == "table") then
+            check(name .. " capture: the notify entry records what was asked",
+                notify.unit == "target"
+                    and notify.guid == "Player-target"
+                    and notify.time == capClock
+                    and notify.distance == 6
+                    and notify.interactDistance == true
+                    and notify.canInspect == true,
+                "unit=" .. tostring(notify.unit) .. " guid=" .. tostring(notify.guid)
+                    .. " t=" .. tostring(notify.time) .. " d=" .. tostring(notify.distance)
+                    .. " dist=" .. tostring(notify.interactDistance)
+                    .. " can=" .. tostring(notify.canInspect))
+        end
+
+        -- The error entry, and the filter's refusal to swallow the message. The
+        -- return value is asserted because a filter that returned false would
+        -- make the popup disappear -- a "fix" that hides the symptom it was added
+        -- to diagnose.
+        local ret
+        if (type(filter) == "function") then
+            ret = { filter(3, "Not in Range") }
+        end
+        check(name .. " capture: the error filter returns nothing",
+            type(ret) == "table" and #ret == 0,
+            "n=" .. tostring(type(ret) == "table" and #ret or -1))
+
+        local errEntry
+        for _, e in ipairs(probe:GetErrorLog()) do
+            if (e.kind == "error") then errEntry = e break end
+        end
+        check(name .. " capture: an error entry is recorded",
+            type(errEntry) == "table"
+                and errEntry.messageType == 3
+                and errEntry.message == "Not in Range"
+                and errEntry.time == capClock,
+            "type=" .. tostring(errEntry and errEntry.messageType)
+                .. " msg=" .. tostring(errEntry and errEntry.message))
+
+        -- Bounded. 50 entries is the cap; drive well past it through the filter so
+        -- the bound is exercised on a path that actually runs (60 message events).
+        if (type(filter) == "function") then
+            for i = 1, 60 do filter(3, "Not in Range") end
+        end
+        local log = probe:GetErrorLog()
+        check(name .. " capture: the ring buffer stays bounded at 50",
+            #log == 50,
+            "entries=" .. tostring(#log))
+
+        -- Removable. Without this the temporary capture could not be detached in
+        -- a live session, which is the whole reason it is safe to ship at all.
+        check(name .. " capture: the filter is removable",
+            probe:RemoveErrorFilter() == true
+                and removedEvent == "UI_ERROR_MESSAGE"
+                and probe.uiErrorFilter == nil,
+            "removed=" .. tostring(removedEvent))
+        check(name .. " capture: ClearErrorLog empties the buffer",
+            (probe:ClearErrorLog() or true) and #probe:GetErrorLog() == 0,
+            "entries=" .. tostring(#probe:GetErrorLog()))
+    end
+
+    -- The two capture hooks are opt-in per client: ChatFrame_AddMessageEventFilter
+    -- does not exist everywhere, and NotifyInspect must not be assumed either. A
+    -- client missing either has to load with the capture silently off rather than
+    -- raise at file scope -- the TT.LOAD_STAGE diagnostic exists to name exactly
+    -- that failure.
+    local bare = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        UnitExists = function() return true end,
+    })
+    -- NotifyInspect comes from baseEnv, so absence has to be forced AFTER load:
+    -- `NotifyInspect = nil` in a table constructor creates no key at all.
+    _G.NotifyInspect = nil
+    local bareOk = pcall(function()
+        bare:DoInspect("target")
+        bare:ClearErrorLog()
+        return bare:GetErrorLog()
+    end)
+    check("capture: a client with no NotifyInspect still loads and reports",
+        bareOk and #bare:GetErrorLog() == 0,
+        "ok=" .. tostring(bareOk))
+
+    -- And the filter is simply not installed when the API is absent. Forced after
+    -- load for the same reason, since baseEnv does not define it either way.
+    local noFilter = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        UnitExists = function() return true end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return 1 end,
+    })
+    _G.ChatFrame_AddMessageEventFilter = nil
+    check("capture: absent ChatFrame_AddMessageEventFilter does not break load",
+        noFilter.uiErrorFilter == nil and #noFilter:GetErrorLog() == 0,
+        "filter=" .. tostring(noFilter.uiErrorFilter))
+end
+
+-- THE EVENT PATH ITSELF, which nothing above touches. Every block in this file
+-- calls DoInspect or ScanNearby directly, so a handler that raises BEFORE it
+-- reaches either of them is invisible to every assertion here -- and that is
+-- exactly what shipped. `isCloseEnoughToAsk` was referenced from the OnEvent
+-- handler while being declared as a local FURTHER DOWN the file; a local is only
+-- in scope from its declaration onward, so the reference compiled as a GLOBAL
+-- lookup and came back nil at runtime. On Classic Era every player target and
+-- every player hover raised "attempt to call global 'isCloseEnoughToAsk' (a nil
+-- value)" and the handler aborted -- red text at the top of the screen on
+-- precisely the two triggers the player reported (a character selected, and
+-- hovering), while this suite stayed green.
+--
+-- The frame mock RETAINS its scripts, because baseEnv's discards them and an
+-- unreachable handler makes every assertion below pass for the wrong reason.
+-- The comment on the block above has always claimed to drive "the real
+-- UPDATE_MOUSEOVER_UNIT event handler"; it did not, and this is that test.
+do
+    for _, c in ipairs({
+        { "Classic Era",     P.WOW_PROJECT_CLASSIC,                 11509 },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC,  20506 },
+        { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,            38002 },
+    }) do
+        local name = c[1]
+        local tickC = 3000
+        local far = true
+        local hitsC = {}
+        local probeC = run(c[2], c[3], "slot4", CONSTS, {
+            CreateFrame = function()
+                local f = { scripts = {} }
+                f.RegisterEvent = function() end
+                f.SetScript = function(self, script, fn) self.scripts[script] = fn end
+                f.GetScript = function(self, script) return self.scripts[script] end
+                f.IsShown = function() return false end
+                return f
+            end,
+            UnitExists = function(u)
+                return u == "target" or u == "mouseover" or u == "player"
+            end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                return "Player-" .. tostring(u)
+            end,
+            UnitDistanceSquared = function()
+                if (far) then return 1600, true end   -- 40yd, past the ask range
+                return 36, true                        -- 6yd
+            end,
+            CanInspect = function(u, rangeFlag)
+                if (rangeFlag ~= nil) then return not far end
+                return true
+            end,
+            CheckInteractDistance = function() return not far end,
+            NotifyInspect = function(u) hitsC[#hitsC + 1] = u end,
+            GetTime = function() return tickC end,
+            GetNamePlates = function() return {} end,
+        })
+        local handler = probeC.frame and probeC.frame.scripts
+            and probeC.frame.scripts.OnEvent
+        check(name .. " event path: the OnEvent handler is reachable",
+            type(handler) == "function")
+
+        -- Out of range: the two events the player named. Neither may raise, and
+        -- neither may reach the server.
+        local okTarget, errTarget = pcall(handler, probeC.frame, "PLAYER_TARGET_CHANGED")
+        check(name .. " event path: out-of-range target raises nothing",
+            okTarget, "err=" .. tostring(errTarget))
+        local okHover, errHover = pcall(handler, probeC.frame, "UPDATE_MOUSEOVER_UNIT")
+        check(name .. " event path: out-of-range hover raises nothing",
+            okHover, "err=" .. tostring(errHover))
+        check(name .. " event path: out-of-range target/hover ask nothing",
+            #hitsC == 0, "requests=" .. tostring(#hitsC))
+
+        -- And the handler still does its job once the unit is reachable, so the
+        -- crash cannot be "fixed" by disabling the path it guards.
+        far = false
+        tickC = tickC + 20
+        local okInRange = pcall(handler, probeC.frame, "PLAYER_TARGET_CHANGED")
+        check(name .. " event path: in-range target is still inspected",
+            okInRange and #hitsC == 1,
+            "ok=" .. tostring(okInRange) .. " requests=" .. tostring(#hitsC))
     end
 end
 

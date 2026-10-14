@@ -3,7 +3,7 @@
 ## Notes: Opt-in WoWUnit suite. Copy this folder to Interface/AddOns/TacoTipTests/ and enable it alongside TacoTip, then run /tttest.
 ## Author: AcidBomb
 ## DefaultState: disabled
-## Dependencies: TacoTip_Forever
+## Dependencies: TacoTip
 ## OptionalDependencies: WoWUnit
 
 TacoTip_Forever_Tests.lua

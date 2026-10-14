@@ -723,9 +723,22 @@ do
     -- that the branch was taken at all.
     if (type(cmd) == "function" and type(TT.PrintDiagnostics) == "function") then
         local printed, raised = 0, nil
+        local printedLines = {}
         local savedPrint, savedPanel = REALG.print, TT.OpenOptionsPanel
         local panelOpened = 0
-        REALG.print = function() printed = printed + 1 end
+        -- Capture the TEXT as well as the count: one regression was a false
+        -- alarm INSIDE the report ("client detected as NEITHER Retail nor WoW
+        -- Forever"), which the counter alone could never see. Three of the five
+        -- clients are neither by design, so on Classic-family runs this string
+        -- means the check is lying again.
+        REALG.print = function(...)
+            printed = printed + 1
+            local parts = {}
+            for i = 1, select("#", ...) do
+                parts[#parts + 1] = tostring(select(i, ...))
+            end
+            printedLines[#printedLines + 1] = table.concat(parts, " ")
+        end
         TT.OpenOptionsPanel = function() panelOpened = panelOpened + 1 end
         -- Proxy so the handler's TT:PrintDiagnostics() resolves to the spy.
         local savedDiag = TT.PrintDiagnostics
@@ -741,6 +754,9 @@ do
         end
         TT.PrintDiagnostics = savedDiag
         REALG.print, TT.OpenOptionsPanel = savedPrint, savedPanel
+        local diagText = table.concat(printedLines, "\n")
+        checks[#checks + 1] = { not diagText:find("NEITHER Retail nor WoW Forever", 1, true),
+            "/tacotip diag raises no client-detection false alarm on this client" }
         checks[#checks + 1] = { raised == nil, "the slash handler does not raise (err: " .. tostring(raised) .. ")" }
         checks[#checks + 1] = { printedAfterDiag > 0, "\"diag\" printed the load report" }
         -- The bug being pinned: diag fell through to the default branch and opened

@@ -2713,6 +2713,202 @@ elseif (usePipeline) then
         "got " .. tostring(POSTCALLS and #POSTCALLS))
 end
 
+--------------------------------------------------------------------------
+-- Portrait HIDE, observed directly, on every client.
+--
+-- TT.ev.portraitHide is incremented INSIDE the retainModel guard in
+-- clearTooltipVisuals, so it counts teardowns and cannot see the Hide() that
+-- fires on every recycle -- and the two checks above named for this exact
+-- symptom read portraitHide, so moving that Hide() out of its guard left both
+-- of them green. TT.ev.portraitModelHidden is incremented on every pass of the
+-- keepModel branch and is what these assertions read.
+--
+-- Runs on all five clients through whichever delivery the client actually has:
+-- the OnTooltipSetUnit script on the Classic family, the TooltipDataProcessor
+-- post-call on Retail and WoW Forever. Driving one family's client through the
+-- other family's delivery would test a path that client never runs.
+do
+    local postUnit = (usePipeline and POSTCALLS and POSTCALLS[1]) or nil
+    local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+    local savedGetUnit, savedUnitToken = GT.GetUnit, GT.__unit
+    local savedPortrait = REALG.TacoTipConfig.tooltip_portrait
+    local savedPortrait3D = REALG.TacoTipConfig.tooltip_portrait_3d
+    REALG.TacoTipConfig.tooltip_portrait = true
+    REALG.TacoTipConfig.tooltip_portrait_3d = true
+    currentUnit = "player"
+    GT.__unit = "player"
+    GT.__shown = true
+
+    -- A guid no resolver arm can map: resolveUnitTokenFromGUID only knows
+    -- player, mouseover, target, pet and focus by GUID, and the tooltip has no
+    -- owner, so this is exactly the "guid fallback misses" condition the
+    -- unresolved-unit branch is written for.
+    local ORPHAN_GUID = "Player-9-00000009"
+
+    local function resolveTo(u)
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
+        end
+        GT.GetUnit = function() return "n", u, UNITS[u].guid end
+    end
+    local function resolveToNothing()
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+        end
+        GT.GetUnit = function() return "n", nil end
+    end
+    local function seed()
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+    end
+    -- Renders the current unit. The guid is only meaningful on the modern
+    -- post-call; the Classic script hook carries no data at all, which is the
+    -- delivery main.lua registers and therefore the one it has to survive.
+    local function render(guid)
+        seed()
+        if (postUnit) then
+            postUnit.fn(GT, { guid = guid })
+        elseif (hookUnit) then
+            hookUnit(GT)
+        end
+    end
+
+    resolveTo("player")
+    render(UNITS.player.guid)
+    local portrait = GT.TacoTipPortrait3D
+    check("3D portrait frame exists after a resolved unit render", portrait ~= nil)
+    check("3D portrait is shown after a resolved unit render",
+        (portrait and portrait.IsShown) and portrait:IsShown() or false)
+
+    -- 1. Same-unit re-render: a completing GearScore item load re-drives the
+    -- whole pipeline through SetUnit for the SAME character. Hide() here is the
+    -- blink, and it is the call the teardown counter cannot see.
+    --
+    -- TWO independent observations of the same call, because either alone is
+    -- defeatable: the counter sits inside the guard, so lifting only the Hide()
+    -- line out of it leaves the counter behind and the first check green, while
+    -- dropping the guard moves both and turns the first check red. Counting
+    -- Hide() on the frame itself catches the first case. Each is revert-to-fail
+    -- proven separately.
+    local realHide = portrait.Hide
+    local hideCalls = 0
+    portrait.Hide = function() hideCalls = hideCalls + 1; return realHide() end
+    local hidesBefore = (TT.ev and TT.ev.portraitModelHidden) or 0
+    for _ = 1, 5 do
+        render(UNITS.player.guid)
+    end
+    check("re-rendering the SAME character does not Hide() the 3D portrait",
+        ((TT.ev and TT.ev.portraitModelHidden) or 0) == hidesBefore,
+        "portrait Hide() calls went " .. tostring(hidesBefore) .. " -> "
+            .. tostring((TT.ev and TT.ev.portraitModelHidden) or 0)
+            .. " across 5 re-renders of one character")
+    check("re-rendering the SAME character does not call Hide() on the portrait frame",
+        hideCalls == 0,
+        "portrait:Hide() called " .. tostring(hideCalls)
+            .. " time(s) across 5 re-renders of one character")
+    portrait.Hide = realHide
+
+    -- 2. A real recycle is the opposite and must hide. Driven through the real
+    -- hooks, via __hooks and not GetScript: the mock's HookScript writes
+    -- w.__hooks[s] while GetScript reads w.__scripts[s], which is only `true` for
+    -- these two scripts, so pcall(GetScript(...)) silently does nothing.
+    local cleared = GT.__hooks and GT.__hooks.OnTooltipCleared
+    check("OnTooltipCleared hook is present", type(cleared) == "function")
+    hidesBefore = (TT.ev and TT.ev.portraitModelHidden) or 0
+    if (type(cleared) == "function") then pcall(cleared, GT) end
+    check("a real recycle (OnTooltipCleared) DOES Hide() the 3D portrait",
+        ((TT.ev and TT.ev.portraitModelHidden) or 0) > hidesBefore,
+        "portrait Hide() calls went " .. tostring(hidesBefore) .. " -> "
+            .. tostring((TT.ev and TT.ev.portraitModelHidden) or 0)
+            .. " across one OnTooltipCleared")
+    check("a real recycle leaves the portrait hidden",
+        portrait and portrait.IsShown and (not portrait:IsShown()) or false)
+
+    local hideHook = GT.__hooks and GT.__hooks.OnHide
+    check("OnHide hook is present", type(hideHook) == "function")
+    resolveTo("player")
+    render(UNITS.player.guid)
+    hidesBefore = (TT.ev and TT.ev.portraitModelHidden) or 0
+    if (type(hideHook) == "function") then pcall(hideHook, GT) end
+    check("a real recycle (OnHide) DOES Hide() the 3D portrait",
+        ((TT.ev and TT.ev.portraitModelHidden) or 0) > hidesBefore,
+        "portrait Hide() calls went " .. tostring(hidesBefore) .. " -> "
+            .. tostring((TT.ev and TT.ev.portraitModelHidden) or 0)
+            .. " across one OnHide")
+
+    -- 3. The unresolved-unit branch.
+    --
+    -- onTooltipSetUnit's unresolved branch calls clearTooltipVisuals with
+    -- retainModel = true, so it HIDES the 3D portrait and then RETURNS. The
+    -- only portrait:Show() in the addon is inside TT:ApplyTooltipAppearance,
+    -- which that branch never reaches -- so on any client where the retain path
+    -- is taken the portrait is hidden for the rest of that show.
+    --
+    -- On Retail and WoW Forever the post-call supplies data.guid, so the branch
+    -- compares guids and a matching one takes the keep path (nothing hidden at
+    -- all). On the CLASSIC FAMILY the script hook registered in main.lua drops
+    -- the varargs, so data is nil on every render, incomingGUID is always nil,
+    -- keepModel was always false, and the retain path was ALWAYS taken. That is
+    -- where these assertions have teeth: they are green on the modern pair with
+    -- or without the fix and red on all three Classic clients without it.
+    --
+    -- Asserted on the frame's shown state rather than on a counter, because the
+    -- contract is the end state, not how many Hide() calls it took to get there.
+    -- The state is read immediately before the unresolved render too, so the
+    -- mock's default-__shown-true frame creation cannot make this pass for the
+    -- wrong reason: if ApplyTooltipAppearance never showed the portrait, the
+    -- "visible before" check fails first.
+    resolveTo("player")
+    render(UNITS.player.guid)
+    check("3D portrait is shown before the unresolvable render",
+        portrait and portrait.IsShown and portrait:IsShown() or false)
+    -- Positive control for the check below. The discriminator is the rendered
+    -- talent readout, NOT the AddLine count: in non-wide tip_style the addon
+    -- rewrites existing lines with SetText instead of appending, so an AddLine
+    -- count is zero on a perfectly good resolved render and proves nothing.
+    check("the resolved render produces the unit readout (control for the check below)",
+        string.find(allText(), "21/0/0", 1, true) ~= nil,
+        string.gsub(allText(), "\n", " | "))
+    resolveToNothing()
+    local stateBefore = GT._tacoTipState
+    local genBefore = stateBefore and stateBefore.generation or nil
+    local guidBefore = stateBefore and stateBefore.currentUnitGUID or nil
+    render(ORPHAN_GUID)
+    -- Precondition, not the contract. The generation bump comes from
+    -- clearTooltipVisuals; the UNCHANGED currentUnitGUID and the ABSENCE of the
+    -- rendered readout can only happen on the unresolved branch, which returns
+    -- before assigning the guid and before rendering anything. Without it a run
+    -- where the unit quietly resolved would satisfy the check below for the
+    -- wrong reason -- which is what passing the player's guid instead of
+    -- ORPHAN_GUID demonstrates.
+    local stateAfter = GT._tacoTipState
+    check("the unresolvable render really entered the unresolved branch",
+        stateAfter and genBefore ~= nil and stateAfter.generation > genBefore
+            and stateAfter.currentUnitGUID == guidBefore
+            and string.find(allText(), "21/0/0", 1, true) == nil,
+        "generation " .. tostring(genBefore) .. " -> "
+            .. tostring(stateAfter and stateAfter.generation)
+            .. ", guid " .. tostring(guidBefore) .. " -> "
+            .. tostring(stateAfter and stateAfter.currentUnitGUID)
+            .. ", readout still rendered: "
+            .. tostring(string.find(allText(), "21/0/0", 1, true) ~= nil))
+    check("an unresolvable render does NOT leave the 3D portrait hidden",
+        portrait and portrait.IsShown and portrait:IsShown() or false)
+
+    REALG.TacoTipConfig.tooltip_portrait = savedPortrait
+    REALG.TacoTipConfig.tooltip_portrait_3d = savedPortrait3D
+    if (REALG.TooltipUtil) then
+        REALG.TooltipUtil.GetDisplayedUnit = savedDisp
+    end
+    GT.GetUnit = savedGetUnit
+    GT.__unit = savedUnitToken
+end
+
 local fails = 0
 for _, c in ipairs(checks) do
     if (not c[2]) then

@@ -864,8 +864,8 @@ local function RegisterTacoTipTests()
     -- tooltip hooks, the mover, the overlays -- is silently absent while the
     -- options frame keeps working. LOAD_STAGE names the region to look at.
     function Client:LoadCompleted()
-        local tt = _G.TacoTip_Forever
-        Exists(tt, "TacoTip_Forever namespace present")
+        local tt = _G.TacoTip
+        Exists(tt, "TacoTip namespace present")
         if (not tt) then return end
         IsTrue(tt.LOAD_OK == true,
             "main.lua loaded to completion (stage=" .. tostring(tt.LOAD_STAGE) .. ")")
@@ -880,7 +880,7 @@ local function RegisterTacoTipTests()
     -- SetBackdrop fallback.
     function Client:BackdropTemplateContract()
         local ci = LibStub and LibStub("LibForeverInspector", true)
-        if (not ci or not _G.TacoTip_Forever or not _G.GameTooltip) then return end
+        if (not ci or not _G.TacoTip or not _G.GameTooltip) then return end
         if (ci:IsRetail() or ci:IsForever()) then
             IsTrue(_G.GameTooltip.NineSlice ~= nil, "modern tooltip has a NineSlice child")
             IsTrue(_G.GameTooltip.SetBackdrop == nil,
@@ -906,7 +906,7 @@ local function RegisterTacoTipTests()
             "OnTooltipSetUnit exists iff this is a Classic client")
         IsTrue(gt:HasScript("OnTooltipSetItem") == (not modern),
             "OnTooltipSetItem exists iff this is a Classic client")
-        local hooked = _G.TacoTip_Forever and _G.TacoTip_Forever.HookedTooltipScripts
+        local hooked = _G.TacoTip and _G.TacoTip.HookedTooltipScripts
         IsTrue(type(hooked) == "table", "TT.HookedTooltipScripts recorded")
         if (hooked) then
             IsTrue(hooked.Unit ~= nil, "a unit tooltip delivery path was installed")

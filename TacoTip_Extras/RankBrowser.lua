@@ -139,32 +139,13 @@ local function getGSQualityColor(score, best)
     return 0.62, 0.62, 0.62
 end
 
--- The `#` column. Rank 1 of N is the top of the scale, so the bracket is a
--- PERCENTILE: being 3rd of 40 is a better standing than 3rd of 4000, and a
--- fixed gold/silver/bronze palette cannot express that. Falls back to the
--- medal colours when the pool size is unknown.
+-- The `#` column. The scale itself lives in Scoring.RankColor so the leaderboard
+-- and the tooltip rank line cannot drift apart again; all this adds is the muted
+-- fallback for a standing the database cannot answer.
 local function getRankColor(index, total)
-    local place = tonumber(index)
-    if place == nil then
-        return MUTED_R, MUTED_G, MUTED_B
-    end
-    if total and tonumber(total) and place > 0 and place / tonumber(total) >= 0.95 then
-        return 1.00, 0.84, 0.00
-    end
-    if place == 1 then
-        return 1.00, 0.84, 0.00
-    elseif place == 2 then
-        return 0.75, 0.75, 0.78
-    elseif place == 3 then
-        return 0.80, 0.51, 0.20
-    end
-
     local scoring = namespace.Scoring
-    local count = tonumber(total)
-    if scoring and type(scoring.QualityColor) == "function"
-        and place and count and count > 0 and place > 0 then
-        if place > count then place = count end
-        local r, g, b = scoring.QualityColor((count - place + 1) / count)
+    if scoring and type(scoring.RankColor) == "function" then
+        local r, g, b = scoring.RankColor(index, total)
         if r and g and b then
             return r, g, b
         end

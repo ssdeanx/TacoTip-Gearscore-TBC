@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.2.1
+version: 1.2.2
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE
@@ -34,7 +34,7 @@ updated: 2026-10-13
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing, to follow. It is not a fork of TacoTip, not maintained by the TacoTip author, and it implies no endorsement by either.
 
-**Version:** 1.2.1
+**Version:** 1.2.2
 **Author:** AcidBomb (Pilsung)
 
 ## Requirements

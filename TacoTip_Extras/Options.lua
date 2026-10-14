@@ -23,8 +23,10 @@ local WARNING_RED, WARNING_GREEN, WARNING_BLUE = 0.95, 0.72, 0.30
 local FOOTER_RED, FOOTER_GREEN, FOOTER_BLUE = 0.55, 0.52, 0.62
 
 local INTRO_TEXT = L["INTRO"]
-    or "A TacoTip companion that adds enhancement-aware GearScore, "
-    .. "Average iLvl, and Completion to player tooltips."
+    or (
+        "A TacoTip companion that adds enhancement-aware GearScore, "
+        .. "Average iLvl, and Completion to player tooltips."
+    )
 
 local SCORE_EXPLANATION = L["SCORE_EXPLANATION"]
     or [[Current GS is the players present GearScore in this addon and the headline value shown in Compact mode. Use Current GS when referring to the players current GearScore. It includes equipped items plus supported bonuses from installed permanent enchants and gems.

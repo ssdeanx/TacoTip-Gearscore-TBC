@@ -630,17 +630,15 @@ local function getRankRow(guid, unit)
         end
     end
 
-    -- Rank numbers are coloured by PERCENTILE, so "#1" is the top brand colour
-    -- and "#400 of 4000" is not the same colour as "#400 of 400". Both the
-    -- overall rank and the class rank use the same scale -- the class standing
-    -- is measured against the class pool the database reports.
+    -- Both numbers carry the RANKING scale, resolved through the same
+    -- Scoring.RankColor the leaderboard's `#` column paints from, so "#1" reads
+    -- gold here exactly as it does in the browser. Reading the raw percentile
+    -- bands directly made the best possible rank render purple, because purple is
+    -- the top of the QUALITY scale, not the top of a standing.
     local scoring = namespace.Scoring
     local function rankColor(rank, total)
-        local place, count = tonumber(rank), tonumber(total)
-        if scoring and type(scoring.QualityColor) == "function"
-            and place and count and count > 0 and place > 0 then
-            if place > count then place = count end
-            local r, gg, b = scoring.QualityColor((count - place + 1) / count)
+        if scoring and type(scoring.RankColor) == "function" then
+            local r, gg, b = scoring.RankColor(rank, total)
             if r and gg and b then
                 return r, gg, b
             end
@@ -655,12 +653,15 @@ local function getRankRow(guid, unit)
     local text
     if classRank and className then
         -- [#2 Warrior] -- square brackets, class rank and name inside, overall
-        -- rank outside. The class NAME is drawn in the class colour so it reads
-        -- at a glance, while the numbers carry standing.
+        -- rank outside. The brackets stay WHITE so they read as punctuation
+        -- instead of borrowing whichever number sits next to them, and the class
+        -- NAME is drawn in the class colour so it reads at a glance.
         text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
             .. colorText("#" .. tostring(overall), orr, org, orb) .. " "
-            .. colorText("[#" .. tostring(classRank), crr, crg, crb) .. " "
-            .. colorText(className, classRed, classGreen, classBlue) .. "]"
+            .. colorText("[", 1, 1, 1)
+            .. colorText("#" .. tostring(classRank), crr, crg, crb) .. " "
+            .. colorText(className, classRed, classGreen, classBlue)
+            .. colorText("]", 1, 1, 1)
     else
         text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
             .. colorText("#" .. tostring(overall), orr, org, orb)
