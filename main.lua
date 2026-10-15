@@ -135,6 +135,14 @@ local GetClassAtlas = _G.GetClassAtlas
 
 local POWERBAR_UPDATE_RATE = 0.2
 
+-- Window in which the second of the library's back-to-back completion callbacks
+-- (INVENTORY_READY then TALENTS_READY, both fired by one cacheUnitData) is treated
+-- as a duplicate of the first and skipped. 0.1s is far shorter than any genuine
+-- second update -- a later inspect of the same unit, an item load completing, or a
+-- stale refresh all arrive much later -- and long enough to cover the two events
+-- that are fired in the same frame.
+local INSPECT_RENDER_COALESCE = 0.1
+
 local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local NewTimer = _G.C_Timer and _G.C_Timer.NewTimer
 local CAfter = _G.C_Timer and _G.C_Timer.After
@@ -1577,24 +1585,33 @@ local function onTooltipSetUnit(tooltip, data)
         -- portrait was hidden and nothing in the pipeline could bring it back
         -- for the rest of that show.
         --
-        -- The retain path is documented at :1421 as "hide and re-anchor, but
-        -- keep the loaded model", i.e. it is written on the assumption that the
-        -- caller goes on to re-show. This is the only caller that asks to retain,
-        -- and it does not, so the caller owes the re-show. Restored only when
-        -- nothing proved the character changed: a guid that is present AND
-        -- different is a real unit change and the stale portrait must stay gone.
+        -- The retain path is documented at clearTooltipVisuals as "hide and
+        -- re-anchor, but keep the loaded model", written on the assumption that
+        -- the caller goes on to re-show. This branch used to take it and then
+        -- re-show two lines later -- a Hide()+Show() on a 3D model frame on every
+        -- single render for a portrait that had not changed. It no longer takes it:
+        -- an unproven change is a complete no-op, and a proven change tears the
+        -- mesh down and leaves it down.
         local unresolvedState = getTooltipState(tooltip)
         local incomingGUID = data and data.guid or nil
-        local portrait = tooltip.TacoTipPortrait3D
-        local portraitWasShown = (portrait and portrait.IsShown) and portrait:IsShown() or false
         local changeUnproven = (incomingGUID == nil)
             or (incomingGUID == unresolvedState.currentUnitGUID)
-        clearTooltipVisuals(tooltip, nil,
-            (not changeUnproven),
-            "unresolved-unit", true)
-        if (changeUnproven and portraitWasShown and portrait and portrait.Show) then
-            portrait:Show()
-        end
+        -- keepModel and retainModel both = changeUnproven, and the old call had
+        -- both wrong in opposite directions:
+        --
+        --   unproven (no guid at all -- EVERY Classic render, because the
+        --   OnTooltipSetUnit script hook drops the varargs -- or the same guid):
+        --   the same character. keepModel=false hid the model, re-anchored it and
+        --   relied on the re-show below to put it back; now it is a no-op.
+        --
+        --   proven different (a guid is present AND differs): the loaded mesh
+        --   belongs to the wrong character and must go. keepModel=true means "do
+        --   nothing at all", so the stale portrait stayed visible while the
+        --   tooltip described someone else -- the exact bleed the contract above
+        --   says must not happen. Now it is a full teardown, and nothing re-shows
+        --   it: TT:ApplyTooltipAppearance is the only place that shows a portrait,
+        --   and it is only reached for a resolved unit.
+        clearTooltipVisuals(tooltip, nil, changeUnproven, "unresolved-unit", changeUnproven)
         return
     end
 
@@ -3321,13 +3338,26 @@ local function reportEventCounters(line)
             line("  notifies", st.notifies or 0)
             line("  inspect ready", st.ready or 0)
             line("  timeouts", st.timeouts or 0)
-            -- A refusal is Blizzard saying "I will not inspect that unit". It is
-            -- caught, so it never becomes an error popup, but a rising count
-            -- while sweeping the mouse means the client is enforcing a tighter
-            -- inspect range than the gate APIs report.
-            line("  refused by server", st.rejected or 0)
+            -- A refusal is the client saying "I will not inspect that unit". On
+            -- Classic Era it arrives as an engine UI error and is swallowed by
+            -- the probe guard, so the player never sees or hears it: a rising
+            -- `refusals recorded` with `probe errors suppressed` beside it is the
+            -- client teaching us its real range, silently. `learned max range` is
+            -- the number it taught -- the tightest distance this client has
+            -- refused at -- and is the value the next release should set the
+            -- pre-filter from instead of a hardcoded yardage.
+            line("  refusals recorded", st.rejected or 0)
+            line("  probe errors suppressed", st.suppressed or 0)
+            line("  error speech suppressed", st.suppressedVoice or 0)
+            line("  error sound suppressed", st.suppressedSound or 0)
+            -- NOT the refusal. lastError is set only when the engine CALL raises a
+            -- Lua error out of NotifyInspect, which is a different event from a
+            -- refusal delivered as a UI error. The label used to read "last
+            -- refusal", so on a client whose refusals never raise the line was
+            -- permanently empty and read as "no refusals" while `probe errors
+            -- suppressed` climbed beside it.
             if (st.lastError) then
-                line("  last refusal", tostring(st.lastError))
+                line("  last inspect-call error", tostring(st.lastError))
             end
             line("  learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown")
             line("  scan enqueued", st.scanEnqueued or 0)
@@ -3348,90 +3378,6 @@ local function reportEventCounters(line)
     print("|cff59f0dccharacter adds renders and no hides. Destroys are 1 for the first|r")
     print("|cff59f0dcunit after a /reload, plus 1 for every change to a different unit|r")
     print("|cff59f0dcor a non-unit tooltip; re-rendering the unit already on screen adds none.|r")
-end
-
--- inspect error attribution (temporary) --
---
--- LibForeverInspector carries temporary diagnostic scaffolding for the
--- out-of-range inspect report: a 50-entry ring of {kind="notify"|"error"} entries
--- plus GetErrorLog / ClearErrorLog / RemoveErrorFilter. Nothing read it until
--- now. The question it exists to answer is narrow and single-pass -- when the
--- server answered "Not in Range", what did WE send it and from how far away --
--- so it is printed here as the last N entries, one per line, with the delta from
--- the previous entry. The delta is the part that matters: an error 0.3s after a
--- request, and an error 40s after one, are different bugs, and a bare list of
--- timestamps makes the reader do that subtraction in their head.
---
--- STRICTLY READ-ONLY. This section never writes, never pushes an entry and never
--- calls ClearErrorLog: a diagnostic that consumes the evidence it exists to show
--- is worse than none, and the library marks this scaffolding TO BE REMOVED once
--- attribution is confirmed -- which means a second /tacotip diag run before the
--- user has copied the first would otherwise print an already-drained log and look
--- like the symptom had gone away.
---
--- Guarded on CI.GetErrorLog because the library versions separately from this
--- file, and pcall'd for the reason the counters are totalled arithmetically
--- rather than with next(): this runs from a slash handler on a user's machine and
--- must not be the thing that raises. A missing capture prints nothing rather than
--- printing a failure -- "no section" is the correct output on a build without it.
-local INSPECT_ERROR_LOG_SHOWN = 15
-local function reportInspectErrorLog(line)
-    if (not (CI and type(CI.GetErrorLog) == "function")) then
-        return
-    end
-    local ok, entries = pcall(CI.GetErrorLog, CI)
-    if (not ok or type(entries) ~= "table") then
-        return
-    end
-    print("|cff59f0dc-- inspect error attribution (temporary) --|r")
-    local n = #entries
-    if (n == 0) then
-        line("  no entries", "no NotifyInspect request or UI error has been captured")
-        return
-    end
-    local first = 1
-    if (n > INSPECT_ERROR_LOG_SHOWN) then
-        first = n - INSPECT_ERROR_LOG_SHOWN + 1
-    end
-    line("  captured", n .. " -- showing " .. first .. " to " .. n)
-    -- Two arguments to line(), not one: it is a (label, value) printer, and a
-    -- pre-formatted string handed to it as the label prints a trailing ": nil"
-    -- for the absent value. The index and the delta are the label; what the
-    -- entry says is the value.
-    local prevTime
-    for i = first, n do
-        local e = entries[i]
-        if (type(e) == "table") then
-            local t = tonumber(e.time)
-            local delta
-            if (prevTime and t) then
-                delta = string.format("%.2fs", t - prevTime)
-            else
-                delta = "  --  "
-            end
-            if (e.kind == "notify") then
-                -- distance and interactDistance disagreeing, or canInspect false
-                -- at a distance the client will answer for, is exactly the shape
-                -- that produced the original report, so all three are printed.
-                line(string.format("  [%2d] +%s", i, delta),
-                    string.format("notify %s dist=%s interactDist=%s canInspect=%s",
-                        tostring(e.unit or "?"), tostring(e.distance or "?"),
-                        tostring(e.interactDistance), tostring(e.canInspect)))
-            elseif (e.kind == "error") then
-                -- "<unresolved>" rather than "nil": GetGameMessageInfo is absent
-                -- on some clients, and "nil" in a diagnostic reads as a broken
-                -- value rather than as an API that was not there to ask.
-                line(string.format("  [%2d] +%s", i, delta),
-                    string.format("ERROR msgType=%s %s", tostring(e.messageType),
-                        tostring(e.message or "<message unresolved>")))
-            else
-                line(string.format("  [%2d] +%s %s", i, delta, tostring(e.kind)))
-            end
-            if (t) then
-                prevTime = t
-            end
-        end
-    end
 end
 
 -- Silent-failure checks.
@@ -3576,7 +3522,6 @@ function TT:PrintDiagnostics()
     line("GearScore bracket", gs and gs.BRACKET_SIZE or "none")
     line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
     reportEventCounters(line)
-    reportInspectErrorLog(line)
     reportSilentFailures(line)
     print("|cff59f0dc================================|r")
 end
@@ -3703,7 +3648,23 @@ local function onEvent(self, event, ...)
         if (guid) then
             local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and UnitGUID(ttUnit) == guid) then
-                GameTooltip:SetUnit(ttUnit)
+                -- The library fires INVENTORY_READY and TALENTS_READY back to back
+                -- for ONE completed inspect. Rebuilding on both ran the entire
+                -- render twice for identical data -- the gate chain, the whole text
+                -- path, and GetScore, which walks 18 item slots and their item
+                -- loads. The second of an immediate pair is dropped, keyed on the
+                -- GUID with a short window, so a genuine later update still
+                -- rebuilds. GetTime is the same monotonic clock the library uses.
+                local st = getTooltipState(GameTooltip)
+                local now = (type(GetTime) == "function") and GetTime() or 0
+                local duplicate = (st.inspectRenderGUID == guid
+                    and st.inspectRenderTime ~= nil
+                    and (now - st.inspectRenderTime) < INSPECT_RENDER_COALESCE)
+                if (not duplicate) then
+                    st.inspectRenderGUID = guid
+                    st.inspectRenderTime = now
+                    GameTooltip:SetUnit(ttUnit)
+                end
             end
             if (event == "INVENTORY_READY") then
                 if (InspectFrame and InspectFrame:IsShown()) then

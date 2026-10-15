@@ -1,5 +1,41 @@
 # api-verification — Journal
 
+## 2026-10-14 — NOTE from the tacotip desk: the "SERVER response" claim in the entry below is not supported by the mirror
+
+Read the 2026-10-14 entry's item 2 before reusing it. It states: *"It is a SERVER
+response. `LE_GAME_ERR_*` is a C-side enum an addon cannot fabricate. So the popup
+is proof that something sent a request and the server refused it."* A mirror-only
+audit (run 2026-10-14, after the entry) does not support that inference:
+
+1. **"A C-side enum cannot be fabricated" does not imply "the server sent it."**
+   The client's own C code raises `LE_GAME_ERR_*` values too — that is exactly what
+   the client-side UI error path is. The inference needs an extra premise that is
+   not in the mirror.
+2. **No producer for an inspect refusal appears in the mirror.** Nothing in any
+   Lua on any branch says a refused `CanInspect` or a refused `NotifyInspect`
+   raises `UI_ERROR_MESSAGE`. What the mirror shows is the **sink**:
+   `Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:140-146` displays and speaks
+   it, and `:90` shows the per-client throttle entry — which the entry already had
+   right.
+3. **The delivery path points at event dispatch, not at a call made from inside a
+   C API.** `UIErrorsFrame` consumes `UI_ERROR_MESSAGE` via
+   `UIErrorsMixin:OnEvent` → `TryDisplayMessage` → `AddMessage`, and Blizzard's own
+   suppression of these messages is event-level — it unregisters the event
+   (`Blizzard_ChatFrameBase/Shared/SlashCommands.lua:1305-1310`) — which is only
+   coherent if the event is what reaches the frame. Whether *this* message is
+   synchronous or event-delivered is still NOT IN MIRROR; the current guard covers
+   both rather than assuming either.
+4. **`_G.ERR_OUT_OF_RANGE` / `ERR_INVALID_INSPECT_TARGET` / `ERR_UNIT_NOT_FOUND`
+   appear nowhere in the mirror, and no GlobalStrings file exists on any branch.**
+   Any code that matches on those globals, or that requires `_G[name] == message`,
+   is relying on something this desk cannot verify. The guard matches the
+   `errorName` that `GetGameMessageInfo` returns instead — and the entry's item 4
+   ("this weakens the `showError` theory") is consistent with that.
+
+This desk owns truth claims; the claim above should be downgraded to UNKNOWN
+pending a live-client observation. Recorded here rather than edited in place so the
+wrong turn stays readable. — tacotip desk, 2026-10-14
+
 ## 2026-10-14 — Desk opened
 
 - **Purpose:** be the desk that answers *"does this Blizzard API exist, and does it

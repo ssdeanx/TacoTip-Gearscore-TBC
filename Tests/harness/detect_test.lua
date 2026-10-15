@@ -87,7 +87,11 @@ end
 
 -- run(profile) -> CI table. layout: "slot4" = modern GetBuildInfo shape,
 -- "slot7" = the shape implied by Blizzard's own Classic FrameXML.
-local function run(projectId, iface, layout, projectConsts, patches)
+-- opts (optional): { skipDetours = true } loads the library without LibDetours,
+-- which is the state a client would be in if the bundled lib were ever missing
+-- -- the probe guard then cannot install and must degrade to a no-op rather than
+-- raise at file scope.
+local function run(projectId, iface, layout, projectConsts, patches, opts)
     for k in STD.pairs(REALG) do REALG[k] = nil end
     baseEnv()
     if (patches) then
@@ -103,6 +107,12 @@ local function run(projectId, iface, layout, projectConsts, patches)
     end
     assert(loadfile(LIB .. "LibStub/LibStub.lua"))()
     assert(loadfile(LIB .. "CallbackHandler-1.0/CallbackHandler-1.0.lua"))()
+    if (not (opts and opts.skipDetours)) then
+        -- The bundled LibDetours is part of what ships (TacoTip.toc loads it and
+        -- main.lua asserts it), so the sandbox contains it too. A test that wants
+        -- it absent asks for that explicitly.
+        assert(loadfile(LIB .. "LibDetours-1.0/LibDetours-1.0.lua"))()
+    end
     local chunk = assert(loadfile(LIB .. "LibForeverInspector/LibForeverInspector.lua"))
     chunk("TacoTip")
     return LibStub("LibForeverInspector")
@@ -387,6 +397,7 @@ end
 -- hold, every time, and recency is not an exemption.
 do
     local clock = 1000
+    local inRange = false          -- mutable: the gate must follow the signal
     local env = {
         UnitExists = function() return true end,
         UnitIsConnected = function() return true end,
@@ -395,19 +406,28 @@ do
         UnitIsUnit = function() return false end,
         UnitGUID = function(u) if (u == "player") then return "Player-self" end return "Player-" .. tostring(u) end,
         CanInspect = function() return true end,
-        CheckInteractDistance = function() return false end,  -- out of range
+        CheckInteractDistance = function() return inRange end,
         GetTime = function() return clock end,
     }
     local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
     check("classic range: out-of-range rejected",
         ci:CanInspect("n1") == false)
 
-    ci.inspectSuccessTime["Player-n1"] = clock          -- just inspected
-    check("classic range: recency does NOT exempt a unit that walked out of range",
-        ci:CanInspect("n1") == false)
+    -- Inspectable while the distance signal holds...
+    inRange = true
+    check("classic range: in range and queryable is accepted",
+        ci:CanInspect("n1") == true)
 
-    ci.inspectSuccessTime["Player-n1"] = clock - 6      -- window long expired
-    check("classic range: stale entry does not extend the gate",
+    -- ...and refused the moment it stops, with no grace for having just been
+    -- inspected. The assertions that used to sit here seeded
+    -- lib.inspectSuccessTime (a per-unit recency table) to prove that a recent
+    -- inspect did not exempt a unit -- but nothing in the gate ever read that
+    -- table, so they passed whether or not any hysteresis existed, and the field
+    -- has since been deleted as write-only state. The contract is asserted by
+    -- moving the signal itself instead: a future "it answered a moment ago, let it
+    -- through" window fails this check, which is the point of it.
+    inRange = false
+    check("classic range: the distance signal alone decides, with no recency grace",
         ci:CanInspect("n1") == false)
 
     -- Mainline keeps the either-signal rule: distance false, CanInspect true is
@@ -605,6 +625,163 @@ do
     check("watchdog releases a stalled inspect",
         (ci:GetInspectStats().timeouts or 0) >= 1,
         "timeouts=" .. tostring(ci:GetInspectStats().timeouts))
+end
+
+-- THE TICK'S COST, THE WATCHDOG'S WINDOW AND A FOREIGN INSPECT_READY.
+--
+-- Three defects found by auditing the scan pipeline rather than by the suite:
+--   * the tick walked all 40 raid members through the whole gate chain BEFORE
+--     checking whether their data was already fresh -- ~880 engine calls per
+--     second in a cached 40-man raid, all to discover that nothing needed doing;
+--   * the watchdog's documented 3s window was unreachable (an earlier branch
+--     always fired first at INSPECT_DELAY + 0.8), so `timeouts` never counted and
+--     a stalled unit was re-requested at nearly twice the intended rate;
+--   * INSPECT_READY cleared the pending slot for ANY guid, so a late answer to an
+--     earlier request dropped a request that was still in flight.
+do
+    local clock = 5000
+    local tickers, probes
+
+    local function build(env)
+        clock = clock + 1000
+        tickers = {}
+        probes = { can = 0, dist = 0, distSq = 0 }
+        local base = {
+            -- The library's own frame must retain its scripts, or its OnEvent
+            -- handler is unreachable from any test (the base mock discards them).
+            CreateFrame = function()
+                local f = { scripts = {} }
+                f.RegisterEvent = function() end
+                f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+                f.GetScript = function(self, name) return self.scripts[name] end
+                return f
+            end,
+            -- Only the units these tests use exist: "player" (the tick's own
+            -- liveness check), "n1"/"n2" (the units under test) and raid1..40.
+            -- "target"/"mouseover"/"focus" deliberately do NOT, so the tick's
+            -- priority-1 arm cannot mask what priority 3 is doing.
+            UnitExists = function(u)
+                return u == nil or u == "player" or u == "n1" or u == "n2"
+                    or (type(u) == "string" and u:match("^raid") ~= nil)
+            end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                return "Player-" .. tostring(u)
+            end,
+            UnitDistanceSquared = function() probes.distSq = probes.distSq + 1 return 100, true end,
+            CanInspect = function() probes.can = probes.can + 1 return true end,
+            CheckInteractDistance = function() probes.dist = probes.dist + 1 return true end,
+            NotifyInspect = function() return true end,
+            GetTime = function() return clock end,
+            IsInGroup = function() return (env and env.inRaid) and true or false end,
+            IsInRaid = function() return (env and env.inRaid) and true or false end,
+            GetNamePlates = function() return {} end,
+            C_Timer = {
+                After = function() end,
+                NewTicker = function(interval, fn)
+                    local h = { interval = interval, cb = fn }
+                    function h:Cancel() end
+                    tickers[#tickers + 1] = h
+                    return h
+                end,
+            },
+        }
+        for k, v in pairs(env or {}) do base[k] = v end
+        local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, base)
+        local queueT
+        for _, t in ipairs(tickers) do
+            if (t.interval == 0.5) then queueT = t end
+        end
+        return ci, queueT
+    end
+
+    -- 1. A 40-man raid whose members are all already cached must cost the tick
+    --    NOTHING. The freshness lookup is what decides that, and it has to come
+    --    before the gate chain for it to cost nothing.
+    local ciA, tickA = build({ inRaid = true })
+    for i = 1, 40 do
+        ciA.cache["Player-raid" .. i] = { time = clock }
+    end
+    probes = { can = 0, dist = 0, distSq = 0 }
+    tickA.cb()
+    check("a cached 40-man raid costs the tick no probes at all",
+        probes.can == 0 and probes.dist == 0 and probes.distSq == 0,
+        "can=" .. tostring(probes.can) .. " dist=" .. tostring(probes.dist)
+            .. " distSq=" .. tostring(probes.distSq))
+
+    -- 2. The watchdog window. Stepped in 0.5s ticks -- which is how it runs in
+    --    the client -- a stalled request must survive to the 3s window and be
+    --    counted there, not be released early and silently.
+    local ciB, tickB = build({})
+    ciB:DoInspect("n1")
+    local releasedAt = nil
+    for step = 1, 8 do
+        clock = clock + 0.5
+        tickB.cb()
+        if ((ciB:GetInspectStats().timeouts or 0) > 0 and not releasedAt) then
+            releasedAt = step * 0.5
+        end
+    end
+    check("a stalled inspect is released at the documented 3s window",
+        releasedAt ~= nil and releasedAt > 2.5,
+        "released after " .. tostring(releasedAt) .. "s of 0.5s ticks")
+    check("...and the stall is counted in `timeouts`",
+        (ciB:GetInspectStats().timeouts or 0) == 1,
+        "timeouts=" .. tostring(ciB:GetInspectStats().timeouts))
+
+    -- 3. A late answer for an EARLIER request must not release the request that
+    --    is in flight. With the slot released, the second unit's own answer can
+    --    no longer be resolved (it is neither target nor mouseover), so its data
+    --    is discarded and requested again -- observable as `ready` not moving.
+    local ciC, tickC = build({})
+    local handlerC = ciC.frame.scripts.OnEvent
+    local readyBefore = ciC:GetInspectStats().ready or 0
+    ciC:DoInspect("n1")                                  -- request 1; n1 pending
+    ciC:DoInspect("n2")                                  -- slot taken -> queued
+    clock = clock + 4
+    tickC.cb()                                           -- watchdog drops n1; queue sends n2
+    handlerC(ciC.frame, "INSPECT_READY", "Player-n1")    -- n1's LATE answer
+    handlerC(ciC.frame, "INSPECT_READY", "Player-n2")    -- n2's own answer
+    check("a late answer for an earlier request does not drop the request in flight",
+        (ciC:GetInspectStats().ready or 0) == readyBefore + 1,
+        "ready " .. tostring(readyBefore) .. " -> " .. tostring(ciC:GetInspectStats().ready))
+end
+
+-- A UNIT WITH NO DATA HAS NO SPECIALIZATION, and must say so rather than
+-- inventing one. `GetSpecialization` used to return 1 for an uncached unit, which
+-- means "the first spec of its class" -- so every uninspected player was shown
+-- "Arms [0/0/0]" on the classic family or "Arms" on the modern pair, as if it
+-- were known, until INSPECT_READY re-rendered. A confidently wrong spec line is
+-- worse than no line, and the callers already handle nil.
+do
+    local clock = 9000
+    local env = {
+        UnitExists = function(u) return u == nil or u == "player" or u == "n1" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        GetTime = function() return clock end,
+    }
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
+    check("an uncached unit reports NO specialization (not the class's first)",
+        ci:GetSpecialization("n1") == nil,
+        "spec=" .. tostring(ci:GetSpecialization("n1")))
+    -- Positive control, so the check above cannot pass because the whole function
+    -- is broken: with data present, the cached group index IS reported.
+    ci.cache["Player-n1"] = { specIndexByGroup = { [1] = 2, [2] = 3 } }
+    check("...and a cached unit reports its own group index",
+        ci:GetSpecialization("n1", 1) == 2 and ci:GetSpecialization("n1", 2) == 3,
+        "group1=" .. tostring(ci:GetSpecialization("n1", 1))
+            .. " group2=" .. tostring(ci:GetSpecialization("n1", 2)))
 end
 
 -- REGRESSION GUARD: the pre-existing roster auto-scan is independent of the
@@ -816,8 +993,11 @@ do
 --   (b) the reject cooldown was purely time-based: after INSPECT_REJECT_COOLDOWN
 --       the SAME out-of-range unit was eligible again, so a target that stayed
 --       far away cost one server error every 10 seconds forever.
---   (c) Blizzard gates NotifyInspect with CanInspect(unit, TRUE) on all five
---       branches; the library passed only (unit).
+--   (c) the library passed a second argument to CanInspect, on the reading that it
+--       was a range flag. It is `showError`, the mirror documents only ONE
+--       argument on every branch, and the two-argument call is Blizzard's own
+--       explicit-action path -- see the corrected block further down this file,
+--       which this comment used to contradict.
 --
 -- Driven through BOTH live entry points -- the horizon render path (DoInspect,
 -- which main.lua calls from its tooltip hook) and the proximity scan fallback
@@ -974,39 +1154,53 @@ do
     end
 end
 
--- CanInspect IS ASKED WITH ONE ARGUMENT, EVERYWHERE, AND THE ATTRIBUTION CAPTURE
--- RECORDS BOTH SIDES OF THE QUESTION.
+-- CANINSPECT IS ASKED WITH ONE ARGUMENT, EVERYWHERE -- AND ON CLASSIC ERA A
+-- REFUSAL IS SILENT WITHOUT BEING IGNORED.
 --
--- The block above pins the behaviour ("a showError refusal does not block the
--- request"), but nothing pinned HOW the library asks. A mock of the shape
--- `function() return true end` accepts any arity, so `CanInspect(unit)` and
--- `CanInspect(unit, true)` are indistinguishable to every existing test in this
--- file -- which is exactly how a call that asks the engine to display an error
--- message shipped with the suite green. The stub here records `select("#", ...)`
--- and the test asserts on it directly, on all five clients, at every place the
--- library calls CanInspect on the request path.
+-- Two contracts are pinned here, on all five clients:
 --
--- The capture assertions come from the same defect: the counters are cumulative
--- since /reload and read zero when the player is standing away from everyone, so
--- "no inspect was attempted" and "an inspect was attempted and something else
--- raised the message" look identical. The ring buffer is what separates them.
+--   1. HOW the library asks. A mock of the shape `function() return true end`
+--      accepts any arity, so `CanInspect(unit)` and `CanInspect(unit, true)` are
+--      indistinguishable to every other test in this file -- which is exactly how
+--      a call that asks the engine to display an error message shipped with the
+--      suite green. The mock records `select("#", ...)` and the test asserts one
+--      argument, every time, from every call site.
+--
+--   2. WHAT HAPPENS WHEN THE CLIENT REFUSES -- Classic Era's contract, because
+--      Classic Era is the client that refuses this way. The probe guard must
+--      swallow the engine message and its spoken error, record the refusal, stop
+--      re-asking the unit, and recover the moment the unit is in range again;
+--      and it must never swallow a message it did not cause.
+--
+-- The mock client refuses when the unit is beyond its own inspect limit and, when
+-- it refuses, it emits exactly what the real client emits: UIErrorsFrame with an
+-- ERR_OUT_OF_RANGE messageType, and C_Sound.PlayVocalErrorSound, in that order,
+-- from inside the query.
+--
+-- The other four clients get a HEALTHY mock client instead (no emission, inspect
+-- allowed inside range), and are asserted for what this release promises them:
+-- their exact previous behaviour -- query-first order, a request still issued,
+-- the guard not even installed -- so "we did not touch them" is a measured fact
+-- rather than a claim.
 do
     local CLIENTS = {
-        { "Classic Era",     P.WOW_PROJECT_CLASSIC,                11509 },
-        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506 },
-        { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002 },
-        { "WoW Forever",     P.WOW_PROJECT_MAINLINE,               16001 },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,              120100 },
+        { "Classic Era",     P.WOW_PROJECT_CLASSIC,                 11509, true },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, false },
+        { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002, false },
+        { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                16001, false },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,               120100, false },
     }
 
     for _, c in ipairs(CLIENTS) do
-        local name = c[1]
-        local capClock = 4000
-        local arities = {}
-        local filter, filterEvent, removedEvent
-        local notified = {}
+        local name, projectId, iface, isEra = c[1], c[2], c[3], c[4]
+        local testClock = 5000
+        local yards = 15
+        local shown, voices, notified, arities, order = {}, {}, {}, {}, {}
+        local canRefuse = false
+        local queueTick
+        local refusedMessageType = 7
 
-        local probe = run(c[2], c[3], "slot4", CONSTS, {
+        local probe = run(projectId, iface, "slot4", CONSTS, {
             UnitExists = function() return true end,
             UnitIsConnected = function() return true end,
             UnitIsDeadOrGhost = function() return false end,
@@ -1016,158 +1210,399 @@ do
                 if (u == "player") then return "Player-self" end
                 return "Player-" .. tostring(u)
             end,
-            UnitDistanceSquared = function() return 36, true end,   -- 6yd, inside range
-            -- The whole point: this stub is ARITY-SENSITIVE. Every earlier CanInspect
-            -- mock in this file is `function() return true end`, which answers the
-            -- same for one argument and for two, so none of them could see the
-            -- difference the defect was made of.
+            UnitDistanceSquared = function() return yards * yards, true end,
+            ERR_OUT_OF_RANGE = "Out of range",
+            ERR_INVALID_INSPECT_TARGET = "You can't inspect that unit.",
+            ERR_UNIT_NOT_FOUND = "Unit not found.",
+            GetGameMessageInfo = function(messageType)
+                if (messageType == refusedMessageType) then
+                    return "ERR_OUT_OF_RANGE", nil, 10
+                end
+                return "ERR_OTHER", nil, nil
+            end,
+            UIErrorsFrame = {
+                AddMessage = function(self, message, r, g, b, hold, messageType)
+                    shown[#shown + 1] = { message = message, messageType = messageType }
+                end,
+            },
+            C_Sound = {
+                PlayVocalErrorSound = function(voiceID)
+                    voices[#voices + 1] = voiceID
+                end,
+            },
+            PlaySound = function() end,
             CanInspect = function(...)
                 arities[#arities + 1] = select("#", ...)
+                order[#order + 1] = "can"
+                -- Classic Era refuses what its own engine will not inspect; the
+                -- other clients inspect anything inside the gate range.
+                if (canRefuse or (isEra and yards > 10)) then
+                    -- Called exactly the way the client calls it --
+                    -- `self:AddMessage(message, r, g, b, holdTime, messageType)`
+                    -- (Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:137) --
+                    -- because the messageType is the LAST argument, and a mock
+                    -- that gets that wrong tests a call shape the client never
+                    -- makes.
+                    UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, refusedMessageType)
+                    local sound = rawget(_G, "C_Sound")
+                    if (type(sound) == "table" and type(sound.PlayVocalErrorSound) == "function") then
+                        sound.PlayVocalErrorSound(10)
+                    end
+                    return false
+                end
                 return true
             end,
-            CheckInteractDistance = function() return true end,
+            CheckInteractDistance = function()
+                order[#order + 1] = "dist"
+                return yards <= 28
+            end,
             NotifyInspect = function(u)
                 notified[#notified + 1] = u
                 return true
             end,
-            GetTime = function() return capClock end,
+            GetTime = function() return testClock end,
             GetNamePlates = function() return {} end,
-            ChatFrame_AddMessageEventFilter = function(event, fn)
-                filterEvent, filter = event, fn
-            end,
-            ChatFrame_RemoveMessageEventFilter = function(event, fn)
-                removedEvent = (filter == fn) and event or nil
-            end,
-            GetGameMessageInfo = function(messageType)
-                return { type = "ERR_NOT_IN_RANGE", message = "Not in Range" }
-            end,
+            C_Timer = {
+                NewTicker = function(interval, fn)
+                    if (interval == 0.5) then
+                        queueTick = fn
+                    end
+                end,
+            },
         })
 
-        check(name .. " capture: the UI_ERROR_MESSAGE filter is installed",
-            filterEvent == "UI_ERROR_MESSAGE" and type(filter) == "function",
-            "event=" .. tostring(filterEvent))
+        -- The guard is installed exactly where the symptom is: Classic Era, and
+        -- nowhere else.
+        check(name .. " probe guard: installed only on Classic Era",
+            isEra == (probe.inspectSuppressorInstalled == true),
+            "installed=" .. tostring(probe.inspectSuppressorInstalled))
 
-        -- Drive the real request path. DoInspect -> requestInspect is the single
-        -- point NotifyInspect is actually called from, so this covers lib:CanInspect
-        -- and requestInspectImpl in one go.
+        -- A 15yd unit: inside the gate API's 28yd and inside the 20yd pre-filter.
         probe:DoInspect("target")
-        check(name .. " capture: the request was actually issued",
-            #notified == 1 and notified[1] == "target",
-            "requests=" .. tostring(#notified))
+        local stats = probe:GetInspectStats()
 
-        -- The contract. One argument, every single time, from every call site.
+        -- Order: the reorder belongs to Classic Era alone. Era reads the distance
+        -- signal first; every other client keeps query-first, exactly as shipped.
+        check(name .. " probe guard: gate order is " .. (isEra and "distance-first" or "query-first"),
+            order[1] == (isEra and "dist" or "can"),
+            "first=" .. tostring(order[1]) .. " second=" .. tostring(order[2]))
+
+        if (isEra) then
+            -- CLASSIC ERA: the refusal is invisible to the player and to nothing
+            -- else -- it is recorded, and the unit is not asked about again.
+            check(name .. " probe guard: the refusal never reaches the player",
+                #shown == 0 and #voices == 0,
+                "shown=" .. tostring(#shown) .. " voices=" .. tostring(#voices))
+            check(name .. " probe guard: the refusal is recorded, not discarded",
+                (stats.suppressed or 0) == 1 and (stats.suppressedVoice or 0) == 1
+                    and (stats.rejected or 0) >= 1 and stats.learnedRange == yards,
+                "suppressed=" .. tostring(stats.suppressed)
+                    .. " voice=" .. tostring(stats.suppressedVoice)
+                    .. " rejected=" .. tostring(stats.rejected)
+                    .. " learned=" .. tostring(stats.learnedRange))
+            check(name .. " probe guard: an out-of-range unit is never requested",
+                #notified == 0, "requests=" .. tostring(#notified))
+
+            -- THE LOOP. Ten simulated minutes of the 0.5s queue tick against the
+            -- same far target: no further engine call, no further request, no
+            -- further message. This is the assertion that would have caught the
+            -- reported spam; before the guard, the refusal was invisible to Lua,
+            -- so nothing was recorded and the tick re-asked forever.
+            --
+            -- `stats` is the LIVE stats table (GetInspectStats hands out
+            -- lib.inspectStats itself), so the baseline has to be snapshotted
+            -- here -- comparing against a field of the live table later would
+            -- compare the post-tick value with itself and pass unconditionally.
+            local suppressedAtStart = stats.suppressed or 0
+            if (queueTick) then
+                for _ = 1, 1200 do
+                    testClock = testClock + 0.5
+                    queueTick()
+                end
+            end
+            local after = probe:GetInspectStats()
+            check(name .. " probe guard: ten minutes of ticks do not re-ask",
+                (after.notifies or 0) == 0 and #notified == 0
+                    and (after.suppressed or 0) == suppressedAtStart,
+                "notifies=" .. tostring(after.notifies) .. " requests=" .. tostring(#notified)
+                    .. " suppressed=" .. tostring(after.suppressed) .. " (was " .. tostring(suppressedAtStart) .. ")")
+
+            -- Walk closer and it works again: the refusal was not permanent.
+            yards = 6
+            testClock = testClock + 15
+            probe:DoInspect("target")
+            check(name .. " probe guard: back in range, the unit is inspected again",
+                #notified == 1 and #shown == 0,
+                "requests=" .. tostring(#notified) .. " shown=" .. tostring(#shown))
+        else
+            -- THE OTHER FOUR: unchanged. The unit is inside the gate range, so the
+            -- request still goes out -- the behaviour these clients already had --
+            -- and no hook of ours exists in their path to swallow anything.
+            check(name .. " probe guard: unchanged -- the unit is still requested",
+                #notified == 1 and #shown == 0 and (stats.suppressed or 0) == 0,
+                "requests=" .. tostring(#notified) .. " shown=" .. tostring(#shown)
+                    .. " suppressed=" .. tostring(stats.suppressed))
+        end
+
+        -- The arity contract: every call the LIBRARY made asked with exactly one
+        -- argument. Measured before the direct two-argument call below, so that
+        -- call is not counted.
         local maxArity, total = 0, 0
         for _, n in ipairs(arities) do
             total = total + 1
             if (n > maxArity) then maxArity = n end
         end
-        check(name .. " capture: CanInspect is called with EXACTLY one argument",
+        check(name .. " probe guard: CanInspect is called with EXACTLY one argument",
             (total >= 1 and maxArity == 1),
             "calls=" .. tostring(total) .. " maxArity=" .. tostring(maxArity))
 
-        -- The notify entry. Fields are asserted individually rather than by
-        -- "is a table", because an entry that exists but records nothing is the
-        -- same failure this whole block exists to detect.
-        local notify
-        for _, e in ipairs(probe:GetErrorLog()) do
-            if (e.kind == "notify") then notify = e break end
-        end
-        check(name .. " capture: a notify entry is recorded",
-            type(notify) == "table",
-            "entries=" .. tostring(#probe:GetErrorLog()))
-        if (type(notify) == "table") then
-            check(name .. " capture: the notify entry records what was asked",
-                notify.unit == "target"
-                    and notify.guid == "Player-target"
-                    and notify.time == capClock
-                    and notify.distance == 6
-                    and notify.interactDistance == true
-                    and notify.canInspect == true,
-                "unit=" .. tostring(notify.unit) .. " guid=" .. tostring(notify.guid)
-                    .. " t=" .. tostring(notify.time) .. " d=" .. tostring(notify.distance)
-                    .. " dist=" .. tostring(notify.interactDistance)
-                    .. " can=" .. tostring(notify.canInspect))
-        end
+        -- Release whatever request is still outstanding the way the client would
+        -- (INSPECT_READY, which this mock never sends) or the watchdog does, and
+        -- move out of the pre-filter so the tick cannot open a new one: the
+        -- pass-through assertions below must not be measured against an open
+        -- attribution window.
+        yards = 30
+        testClock = testClock + 5
+        if (queueTick) then queueTick() end
 
-        -- The error entry, and the filter's refusal to swallow the message. The
-        -- return value is asserted because a filter that returned false would
-        -- make the popup disappear -- a "fix" that hides the symptom it was added
-        -- to diagnose.
-        local ret
-        if (type(filter) == "function") then
-            ret = { filter(3, "Not in Range") }
-        end
-        check(name .. " capture: the error filter returns nothing",
-            type(ret) == "table" and #ret == 0,
-            "n=" .. tostring(type(ret) == "table" and #ret or -1))
+        -- Not ours, not swallowed: an unrelated message reaches the frame.
+        local beforeUnrelated = #shown
+        _G.UIErrorsFrame:AddMessage("Some unrelated error", 1, 0, 0, 1.0, 3)
+        check(name .. " probe guard: an unrelated error still displays",
+            #shown == beforeUnrelated + 1,
+            "shown=" .. tostring(#shown) .. " (was " .. tostring(beforeUnrelated) .. ")")
 
-        local errEntry
-        for _, e in ipairs(probe:GetErrorLog()) do
-            if (e.kind == "error") then errEntry = e break end
-        end
-        check(name .. " capture: an error entry is recorded",
-            type(errEntry) == "table"
-                and errEntry.messageType == 3
-                and errEntry.message == "Not in Range"
-                and errEntry.time == capClock,
-            "type=" .. tostring(errEntry and errEntry.messageType)
-                .. " msg=" .. tostring(errEntry and errEntry.message))
-
-        -- Bounded. 50 entries is the cap; drive well past it through the filter so
-        -- the bound is exercised on a path that actually runs (60 message events).
-        if (type(filter) == "function") then
-            for i = 1, 60 do filter(3, "Not in Range") end
-        end
-        local log = probe:GetErrorLog()
-        check(name .. " capture: the ring buffer stays bounded at 50",
-            #log == 50,
-            "entries=" .. tostring(#log))
-
-        -- Removable. Without this the temporary capture could not be detached in
-        -- a live session, which is the whole reason it is safe to ship at all.
-        check(name .. " capture: the filter is removable",
-            probe:RemoveErrorFilter() == true
-                and removedEvent == "UI_ERROR_MESSAGE"
-                and probe.uiErrorFilter == nil,
-            "removed=" .. tostring(removedEvent))
-        check(name .. " capture: ClearErrorLog empties the buffer",
-            (probe:ClearErrorLog() or true) and #probe:GetErrorLog() == 0,
-            "entries=" .. tostring(#probe:GetErrorLog()))
+        -- The player's own request is not ours either: Blizzard calls
+        -- CanInspect(unit, true) from InspectFrame_Show (/inspect, right-click ->
+        -- Inspect), and that message must still display.
+        canRefuse = true
+        local beforeBlizzard = #shown
+        _G.CanInspect("target", true)
+        check(name .. " probe guard: a player-requested message still displays",
+            #shown == beforeBlizzard + 1,
+            "shown=" .. tostring(#shown) .. " (was " .. tostring(beforeBlizzard) .. ")")
     end
 
-    -- The two capture hooks are opt-in per client: ChatFrame_AddMessageEventFilter
-    -- does not exist everywhere, and NotifyInspect must not be assumed either. A
-    -- client missing either has to load with the capture silently off rather than
-    -- raise at file scope -- the TT.LOAD_STAGE diagnostic exists to name exactly
-    -- that failure.
-    local bare = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+    -- A client without LibDetours must still load and inspect: the guard is
+    -- defence around our own calls, not a load dependency.
+    local noDetours = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
         UnitExists = function() return true end,
-    })
-    -- NotifyInspect comes from baseEnv, so absence has to be forced AFTER load:
-    -- `NotifyInspect = nil` in a table constructor creates no key at all.
-    _G.NotifyInspect = nil
-    local bareOk = pcall(function()
-        bare:DoInspect("target")
-        bare:ClearErrorLog()
-        return bare:GetErrorLog()
-    end)
-    check("capture: a client with no NotifyInspect still loads and reports",
-        bareOk and #bare:GetErrorLog() == 0,
-        "ok=" .. tostring(bareOk))
-
-    -- And the filter is simply not installed when the API is absent. Forced after
-    -- load for the same reason, since baseEnv does not define it either way.
-    local noFilter = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
-        UnitExists = function() return true end,
+        UnitIsPlayer = function() return true end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsUnit = function() return false end,
+        UnitDistanceSquared = function() return 36, true end,
         CanInspect = function() return true end,
         CheckInteractDistance = function() return true end,
         NotifyInspect = function() return true end,
         GetTime = function() return 1 end,
+        GetNamePlates = function() return {} end,
+    }, { skipDetours = true })
+    local noDetoursOk = pcall(function() return noDetours:DoInspect("target") end)
+    check("probe guard: no LibDetours still loads and inspects",
+        noDetoursOk and noDetours.inspectSuppressorInstalled ~= true,
+        "ok=" .. tostring(noDetoursOk))
+
+    -- And a client with no UIErrorsFrame: same contract. The guard retries the
+    -- install on every probe, so this is also the "frame created later" case.
+    local noErrors = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        UnitExists = function() return true end,
+        UnitIsPlayer = function() return true end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsUnit = function() return false end,
+        UnitDistanceSquared = function() return 36, true end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return 1 end,
+        GetNamePlates = function() return {} end,
     })
-    _G.ChatFrame_AddMessageEventFilter = nil
-    check("capture: absent ChatFrame_AddMessageEventFilter does not break load",
-        noFilter.uiErrorFilter == nil and #noFilter:GetErrorLog() == 0,
-        "filter=" .. tostring(noFilter.uiErrorFilter))
+    local noErrorsOk = pcall(function() return noErrors:DoInspect("target") end)
+    check("probe guard: no UIErrorsFrame still loads and inspects",
+        noErrorsOk and noErrors.inspectSuppressorInstalled ~= true,
+        "ok=" .. tostring(noErrorsOk))
+end
+
+-- THE ASYNC PATH, THE CLASSIFICATION, THE SOUND LATCHES, THE INSTALL RETRY AND
+-- THE PLAYER'S OWN MESSAGE -- the five behaviours the first pass left untested.
+--
+-- The block above emits the refusal from INSIDE the query, which asserts the
+-- synchronous hypothesis rather than testing it. The mirror suggests the real
+-- delivery is event dispatch (UIErrorsFrame consumes UI_ERROR_MESSAGE through
+-- OnEvent -> TryDisplayMessage -> AddMessage), so these tests emit AFTER the call
+-- has returned, through the same sink the client uses, and assert the window
+-- catches it. They also pin the three behaviours that separate "the popup is
+-- gone" from "the popup is gone but a 5-yard ceiling now blocks every inspect for
+-- the rest of the session".
+do
+    local caseClock = 6000
+    local yards = 15
+    local shown, voices, sounds, notified = {}, {}, {}, {}
+
+    -- A fresh Classic Era client per case. The mock CanInspect refuses silently
+    -- (returns false, emits nothing) so each test chooses exactly when and how
+    -- the message is delivered -- that is the whole point of the block.
+    local function newEra(patches, noErrorsFrame)
+        caseClock = caseClock + 100
+        shown, voices, sounds, notified = {}, {}, {}, {}
+        local env = {
+            UnitExists = function() return true end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                return "Player-" .. tostring(u)
+            end,
+            UnitDistanceSquared = function() return yards * yards, true end,
+            -- 7 = the range refusal (with a voice), 8 = the general "can't
+            -- inspect" refusal, 9 = a name-less refusal with only a sound kit,
+            -- 10 = a message type this client cannot resolve at all,
+            -- 11 = a range refusal carrying BOTH a sound kit and a voice -- the
+            -- shape that arms a stale sound latch if both are armed.
+            GetGameMessageInfo = function(mt)
+                if (mt == 7) then return "ERR_OUT_OF_RANGE", nil, 10 end
+                if (mt == 8) then return "ERR_INVALID_INSPECT_TARGET", nil, nil end
+                if (mt == 9) then return "ERR_UNIT_NOT_FOUND", 999, nil end
+                if (mt == 11) then return "ERR_OUT_OF_RANGE", 999, 10 end
+                return nil
+            end,
+            C_Sound = {
+                PlayVocalErrorSound = function(id) voices[#voices + 1] = id end,
+            },
+            PlaySound = function(id) sounds[#sounds + 1] = id end,
+            CanInspect = function() return false end,
+            CheckInteractDistance = function() return true end,
+            NotifyInspect = function(u) notified[#notified + 1] = u return true end,
+            GetTime = function() return caseClock end,
+            GetNamePlates = function() return {} end,
+            C_Timer = { After = function() end, NewTicker = function() end },
+        }
+        if (not noErrorsFrame) then
+            env.UIErrorsFrame = {
+                AddMessage = function(self, message, r, g, b, hold, messageType)
+                    shown[#shown + 1] = { message = message, messageType = messageType }
+                end,
+            }
+        end
+        for k, v in pairs(patches or {}) do env[k] = v end
+        return run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
+    end
+
+    -- 1. THE ASYNC DELIVERY. The query refuses; no request is made, so nothing
+    --    but the probe window can attribute the message -- and the message
+    --    arrives after the call returned, the way the mirror says it arrives.
+    local probeA = newEra()
+    probeA:DoInspect("target")
+    check("probe guard async: a refused query makes no request",
+        #notified == 0, "requests=" .. tostring(#notified))
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    check("probe guard async: a refusal delivered AFTER the call is swallowed",
+        #shown == 0 and (probeA:GetInspectStats().suppressed or 0) == 1,
+        "shown=" .. tostring(#shown) .. " suppressed=" .. tostring(probeA:GetInspectStats().suppressed))
+    check("probe guard async: and its spoken error is swallowed",
+        #voices == 0, "voices=" .. tostring(#voices))
+
+    -- 2. THE CLASSIFICATION. A general refusal must be swallowed but teach no
+    --    range: tightening the ceiling to the unit's distance here is how a
+    --    non-range refusal at 5yd would block every unit at 5yd+ for the session.
+    local probeB = newEra()
+    probeB:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("You can't inspect that unit.", 1, 0, 0, 1.0, 8)
+    local statsB = probeB:GetInspectStats()
+    check("probe guard classify: a non-range refusal is swallowed but teaches no range",
+        #shown == 0 and (statsB.suppressed or 0) == 1 and statsB.learnedRange == nil
+            and (probeB.inspectOutOfRange == nil or next(probeB.inspectOutOfRange) == nil),
+        "shown=" .. tostring(#shown) .. " suppressed=" .. tostring(statsB.suppressed)
+            .. " learned=" .. tostring(statsB.learnedRange))
+    -- ...and the range refusal in the same client DOES teach it, so the check
+    -- above is not passing because learning is broken.
+    local probeB2 = newEra()
+    probeB2:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    check("probe guard classify: a range refusal still teaches the ceiling",
+        probeB2:GetInspectStats().learnedRange == yards,
+        "learned=" .. tostring(probeB2:GetInspectStats().learnedRange))
+
+    -- 3. THE SOUND LATCHES. Only the sound the client will actually play is
+    --    armed, it is swallowed once, and it does not swallow a later sound.
+    local probeC = newEra()
+    probeC:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("Unit not found.", 1, 0, 0, 1.0, 9)   -- sound kit, no voice
+    _G.PlaySound(999)                                                 -- the client's own sound
+    check("probe guard sound: a sound-only refusal swallows its sound once",
+        #shown == 0 and #sounds == 0, "sounds=" .. tostring(#sounds))
+    _G.PlaySound(999)                                                 -- a later, unrelated sound
+    check("probe guard sound: the next sound with the same id still plays",
+        #sounds == 1, "sounds=" .. tostring(#sounds))
+    -- A message with a voice arms the voice, not the sound kit.
+    local probeC2 = newEra()
+    probeC2:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    _G.C_Sound.PlayVocalErrorSound(10)
+    _G.PlaySound(999)
+    check("probe guard sound: a voiced refusal does not arm the sound kit",
+        #voices == 0 and #sounds == 1,
+        "voices=" .. tostring(#voices) .. " sounds=" .. tostring(#sounds))
+    -- The shape that matters: a message carrying BOTH ids. The client plays the
+    -- voice and never the sound kit (TryDisplayMessage), so arming the kit would
+    -- leave a latch that swallows a later, unrelated sound.
+    local probeC3 = newEra()
+    probeC3:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 11)
+    _G.C_Sound.PlayVocalErrorSound(10)
+    _G.PlaySound(999)
+    check("probe guard sound: a message with both ids arms only the voice",
+        #voices == 0 and #sounds == 1,
+        "voices=" .. tostring(#voices) .. " sounds=" .. tostring(#sounds))
+
+    -- 4. THE INSTALL RETRY. A client whose UIErrorsFrame appears after the addon
+    --    loaded must still get the guard on the next probe.
+    local probeD = newEra(nil, true)
+    check("probe guard retry: not installed while the frame is absent",
+        probeD.inspectSuppressorInstalled ~= true,
+        "installed=" .. tostring(probeD.inspectSuppressorInstalled))
+    _G.UIErrorsFrame = {
+        AddMessage = function(self, message, r, g, b, hold, messageType)
+            shown[#shown + 1] = { message = message, messageType = messageType }
+        end,
+    }
+    probeD:DoInspect("target")
+    check("probe guard retry: installed on the next probe",
+        probeD.inspectSuppressorInstalled == true,
+        "installed=" .. tostring(probeD.inspectSuppressorInstalled))
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    check("probe guard retry: and it swallows from then on",
+        #shown == 0, "shown=" .. tostring(#shown))
+
+    -- 5. THE PLAYER'S OWN MESSAGE. While the player is driving an inspect of
+    --    their own (/inspect, right-click -> Inspect), the window must not eat
+    --    the message that path produces.
+    local inspecting = false
+    local probeE = newEra({
+        InspectFrame = {
+            unit = nil,
+            IsShown = function() return inspecting end,
+        },
+        CanInspect = function() return true end,
+    })
+    probeE:DoInspect("target")          -- request goes out; window + pending armed
+    inspecting = true
+    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    check("probe guard player: while InspectFrame is up, the message displays",
+        #shown == 1, "shown=" .. tostring(#shown))
+    inspecting = false
+
+    -- 6. NO NAME AT ALL. A client whose GetGameMessageInfo resolves nothing: the
+    --    open window is the evidence, because it is only open around our call.
+    local probeF = newEra()
+    probeF:DoInspect("target")
+    _G.UIErrorsFrame:AddMessage("Irgendeine Meldung", 1, 0, 0, 1.0, 10)
+    check("probe guard unnamed: a message with no resolvable name is still swallowed",
+        #shown == 0 and (probeF:GetInspectStats().suppressed or 0) == 1,
+        "shown=" .. tostring(#shown) .. " suppressed=" .. tostring(probeF:GetInspectStats().suppressed))
 end
 
 -- THE EVENT PATH ITSELF, which nothing above touches. Every block in this file

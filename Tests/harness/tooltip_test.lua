@@ -578,6 +578,16 @@ local currentUnit = "player"
 REALG.UnitExists = function(u) return UNITS[u] ~= nil end
 REALG.UnitGUID = function(u) return UNITS[u] and UNITS[u].guid or nil end
 REALG.UnitName = function(u) return UNITS[u] and UNITS[u].name or nil end
+-- A controllable clock, deliberately parked at 0 unless a test moves it.
+--
+-- The library's pacing gate is `now >= nextInspectTime`, where nextInspectTime is
+-- set to now + INSPECT_DELAY when a request goes out -- so with no clock at all
+-- (this mock's original state) the library reads 0 for every timestamp and can
+-- issue exactly ONE request per run: the first one. Any test that needs a second
+-- request has to move this forward, which is honest about what it is doing. Every
+-- other test sees 0, exactly as it did when GetTime was absent.
+REALG.__testClock = 0
+REALG.GetTime = function() return REALG.__testClock end
 REALG.UnitLevel = function(u) return UNITS[u] and UNITS[u].level or 1 end
 REALG.UnitRace = function(u) return UNITS[u] and UNITS[u].race or "" end
 REALG.UnitClass = function(u)
@@ -2602,27 +2612,35 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit = savedDisp, savedGetUnit
     end
 
-    -- Hovering a player must NOT inspect it. NotifyInspect is a SERVER REQUEST:
-    -- on an out-of-range unit Blizzard answers "Not in Range" / "Cannot Inspect",
-    -- which is what forum users reported seeing continuously while sweeping the
-    -- mouse across distant players. It also fired once per RENDER rather than
-    -- per hover, and every request ran InspectGuildFrame_Update, whose unguarded
-    -- nil guild realm blanks an inspected player who has no guild.
+    -- Hovering a player DOES inspect it. GearScore-on-hover is the feature, and
+    -- the data can only come from a request -- what must NOT happen is a request
+    -- per RENDER, because the tooltip re-renders on every item load, modifier
+    -- change and unit-target change.
     --
-    -- Asserted by COUNTING, because the mock discards its arguments: an addon
-    -- that inspected every player looked identical to one that inspected none.
-    -- Two different players, five renders each, expected zero requests.
+    -- This block used to assert the opposite ("hovering a player NEVER
+    -- auto-inspects") and was GREEN FOR THE WRONG REASON: the mock creates every
+    -- frame shown, nothing ever hides InspectFrame, and lib:CanInspect refuses
+    -- while the inspect frame is up -- so the library issued ZERO requests for the
+    -- whole run and the check could not tell "hover never asks" from "the library
+    -- never asks at all". It would have passed with the entire request path
+    -- deleted. InspectFrame is hidden explicitly below, and the same block now
+    -- proves the positive case too, because a green suite that cannot fail is
+    -- worse than no suite.
     do
         local savedNI, savedCU = REALG.NotifyInspect, REALG.CanInspect
         local savedTarget = UNITS.target
+        local savedInspectFrame = REALG.InspectFrame
         -- The addon only inspects PLAYERS, and the mock's "target" is an NPC, so
         -- a second inspectable unit has to be a second player. Swapped in and
         -- restored rather than added to UNITS, which many other tests read.
         UNITS.target = { guid = "Player-9-00000009", name = "Otherplayer", level = 58,
                          race = "Human", class = "MAGE", isPlayer = true, pvp = false }
-        local calls = 0
+        local calls, lastUnit = 0, nil
         REALG.CanInspect = function() return true end
-        REALG.NotifyInspect = function() calls = calls + 1 end
+        REALG.NotifyInspect = function(u) calls = calls + 1; lastUnit = u end
+        -- The player is not inspecting anything: without this the gate refuses
+        -- every candidate and the assertions below pass for the wrong reason.
+        REALG.InspectFrame = { IsShown = function() return false end, unit = nil }
 
         local function renderUnit(u, n)
             GT.__unit = u
@@ -2638,16 +2656,25 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
 
         local before = calls
         renderUnit("mouseover", 5)
+        local afterFirst = calls
+        check("hovering a player DOES inspect it", afterFirst > before,
+            "NotifyInspect calls=" .. tostring(afterFirst - before))
+        check("...and the request is for the HOVERED unit", lastUnit == "mouseover",
+            "last inspected unit=" .. tostring(lastUnit))
+        -- Five renders of one player must not cost five requests: the pending slot
+        -- and INSPECT_DELAY pace them, and the queue dedupes by GUID.
+        check("a burst of renders of the same player does not multiply the request",
+            (afterFirst - before) <= 1,
+            "NotifyInspect calls across 5 renders=" .. tostring(afterFirst - before))
+        local beforeSecond = calls
         renderUnit("target", 5)
-        local after = calls
-
-        check("hovering a player NEVER auto-inspects (no NotifyInspect on hover)",
-            (after - before) == 0,
-            "NotifyInspect called " .. tostring(after - before)
-                .. " time(s) across 10 renders of 2 different players (expected 0)")
+        check("a second player costs at most one more request",
+            (calls - beforeSecond) <= 1,
+            "NotifyInspect calls=" .. tostring(calls - beforeSecond))
 
         UNITS.target = savedTarget
         REALG.NotifyInspect, REALG.CanInspect = savedNI, savedCU
+        REALG.InspectFrame = savedInspectFrame
     end
 
     -- Another addon's line must survive our clear. This addon remembers the line
@@ -2841,28 +2868,29 @@ do
             .. tostring((TT.ev and TT.ev.portraitModelHidden) or 0)
             .. " across one OnHide")
 
-    -- 3. The unresolved-unit branch.
+    -- 3. The unresolved-unit branch: no unit token could be resolved.
     --
-    -- onTooltipSetUnit's unresolved branch calls clearTooltipVisuals with
-    -- retainModel = true, so it HIDES the 3D portrait and then RETURNS. The
-    -- only portrait:Show() in the addon is inside TT:ApplyTooltipAppearance,
-    -- which that branch never reaches -- so on any client where the retain path
-    -- is taken the portrait is hidden for the rest of that show.
+    -- TWO contracts, and which one applies depends on whether the delivery
+    -- carried a GUID at all:
     --
-    -- On Retail and WoW Forever the post-call supplies data.guid, so the branch
-    -- compares guids and a matching one takes the keep path (nothing hidden at
-    -- all). On the CLASSIC FAMILY the script hook registered in main.lua drops
-    -- the varargs, so data is nil on every render, incomingGUID is always nil,
-    -- keepModel was always false, and the retain path was ALWAYS taken. That is
-    -- where these assertions have teeth: they are green on the modern pair with
-    -- or without the fix and red on all three Classic clients without it.
+    --   * nothing proven (no GUID -- EVERY render on the Classic family, because
+    --     the OnTooltipSetUnit script hook registered in main.lua drops the
+    --     varargs -- or the same GUID as the unit already rendered): the portrait
+    --     belongs to this character and must be left completely alone. It used to
+    --     be hidden, re-anchored and then re-shown here -- a Hide()+Show() on a 3D
+    --     model frame on every render, for a portrait that had not changed -- and
+    --     before the re-show existed it was hidden for the rest of the show.
+    --   * proven different (a GUID is present and differs -- the modern post-call
+    --     supplies one): the loaded mesh is the WRONG character's and must go.
+    --     The old call passed keepModel = true here, which means "do nothing at
+    --     all", so the stale portrait stayed visible while the tooltip described
+    --     someone else -- and the comment above that call claimed the opposite.
     --
     -- Asserted on the frame's shown state rather than on a counter, because the
-    -- contract is the end state, not how many Hide() calls it took to get there.
-    -- The state is read immediately before the unresolved render too, so the
-    -- mock's default-__shown-true frame creation cannot make this pass for the
-    -- wrong reason: if ApplyTooltipAppearance never showed the portrait, the
-    -- "visible before" check fails first.
+    -- contract is the end state. The state is read immediately before the
+    -- unresolved render too, so the mock's default-__shown-true frame creation
+    -- cannot make this pass for the wrong reason: if ApplyTooltipAppearance never
+    -- showed the portrait, the "visible before" check fails first.
     resolveTo("player")
     render(UNITS.player.guid)
     check("3D portrait is shown before the unresolvable render",
@@ -2878,14 +2906,20 @@ do
     local stateBefore = GT._tacoTipState
     local genBefore = stateBefore and stateBefore.generation or nil
     local guidBefore = stateBefore and stateBefore.currentUnitGUID or nil
+    -- Count Hide() calls on the portrait frame around this render. The earlier
+    -- blocks install and then RESTORE this wrapper, so it has to be re-installed
+    -- here rather than reusing their counter.
+    local realHideOrphan = portrait.Hide
+    local hidesOrphan = 0
+    portrait.Hide = function() hidesOrphan = hidesOrphan + 1; return realHideOrphan() end
     render(ORPHAN_GUID)
+    portrait.Hide = realHideOrphan
     -- Precondition, not the contract. The generation bump comes from
-    -- clearTooltipVisuals; the UNCHANGED currentUnitGUID and the ABSENCE of the
-    -- rendered readout can only happen on the unresolved branch, which returns
-    -- before assigning the guid and before rendering anything. Without it a run
-    -- where the unit quietly resolved would satisfy the check below for the
-    -- wrong reason -- which is what passing the player's guid instead of
-    -- ORPHAN_GUID demonstrates.
+    -- clearTooltipVisuals; the UNCHANGED currentUnitGUID can only happen on the
+    -- unresolved branch, which returns before assigning the guid. A run where the
+    -- unit quietly resolved would assign data.guid (modern) or UnitGUID(nil)
+    -- (classic) to currentUnitGUID, so this catches it -- which is what passing
+    -- the player's guid instead of ORPHAN_GUID demonstrates.
     local stateAfter = GT._tacoTipState
     check("the unresolvable render really entered the unresolved branch",
         stateAfter and genBefore ~= nil and stateAfter.generation > genBefore
@@ -2897,8 +2931,25 @@ do
             .. tostring(stateAfter and stateAfter.currentUnitGUID)
             .. ", readout still rendered: "
             .. tostring(string.find(allText(), "21/0/0", 1, true) ~= nil))
-    check("an unresolvable render does NOT leave the 3D portrait hidden",
-        portrait and portrait.IsShown and portrait:IsShown() or false)
+    -- Which contract applies: the modern post-call carries data.guid, the Classic
+    -- script hook carries nothing at all, so the same render exercises the
+    -- "proven different" contract on two clients and the "nothing proven" one on
+    -- three. Both are asserted, each where it applies -- and the two assertions
+    -- are the two halves of the fix: hiding the mesh that belongs to someone else,
+    -- and leaving an unchanged one completely alone.
+    local orphanProvesChange = (postUnit ~= nil)
+    if (orphanProvesChange) then
+        check("an unresolvable render for a PROVEN different unit hides the stale portrait",
+            portrait.IsShown and (not portrait:IsShown()) or false,
+            "shown=" .. tostring(portrait.IsShown and portrait:IsShown())
+                .. ", Hide() calls=" .. tostring(hidesOrphan))
+    else
+        check("an unresolvable render with NO GUID leaves the 3D portrait alone",
+            portrait.IsShown and portrait:IsShown() or false,
+            "shown=" .. tostring(portrait.IsShown and portrait:IsShown()))
+        check("...and does not Hide() it at all (no hide/show churn per render)",
+            hidesOrphan == 0, "Hide() calls=" .. tostring(hidesOrphan))
+    end
 
     REALG.TacoTipConfig.tooltip_portrait = savedPortrait
     REALG.TacoTipConfig.tooltip_portrait_3d = savedPortrait3D
@@ -2907,6 +2958,130 @@ do
     end
     GT.GetUnit = savedGetUnit
     GT.__unit = savedUnitToken
+end
+
+-- HOVER MUST INSPECT -- on every client, through that client's own delivery.
+--
+-- GearScore-on-hover IS the feature: the tooltip can only show another player's
+-- gear if a request went out for the unit being hovered. What must NOT happen is a
+-- request per RENDER (the tooltip re-renders on every item load, modifier change
+-- and target change), and what must not happen is a request for a unit the gates
+-- refused.
+--
+-- Asserted HERE, on all five clients, rather than only inside the pipeline-only
+-- section above: that section is skipped on the Classic family, and the Classic
+-- family is where the reported out-of-range popup came from -- a symptom that
+-- REQUIRES a request to have been issued on hover. An assertion that never runs
+-- there cannot see a regression that breaks it.
+do
+    local postUnit = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[1]) or nil
+    local savedNI, savedCU = REALG.NotifyInspect, REALG.CanInspect
+    local savedInspectFrame = REALG.InspectFrame
+    local savedTarget = UNITS.target
+    local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+    local savedGetUnit, savedUnitToken = GT.GetUnit, GT.__unit
+
+    UNITS.target = { guid = "Player-9-00000009", name = "Otherplayer", level = 58,
+                     race = "Human", class = "MAGE", isPlayer = true, pvp = false }
+    local calls, lastUnit = 0, nil
+    REALG.CanInspect = function() return true end
+    REALG.NotifyInspect = function(u) calls = calls + 1; lastUnit = u end
+    -- The player is not inspecting anything of their own: while InspectFrame is
+    -- up the gate refuses every candidate, which is how the old version of this
+    -- assertion managed to be green while the request path did nothing.
+    REALG.InspectFrame = { IsShown = function() return false end, unit = nil }
+    GT.__shown = true
+
+    -- Hermetic. Two pieces of state left by earlier blocks would suppress the
+    -- request this block is about, and BOTH were in play when it was first
+    -- written:
+    --
+    --   * an outstanding request. The harness mock defines no GetTime at all, so
+    --     the library reads 0 for every timestamp and its pacing gate
+    --     (`now >= nextInspectTime`) can never open again after the first request
+    --     of the run -- which means a pending slot left behind by an earlier
+    --     block suppresses every later request. Released here by answering it.
+    --   * a cached unit or a per-unit cooldown mark for the GUIDs under test,
+    --     both of which legitimately suppress a request too.
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        if (okCI and CI) then
+            local h = CI.frame and CI.frame.__scripts and CI.frame.__scripts.OnEvent
+            if (h) then
+                pcall(h, CI.frame, "INSPECT_READY", UNITS.mouseover.guid)
+                pcall(h, CI.frame, "INSPECT_READY", UNITS.target.guid)
+            end
+            for _, g in ipairs({ UNITS.mouseover.guid, UNITS.target.guid }) do
+                if (CI.cache) then CI.cache[g] = nil end
+                if (CI.inspectRejected) then CI.inspectRejected[g] = nil end
+                if (CI.inspectOutOfRange) then CI.inspectOutOfRange[g] = nil end
+            end
+        end
+    end
+
+    local function renderHover(u)
+        GT.__unit = u
+        GT.GetUnit = function() return "n", u, UNITS[u].guid end
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
+        end
+        GT:ClearLines()
+        GT:AddLine(UNITS[u].name)
+        GT:AddLine("Level 60")
+        if (postUnit) then
+            postUnit.fn(GT, { guid = UNITS[u].guid })
+        elseif (hookUnit) then
+            hookUnit(GT)
+        end
+    end
+
+    -- Move the mock clock forward so the library's pacing gate opens again. With
+    -- the clock parked at 0 (its default) the gate `now >= nextInspectTime` can
+    -- never reopen after the first request of the run, so a block that runs after
+    -- another requesting block would assert against a library that is working
+    -- correctly and see nothing.
+    REALG.__testClock = (REALG.__testClock or 0) + 10
+    local before = calls
+    for _ = 1, 5 do renderHover("mouseover") end
+    check("hovering a player DOES inspect it (all clients)",
+        calls > before, "NotifyInspect calls=" .. tostring(calls - before))
+    check("...and the request is for the HOVERED unit", lastUnit == "mouseover",
+        "last inspected unit=" .. tostring(lastUnit))
+    check("...and five renders of it cost at most one request",
+        (calls - before) <= 1, "NotifyInspect calls=" .. tostring(calls - before))
+
+    UNITS.target = savedTarget
+    REALG.NotifyInspect, REALG.CanInspect = savedNI, savedCU
+    REALG.InspectFrame = savedInspectFrame
+    if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+    GT.GetUnit, GT.__unit = savedGetUnit, savedUnitToken
+end
+
+-- ONE COMPLETED INSPECT REBUILDS THE TOOLTIP ONCE.
+--
+-- The library fires INVENTORY_READY and TALENTS_READY back to back from a single
+-- cacheUnitData, and main.lua handled both identically with GameTooltip:SetUnit --
+-- so every completed inspect ran the whole render twice for identical data: the
+-- gate chain, the entire text path, and GetScore, which walks 18 item slots and
+-- their item loads. The second of an immediate pair is now dropped.
+do
+    local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+    check("the library is reachable for the rebuild check", okCI and CI ~= nil)
+    if (okCI and CI) then
+        GT.__unit = "player"
+        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+        end
+        local calls = 0
+        local realSetUnit = GT.SetUnit
+        GT.SetUnit = function(...) calls = calls + 1; return realSetUnit(...) end
+        CI.callbacks:Fire("INVENTORY_READY", UNITS.player.guid, true, "player")
+        CI.callbacks:Fire("TALENTS_READY", UNITS.player.guid, "player")
+        check("one completed inspect rebuilds the tooltip ONCE, not twice",
+            calls == 1, "GameTooltip:SetUnit calls=" .. tostring(calls))
+        GT.SetUnit = realSetUnit
+    end
 end
 
 local fails = 0

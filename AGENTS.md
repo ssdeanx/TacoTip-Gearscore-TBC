@@ -248,6 +248,8 @@ mistake recurs; the specific incident is in the changelog and the desk journals.
   does not exist there at all. "Nothing proved the character changed" must mean
   *tear nothing down*.
 
+- **A refused `CanInspect` on Classic Era *answers by displaying*; it does not raise.** ⚠️ **Labelled ASSUMED, not verified.** What the mirror shows: `UIErrorsFrame` displays a UI error with `AddMessage(message, r, g, b, 1.0, messageID)` and speaks it via `C_Sound.PlayVocalErrorSound(voiceID)` (`Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:140-146`), and Blizzard's own inspect procedure is `CanInspect(unit, true)` → `NotifyInspect(unit)` with no range check on any branch. What the mirror does **not** show: which call produces the refusal, or whether it arrives synchronously or by event dispatch. So do not build a gate on the belief that the query speaks, and do not build one on the belief that it does not: cover both (a short attribution window around our own calls), match the refusal by the `errorName` `GetGameMessageInfo` returns — never by literal English, and never by `_G.ERR_*`, which appears nowhere in the mirror — and let only a genuine range refusal teach a range.
+
 ## Where things stand
 
 Deliberately empty. Read `CHANGELOG.md` for what this release changed and what is
