@@ -1,0 +1,35 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:27:40Z",
+  "agent_name": "fix-anchor-gate",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "bench findings were the authority; the fix is a 5-line condition on the existing gate's early return, additive over the dirty tree; both new pins red on a pre-fix copy showing the seeded BOTTOMRIGHT park surviving (the defect itself)",
+    "what_was_hard": "the handle is created unnamed so the mock's SetPoint stores its name as nil — the relative frame had to be read off the raw SetPoint argument, not GetPoint",
+    "skill_gap": null
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "operator hovers on classic_anniversary (then classic_era); pinned in the harness, not observed in game — the next hover is the only acceptance"
+  },
+  "details": {
+    "what_changed": "onGameTooltipSetDefaultAnchor (main.lua:4064-4081): isManagedAnchorTarget skip now counts menu/unresolved and returns early only when anchor_mouse is on or custom_pos is nil; with custom_pos set the re-pin (ClearAllPoints + SetPoint(anchorPoint, TacoTipDragButton, anchorPoint) at 4095-4098) runs on EVERY call — 0.8.3 behavior. Hook registration (runUntainted), render-time applyCustomTooltipAnchor, and all other branches untouched.",
+    "pins_added": [
+      "re-hover with empty residue (GetUnit nil, IsUnit false, no owner.unit, TooltipUtil.GetDisplayedUnit nil on pipeline) + custom_pos set + seeded client BOTTOMRIGHT park -> exactly ONE point relative to the raw TacoTipDragButton frame at the saved anchor (ClearAllPoints proven by the park being gone; smear would be 2 points)",
+      "the menu-skip counter still tallies on that same call AND the re-pin still happens (verdict is diagnostic, not a suppressor)"
+    ],
+    "mutation_proof": "copy of the tree with the fix reverted to the unconditional gate return, new pins kept: TBC_ANNIV and CLASSIC_ERA both FAIL with 'relIsHandle=false point=BOTTOMRIGHT/BOTTOMRIGHT' (seeded client park survives) and 'relIsHandle=false' — 2/249 FAILED on each branch. Copy deleted after.",
+    "suite": "bash Tests/harness/run_all.sh -> TOTAL 71 invocations: 71 passed, 0 failed",
+    "luacheck": "0 warnings / 0 errors in 88 files",
+    "verify_release": "Tools/verify_release.sh --worktree -> PASS",
+    "tree": "DIRTY width/portrait-edge hunks in main.lua and Tests/harness/tooltip_test.lua preserved; the diff is additive on top",
+    "reporting": "pinned in the harness, not observed in game — the operator's next hover is the only acceptance"
+  }
+}

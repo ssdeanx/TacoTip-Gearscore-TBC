@@ -1,0 +1,25 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:07:49Z",
+  "agent_name": "current-tooltip-save",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Mechanism-aligned diffing (hook body, render anchor, drag save) instead of name matching; git log -S pinpointed that all three new anchor mechanisms landed in committed HEAD db275d7, not the dirty tree.",
+    "what_was_hard": "The old and new trees diverged by ~1900 lines; isolating the anchor-relevant deltas required reading both full pipelines. The exact in-game re-hover sequence cannot be proven from source alone; the findings give ranked candidates plus /tacotip diag counters to discriminate.",
+    "skill_gap": "None material; cross-client runtime confirmation is out of this lane's scope."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Arbiter should verify candidate 1 (gated hook + render-dependent compensation) using /tacotip diag counters across a first hover vs a stuck re-hover before any revert or fix."
+  },
+  "artifacts": [
+    "bench/findings/current-tooltip-save-regression.md"
+  ]
+}

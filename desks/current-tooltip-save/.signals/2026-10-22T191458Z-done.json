@@ -1,0 +1,25 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:14:58Z",
+  "agent_name": "current-tooltip-save",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Using the per-tooltip cache lifecycle as the trace spine made the hop-by-hop old/new alignment decisive: isUnitFramePeriodicUpdate is identical in both trees, so the cache is a contributor, not the regression; the gated SetDefaultAnchor hook (B2) is the only hop that is new AND position-breaking.",
+    "what_was_hard": "The operator hypothesis (re-apply branches on the cached unit) required proving a negative across the whole tree: applyCustomTooltipAnchor reads config only, the gate reads live residue only, and the cache's two loop-relevant reads (B1, unresolved keepModel) were each shown not to SetPoint.",
+    "skill_gap": "None material; in-game confirmation of which gate skip kind fires on the stuck re-hover remains with the arbiter via /tacotip diag."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Confirm B2 with /tacotip diag counters on a stuck re-hover (anchorSkippedMenu/Unresolved vs unitRender, anchorHookFailed) before any fix or revert."
+  },
+  "artifacts": [
+    "bench/findings/current-tooltip-save-regression.md (rev 2: three-path trace with cache spine)"
+  ]
+}

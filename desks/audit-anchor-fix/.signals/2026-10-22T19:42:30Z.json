@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:42:30Z",
+  "agent_name": "audit-anchor-fix",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Three-path re-trace against 0.8.3 with quoted live code; per-pin revert proof on an isolated /tmp copy (both new pins RED on all five families, exactly 2 failures each, correct failure semantics); additive-only diff proof by hunk arithmetic (23+/16- pre-existing + -1/+9 fix hunk); full validation matrix run independently (71/71 x3 interpreters, luacheck 0/0, verify_release PASS).",
+    "what_was_hard": "Splitting the already-dirty tree's hunks into pre-existing width/portrait vs the fix lane's addition without a pre-fix snapshot — resolved by hunk arithmetic matching the dirty state recorded in current-tooltip-save-regression.md plus content classification.",
+    "skill_gap": "none material"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Operator in-game hover on classic_anniversary is the only acceptance: save a position, leave, re-hover the same unit (and an item button) — pinned in the harness, not observed in game. Cosmetic follow-up if desired: diag labels 'anchor passthrough (menu/popup surface)' at main.lua:4824-4825 now overstate for custom_pos-on (those calls re-pin; the counters are classification tallies)."
+  }
+}

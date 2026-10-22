@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:06:35Z",
+  "agent_name": "anchor-client-truth",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "classic_anniversary checked first, then prove-by-diff that classic_era and classic_titan are byte-identical (ignore-cr-at-eol) across the whole tooltip machinery set — one verified body covers three branches with exact file:line quotes. TOC dependency-chain walk settled which of the two GameTooltip_SetDefaultAnchor definitions wins on the classic family.",
+    "what_was_hard": "SetOwner is a native method on all five branches — its point-clearing semantics cannot be quoted from the UI mirror; documented as observable contract and explicitly flagged unprovable instead of guessed. Raw anniversary-vs-era diffs were pure CRLF noise requiring ignore-cr comparison.",
+    "skill_gap": "None blocking; native-client behavior (SetOwner anchor reset, SetPoint replace-on-same-triple engine semantics) is inherently outside the mirror and must stay labeled as such."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Addon-side desk should treat the 0.2s owner:UpdateTooltip() re-stamp of SetDefaultAnchor as the load-bearing client fact: a restore must run after every SetDefaultAnchor (e.g. OnTooltipSetUnit) or remove its own differently-named anchor point, or the multi-anchor/stale-anchor state explains the stuck-mid-screen symptom. Operator in-game observation on classic_anniversary outranks this file if they conflict."
+  }
+}

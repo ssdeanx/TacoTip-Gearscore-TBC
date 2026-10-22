@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:11:39Z",
+  "agent_name": "prior-tooltip-save",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Rewrote the bench findings as a full cache-spined trace: 9-hop first hover, exhaustive writer table for custom_pos/custom_anchor across main.lua+options.lua+gearscore.lua, re-hover with the client's 0.2s UpdateTooltip re-fire loop, and every clear/reset site — all with verbatim file:line quotes, including origin/classic_anniversary client citations (UnitFrame.lua:452, GameTooltip.lua:109-114, TOOLTIP_UPDATE_TIME=0.2).",
+    "what_was_hard": "Pinning the OnTooltipCleared/SetOwner fire timing (C-side) — bounded the claim to the addon's observable handlers and the addon's own comments instead of overclaiming.",
+    "skill_gap": "None material for a read-only trace."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "bench/findings/prior-tooltip-save-mechanism.md (727 lines, TRACE structure). Hypothesis verdict: in 0.8.3 the saved-position re-apply does NOT go through the cached unit — the SetDefaultAnchor post-hook (main.lua:2840-2842) is unit-blind; cache readers R1-R7 gate content only; the sole unit-conditioned re-anchor is mover-mode ShowExample. The cached-unit coupling the operator described first exists in 0.8.4 (isManagedAnchorTarget skip gate + applyCustomTooltipAnchor at main.lua:2009). Also documented: 'after some time' mechanisms (instant-fade Hide, 0.2s re-pin loop, generation-guarded defers) and that currentUnitGUID is never cleared. No code edited; prior tree 0 files modified."
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T19:01:38Z",
+  "agent_name": "prior-tooltip-save",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Plain read of /home/sam/TacoTip (v0.8.3) end to end: hook body, drag-stop save, handle lifecycle, ADDON_LOADED sanitizer, options/slash entry points, all quoted with file:line; client trigger verified on origin/classic_anniversary (UnitFrame.lua:452 SetDefaultAnchor-before-SetUnit, GameTooltip.lua:109 bottom-right reset).",
+    "what_was_hard": "Locating when the client fires the hooked global (OnTooltipSetDefaultAnchor is a C-side script; settled on the two Lua-observable funnels: unit-frame direct calls and the template mixin).",
+    "skill_gap": "None material; a diff tool between the two trees would have speeded the appendix."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Findings at bench/findings/prior-tooltip-save-mechanism.md. Headline: 0.8.3 re-applied the saved position on EVERY GameTooltip_SetDefaultAnchor call with no unit/content gate; 0.8.4 added isManagedAnchorTarget skip gates plus runUntainted/pcall and a second apply site (applyCustomTooltipAnchor, main.lua:2009). Save shape and handle-anchored restore are unchanged. No code was edited anywhere."
+  }
+}
