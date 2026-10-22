@@ -5354,6 +5354,62 @@ do
                     .. " fallbacks=" .. tostring(fallBefore) .. "->" .. tostring(fallAfter))
         end
 
+        -- Pin E restored custom_pos to its PRE-BLOCK value (nil in this test),
+        -- so re-establish the saved configuration these two pins exercise.
+        CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 300, 200 }
+        CFG.custom_anchor = "TOPLEFT"
+        CFG.anchor_mouse = false
+
+        -- Pin F: STALE UNIT RESIDUE MUST NOT HIDE A NON-UNIT CALLER.        -- The client fires SetDefaultAnchor BEFORE SetUnit, so during a bag
+        -- or other-addon hover the tooltip still describes the PREVIOUS
+        -- hover. Here the residue says "target" (GetUnit/IsUnit both), which
+        -- is exactly what the residue-based gate used to read as a unit
+        -- hover -- and it re-pinned the bag tooltip to the saved handle.
+        -- The caller decides now: a bag-like parent with stale unit residue
+        -- must still pass through untouched. Old residue-gated code pins ->
+        -- red.
+        if (handle) then
+            local bagButton3 = makeWidget("Frame", "TestBagItemButton3")
+            resetRehoverResidue()
+            GT.__unit = "target"
+            GT.GetUnit = mockGetUnit("target")
+            seedFocus(bagButton3)
+            TT.ev.lastAnchorDecision = nil
+            local relStale = runHookCapturingRel(GT, bagButton3)
+            local nStale = pointCount()
+            local pStale = point1()
+            local decStale = TT.ev.lastAnchorDecision
+            check("stale unit residue on a bag-like parent still passes through",
+                nStale == 1 and pStale == "BOTTOMRIGHT" and relStale == nil
+                    and GT.__setPointCalls == 0 and decStale == "passthrough",
+                "points=" .. tostring(nStale) .. " point=" .. tostring(pStale)
+                    .. " setPointCalls=" .. tostring(GT.__setPointCalls)
+                    .. " decision=" .. tostring(decStale))
+        end
+
+        -- Pin G: A REAL UNIT FRAME MUST STILL RE-PIN (no over-narrowing).
+        -- parent.unit is the caller fact that survives the stale-residue
+        -- problem: UnitFrame_UpdateTooltip passes the frame itself
+        -- (UnitFrame.lua:451-452), and that frame carries .unit. Empty
+        -- residue proves the pin does not depend on the tooltip's content.
+        if (handle) then
+            local unitFrame = makeWidget("Frame", "TestUnitFrameParent")
+            unitFrame.unit = "target"
+            resetRehoverResidue()
+            seedFocus(unitFrame)
+            TT.ev.lastAnchorDecision = nil
+            local relUnit = runHookCapturingRel(GT, unitFrame)
+            local nUnit = pointCount()
+            local pUnit, _, rpUnit = point1()
+            local decUnit = TT.ev.lastAnchorDecision
+            check("a unit-frame parent re-pins on the saved position",
+                nUnit == 1 and relUnit == handle and pUnit == "TOPLEFT" and rpUnit == "TOPLEFT"
+                    and decUnit == "repin-managed",
+                "points=" .. tostring(nUnit) .. " relIsHandle=" .. tostring(relUnit == handle)
+                    .. " point=" .. tostring(pUnit) .. "/" .. tostring(rpUnit)
+                    .. " decision=" .. tostring(decUnit))
+        end
+
         -- Restore.
         GT.__unit, GT.GetUnit, GT.GetOwner = prevUnit, prevGetUnit, prevGetOwner
         GT.__lines, GT.__points = prevLines, prevPoints

@@ -4066,6 +4066,30 @@ local function isWorldMouseoverUnitHover()
     return okFocus and focus == WorldFrame
 end
 
+-- IS THIS CALL A UNIT HOVER?
+--
+-- The caller, not the tooltip, answers. The tooltip's residue is STALE by
+-- construction: the client calls GameTooltip_SetDefaultAnchor(tooltip, self)
+-- BEFORE GameTooltip:SetUnit(...) (UnitFrame.lua:451-452 on classic), so at
+-- post-hook time the tooltip still describes the PREVIOUS hover. A bag or
+-- other addon's tooltip raised right after a unit hover therefore reads
+-- "unit" (IsUnit / GetUnit / GetDisplayedUnit all answer about the old
+-- content) and the old residue-based gate re-pinned it to the saved handle
+-- -- the operator's "other addons get written over" report. The only
+-- durable facts are the caller's: a unit frame carries .unit, and the
+-- world-mouseover shape puts the cursor on the 3-D world over a live
+-- mouseover unit (GameTooltipMixin: SetDefaultAnchor(self, UIParent)).
+local function isUnitParent(parent)
+    if (not parent or type(parent.unit) ~= "string" or parent.unit == "") then
+        return false
+    end
+    if (type(UnitExists) ~= "function") then
+        return true
+    end
+    local ok, exists = pcall(UnitExists, parent.unit)
+    return (ok and exists) and true or false
+end
+
 local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     if (not tooltip) then
         return
@@ -4107,6 +4131,12 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     -- Hunter M-NEW2: count the passthrough by kind (menu-by-design vs
     -- unit-like-but-unresolved). Neutral tallies, not failure events.
     local managedAnchor, anchorSkipKind = isManagedAnchorTarget(tooltip, parent)
+    -- Caller identity, decided ONCE. The residue verdict above is diagnostic
+    -- only (counters); it must never decide the pin, because it describes the
+    -- previous hover, not this call.
+    local unitParent = isUnitParent(parent)
+    local worldMouseoverUnit = (not unitParent) and isWorldMouseoverUnitHover()
+    local isUnitHover = unitParent or worldMouseoverUnit
     local mouseoverRepin = false
     local decision = "none"
     if (not managedAnchor) then
@@ -4116,33 +4146,31 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         elseif (anchorSkipKind == "unresolved") then
             TT.ev.anchorSkippedUnresolved = (TT.ev.anchorSkippedUnresolved or 0) + 1
         end
-        -- The verdict must not suppress the saved-position re-pin. 0.8.3
-        -- re-pinned to TacoTipDragButton on EVERY SetDefaultAnchor call with
-        -- no unit gate of any kind; gating it here left the client's
-        -- BOTTOMRIGHT park live for the whole re-hover (the stuck /
-        -- mid-screen smear). The counters above still tally; the cursor path,
-        -- the two-bar bottom-right branch, and the world-mouseover gate below
-        -- are what keep the skip now.
-        if (TacoTipConfig.anchor_mouse or not TacoTipConfig.custom_pos) then
+    end
+    if (TacoTipConfig.anchor_mouse) then
+        -- Mouse anchoring keeps its pre-existing scope: managed hovers only.
+        if (not managedAnchor) then
             TT.ev = TT.ev or {}
             TT.ev.lastAnchorDecision = "passthrough"
             return
         end
-        -- Unit gate on the fall-through (0.8.4.x): of this menu/unresolved
-        -- remainder only the world-mouseover unit shape re-pins. Unit frames
-        -- never reach this line -- parent.unit / owner.unit / IsUnit resolved
-        -- them as managedAnchor above. Everything else that lands here (bag
-        -- items, character-pane slots, menus, other addons' owners) has its
-        -- cursor on its own frame, so it returns with the caller-set anchor
-        -- intact and only the counters above having moved. Suppressing the
-        -- world-mouseover case would restore the pre-dad58ec bottom-right
-        -- park for it (the "it resets my position" report, main.lua:1471-1479).
-        if (not isWorldMouseoverUnitHover()) then
+    elseif (TacoTipConfig.custom_pos) then
+        -- THE RULE: with a saved position, re-pin ONLY a unit hover. Every
+        -- other caller -- bag buttons, character-pane slots, menus, panels,
+        -- other addons' frames -- keeps the anchor it was given, untouched:
+        -- no ClearAllPoints, no SetPoint, no EnableMouse change. This is what
+        -- makes the addon composable with anything else that touches the
+        -- shared GameTooltip.
+        if (not isUnitHover) then
             TT.ev = TT.ev or {}
             TT.ev.lastAnchorDecision = "passthrough"
             return
         end
-        mouseoverRepin = true
+        mouseoverRepin = (not unitParent)
+    elseif (not managedAnchor) then
+        TT.ev = TT.ev or {}
+        TT.ev.lastAnchorDecision = "passthrough"
+        return
     end
     if (TacoTipConfig.anchor_mouse) then
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
