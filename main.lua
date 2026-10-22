@@ -165,10 +165,13 @@ local function applyTooltipMaxWidth(tooltip)
                 -- for exactly this -- see portraitSetFailed, the discarded
                 -- portrait SetUnit at the same kind of call site.
                 --
-                -- The memo is still written on failure, so the hot path does
-                -- not re-issue the failing call on every render: a SetWidth that
-                -- raises will keep raising, and the count says how often.
-                if (not pcall(leftLine.SetWidth, leftLine, leftCap)) then
+                -- The memo is written only when the width cap actually applied:
+                -- a raising SetWidth leaves the line uncapped, so the memo must
+                -- stay clear and the next render must retry instead of latching
+                -- the line uncapped for the session. The counter still records
+                -- how often it raises.
+                local leftWidthOk = pcall(leftLine.SetWidth, leftLine, leftCap)
+                if (not leftWidthOk) then
                     TT.ev = TT.ev or {}
                     TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
                 end
@@ -190,14 +193,17 @@ local function applyTooltipMaxWidth(tooltip)
                         TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
                     end
                 end
-                leftLine._tacoTipMaxWidth = leftCap
-                writes = writes + 1
+                if (leftWidthOk) then
+                    leftLine._tacoTipMaxWidth = leftCap
+                    writes = writes + 1
+                end
             end
         end
         local rightLine = getTooltipRightLine(tooltip, i)
         if (rightLine and type(rightLine.SetWidth) == "function") then
             if (rightLine._tacoTipMaxWidth ~= rightCap) then
-                if (not pcall(rightLine.SetWidth, rightLine, rightCap)) then
+                local rightWidthOk = pcall(rightLine.SetWidth, rightLine, rightCap)
+                if (not rightWidthOk) then
                     TT.ev = TT.ev or {}
                     TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
                 end
@@ -216,8 +222,10 @@ local function applyTooltipMaxWidth(tooltip)
                         TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
                     end
                 end
-                rightLine._tacoTipMaxWidth = rightCap
-                writes = writes + 1
+                if (rightWidthOk) then
+                    rightLine._tacoTipMaxWidth = rightCap
+                    writes = writes + 1
+                end
             end
         end
     end
@@ -1518,7 +1526,11 @@ end
 -- its GetRight() would re-anchor the portrait on every render -- exactly the
 -- per-render anchor that 0.7.9 removed.
 local function getPortraitSideRightEdge(tooltip)
-    local effectiveMax = getEffectiveTooltipMaxWidth()
+    -- No width clamp here: the edge key must be built from the frame's REAL
+    -- width, so a tooltip wider than the cap is a different key and the side
+    -- re-decides instead of keeping a stale cache hit. The cap is applied to
+    -- lines by applyTooltipMaxWidth; clamping this prediction only hid the
+    -- width the decision needs to see.
     local custom = TacoTipConfig and TacoTipConfig.custom_pos
     if (type(custom) == "table" and not TacoTipConfig.anchor_mouse and TacoTipDragButton
             and type(TacoTipDragButton.GetLeft) == "function"
@@ -1527,9 +1539,6 @@ local function getPortraitSideRightEdge(tooltip)
         if (handleLeft) then
             local handleWidth = TacoTipDragButton:GetWidth() or 0
             local tipWidth = (type(tooltip.GetWidth) == "function" and tooltip:GetWidth()) or 0
-            if (tipWidth > effectiveMax) then
-                tipWidth = effectiveMax
-            end
             local anchorPoint = TacoTipConfig.custom_anchor
             if (type(anchorPoint) ~= "string") then
                 anchorPoint = "TOPLEFT"
@@ -1548,9 +1557,6 @@ local function getPortraitSideRightEdge(tooltip)
     end
     local unmanagedRight = ((type(tooltip.GetRight) == "function" and tooltip:GetRight()) or 0)
     local unmanagedW = (type(tooltip.GetWidth) == "function" and tooltip:GetWidth()) or 0
-    if (unmanagedW > effectiveMax) then
-        unmanagedW = effectiveMax
-    end
     local unmanagedLeft = (unmanagedRight > 0 and unmanagedW > 0) and (unmanagedRight - unmanagedW) or nil
     return unmanagedRight, false, unmanagedLeft
 end
@@ -2221,6 +2227,7 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     if (not keepModel) then
         state.portraitSide = nil
         state.portraitAnchored = false
+        state.portraitRightEdge = nil
         clearTooltipPlayerClassColor(tooltip)
         resetTooltipBorderToDefault(tooltip)
         if (tooltip.TacoTipPortrait) then

@@ -4789,6 +4789,164 @@ do
                 text:find(want, 1, true) ~= nil, want)
         end
     end
+
+    -- Second-hover stretch: H1/H2/H3.
+    --
+    -- Carrier (client truth): a unit-to-unit retarget runs
+    -- ClearLines -> rebuild -> Show with NO Hide, so Hide-hooked resets are
+    -- skipped. hunterRender below drives exactly that: ClearLines, stock
+    -- lines, the post-call/hook -- never Hide, never OnTooltipCleared -- so a
+    -- stale cache from the first hover survives into the second one here the
+    -- same way it does in game. First hover fine, rehover stretched.
+    --
+    -- Revert map:
+    --   H1: write the memo unconditionally again -> the "leaves no memo"
+    --       and "retries" pins go red (counter pin stays green: it still counts).
+    --   H2: clamp tipWidth to the 320 cap again in getPortraitSideRightEdge ->
+    --       the "wider than the cap re-decides" pin goes red (500 and 320 key alike).
+    --   H3: drop the portraitRightEdge=nil reset -> the "recycle clears" pin
+    --       goes red (side+anchored clear, the edge key survives).
+    do
+        local portraitPost = hunterPost
+        local function retargetResolve(unitName)
+            local u = unitName or "player"
+            GT.__unit = u
+            GT.__shown = true
+            GT.GetUnit = mockGetUnit(u)
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function()
+                    return "n", u, UNITS[u].guid end
+            end
+        end
+        local function retargetRender(unitName)
+            local u = unitName or "player"
+            GT:ClearLines()
+            GT:AddLine(UNITS[u].name)
+            GT:AddLine("Level 60 Human")
+            GT:AddLine("WARRIOR")
+            GT:AddLine("Testguild")
+            GT:AddLine("")
+            GT:AddLine("HP: 50/50")
+            if (portraitPost) then
+                portraitPost.fn(GT, { guid = UNITS[u].guid })
+            elseif (hookUnit) then
+                hookUnit(GT)
+            end
+        end
+
+        -- H1: a RAISING SetWidth must NOT latch the memo. The pooled line is
+        -- reused across hovers, so a memo written on failure uncaps that index
+        -- for the session and the second hover stretches.
+        do
+            retargetResolve("player")
+            retargetRender("player")
+            local failLine = (TT.GetTooltipLeftLine and TT.GetTooltipLeftLine(GT, 1))
+                or GT:GetLeftLine(1)
+            check("H1 setup: a left line exists for the failed-cap pin", failLine ~= nil)
+            if (failLine) then
+                local savedSetWidth = failLine.SetWidth
+                local failCalls = 0
+                failLine._tacoTipMaxWidth = nil
+                failLine.SetWidth = function()
+                    failCalls = failCalls + 1
+                    error("RETARGET_PIN_H1_SETWIDTH")
+                end
+                local failBefore = (TT.ev and TT.ev.tooltipMaxWidthFailed) or 0
+                retargetRender("player")
+                local memoAfterFail = failLine._tacoTipMaxWidth
+                local callsAfterFirst = failCalls
+                retargetRender("player")
+                failLine.SetWidth = savedSetWidth
+                check("a failed width cap leaves no memo (the line stays retryable)",
+                    memoAfterFail == nil,
+                    "memo=" .. tostring(memoAfterFail))
+                check("...and the failure is still counted",
+                    ((TT.ev and TT.ev.tooltipMaxWidthFailed) or 0) > failBefore,
+                    "tooltipMaxWidthFailed=" .. tostring((TT.ev and TT.ev.tooltipMaxWidthFailed) or 0))
+                check("...and the next render retries the failing call instead of skipping it",
+                    failCalls > callsAfterFirst,
+                    "calls=" .. tostring(failCalls) .. " after first=" .. tostring(callsAfterFirst))
+                failLine._tacoTipMaxWidth = nil
+            end
+        end
+
+        -- H2+H3 run on the managed (saved-position) path, where the edge key
+        -- exists at all. Unmanaged cursor-follower mode keys nothing by design.
+        do
+            local CFG = REALG.TacoTipConfig
+            local prevPos, prevAnchor = CFG.custom_pos, CFG.custom_anchor
+            local prevMouse = CFG.anchor_mouse
+            local prevPortrait, prevPortrait3D = CFG.tooltip_portrait, CFG.tooltip_portrait_3d
+            local uiPrev = REALG.UIParent.__right
+            CFG.anchor_mouse = false
+            CFG.tooltip_portrait = true
+            CFG.tooltip_portrait_3d = true
+            CFG.custom_anchor = "TOPLEFT"
+            CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 1400, 400 }
+            if (type(REALG.TacoTip_CustomPosEnable) == "function") then
+                pcall(REALG.TacoTip_CustomPosEnable, false)
+            end
+            local handle = REALG.TacoTipDragButton
+            -- Independent derivation, not a copy of the code: 1400 + 200 = 1600
+            -- ends at 1600 (portrait fits right of it), 1400 + 500 = 1900 ends
+            -- at 1900 (tooltip + 8 + 66 = 1974 past the 1920 screen, flips left).
+            -- 500 is over the 320 hard ceiling on purpose: the old clamp keyed
+            -- both widths as 320 and never re-decided.
+            check("H2/H3 setup: a saved position creates the handle", handle ~= nil)
+            if (handle) then
+                REALG.UIParent.__right = 1920
+                GT.__right = 0
+                GT.__w = nil
+                local function pointNow()
+                    local p = GT.TacoTipPortrait3D
+                    if (p and p.GetNumPoints and p:GetNumPoints() > 0) then
+                        return select(1, p:GetPoint(1))
+                    end
+                    return nil
+                end
+                local function recycleRetarget()
+                    if (GT.__hooks and GT.__hooks.OnTooltipCleared) then
+                        pcall(GT.__hooks.OnTooltipCleared, GT)
+                    end
+                end
+                handle.__left = 1400
+                GT.__w = 200
+                recycleRetarget()
+                retargetResolve("player")
+                retargetRender("player")
+                local narrowPoint = pointNow()
+                GT.__w = 500
+                retargetResolve("player")
+                retargetRender("player")
+                local widePoint = pointNow()
+                check("a rehover wider than the cap re-decides the portrait side (no recycle, no Hide)",
+                    narrowPoint == "TOPLEFT" and widePoint == "TOPRIGHT",
+                    "narrow=" .. tostring(narrowPoint) .. " wide=" .. tostring(widePoint))
+                local edgeAfterWide = GT._tacoTipState and GT._tacoTipState.portraitRightEdge
+                check("H3 setup: a managed render records an edge key",
+                    edgeAfterWide ~= nil,
+                    "edge=" .. tostring(edgeAfterWide))
+                pcall(TT.clearTooltipVisuals, GT)
+                local cleared = GT._tacoTipState
+                check("a recycle clears the portrait edge key alongside side+anchored",
+                    cleared ~= nil and cleared.portraitRightEdge == nil
+                        and cleared.portraitSide == nil and cleared.portraitAnchored == false,
+                    "edge=" .. tostring(cleared and cleared.portraitRightEdge)
+                        .. " side=" .. tostring(cleared and cleared.portraitSide)
+                        .. " anchored=" .. tostring(cleared and cleared.portraitAnchored))
+                GT.__right = 0
+                GT.__w = nil
+                handle.__left = 0
+                REALG.UIParent.__right = uiPrev
+                pcall(TT.clearTooltipVisuals, GT)
+                retargetResolve("player")
+                retargetRender("player")
+            end
+            CFG.custom_pos, CFG.custom_anchor = prevPos, prevAnchor
+            CFG.anchor_mouse = prevMouse
+            CFG.tooltip_portrait, CFG.tooltip_portrait_3d = prevPortrait, prevPortrait3D
+        end
+    end
 end
 
 -- ============================================================================
