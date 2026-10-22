@@ -4064,6 +4064,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         return
     end
     if (isAddonAnchorFrame(parent) or isAddonAnchorFrame(tooltip)) then
+        TT.ev = TT.ev or {}
+        TT.ev.lastAnchorDecision = "addon-self"
         return
     end
     if (TacoTipConfig.anchor_mouse_spells) then
@@ -4086,6 +4088,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             if (tooltip.EnableMouse) then
                 tooltip:EnableMouse(false)
             end
+            TT.ev = TT.ev or {}
+            TT.ev.lastAnchorDecision = "spells"
             return
         end
     end
@@ -4096,6 +4100,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     -- Hunter M-NEW2: count the passthrough by kind (menu-by-design vs
     -- unit-like-but-unresolved). Neutral tallies, not failure events.
     local managedAnchor, anchorSkipKind = isManagedAnchorTarget(tooltip, parent)
+    local mouseoverRepin = false
+    local decision = "none"
     if (not managedAnchor) then
         TT.ev = TT.ev or {}
         if (anchorSkipKind == "menu") then
@@ -4111,6 +4117,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         -- the two-bar bottom-right branch, and the world-mouseover gate below
         -- are what keep the skip now.
         if (TacoTipConfig.anchor_mouse or not TacoTipConfig.custom_pos) then
+            TT.ev = TT.ev or {}
+            TT.ev.lastAnchorDecision = "passthrough"
             return
         end
         -- Unit gate on the fall-through (0.8.4.x): of this menu/unresolved
@@ -4123,8 +4131,11 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         -- world-mouseover case would restore the pre-dad58ec bottom-right
         -- park for it (the "it resets my position" report, main.lua:1471-1479).
         if (not isWorldMouseoverUnitHover()) then
+            TT.ev = TT.ev or {}
+            TT.ev.lastAnchorDecision = "passthrough"
             return
         end
+        mouseoverRepin = true
     end
     if (TacoTipConfig.anchor_mouse) then
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
@@ -4133,6 +4144,7 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             end
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMLEFT", TacoTipMouseAnchor, "CENTER", 10, 10)
+            decision = "mouse"
         end
     else
         if (TacoTipConfig.custom_pos) then
@@ -4143,12 +4155,16 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
                 tooltip:ClearAllPoints()
                 local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
                 tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
+                decision = mouseoverRepin and "repin-mouseover" or "repin-managed"
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y + 9)
+            decision = "twobar"
         end
     end
+    TT.ev = TT.ev or {}
+    TT.ev.lastAnchorDecision = decision
     if (tooltip.EnableMouse) then
         tooltip:EnableMouse(false)
     end
@@ -5326,6 +5342,7 @@ function TT:PrintDiagnostics()
     -- A C API argument error carries no Lua stack, so this is the only place it
     -- can be named. Reported once per distinct message; see handlePipelineError.
     line("last tooltip error", TT.lastTooltipError or "none")
+    line("last anchor decision", TT.ev and TT.ev.lastAnchorDecision or "none yet")
     line("pipeline errors suppressed", TT.ev and TT.ev.pipelineErrorsSuppressed or 0)
     if (TT.ev and TT.ev.pipelineSuppressedRing and #TT.ev.pipelineSuppressedRing > 0) then
         line("  suppressed (up to 5)", table.concat(TT.ev.pipelineSuppressedRing, " ;; "))

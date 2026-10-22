@@ -5279,6 +5279,33 @@ do
                     .. " relIsHandle=" .. tostring(relSeen == handle))
         end
 
+        -- Pin D: LAST ANCHOR DECISION (diag line "last anchor decision").
+        -- The hook records what it did to the last tooltip so /tacotip diag
+        -- answers "what did TacoTip do to my bag tooltip" without guesswork:
+        -- world-mouseover re-pin records "repin-mouseover", a bag-like parent
+        -- records "passthrough". Reset to nil first: a stale value from an
+        -- earlier pin passing here is exactly the false-green hands-up.md
+        -- warns about. Revert either direction (pre-dad58ec skip, dad58ec
+        -- unconditional) leaves the wrong value or nil here -> red.
+        if (handle) then
+            TT.ev.lastAnchorDecision = nil
+            resetRehoverResidue()
+            runHookCapturingRel(GT, REALG.UIParent)
+            local decRepin = TT.ev.lastAnchorDecision
+            TT.ev.lastAnchorDecision = nil
+            local bagButton2 = makeWidget("Frame", "TestBagItemButton2")
+            resetRehoverResidue()
+            seedFocus(bagButton2)
+            runHookCapturingRel(GT, bagButton2)
+            local decPass = TT.ev.lastAnchorDecision
+            check("anchor decision records repin-mouseover on a unit hover",
+                decRepin == "repin-mouseover",
+                "lastAnchorDecision=" .. tostring(decRepin))
+            check("anchor decision records passthrough on a bag-like parent",
+                decPass == "passthrough",
+                "lastAnchorDecision=" .. tostring(decPass))
+        end
+
         -- Restore.
         GT.__unit, GT.GetUnit, GT.GetOwner = prevUnit, prevGetUnit, prevGetOwner
         GT.__lines, GT.__points = prevLines, prevPoints
