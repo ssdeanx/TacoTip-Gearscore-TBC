@@ -1324,6 +1324,36 @@ do
         "font=" .. tostring(CFG.tooltip_font) .. " bar=" .. tostring(CFG.tooltip_bar_texture))
 end
 
+-- custom_pos shape: the drag-stop write is the only in-addon writer, but an
+-- old GetPoint-bug save can carry nils and a hand-edited SavedVariables
+-- value bypasses every writer. Either shape reaches tooltip:SetPoint raw and
+-- raises from a post-hook that swallows it, leaving the tooltip anchorless.
+-- Repair to nil (absent = Blizzard placement), never to a guessed position;
+-- a valid saved position survives untouched.
+do
+    CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", nil, nil }
+    TT:ApplyConfigDefaults(CFG)
+    check("a custom_pos with nil offsets sanitizes to nil (Blizzard placement)",
+        CFG.custom_pos == nil,
+        tostring(CFG.custom_pos))
+    CFG.custom_pos = { "BOGUS", "BOTTOMLEFT", 10, 20 }
+    TT:ApplyConfigDefaults(CFG)
+    check("a custom_pos with a bad point sanitizes to nil",
+        CFG.custom_pos == nil,
+        tostring(CFG.custom_pos))
+    CFG.custom_pos = "BOTTOMRIGHT"
+    TT:ApplyConfigDefaults(CFG)
+    check("a non-table custom_pos sanitizes to nil",
+        CFG.custom_pos == nil,
+        tostring(CFG.custom_pos))
+    local goodPos = { "BOTTOMLEFT", "BOTTOMLEFT", 100, 200 }
+    CFG.custom_pos = goodPos
+    TT:ApplyConfigDefaults(CFG)
+    check("...while a valid saved position survives sanitizing",
+        CFG.custom_pos == goodPos,
+        tostring(CFG.custom_pos))
+end
+
 --------------------------------------------------------------------------
 -- Pawn must not be asked for a score when Pawn has no scale for the
 -- class/spec. pawnLoadedScaleName returns nil in exactly that case, and the

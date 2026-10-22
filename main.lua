@@ -1500,7 +1500,14 @@ local function applyCustomTooltipAnchor(tooltip, unit)
     if (not TacoTipDragButton) then
         return false
     end
+    -- Same rule as the hook pin: never ClearAllPoints on an unvalidated
+    -- anchor. A non-string custom_anchor (hand-edited mid-session; the
+    -- sanitizer only runs at load) with cleared points leaves the tooltip
+    -- anchorless. False keeps the client's anchor.
     local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
+    if (type(anchorPoint) ~= "string") then
+        return false
+    end
     tooltip:ClearAllPoints()
     tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
     return true
@@ -4152,10 +4159,22 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
                 TacoTip_CustomPosEnable(false)
             end
             if (TacoTipDragButton) then
-                tooltip:ClearAllPoints()
                 local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
-                tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
-                decision = mouseoverRepin and "repin-mouseover" or "repin-managed"
+                -- Validate BEFORE ClearAllPoints: a bad anchor with cleared
+                -- points leaves the tooltip with no anchor at all (invisible
+                -- until something else re-anchors it). The load-time sanitizer
+                -- owns the literals; this owns the mid-session value. On bad
+                -- input do nothing -- the caller-set anchor survives -- and
+                -- count it so /tacotip diag names it instead of hiding it.
+                if (type(anchorPoint) ~= "string") then
+                    TT.ev = TT.ev or {}
+                    TT.ev.anchorInvalidSkipped = (TT.ev.anchorInvalidSkipped or 0) + 1
+                    decision = "invalid"
+                else
+                    tooltip:ClearAllPoints()
+                    tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
+                    decision = mouseoverRepin and "repin-mouseover" or "repin-managed"
+                end
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
@@ -4237,6 +4256,17 @@ local function syncTooltipMoverPosition(showExample)
     end
 
     local pos = (TacoTipConfig and TacoTipConfig.custom_pos) or getDefaultTooltipMoverPosition()
+    -- Runtime guard beside the load-time sanitizer: the table can be
+    -- hand-edited mid-session, and the old GetPoint-bug shape (nil offsets)
+    -- predates the sanitizer. A raw SetPoint with this shape raises; the
+    -- callers run inside hook chains that swallow it. Fall back to the
+    -- default position and count it so /tacotip diag names it.
+    if (type(pos) ~= "table" or type(pos[1]) ~= "string" or type(pos[2]) ~= "string"
+            or type(pos[3]) ~= "number" or type(pos[4]) ~= "number") then
+        TT.ev = TT.ev or {}
+        TT.ev.moverPosFallback = (TT.ev.moverPosFallback or 0) + 1
+        pos = getDefaultTooltipMoverPosition()
+    end
     TacoTipDragButton:ClearAllPoints()
     TacoTipDragButton:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
 
@@ -4835,6 +4865,7 @@ local function reportEventCounters(line)
         + (ev.moverDisableFailed or 0) + (ev.configRepairs or 0)
         + (ev.characterPaneOnShowFailed or 0) + (ev.inspectPaneOnShowFailed or 0)
         + (ev.anchorHookFailed or 0) + (ev.statusBarHookRefused or 0)
+        + (ev.anchorInvalidSkipped or 0) + (ev.moverPosFallback or 0)
     if (total == 0) then
         line("event counters", "no events recorded yet -- hover a character first")
         return
@@ -4894,6 +4925,11 @@ local function reportEventCounters(line)
     if (ev.anchorHookFailed and ev.anchorHookFailed > 0) then
         line("  last anchor hook error", ev.lastAnchorHookError or "?")
     end
+    -- Fallback counters: inputs bad enough to skip a pin or reposition must
+    -- be visible here, not just absorbed. Both mean a saved value went bad
+    -- mid-session (the load-time sanitizer owns the load path).
+    line("anchor pins skipped (bad anchor, caller kept)", ev.anchorInvalidSkipped or 0)
+    line("mover position fallbacks (bad pos, default used)", ev.moverPosFallback or 0)
     -- The tooltip status bar declares no OnHide on any of the five clients, so
     -- the teardown hook is installed under a pcall. Zero is the healthy value;
     -- a non-zero count means this client refused it.

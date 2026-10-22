@@ -5288,6 +5288,7 @@ do
         -- warns about. Revert either direction (pre-dad58ec skip, dad58ec
         -- unconditional) leaves the wrong value or nil here -> red.
         if (handle) then
+            TT.ev = TT.ev or {}
             TT.ev.lastAnchorDecision = nil
             resetRehoverResidue()
             runHookCapturingRel(GT, REALG.UIParent)
@@ -5297,13 +5298,60 @@ do
             resetRehoverResidue()
             seedFocus(bagButton2)
             runHookCapturingRel(GT, bagButton2)
-            local decPass = TT.ev.lastAnchorDecision
+            local decPass = (TT.ev or {}).lastAnchorDecision
             check("anchor decision records repin-mouseover on a unit hover",
                 decRepin == "repin-mouseover",
                 "lastAnchorDecision=" .. tostring(decRepin))
             check("anchor decision records passthrough on a bag-like parent",
                 decPass == "passthrough",
                 "lastAnchorDecision=" .. tostring(decPass))
+        end
+
+        -- Pin E: BAD INPUTS NEVER MUTATE (nil checks + fallbacks).
+        -- E1: a non-string custom_anchor (hand-edited mid-session; the
+        -- sanitizer only runs at load) must not ClearAllPoints the tooltip:
+        -- the seeded caller park survives, setPointCalls stays 0, the
+        -- decision reads "invalid" and the skip is counted. Old code
+        -- ClearAllPoints'd + SetPoint'd to the handle -> all three red.
+        -- E2: a corrupt custom_pos (old GetPoint-bug nils) makes
+        -- syncTooltipMoverPosition fall back to the default position instead
+        -- of raising: the drag handle ends on BOTTOMRIGHT/BOTTOMRIGHT with
+        -- numeric offsets, and the fallback is counted. Old code recorded
+        -- the corrupt point -> red.
+        if (handle) then
+            local badBefore = (TT.ev and TT.ev.anchorInvalidSkipped) or 0
+            CFG.custom_anchor = {}
+            TT.ev = TT.ev or {}
+            TT.ev.lastAnchorDecision = nil
+            resetRehoverResidue()
+            seedFocus(REALG.WorldFrame)
+            local relBad = runHookCapturingRel(GT, REALG.UIParent)
+            local nBad = pointCount()
+            local badAfter = (TT.ev and TT.ev.anchorInvalidSkipped) or 0
+            local decBad = TT.ev.lastAnchorDecision
+            CFG.custom_anchor = prevAnchor
+            check("bad custom_anchor leaves the caller anchor untouched",
+                nBad == 1 and relBad == nil and GT.__setPointCalls == 0
+                    and decBad == "invalid" and badAfter == badBefore + 1,
+                "points=" .. tostring(nBad)
+                    .. " setPointCalls=" .. tostring(GT.__setPointCalls)
+                    .. " relIsHandle=" .. tostring(relBad == handle)
+                    .. " decision=" .. tostring(decBad)
+                    .. " skipped=" .. tostring(badBefore) .. "->" .. tostring(badAfter))
+            local fallBefore = (TT.ev and TT.ev.moverPosFallback) or 0
+            CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", nil, nil }
+            TT:SyncTooltipMover(false)
+            local hp, _, hrp, hox, hoy = handle:GetPoint(1)
+            local fallAfter = (TT.ev and TT.ev.moverPosFallback) or 0
+            CFG.custom_pos = prevPos
+            TT:SyncTooltipMover(false)
+            check("corrupt custom_pos falls back to the default position",
+                hp == "BOTTOMRIGHT" and hrp == "BOTTOMRIGHT"
+                    and type(hox) == "number" and type(hoy) == "number"
+                    and fallAfter == fallBefore + 1,
+                "point=" .. tostring(hp) .. "/" .. tostring(hrp)
+                    .. " offsets=" .. tostring(hox) .. "," .. tostring(hoy)
+                    .. " fallbacks=" .. tostring(fallBefore) .. "->" .. tostring(fallAfter))
         end
 
         -- Restore.

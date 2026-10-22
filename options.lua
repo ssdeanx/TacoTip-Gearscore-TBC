@@ -474,6 +474,29 @@ function TT:SafeSanitizeConfig(config)
         repair("custom_anchor")
         config.custom_anchor = defaults.custom_anchor
     end
+    -- custom_pos shape: the drag-stop write (main.lua onDragButtonDragStop) is
+    -- the only in-addon writer and always writes {point, point, number,
+    -- number}, but an old GetPoint-bug save can carry nils and a hand-edited
+    -- SavedVariables value bypasses every writer. Either shape reaches
+    -- tooltip:SetPoint unvalidated (syncTooltipMoverPosition is raw), which
+    -- raises -- from a hooksecurefunc post-hook that swallows it and leaves
+    -- the tooltip anchorless. Repair to nil (absent = Blizzard placement),
+    -- never to a guessed position.
+    local pos = config.custom_pos
+    if (pos ~= nil) then
+        local posOk = type(pos) == "table"
+            and (pos[1] == "TOPLEFT" or pos[1] == "TOPRIGHT"
+                or pos[1] == "BOTTOMLEFT" or pos[1] == "BOTTOMRIGHT"
+                or pos[1] == "CENTER")
+            and (pos[2] == "TOPLEFT" or pos[2] == "TOPRIGHT"
+                or pos[2] == "BOTTOMLEFT" or pos[2] == "BOTTOMRIGHT"
+                or pos[2] == "CENTER")
+            and type(pos[3]) == "number" and type(pos[4]) == "number"
+        if (not posOk) then
+            repair("custom_pos")
+            config.custom_pos = nil
+        end
+    end
     for _, mediaKey in ipairs({
         "tooltip_font", "tooltip_bar_texture",
         "tooltip_background_texture", "tooltip_border_texture",
