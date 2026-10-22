@@ -4025,6 +4025,40 @@ local function isManagedAnchorTarget(tooltip, parent)
     return false, "menu"
 end
 
+-- THE ONE MENU-CLASSIFIED CALL THAT MUST KEEP THE RE-PIN: a world-mouseover
+-- unit hover. It cannot be told apart by parent or residue: GameTooltipMixin
+-- fires GameTooltip_SetDefaultAnchor(self, UIParent)
+-- (origin/classic_anniversary Blizzard_SharedXML/Classic/GameTooltipTemplate.xml:153,
+-- GameTooltipTemplate.lua:12-14), and the SetOwner inside the original parks
+-- the residue, so at post-hook time parent is UIParent (no .unit) and the unit
+-- probes read "menu" -- exactly the shape the applyCustomTooltipAnchor comment
+-- (main.lua:1471-1479) documents as the pre-dad58ec "it resets my position"
+-- report. What IS still true of that hover, and of no item/panel/menu surface,
+-- is that the cursor sits on the 3-D world over a live mouseover unit. The
+-- focus test is the same idiom the anchor_mouse_world branch already uses
+-- (TT:GetMouseFocus() == WorldFrame, main.lua:4083); UnitExists is required so
+-- a world OBJECT tooltip (chest, no mouseover) and a stale mouseover under a
+-- bag/panel cursor both read false. Every menu-classified call with the cursor
+-- on its own frame -- bag items, character-pane slots, other addons' owners --
+-- fails this and keeps the caller-set anchor.
+local function isWorldMouseoverUnitHover()
+    if (type(UnitExists) ~= "function") then
+        return false
+    end
+    local okExists, exists = pcall(UnitExists, "mouseover")
+    if (not okExists or not exists) then
+        return false
+    end
+    -- WorldFrame must be a real frame: nil == nil would otherwise pass.
+    if (WorldFrame == nil) then
+        return false
+    end
+    local okFocus, focus = pcall(function()
+        return TT:GetMouseFocus()
+    end)
+    return okFocus and focus == WorldFrame
+end
+
 local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     if (not tooltip) then
         return
@@ -4073,9 +4107,22 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         -- re-pinned to TacoTipDragButton on EVERY SetDefaultAnchor call with
         -- no unit gate of any kind; gating it here left the client's
         -- BOTTOMRIGHT park live for the whole re-hover (the stuck /
-        -- mid-screen smear). The counters above still tally; only the cursor
-        -- path and the two-bar bottom-right branch keep the skip.
+        -- mid-screen smear). The counters above still tally; the cursor path,
+        -- the two-bar bottom-right branch, and the world-mouseover gate below
+        -- are what keep the skip now.
         if (TacoTipConfig.anchor_mouse or not TacoTipConfig.custom_pos) then
+            return
+        end
+        -- Unit gate on the fall-through (0.8.4.x): of this menu/unresolved
+        -- remainder only the world-mouseover unit shape re-pins. Unit frames
+        -- never reach this line -- parent.unit / owner.unit / IsUnit resolved
+        -- them as managedAnchor above. Everything else that lands here (bag
+        -- items, character-pane slots, menus, other addons' owners) has its
+        -- cursor on its own frame, so it returns with the caller-set anchor
+        -- intact and only the counters above having moved. Suppressing the
+        -- world-mouseover case would restore the pre-dad58ec bottom-right
+        -- park for it (the "it resets my position" report, main.lua:1471-1479).
+        if (not isWorldMouseoverUnitHover()) then
             return
         end
     end

@@ -5103,19 +5103,34 @@ end
 
 -- ============================================================================
 -- RE-HOVER ANCHOR: with a saved custom_pos, GameTooltip_SetDefaultAnchor must
--- re-pin to TacoTipDragButton on EVERY call, even when the tooltip's live unit
--- residue is empty -- the re-hover shape (SetOwner has cleared the lines,
--- GetUnit answers nil, IsUnit is false, the owner has no unit). 0.8.3 re-pinned
--- unconditionally (prior-tooltip-save-mechanism.md, main.lua:2840-2842); the
--- 0.8.4 gate (isManagedAnchorTarget) reads that empty residue as "menu" and
+-- re-pin to TacoTipDragButton for UNIT hovers on every call, even when the
+-- tooltip's live unit residue is empty -- the re-hover shape (SetOwner has
+-- cleared the lines, GetUnit answers nil, IsUnit is false, the owner has no
+-- unit). Two unit shapes survive the 0.8.4 gate; the pins below exercise the
+-- one that is menu-classified at hook time:
+--   * unit frames -- parent carries .unit (UnitFrame.lua:451-452) -- resolve
+--     as managedAnchor and re-pin above the skip (unchanged since db275d7);
+--   * WORLD MOUSEOVER -- GameTooltipMixin fires SetDefaultAnchor(self,
+--     UIParent) (GameTooltipTemplate.xml:153 / GameTooltipTemplate.lua:12-14),
+--     so parent has no .unit and the empty residue reads "menu" (main.lua:
+--     1471-1479 documents this shape as the pre-dad58ec "it resets my
+--     position" report). The fall-through now re-pins only when the cursor is
+--     on the 3-D world over a live mouseover unit -- seeded here as focus =
+--     WorldFrame with the mock's UNITS.mouseover.
+-- 0.8.3 re-pinned unconditionally (prior-tooltip-save-mechanism.md,
+-- main.lua:2840-2842); the 0.8.4 gate reads that empty residue as "menu" and
 -- SKIPS, so the client's BOTTOMRIGHT park stays live for the whole hover --
 -- stuck / mid-screen smear, "resets later" when a completing render reaches
 -- applyCustomTooltipAnchor. Bench: current-tooltip-save-regression.md hop B2.
 --
--- Revert map: restore the unconditional `return` inside the
--- isManagedAnchorTarget skip (drop the `anchor_mouse or not custom_pos`
--- condition in onGameTooltipSetDefaultAnchor) -> both pins below go red: the
--- seeded client park is never cleared and the tooltip never reaches the handle.
+-- Revert map (two directions, one tree each):
+--   * pre-dad58ec: restore the unconditional `return` inside the
+--     isManagedAnchorTarget skip (drop the `anchor_mouse or not custom_pos`
+--     condition) -> pins A/B below go red: the seeded client park is never
+--     cleared and the tooltip never reaches the handle.
+--   * dad58ec (fix reverted): drop the isWorldMouseoverUnitHover() gate ->
+--     the BAG-LIKE pass-through pin (C) goes red: the unconditional pin
+--     ClearAllPoints's the caller's anchor and yanks the tooltip to the handle.
 -- ============================================================================
 do
     local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
@@ -5127,6 +5142,7 @@ do
         local prevPower = CFG.show_power_bar
         local prevUnit, prevGetUnit, prevGetOwner = GT.__unit, GT.GetUnit, GT.GetOwner
         local prevLines, prevPoints = GT.__lines, GT.__points
+        local prevFoci = REALG.GetMouseFoci
         local prevDisp, hasDisp = nil, false
         if (REALG.TooltipUtil) then
             prevDisp = REALG.TooltipUtil.GetDisplayedUnit
@@ -5146,13 +5162,28 @@ do
         local handle = REALG.TacoTipDragButton
         check("re-hover pin setup: a saved position creates the handle", handle ~= nil)
 
+        -- Mouse-focus seeding: focus frames are how the fall-through tells the
+        -- world-mouseover unit hover from an item/panel/menu surface. The mock
+        -- default (REALG.GetMouseFoci -> nil) is "cursor not on the world".
+        local function seedFocus(frame)
+            REALG.GetMouseFoci = function()
+                if (frame) then
+                    return { frame }
+                end
+                return nil
+            end
+        end
+
         -- Residue reset, per pin. The re-hover shape is an EMPTY tooltip: the
         -- gate must see no unit anywhere -- GetUnit nil, IsUnit false, no
         -- owner.unit, no TooltipUtil displayed unit -- or the pin measures the
         -- managed path instead of the skip the defect lives on. The seeded
         -- point is the client's own park (BOTTOMRIGHT of UIParent). The mock's
         -- SetPoint APPENDS, so a skip that never ClearAllPoints leaves this
-        -- point on the frame next to anything later added.
+        -- point on the frame next to anything later added. Focus is seeded to
+        -- WorldFrame: the world-mouseover hover has the cursor on the 3-D
+        -- world (the parent is UIParent, GameTooltipMixin), and the mock's
+        -- UNITS.mouseover already answers UnitExists.
         local function resetRehoverResidue()
             GT.__unit = nil
             GT.GetUnit = mockGetUnit(nil)
@@ -5163,6 +5194,7 @@ do
             end
             GT.__points = { { "BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -9, 70 } }
             GT.__setPointCalls = 0
+            seedFocus(REALG.WorldFrame)
         end
 
         local function pointCount()
@@ -5221,9 +5253,36 @@ do
                 "relIsHandle=" .. tostring(relSeen == handle))
         end
 
+        -- Pin C: BAG-LIKE PASS-THROUGH (the dad58ec failure this desk fixes).
+        -- Bag item buttons never call SetDefaultAnchor themselves (SetOwner +
+        -- CalculateItemTooltipAnchors, ContainerFrame_Shared.lua:1400-1402);
+        -- when a shared-tooltip re-anchor arrives during an item/panel hover it
+        -- is menu-classified with a unitless parent and the cursor ON THAT
+        -- FRAME, not the world -- note the mock's UNITS.mouseover is still
+        -- alive here, so only the focus test can block the pin: that is the
+        -- discriminator when parent could be UIParent on both shapes.
+        -- The caller's anchor must survive untouched: no ClearAllPoints, no
+        -- hook SetPoint, seeded park remains the single point.
+        -- Revert: drop the isWorldMouseoverUnitHover() gate (dad58ec tree) ->
+        -- unconditional ClearAllPoints + SetPoint to the handle -> red.
+        if (handle) then
+            local bagButton = makeWidget("Frame", "TestBagItemButton")
+            resetRehoverResidue()
+            seedFocus(bagButton)
+            local relSeen = runHookCapturingRel(GT, bagButton)
+            local n = pointCount()
+            local p = point1()
+            check("bag-like parent passes through: caller's park survives",
+                n == 1 and p == "BOTTOMRIGHT" and relSeen == nil and GT.__setPointCalls == 0,
+                "points=" .. tostring(n) .. " point=" .. tostring(p)
+                    .. " setPointCalls=" .. tostring(GT.__setPointCalls)
+                    .. " relIsHandle=" .. tostring(relSeen == handle))
+        end
+
         -- Restore.
         GT.__unit, GT.GetUnit, GT.GetOwner = prevUnit, prevGetUnit, prevGetOwner
         GT.__lines, GT.__points = prevLines, prevPoints
+        REALG.GetMouseFoci = prevFoci
         if (hasDisp) then
             REALG.TooltipUtil.GetDisplayedUnit = prevDisp
         end
