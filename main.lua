@@ -4069,7 +4069,15 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
         elseif (anchorSkipKind == "unresolved") then
             TT.ev.anchorSkippedUnresolved = (TT.ev.anchorSkippedUnresolved or 0) + 1
         end
-        return
+        -- The verdict must not suppress the saved-position re-pin. 0.8.3
+        -- re-pinned to TacoTipDragButton on EVERY SetDefaultAnchor call with
+        -- no unit gate of any kind; gating it here left the client's
+        -- BOTTOMRIGHT park live for the whole re-hover (the stuck /
+        -- mid-screen smear). The counters above still tally; only the cursor
+        -- path and the two-bar bottom-right branch keep the skip.
+        if (TacoTipConfig.anchor_mouse or not TacoTipConfig.custom_pos) then
+            return
+        end
     end
     if (TacoTipConfig.anchor_mouse) then
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then

@@ -5101,6 +5101,138 @@ do
     end
 end
 
+-- ============================================================================
+-- RE-HOVER ANCHOR: with a saved custom_pos, GameTooltip_SetDefaultAnchor must
+-- re-pin to TacoTipDragButton on EVERY call, even when the tooltip's live unit
+-- residue is empty -- the re-hover shape (SetOwner has cleared the lines,
+-- GetUnit answers nil, IsUnit is false, the owner has no unit). 0.8.3 re-pinned
+-- unconditionally (prior-tooltip-save-mechanism.md, main.lua:2840-2842); the
+-- 0.8.4 gate (isManagedAnchorTarget) reads that empty residue as "menu" and
+-- SKIPS, so the client's BOTTOMRIGHT park stays live for the whole hover --
+-- stuck / mid-screen smear, "resets later" when a completing render reaches
+-- applyCustomTooltipAnchor. Bench: current-tooltip-save-regression.md hop B2.
+--
+-- Revert map: restore the unconditional `return` inside the
+-- isManagedAnchorTarget skip (drop the `anchor_mouse or not custom_pos`
+-- condition in onGameTooltipSetDefaultAnchor) -> both pins below go red: the
+-- seeded client park is never cleared and the tooltip never reaches the handle.
+-- ============================================================================
+do
+    local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
+    check("re-hover pin: anchor post-hook installed", type(anchorHook) == "function")
+    if (type(anchorHook) == "function") then
+        local CFG = REALG.TacoTipConfig
+        local prevPos, prevAnchor = CFG.custom_pos, CFG.custom_anchor
+        local prevMouse, prevSpells = CFG.anchor_mouse, CFG.anchor_mouse_spells
+        local prevPower = CFG.show_power_bar
+        local prevUnit, prevGetUnit, prevGetOwner = GT.__unit, GT.GetUnit, GT.GetOwner
+        local prevLines, prevPoints = GT.__lines, GT.__points
+        local prevDisp, hasDisp = nil, false
+        if (REALG.TooltipUtil) then
+            prevDisp = REALG.TooltipUtil.GetDisplayedUnit
+            hasDisp = true
+        end
+
+        -- Saved-position configuration. custom_anchor is a literal this test
+        -- owns, not a read of the code under test.
+        CFG.anchor_mouse = false
+        CFG.anchor_mouse_spells = false
+        CFG.show_power_bar = false
+        CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 300, 200 }
+        CFG.custom_anchor = "TOPLEFT"
+        if (type(REALG.TacoTip_CustomPosEnable) == "function") then
+            pcall(REALG.TacoTip_CustomPosEnable, false)
+        end
+        local handle = REALG.TacoTipDragButton
+        check("re-hover pin setup: a saved position creates the handle", handle ~= nil)
+
+        -- Residue reset, per pin. The re-hover shape is an EMPTY tooltip: the
+        -- gate must see no unit anywhere -- GetUnit nil, IsUnit false, no
+        -- owner.unit, no TooltipUtil displayed unit -- or the pin measures the
+        -- managed path instead of the skip the defect lives on. The seeded
+        -- point is the client's own park (BOTTOMRIGHT of UIParent). The mock's
+        -- SetPoint APPENDS, so a skip that never ClearAllPoints leaves this
+        -- point on the frame next to anything later added.
+        local function resetRehoverResidue()
+            GT.__unit = nil
+            GT.GetUnit = mockGetUnit(nil)
+            GT.GetOwner = function() return nil end
+            GT.__lines = {}
+            if (hasDisp) then
+                REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+            end
+            GT.__points = { { "BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -9, 70 } }
+            GT.__setPointCalls = 0
+        end
+
+        local function pointCount()
+            return (GT.GetNumPoints and GT:GetNumPoints()) or #GT.__points
+        end
+        local function point1()
+            if (GT.GetPoint) then return GT:GetPoint(1) end
+            local q = GT.__points[1]
+            if (not q) then return nil end
+            return q[1], q[2], q[3], q[4], q[5]
+        end
+        -- The handle is created UNNAMED (main.lua CreateFrame("Button", nil,
+        -- UIParent)), so the mock's SetPoint stores its name as nil -- the
+        -- engine does the same. The relative frame therefore has to be read
+        -- off the raw SetPoint argument, the way the render-time pin above
+        -- already captures it, not off GetPoint's name.
+        local function runHookCapturingRel(...)
+            local saved = GT.SetPoint
+            local relSeen = nil
+            GT.SetPoint = function(self, p, rel, rp, ox, oy)
+                relSeen = rel
+                return saved(self, p, rel, rp, ox, oy)
+            end
+            pcall(anchorHook, ...)
+            GT.SetPoint = saved
+            return relSeen
+        end
+
+        -- Pin A: empty residue + custom_pos -> exactly ONE point, relative to
+        -- TacoTipDragButton at the saved anchor. Two points would be the
+        -- multi-anchor smear; the seeded UIParent park would be the skip.
+        if (handle) then
+            resetRehoverResidue()
+            local relSeen = runHookCapturingRel(GT, REALG.UIParent)
+            local n = pointCount()
+            local p, _, rp = point1()
+            check("re-hover with empty residue ends with one point on the drag handle",
+                n == 1 and relSeen == handle and p == "TOPLEFT" and rp == "TOPLEFT",
+                "points=" .. tostring(n) .. " relIsHandle=" .. tostring(relSeen == handle)
+                    .. " point=" .. tostring(p) .. "/" .. tostring(rp))
+        end
+
+        -- Pin B: the gate's diagnostic counters still tally on that same call
+        -- -- the verdict is diagnostic, not a suppressor. Fresh residue reset
+        -- so this pin does not ride on pin A's state.
+        if (handle) then
+            local menuBefore = (TT.ev and TT.ev.anchorSkippedMenu) or 0
+            resetRehoverResidue()
+            local relSeen = runHookCapturingRel(GT, REALG.UIParent)
+            local menuAfter = (TT.ev and TT.ev.anchorSkippedMenu) or 0
+            check("the menu-skip counter still tallies while the re-pin runs",
+                menuAfter == menuBefore + 1,
+                "anchorSkippedMenu=" .. tostring(menuBefore) .. "->" .. tostring(menuAfter))
+            check("...and the re-pin still happened on that counted call",
+                relSeen == handle,
+                "relIsHandle=" .. tostring(relSeen == handle))
+        end
+
+        -- Restore.
+        GT.__unit, GT.GetUnit, GT.GetOwner = prevUnit, prevGetUnit, prevGetOwner
+        GT.__lines, GT.__points = prevLines, prevPoints
+        if (hasDisp) then
+            REALG.TooltipUtil.GetDisplayedUnit = prevDisp
+        end
+        CFG.custom_pos, CFG.custom_anchor = prevPos, prevAnchor
+        CFG.anchor_mouse, CFG.anchor_mouse_spells = prevMouse, prevSpells
+        CFG.show_power_bar = prevPower
+    end
+end
+
 local fails = 0
 for _, c in ipairs(checks) do
     if (not c[2]) then
