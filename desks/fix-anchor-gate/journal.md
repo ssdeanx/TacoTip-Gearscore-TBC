@@ -53,3 +53,7 @@
 - **Next step:** operator in-game observation. If the re-hover still smears,
   next diagnostic is `/tacotip diag` counters (`anchorSkippedMenu`,
   `anchorSkippedUnresolved`, `anchorHookFailed`) — the gate still tallies.
+
+## 2026-10-22 — [signal:accepted] operator confirmed in game
+- Operator: "gj it works!!" — the re-hover position defect is observed fixed on classic_anniversary (his play branch). This is the acceptance hands-up.md names: in-game hover, not the harness. Harness pin claim upgraded from "pinned, not observed" to observed.
+- Shipped as `dad58ec` on origin/main (with `dea3fcb` width/portrait and `61451d2` docs). Desk closed.
