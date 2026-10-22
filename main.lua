@@ -4894,11 +4894,17 @@ local function reportEventCounters(line)
         + (ev.characterPaneOnShowFailed or 0) + (ev.inspectPaneOnShowFailed or 0)
         + (ev.anchorHookFailed or 0) + (ev.statusBarHookRefused or 0)
         + (ev.anchorInvalidSkipped or 0) + (ev.moverPosFallback or 0)
+    -- The four counters read first on every report. Printed even when the
+    -- session is fresh: "0 renders" is information, and the old early return
+    -- ("no events recorded yet") hid these behind a single line.
+    print("|cff59f0dc-- counters (since /reload) --|r")
+    line("unit renders", ev.unitRender or 0)
+    line("portrait Hide() calls (on clear)", ev.portraitModelHidden or 0)
+    line("portrait teardowns (hide + ClearModel)", ev.portraitHide or 0)
+    line("portrait destroys (ClearModel)", ev.portraitDestroy or 0)
     if (total == 0) then
-        line("event counters", "no events recorded yet -- hover a character first")
         return
     end
-    print("|cff59f0dc-- event counters (cumulative since /reload) --|r")
     line("unit renders", ev.unitRender or 0)
     line("GearScore callbacks", ev.gsCallback or 0)
     line("  of those, dropped as re-entrant", ev.gsCallbackReentrant or 0)
@@ -5371,6 +5377,48 @@ local function reportSilentFailures(line)
     end
 end
 
+-- ERRORS FIRST.
+--
+-- handlePipelineError records every distinct raise it contains into
+-- TT.ev.pipelineErrorSeen -- and nothing ever printed that table. The report
+-- therefore said "problems: none detected" while errors were being collected
+-- behind it, which is exactly the "diag never shows errors" report. Every
+-- captured message is printed here with its count, before any counters: a
+-- report whose first screen is numbers and whose errors are nowhere is not a
+-- diagnostic.
+local function reportErrors(line)
+    local ev = TT.ev or {}
+    local seen = ev.pipelineErrorSeen
+    local names, total = {}, 0
+    if (type(seen) == "table") then
+        for msg, count in pairs(seen) do
+            names[#names + 1] = tostring(msg)
+            total = total + (tonumber(count) or 1)
+        end
+    end
+    table.sort(names)
+    print("|cffff8080-- errors --|r")
+    if (#names == 0) then
+        line("captured errors", "none since /reload")
+    else
+        line("captured errors", total .. " across " .. #names .. " distinct message(s)")
+        for i = 1, #names do
+            if (i <= 6) then
+                print("|cffff8080  " .. tostring(seen[names[i]]) .. "x " .. names[i] .. "|r")
+            end
+        end
+        if (#names > 6) then
+            line("  not listed", (#names - 6) .. " more distinct message(s)")
+        end
+    end
+    line("last tooltip error", TT.lastTooltipError or "none")
+    line("anchor hook failures", ev.anchorHookFailed or 0)
+    if (ev.anchorHookFailed and ev.anchorHookFailed > 0) then
+        line("  last anchor hook error", ev.lastAnchorHookError or "?")
+    end
+    line("pipeline errors suppressed", ev.pipelineErrorsSuppressed or 0)
+end
+
 function TT:PrintDiagnostics()
     local function line(label, value)
         print(string.format("|cff59f0dcTacoTip:|r %s: %s", label, tostring(value)))
@@ -5380,6 +5428,22 @@ function TT:PrintDiagnostics()
     line("load OK", TT.LOAD_OK and "yes" or "NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE))
     line("client family", CI and CI.family or "?")
     line("interface", CI and CI.interfaceVersion or "?")
+    reportErrors(line)
+    -- The saved-position state, in one place. Every "my tooltip position"
+    -- report needs exactly these facts: whether a position is saved, what
+    -- anchor literal it uses, whether the handle exists, and what the hook did
+    -- to the LAST tooltip (the decision line). No counters, no theory.
+    print("|cff59f0dc-- tooltip anchor --|r")
+    local cfg = TacoTipConfig or {}
+    line("saved custom position", cfg.custom_pos and "yes" or "no")
+    line("custom anchor", cfg.custom_anchor or "nil")
+    line("anchor to mouse", cfg.anchor_mouse and "on" or "off")
+    local dragButton = _G.TacoTipDragButton
+    line("drag handle", dragButton and (dragButton:IsShown() and "shown" or "exists (hidden)") or "NOT CREATED")
+    line("last anchor decision", (TT.ev and TT.ev.lastAnchorDecision) or "none yet")
+    line("passthrough (non-unit callers)", ((TT.ev and TT.ev.anchorSkippedMenu) or 0)
+        + ((TT.ev and TT.ev.anchorSkippedUnresolved) or 0))
+    line("pins skipped (bad anchor)", (TT.ev and TT.ev.anchorInvalidSkipped) or 0)
     -- Which widget surface this client actually presents. These three facts
     -- select the tooltip code paths, so reporting them makes a "looks wrong on
     -- client X" report answerable without guesswork. Read-only: no widget is
@@ -5405,12 +5469,7 @@ function TT:PrintDiagnostics()
             .. " spell=" .. tostring(TT.HookedTooltipScripts.Spell)) or "none")
     -- A C API argument error carries no Lua stack, so this is the only place it
     -- can be named. Reported once per distinct message; see handlePipelineError.
-    line("last tooltip error", TT.lastTooltipError or "none")
-    line("last anchor decision", TT.ev and TT.ev.lastAnchorDecision or "none yet")
-    line("pipeline errors suppressed", TT.ev and TT.ev.pipelineErrorsSuppressed or 0)
-    if (TT.ev and TT.ev.pipelineSuppressedRing and #TT.ev.pipelineSuppressedRing > 0) then
-        line("  suppressed (up to 5)", table.concat(TT.ev.pipelineSuppressedRing, " ;; "))
-    end
+    line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
     if (not TT.LOAD_OK) then
         print("|cff59f0dcIf the stage is not \"complete\", an error was raised while|r")
         print("|cff59f0dclloading main.lua at or after that point. /reload cannot fix|r")

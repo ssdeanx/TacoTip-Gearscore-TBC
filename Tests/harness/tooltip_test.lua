@@ -4086,6 +4086,33 @@ do
         end
     end
 
+    -- Diag surfacing: a captured pipeline error must appear in the report.
+    -- handlePipelineError fills TT.ev.pipelineErrorSeen, and nothing read that
+    -- table before: diag said "problems: none detected" while errors were
+    -- being collected behind it. Revert (drop reportErrors) -> both red.
+    do
+        TT.ev = TT.ev or {}
+        local prevSeen = TT.ev.pipelineErrorSeen
+        TT.ev.pipelineErrorSeen = { ["PIN_CAPTURED_ERROR_XYZ"] = 3 }
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        TT.ev.pipelineErrorSeen = prevSeen
+        local text = table.concat(captured, "\n")
+        check("diag prints captured pipeline errors",
+            text:find("PIN_CAPTURED_ERROR_XYZ", 1, true) ~= nil,
+            "captured error not found in diag output")
+        check("...with the captured count",
+            text:find("3x PIN_CAPTURED_ERROR_XYZ", 1, true) ~= nil,
+            "captured count missing from diag output")
+    end
+
     -- Pawn late-load diag: Pawn appearing after load is reported as a problem
     -- (scores unavailable until reload), distinct from "no scale".
     do
