@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-22T22:23:26Z",
+  "agent_name": "fix-anchor-unit-gate",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Evidence-first Step 1 settled the discriminator: the addon's own main.lua:1471-1479 documents world mouseover reaching the hook menu-classified (parent=UIParent via GameTooltipMixin), so mouse focus (WorldFrame) + live mouseover unit separates it from bag/panel/addon surfaces even when both arrive with identical frame args; re-hover pins seeded to that exact shape kept their pre-fix redness, and both revert directions were proven per pin on an isolated copy.",
+    "what_was_hard": "The mirror cannot show when the engine fires OnTooltipSetDefaultAnchor (C-side), so the bag route had to be inferred from the operator's in-game report plus mixin wiring; one luajit suite failure during the first concurrent run never reproduced (7 full runs + 30 standalone repeats green) and its output was truncated before capture.",
+    "skill_gap": "Capture full suite output before tail-filtering on first runs of any interpreter, so a one-off failure cannot arrive undetailed."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}
