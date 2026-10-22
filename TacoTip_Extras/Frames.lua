@@ -10,6 +10,7 @@ end
 local Scanner = namespace.Scanner
 local Cache = namespace.Cache
 local Adapter = namespace.TacoTipAdapter
+local Core = namespace.Core
 
 -- Bound at file scope. TacoExtrasApplyLocale MUTATES this table rather than
 -- replacing it, so the reference stays live across a language change.
@@ -41,6 +42,108 @@ local eventFrame
 local localListener
 local remoteListener
 local secureHooks = {}
+
+-- ---------------------------------------------------------------------------
+-- The bounded-callback boundary
+-- ---------------------------------------------------------------------------
+--
+-- EVERY callback this add-on registers on a Blizzard frame or on a Blizzard
+-- function is wrapped by boundedCallback below. A raise inside a HookScript
+-- handler or inside a hooksecurefunc post-hook does NOT stay inside this
+-- add-on: it unwinds through the client's own frame script, so the rest of
+-- Blizzard's handler for that frame never runs. The player sees a broken
+-- character pane or a broken inspect pane -- and the add-on has no idea why.
+--
+-- So every registered callback is bounded: the raise is caught HERE, counted,
+-- and named. The counter and the last message are surfaced by /ttgsdebug
+-- (Core.lua's surfaces block), so a broken surface is diagnosable instead of
+-- merely broken.
+--
+-- The wrapper returns NOTHING. That is deliberate and safe: the four script
+-- types registered below (OnShow, OnHide, OnSizeChanged and the three
+-- hooksecurefunc post-hooks) all ignore the handler's return value, and the
+-- hooks themselves return nothing today. Forcing a return arity here would
+-- be a behaviour change for no gain.
+local hookCallbackErrors = 0
+local lastHookCallbackError = nil
+local hookSkipped = 0
+local hookFailed = 0
+local lastHookFailure = nil
+
+--- Hook a Blizzard frame's script ONLY when that frame declares it.
+---
+--- `Frame:HookScript` raises "bad argument #2 to 'HookScript' (Usage:
+--- self:HookScript(scriptTypeName, script))" when the frame does not declare
+--- the script. That is the failure that aborted the MAIN add-on's whole
+--- Retail load in 0.7.8 (main.lua:2918-2929: the unguarded hook "threw at
+--- FILE SCOPE on Retail, which aborted the remainder of main.lua").
+---
+--- The paper-doll frames declare NO `OnSizeChanged` on any of the five
+--- clients (the classic chain declares OnLoad / OnEvent / OnShow / OnHide and
+--- nothing else), so an unguarded hook on it raises, the raise unwinds the
+--- whole bind, and the equipment window is left unbound with nothing but a
+--- line in the initialization ledger to say so.
+---
+--- Every skip and every failure is counted, so /ttgsdebug can say what was
+--- not hooked instead of leaving it silent.
+local function hookIfDeclared(frame, scriptName, handler, label)
+    if (type(frame) ~= "table" or type(frame.HasScript) ~= "function"
+        or type(frame.HookScript) ~= "function") then
+        hookSkipped = hookSkipped + 1
+        lastHookFailure = tostring(label or scriptName) .. ": frame cannot be hooked"
+        return false
+    end
+    if (not frame:HasScript(scriptName)) then
+        hookSkipped = hookSkipped + 1
+        lastHookFailure = tostring(label or scriptName) .. ": the frame does not declare " .. tostring(scriptName)
+        return false
+    end
+    local ok, err = pcall(frame.HookScript, frame, scriptName, handler)
+    if (not ok) then
+        hookFailed = hookFailed + 1
+        lastHookFailure = tostring(label or scriptName) .. ": " .. tostring(err)
+        return false
+    end
+    return true
+end
+
+local function boundedCallback(label, fn)
+    -- The bounded body is a vararg function on purpose: it forwards the
+    -- callback's arguments to `fn` unchanged.
+    local function bounded(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            hookCallbackErrors = hookCallbackErrors + 1
+            lastHookCallbackError = label .. ": " .. tostring(err)
+        end
+    end
+    return function(...)
+        -- runUntainted: this callback is addon code inside a Blizzard frame's
+        -- script chain (the character pane, the inspect pane, and the
+        -- InspectFrame_Show / InspectFrame_UnitChanged / InspectSwitchTabs
+        -- post-hooks). Uncontained, the client taints that frame; the taint
+        -- reaches the game menu and the Logout/Quit button is refused
+        -- (ADDON_ACTION_FORBIDDEN) -- the player cannot log out.
+        --
+        -- The pcall is INSIDE the containment on purpose: securecall swallows
+        -- a raise and returns nil, so a pcall outside it would report the
+        -- callback as having succeeded and the error counter would never
+        -- move.
+        return Core.RunUntainted(bounded, ...)
+    end
+end
+
+-- The diagnostic snapshot /ttgsdebug reads. Same shape as the other modules'
+-- GetDebugState accessors.
+function Frames.GetDebugState()
+    return {
+        hookCallbackErrors = hookCallbackErrors,
+        lastHookCallbackError = lastHookCallbackError,
+        hookSkipped = hookSkipped,
+        hookFailed = hookFailed,
+        lastHookFailure = lastHookFailure,
+    }
+end
 
 local CONTEXTS = {
     character = {
@@ -273,14 +376,23 @@ local function classColor(unit)
     if type(_G.UnitClass) == "function" then
         local ok, _, classToken = pcall(_G.UnitClass, unit)
         if ok and type(classToken) == "string" then
-            local colors = _G.CUSTOM_CLASS_COLORS
-            local entry = type(colors) == "table" and colors[classToken] or nil
-            if type(entry) ~= "table" or not validColor(entry.r, entry.g, entry.b) then
-                colors = _G.RAID_CLASS_COLORS
-                entry = type(colors) == "table" and colors[classToken] or nil
-            end
-            if type(entry) == "table" and validColor(entry.r, entry.g, entry.b) then
-                return entry.r, entry.g, entry.b
+            -- The CHAIN lives in Core (Core.GetClassColor), so this frame, the
+            -- unit tooltip and the leaderboard row cannot drift apart. What
+            -- stays here is this surface's own two rules: the colour must be
+            -- three finite numbers in 0..1 (an out-of-range community colour
+            -- is refused, not painted), and the fallback is neutral grey.
+            --
+            -- Core owns WHERE a colour comes from; this surface owns whether
+            -- it is acceptable and what to draw when nothing is.
+            local core = namespace.Core
+            if type(core) == "table"
+                and type(core.GetClassColor) == "function" then
+                local red, green, blue = core.GetClassColor(classToken, {
+                    accept = validColor,
+                })
+                if validColor(red, green, blue) then
+                    return red, green, blue
+                end
             end
         end
     end
@@ -1280,15 +1392,28 @@ local function bindCharacter()
     context.host = host
     context.model = model
     createContextFrames(context)
-    host:HookScript("OnShow", onCharacterShow)
-    host:HookScript("OnHide", function()
+    -- The LIVE trigger is the character PANE, not the paper doll.
+    --
+    -- The paper doll carries NO `hidden` attribute, so it is shown from the
+    -- moment it is created, its OnShow fired long before this add-on loaded,
+    -- and a hook on it can never fire again -- the same fact the main add-on
+    -- used in 0.8.4 (main.lua:3782-3799). The character PANE is hidden at
+    -- creation on every client, so ITS OnShow fires once per pane open, which
+    -- is the refresh the equipment window needs.
+    local characterFrame = _G.CharacterFrame
+    hookIfDeclared(characterFrame, "OnShow",
+        boundedCallback("characterFrame.OnShow", onCharacterShow), "characterFrame.OnShow")
+    hookIfDeclared(characterFrame, "OnHide", boundedCallback("characterFrame.OnHide", function()
         hideContext(context, "character-hidden")
-    end)
-    host:HookScript("OnSizeChanged", function()
+    end), "characterFrame.OnHide")
+    -- The paper doll's OnSizeChanged is a POSITION refresh. It is hooked only
+    -- when the frame declares it -- it declares none on any client, and an
+    -- unguarded HookScript raises.
+    hookIfDeclared(host, "OnSizeChanged", boundedCallback("character.OnSizeChanged", function()
         if context.block then
             applyPosition(context, context.currentX, context.currentY)
         end
-    end)
+    end), "character.OnSizeChanged")
     context.bound = true
     context.state = "bound"
     if frameVisible(host) then
@@ -1329,36 +1454,38 @@ local function bindInspect()
     context.model = model
     context.inspectFrame = inspectFrame
     createContextFrames(context)
-    host:HookScript("OnShow", onInspectShow)
-    host:HookScript("OnHide", function()
-        hideContext(context, "inspect-paperdoll-hidden", true)
-    end)
-    host:HookScript("OnSizeChanged", function()
-        if context.block then
-            applyPosition(context, context.currentX, context.currentY)
-        end
-    end)
-    inspectFrame:HookScript("OnShow", function()
+    -- The LIVE trigger is the inspect PANE (it is hidden at creation on every
+    -- client, so its OnShow fires once per inspect). The inspect paper doll's
+    -- own OnShow fired before this add-on loaded -- it carries no `hidden`
+    -- attribute -- so a hook on it could never fire.
+    hookIfDeclared(inspectFrame, "OnShow", boundedCallback("inspectFrame.OnShow", function()
         if inspectPaperDollActive(context) then
             onInspectShow()
         end
-    end)
-    inspectFrame:HookScript("OnHide", function()
+    end), "inspectFrame.OnShow")
+    hookIfDeclared(inspectFrame, "OnHide", boundedCallback("inspectFrame.OnHide", function()
         hideContext(context, "inspect-hidden")
-    end)
-    safeSecureHook(nil, "InspectFrame_Show", function()
+    end), "inspectFrame.OnHide")
+    -- The paper doll's OnSizeChanged is a POSITION refresh, hooked only when
+    -- the frame declares it -- it declares none on any client.
+    hookIfDeclared(host, "OnSizeChanged", boundedCallback("inspect.OnSizeChanged", function()
+        if context.block then
+            applyPosition(context, context.currentX, context.currentY)
+        end
+    end), "inspect.OnSizeChanged")
+    safeSecureHook(nil, "InspectFrame_Show", boundedCallback("InspectFrame_Show", function()
         bindInspectUnit(true)
-    end, "InspectFrame_Show")
-    safeSecureHook(nil, "InspectFrame_UnitChanged", function()
+    end), "InspectFrame_Show")
+    safeSecureHook(nil, "InspectFrame_UnitChanged", boundedCallback("InspectFrame_UnitChanged", function()
         bindInspectUnit(true)
-    end, "InspectFrame_UnitChanged")
-    safeSecureHook(nil, "InspectSwitchTabs", function(newID)
+    end), "InspectFrame_UnitChanged")
+    safeSecureHook(nil, "InspectSwitchTabs", boundedCallback("InspectSwitchTabs", function(newID)
         if newID == 1 then
             onInspectShow()
         else
             hideContext(context, "inspect-tab-hidden", true)
         end
-    end, "InspectSwitchTabs")
+    end), "InspectSwitchTabs")
     context.bound = true
     context.state = "bound"
     if inspectPaperDollActive(context) then

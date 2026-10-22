@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T15:57:00Z",
+  "run_id": "fix-tri-state-inspect-2026-10-20",
+  "agent_name": "fix-tri-state-inspect",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Publishing the three-state names from the library (lib.inspectStates) gave the caller ONE contract to compare against and made the caller genuinely state-dependent: removing the published names turned 4 caller pins red, which is the proof that the caller reads the three-state rather than the old boolean. Splitting the pins by implementation (library harness vs caller harness) meant each revert-to-fail targeted exactly one implementation, so neither mutation could be masked by the other.",
+    "what_was_hard": "The three states changed nothing the player can see, so the caller pin needed an observable that is internal by necessity. Recording the state on the tooltip's own state table (tooltip._tacoTipState.inspectState) was the smallest honest option: it is a record, not a driver of behaviour, and the pins assert both the record and the byte-identical rendered output. A second, unrelated desk was editing the same tree during the session (it added specname_test.lua, moved the suite from 70 to 71 invocations, and touched run_all.sh, Tools/verify_release.sh and THIRD_PARTY_NOTICES.md), so the numbers quoted are the tree's CURRENT ones, not the session's baseline.",
+    "skill_gap": "Reverting the library's answer left the tooltip harness green — correct, but only because the caller pins stub DoInspect directly. A reader could mistake that for the caller pins being blind to the library. The CHANGELOG entry states which harness proves which side."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

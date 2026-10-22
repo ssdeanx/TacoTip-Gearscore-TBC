@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-18T14:26:00Z",
+  "run_id": "stage2",
+  "agent_name": "section2-storage",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "All five audit §6.2 Stage 2 items landed and the full suite is green: 42/42 invocations on lua5.1/lua5.4/luajit, 325 checks flagship era profile (336 retail/forever), LINT=1 luacheck 0 warnings/0 errors. Stage-1 protocol re-verified in-suite plus an explicit wire measurement: 11-field realm-tagged S/T frames ride at 105 bytes under the intact 240-byte enqueue door; maximal-caps shapes are refused at enqueue exactly as before.",
+    "what_was_hard": "The Stage-2 test block's extra PLAYER_ENTERING_WORLD fires re-armed the scan and left it pending (gen 2), silently killing every Tooltips check; root-caused to the missing OnUpdate pump and fixed inside the block. A getDB resurrection trap (any read re-creates an emptied realm key) forced re-ordering the TOO_LARGE key-deletion check ahead of the row check. luacheck flagged the deliberately-empty stale-entry branch; restructured with zero behavior change to reach 0 warnings.",
+    "skill_gap": "none observed"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

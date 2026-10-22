@@ -11,30 +11,30 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.2.2
+version: 1.2.3
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE
 curseforge_id: 1741092
-project_url: https://www.curseforge.com/wow/addons/tacotip-extras/preview
+project_url: https://www.curseforge.com/wow/addons/tacotip-extras
 tacotip_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
 requires: [TacoTip]
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
-interfaces: ["11509", "20506", "38002", "16001", "120100"]
+interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
-status: unreleased
-updated: 2026-10-13
+status: released
+updated: 2026-10-20
 ```
 
 
 **TacoTip Extras** is an optional companion add-on for [TacoTip](https://www.curseforge.com/wow/addons/tacotip-gearscore). It adds enhancement-aware GearScore information to genuine player tooltips and to summaries in the Character and Inspect equipment windows. TacoTip stays separately installed and keeps providing everything else it does.
 
 - **TacoTip** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (required dependency)
-- **TacoTip Extras** — <https://www.curseforge.com/wow/addons/tacotip-extras/preview> (this add-on)
+- **TacoTip Extras** — <https://www.curseforge.com/wow/addons/tacotip-extras> (this add-on)
 
-TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing, to follow. It is not a fork of TacoTip, not maintained by the TacoTip author, and it implies no endorsement by either.
+TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing. It is not a fork of TacoTip, and it implies no endorsement by either.
 
-**Version:** 1.2.2
+**Version:** 1.2.3
 **Author:** AcidBomb (Pilsung)
 
 ## Requirements
@@ -49,7 +49,7 @@ Supported clients — the same set TacoTip supports, declared identically in the
 | TBC Anniversary | 20506 |
 | WotLK Titanforge | 38002 |
 | WoW Forever | 16001 |
-| Retail | 120100 |
+| Retail | 120105 |
 
 ## Installation
 
@@ -58,14 +58,15 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 ## Features
 
 - Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with dedicated background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
-- Interactive Leaderboard window (`/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`) covering the **whole realm**, opening centred on your own rank, with class filtering, live search, `▲ Top` / `▼ My Rank` navigation, and personal rank standing.
-- Automatic tooltip rank display (`Gearscore Rank: #14 [#2 Warrior]`) on player hover.
+- Interactive Leaderboard window (`/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`) covering the **whole realm**, opening centred on your own rank, with class and guild filtering, live search, a sortable level column, `▲ Top` / `▼ My Rank` navigation, keyboard navigation, a Comfortable-rows density option, and personal rank standing.
+- A shared scan button on the leaderboard header and the Options page drives one scan, with a progress rail fed by `Scanner.GetProgress()`.
+- Automatic tooltip rank display (`GS Rank: #14 [#2 Warrior]`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
 - One shared equipment-summary mode with separately saved Character and Inspect positions.
 - Locked-by-default movement using a small handle that appears only while positions are unlocked.
 - Local, friendly remote, and permitted enemy remote player support with fail-closed non-player rejection.
-- Native Options integration, `/ttgs`, a movable minimap shortcut, and reversible TacoTip coexistence.
+- Native Options integration, `/ttgs`, a movable minimap shortcut (left-click: leaderboard, right-click: settings), an **eleven-locale** leaderboard window, Options page, tooltip and equipment-summary UI following TacoTip's language setting, and reversible TacoTip coexistence. The window's labels, column headers, sort dropdown, row tooltips, empty and scan states, the footer's standing line, the class names and the time-ago strings are translated, as are the Options page's control labels, help headings and help text, the mode names and the tooltip's metric labels. A few status and diagnostic strings are still English only — see **Known limitations**.
 
 ## Metrics
 
@@ -78,7 +79,14 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 
 Potential GS, Delta, and Completion appear only when their required item and socket evidence is conclusive. Unavailable or unknown information is never represented as zero.
 
+**The level-70 rule.** Potential GS, Delta, and Completion are hidden for a character below level 70 while **Restrict Potential, Completion, and warnings to level 70** is on — which is the default. Turn that setting off and the same three values are computed and shown at any level: the numbers do not change, only whether you are shown them. The setting takes effect immediately; the values are recomputed from the gear that has already been read, so nothing is rescanned and no re-inspection happens. Current GS, Unenhanced GS, and Average iLvl are never affected by it.
+
 ## Player-tooltip modes
+
+A new install starts on **Detailed**, so every enabled metric is on screen from
+the first tooltip instead of behind a summary. An install that has already
+saved a mode keeps it: pick another one in the Options page, or press **Reset
+enhancer settings** to go back to the defaults.
 
 - **Disabled:** shows no add-on rows and safely releases the TacoTip player-GearScore takeover.
 - **Minimal:** shows the shortest enabled summary, prioritizing Current GS and Average iLvl. It omits Unenhanced GS.
@@ -91,28 +99,45 @@ TacoTip Extras features a decentralized, HonorSpy-style peer-to-peer sync engine
 
 - **Interactive Leaderboard Window:** Access via `/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`, or via the **Open Server Leaderboard** button in Options.
   - Ranks the **whole realm**. There is no Alliance/Horde split — a faction filter would only hide the players you want to compare yourself against.
-  - **Opens on your own rank.** The window scrolls to your position and centres you on the middle visible row every time it opens, honouring the active class filter and search.
+  - **Shows sixteen players at once**, in a window wide enough for the name and spec columns to be read without crowding. The window's content is a clean vertical stack — title, filter row, summary strip, sort readout, column headers, table, progress rail, footer — and every part of it has its own space, so nothing is drawn on top of anything else.
+  - **Opens on your own rank.** The window scrolls to your position and centres you on the middle visible row every time it opens, honouring the active filters and search.
   - **`▼ My Rank`** re-centres you at any time; **`▲ Top`** jumps back to `#1`.
-  - **Sort** by clicking the `GEARSCORE`, `iLVL` or `LAST SEEN` headers. The active column is underlined and the current order is stated on screen. The `#` column always stays the **GearScore rank**, whichever way the list is sorted, so sorting never makes standing look like it moved.
-  - **Hover any row** for full detail: spec, GearScore, Average iLvl, realm rank and last-seen.
+  - **Sort** by clicking the `GEARSCORE`, `iLVL`, `LEVEL` or `LAST SEEN` headers. Clicking the active header reverses its direction; switching columns resets to descending. The active column is underlined and the current order is stated on screen, on a line of its own below the summary strip and clear of the column headers. The `#` column always stays the **GearScore rank**, whichever way the list is sorted, so sorting never makes standing look like it moved.
+  - **Hover any row** for full detail: spec, GearScore, Average iLvl, realm rank, last-seen, guild where known, and advisory PvP lines (Era/TBC/Wrath only; never rendered from synced data on Retail/Forever).
   - **Escape closes the browser**, on every supported client.
-  - Filter by class from the **class dropdown**, or type a name fragment into the search box for live filtering.
+  - Filter by class from the **class dropdown**, by guild substring from the guild box, or type a name fragment into the search box for live filtering.
+  - A muted strip reports pool size, top GearScore and realm-average GearScore; rows first seen this session carry a fresh tick.
+  - A scan button on the header (mirrored on the Options page) drives one shared scan with a progress rail. `Up`/`Down` moves an entry-anchored focus ring, `Enter` opens that row's gear. A `Comfortable rows` checkbox rebuilds the list at 32px rows (default 26px).
   - Your own row carries a **highlight and a `YOU` marker**, so you can see at a glance which row is you.
-  - **Click any row** to open a **gear panel** for that player: their 17 equipped slots, each rendered as a real item link so the game supplies quality colour and hover tooltips. Slot labels use Blizzard's own `INVTYPE_*` strings, so the panel is translated in every language the client ships. Players not scanned this session show a plain explanation rather than blank rows.
+  - **Click any row** to open a **gear panel** for that player: their 17 equipped slots, each rendered as a real item link so the game supplies quality colour and hover tooltips. The panel has its own dark background and border, so it stays readable over whatever is behind it. Slot labels use Blizzard's own `INVTYPE_*` strings, so the panel is translated in every language the client ships. A fresh session entry renders live links; otherwise persisted IDs render dimmed with a last-synced note; only when neither exists does the plain explanation appear rather than blank rows.
   - Top players get percentile-coloured rank numbers: `#1` is the top band because it *is* the highest GearScore. The class-rank number in the tooltip line uses the same scale against the class pool.
   - Every row has a thin class-colour bar, hover highlighting, and muted spec / last-seen columns.
   - Footer banner shows your character's personal Overall, Faction, and Class ranks.
 - **Tooltip Rank Display:**
-  - Renders a rank line on player tooltips: `Gearscore Rank: #14 [#2 Warrior]`, with the numbers coloured by percentile and the class name in its class colour.
+  - Renders a rank line on player tooltips: `GS Rank: #14 [#2 Warrior]`, with the numbers coloured by percentile. Detailed and Minimal show the class name in its class colour; Compact replaces the class name with the class icon, degrading to the class name where the client cannot resolve the atlas. The unit tooltip gains one trailing muted line, `Rank synced: <relative>` (rows older than the session).
   - Can be toggled on/off in the Options panel (`Show server leaderboard rank`).
 - **Silent Background Sync:**
-  - Automatically exchanges inspection records over the hidden chat channel `ttgssync` with fallback broadcasts to `GUILD`, `PARTY`, and `RAID`.
+  - Automatically exchanges inspection records over the hidden chat channel `ttgssync` with fallback broadcasts to `GUILD`, `PARTY`, and `RAID` (`INSTANCE_CHAT` inside instances).
+  - Records ride one versioned stride (`R;2;…`, 13 fields); gear travels only on demand (`G` asks, `D` answers in chunks inside the same 240-byte door).
   - **Asks for data instead of only listening.** A client that has just logged in sends a `Q` query; peers answer with `S` (their own current record) and `T` (a short digest of the best records they hold). Without this a fresh install stayed empty until enough players happened to re-gear near it.
-  - **Flood-controlled on both sides.** Each client answers at most one query per 20 seconds, and answers are jittered by a random 1–4 seconds so a group logging in together does not answer in the same instant. Responses are sized against the 255-byte addon-message limit.
+  - **Flood-controlled on both sides.** Each client answers at most one query per 20 seconds, and answers are jittered by a random 1–4 seconds so a group logging in together does not answer in the same instant. Responses are sized against the 255-byte addon-message limit; enqueue refuses anything over 240 bytes.
   - Re-driven on login, `/reload`, instance transitions and open-world zone changes, throttled to one round per 30 seconds.
   - Channel output is silenced from chat windows with zero chat clutter.
   - Rate-limited with a token bucket (1 msg / 1.5s, burst max 3) to prevent disconnects.
   - Stale data is automatically pruned after 60 days, with a 20,000 player capacity cap (measured at ~5.3 MB of SavedVariables).
+
+### What other players can see
+
+The sync is not private and is not meant to be. This is exactly what leaves your client:
+
+- **Your character is identified by a unique ID.** That ID travels with every record you send. It is the internal ID the game uses for your character, and it is what lets the leaderboard tell one character's record from another's.
+- **Your record carries your name, class, specialization, guild, level, PvP rating, GearScore, average item level, and the time it was recorded.** Your realm is never sent — a record always files under the realm of the client that received it.
+- **Inspecting another player shares that player too.** When you look at someone else's gear, a record for *them* is sent out as well, so the data about a person you inspected is shared with everyone on the channel, not only their own data.
+- **The channel name and the message format are part of the shipped files.** Anyone who joins that channel can read the traffic on it, and anyone can write to it. Nothing is encrypted, and the channel name is not hidden.
+- **Gear is shared on request only, and only as item IDs.** When the leaderboard asks another player for their gear, that player answers with the item IDs in their equipment slots — no item links, no enchant names, no gem names, and nothing else about that character.
+- **The guild roster is not shared.** Only the guild name on your own record is.
+
+Nothing you type in chat, and no setting other than the ones listed above, is sent.
 
 ## Character and Inspect summaries
 
@@ -134,11 +159,13 @@ While Basic or Detailed is active and the exact TacoTip object contract is valid
 
 Open the settings through any of these routes:
 
-- `/ttgs`
-- left-click the minimap button
+- `/ttgs` (always opens the main category; it never closes Settings)
+- right-click the minimap button (toggles settings)
 - Esc → Options → Add-Ons → TacoTip Extras
 
-The main category retains tooltip, scoring-policy, minimap, restore, and reset controls. Its **Equipment Windows** child category contains the shared summary mode, the optional Detailed Unenhanced comparison, the lock/unlock control, and **Reset summary positions**. `/ttgs` and the minimap shortcut open the main category.
+Open the leaderboard via `/tt lb` (or any rank slash), the **Open Server Leaderboard** button, or left-click on the minimap button.
+
+The main category retains tooltip, scoring-policy, minimap, class-colour, restore, and reset controls. Its **Equipment Windows** child category contains the shared summary mode, the optional Detailed Unenhanced comparison, the lock/unlock control, and **Reset summary positions**. `/ttgs` and right-click open the main category; left-click toggles the leaderboard.
 
 The category is registered through `Settings.RegisterCanvasLayoutCategory` with
 `Equipment Windows` as a `RegisterCanvasLayoutSubcategory` beneath it. When
@@ -148,27 +175,36 @@ category name for the main page and to this add-on's main page for the equipment
 page, so the nesting is the same on both APIs. The main page is therefore a
 child of TacoTip's category rather than a second top-level entry.
 
-The minimap button can be dragged around the minimap. Left-click opens the add-on category, closes it when that exact category is active, or switches to it from another Settings category. `/ttgs` always opens or switches; it never closes Settings.
+The minimap button can be dragged around the minimap. Right-click toggles the add-on category, closing it when that exact category is active, or switching to it from another Settings category. Left-click toggles the leaderboard. `/ttgs` always opens; it never closes Settings.
+
+**The diagnostic snapshot is published for TacoTip.** `/ttgsdebug` prints the add-on's live counters — scan state, metric values, sync buckets, listener errors and initialization failures — to the chat frame, and it works on its own. The client's slash-command table is a proxy that is emptied before a command is dispatched, so another add-on cannot read this handler back out of it; the Extras therefore publishes the same function on the plain global `_G.TacoTipExtrasPrintDebugSnapshot`, which TacoTip calls directly. It is the same function object the `/ttgsdebug` command invokes, and the printed content is unchanged.
 
 **Enable add-on** is the master output switch. Disabling it retains child preferences, hides add-on output, and releases every active TacoTip lease. **Restore TacoTip settings** remains a tooltip-only action: it disables and releases only the player-tooltip takeover and its `show_gs_player` recovery record. It does not change or suspend the equipment summary, its mode, or its positions.
 
-A fresh profile starts with both player tooltips and equipment summaries in Detailed mode, Unenhanced GS off, positions locked, and both saved positions unset.
+**Shaman Blue** shows the Shaman class name in blue instead of pink. Classic Era paints the Shaman class colour pink, so without this the class name in the tooltip, in the Character and Inspect windows, and in the leaderboard all read pink. The option is on by default, and those three places always agree with each other. If TacoTip is installed, its own Shaman Blue setting applies as well: turning it off there turns the blue off here too, so the class colour is the same in both add-ons.
+
+The options page is laid out in two columns. Each option's label is kept inside its own column and wraps onto a second line when it is long, and each checkbox's clickable area covers the box and its own label and nothing else — so no option can be clicked in place of the one next to it.
+
+A fresh profile starts with both player tooltips and equipment summaries in Detailed mode, Unenhanced GS off, Shaman Blue on, positions locked, and both saved positions unset.
 
 **Reset add-on settings** uses the fresh-profile defaults; **Reset summary positions** clears only the two equipment positions.
 
 ## Saved variables
 
-Preferences are stored in `TacoTipExtrasDB`, **and so is the leaderboard**. Realm standings are written to `TacoTipExtrasDB.ranks[<realm>]`, keyed by GUID, so the board survives logging out: WoW saves the table on exit and loads it at login, and the sync engine then refreshes it against whoever else is online. A record carries name, faction, class, spec, GearScore, average item level and a timestamp — roughly 276 bytes each, which is where the 20,000-record cap and its ~5.3 MB figure come from.
+Preferences are stored in `TacoTipExtrasDB`, **and so is the leaderboard**. Realm standings are written to `TacoTipExtrasDB.ranks[<realm>]`, keyed by GUID, so the board survives logging out: WoW saves the table on exit and loads it at login, and the sync engine then refreshes it against whoever else is online. A record carries numeric class/spec IDs plus guild, level, PvP rank and arena alongside name, GearScore, average item level and a timestamp — roughly 276 bytes each at the diet shape, growing with the expanded fields, which is where the 20,000-record cap and its ~5.3 MB figure come from. Faction stays storage-only and optional; the realm never leaves the sender because inbound records always file under the receiver's own realm. Synced gear persists separately in `TacoTipExtrasDB.gear`, capped at 2,000 rows per realm under the same 60-day age prune (7 days / 1,000 rows on the aggressive pass).
 
 Before 1.0.0 the add-on stored preferences in `TacoTipGearScoreEnhancerDB`; that name is retired and old tables are ignored rather than migrated, so a pre-1.0.0 profile starts from defaults on first load after upgrading. Nothing errors on the missing table.
 
-Per-slot equipment detail, scanner revisions and cache entries remain **session-only** — they are what the gear panel reads, which is why the panel can only show players scanned since you logged in.
+Per-slot equipment detail renders live while a fresh scanner revision exists; persisted IDs back it with dimmed literals and a last-synced note, which is why the gear panel can show players scanned on an earlier session.
 
 ## Known limitations
 
-- **Not yet released.** 1.0.0 is a relaunch under new packaging; the CurseForge listing does not exist yet.
-- **The adapter gates on capability, not on a version number.** It enforces a minimum TacoTip version of `0.8.0` and then probes the functions it actually calls. It deliberately does **not** compare the inspector's version: `LibForeverInspector` registers the `LibClassicInspector` alias at minor 2 and defines no `Version()` method at all, so any equality check against a published version could never pass. A minimum version is still enforced, so an older TacoTip is still refused.
-- **`GetItemStats` is a Mainline-family API and is absent from the three Classic clients.** It is documented in `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua` on `origin/live` (Retail) *and* on `origin/forever`, and appears nowhere in the `Interface` tree of `classic_era`, `classic_anniversary` or `classic_titan`. **Classic Era and TBC Anniversary therefore take the degraded socket path**: the gem count still scores, because it comes from the item link, but the *empty* socket count, the completion percentage and the potential total are omitted rather than guessed. Retail and WoW Forever take the full socket path. The add-on feature-detects the function rather than branching on a client name, so the two Classic clients and the forced-`nostats` test variant all exercise the same degrade path.
+- **Already listed on CurseForge.** The CurseForge listing exists and serves **1.2.2**. Version **1.2.3** ships alongside TacoTip 0.8.4.
+- **The Options page's integration and enhancement status lines, and the gear panel's "Last synced" note, are still English only.** The three status lines under the Options page — "TacoTip integration: …", "Remote enhancement analysis: …" and "Remote enhancement blocker: Slot …" — and the forty-seven sentences they can expand into (the compatible / incompatible / not-loaded reasons and the remote complete / unavailable / pending / suppressed / not-observed reasons) are written in English in the source, as are the **Reset summary positions** button label, the **How these scores work** heading, the equipment windows' **Drag** handle label and the gear panel's **Last synced …** and **Synced gear (item IDs only)** notes. Everything else on those surfaces is translated. Localizing them is a separate translation pass, not a code change: the strings are hardcoded English today, and the locale keys that once existed for them were never read by any code path, so they have been removed rather than left as dead weight.
+- **The level-70 restriction is a display rule.** While **Restrict Potential, Completion, and warnings to level 70** is on (the default), Potential GS, Delta, and Completion are not shown for a character below level 70 and the related warnings are held back; Current GS, Unenhanced GS, and Average iLvl still show. Turning the setting off shows the same three values at any level. On Classic Era, TBC Anniversary, and Titanforge those three metrics stay unavailable regardless of the setting, because the client does not expose the socket data they need (see the `GetItemStats` note below).
+- **The socket count comes from the documented API, and a count that contradicts the item's own gems is withheld rather than published.** On Retail and WoW Forever the number of socket slots is read from `C_Item.GetItemNumSockets` — the socket-count API Blizzard's own character frame uses, which passes the raw item link straight into it (`PaperDollFrame.lua:2775`, fed by `GetInventoryItemLink` at `:1728`; documented at `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua:854` on `origin/live`, `:876` on `origin/forever`). The add-on still cross-checks that count against the item's own gem list, parsed from the item link, and now in **both** directions: a count that is too small for the item's gems and a count that is too large for them both leave the socket-based metrics **unavailable rather than guessed** on that item.
+- **The adapter gates on capability, not on a version number.** It enforces a minimum TacoTip version of `0.8.0` and then probes the functions it actually calls. It deliberately does **not** compare the inspector's version: `LibForeverInspector` registers the `LibClassicInspector` alias at minor 2 (only when that name is not already held by another library) and defines no `Version()` method at all, so any equality check against a published version could never pass. A minimum version is still enforced, so an older TacoTip is still refused.
+- **`GetItemStats` is a Mainline-family API, is absent from the three Classic clients, and is what the socket path is gated on.** It is documented in `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua` on `origin/live` (Retail) *and* on `origin/forever`, and appears nowhere in the `Interface` tree of `classic_era`, `classic_anniversary` or `classic_titan`. **Classic Era, TBC Anniversary and Titanforge therefore take the degraded socket path**: the gem count still scores, because it comes from the item link, but the *empty* socket count, the completion percentage and the potential total are omitted rather than guessed. Retail and WoW Forever take the full socket path. The add-on feature-detects the function rather than branching on a client name, so the three Classic clients and the forced-`nostats` test variant all exercise the same degrade path. The socket *count* itself does **not** come from `GetItemStats` — it comes from `C_Item.GetItemNumSockets` — and that API is documented on the Classic branches too; the gate deliberately does not widen to it, because the Classic clients' behaviour is a shipped, documented contract and widening it would change published numbers on clients that cannot be tested before publish.
 - Remote Potential GS and Completion may be unavailable when native inspection data is not conclusive.
 - Per-slot enhancement markers, item-level or score overlays beside equipment slots, and enhancement details in item tooltips are not included.
 - **The base GearScore comes from `TT_GS`, not from this add-on.** Enchant (x1.05) and gem (+5 per socket) bonuses are computed here as *deltas* on top of TacoTip's number. An earlier revision carried its own copy of the formula and it was wrong above ilvl 120, where TacoTip switches to formula table A: a `HEAD` at ilvl 200 scored 310 in TacoTip and 269 in the copy.
@@ -184,21 +220,30 @@ bash TacoTip_Extras/Tests/harness/run_all.sh
 
 It runs under `lua5.1`, `lua5.4` and `luajit` and exits non-zero if any invocation fails.
 
-Twelve scenarios per interpreter: five clients, then seven variants that each pin
-a different branch of the compatibility code.
+Fourteen scenarios per interpreter — twelve load scenarios (five clients, then
+seven variants that each pin a different branch of the compatibility code)
+plus two leaderboard-behaviour runs that drive the browser and assert what it
+rendered. Fourteen per interpreter across three interpreters is 42
+invocations in total.
 
 Every scenario asserts **which driver branch the client takes**, not merely that
 it loads. `GameTooltip` declares `OnTooltipSetUnit` on the Classic family and on
 Mainline only in an XML *schema*, so the two families take different code paths
 and "did not raise" is not evidence either path works.
 
-| Client | `WOW_PROJECT_*` constants the branch defines | `GameTooltip` declares `OnTooltipSetUnit` | Driver | `GetItemStats` |
+| Client | `WOW_PROJECT_*` constants the branch defines | `GameTooltip` declares `OnTooltipSetUnit` | Driver | `GetItemStats` (the socket path's gate) |
 | :--- | :--- | :--- | :--- | :--- |
 | Classic Era 11509 | all six, `WOW_PROJECT_ID = 2` | yes | `unit-hook` | absent |
 | TBC Anniversary 20506 | all six, `WOW_PROJECT_ID = 5` | yes | `unit-hook` | absent |
 | Titanforge 38002 | all six, `WOW_PROJECT_ID = 11` | yes | `unit-hook` | absent |
 | WoW Forever 16001 | `MAINLINE`, `CLASSIC` only | no | `poll` | **present** |
-| Retail 120100 | `MAINLINE`, `CLASSIC` only | no | `poll` | **present** |
+| Retail 120105 | `MAINLINE`, `CLASSIC` only | no | `poll` | **present** |
+
+`C_Item.GetItemNumSockets` — the API the socket *count* is read from — is
+documented on all five branches, so the mock installs it on all five clients
+too. The Classic degradation is therefore the **gate's** doing and not an
+accident of the model: the harness proves it by removing the gate and watching
+the Classic socket path come back.
 
 ### The two tooltip drivers
 

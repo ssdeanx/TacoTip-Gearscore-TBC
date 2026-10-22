@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T14:20:00Z",
+  "run_id": "fix-extras-operator-requests-item-5",
+  "agent_name": "fix-extras-operator-requests",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Checking the brief's stated root cause against the client source paid off twice. The hit rect DOES expand to the RIGHT -- but only because SetHitRectInsets' argument order is (left, right, top, bottom), which the API documentation and Blizzard's own calls both confirm; half of what I remembered was the wiki's (left, top, right, bottom). And the brief's template hypothesis is WRONG: InterfaceOptionsCheckButtonTemplate exists on all five branches, resolves through OptionsBaseCheckButtonTemplate to UICheckButtonArtTemplate with a real NormalTexture that Blizzard's own Classic Era UI uses -- and the MAIN add-on uses the same template with no complaint from the operator. Keeping the template and fixing the hit rect and the label cap was the right call, and it is why the page did not have to be re-flowed.",
+    "what_was_hard": "I could not reproduce a 'grey box' from the source, and the operator's screenshot is not in the repo (the only PNGs are old tooltip captures from 2026-10-16, which I inspected). Rather than invent a cause, I reported what the source establishes and what it does not, and fixed the one mechanism the source does support -- a 500-pixel hit-rect expansion, which is a region the client draws a button highlight over. The harness also had a vacuous pin: the mock reported a zero width for a FontString with no explicit width, so 'no label overflows' passed on nothing. The revert proof exposed it, and modelling the auto-size fixed the pin.",
+    "skill_gap": "A pin that measures a quantity the mock never computes is not a pin. 'The label does not overflow' was green because the mock said the label was zero pixels wide. The general form: a geometry pin has to read the geometry the CLIENT would produce -- the template's size, a FontString's auto-size, the hit-rect argument order -- or it is measuring the mock. A second gap: a deprecated template that Blizzard keeps only for compatibility is a standing risk even when it is exonerated, and that is worth recording separately from 'it is broken'."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

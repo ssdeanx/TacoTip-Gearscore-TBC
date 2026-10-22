@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T00:20:00Z",
+  "run_id": "fixmainhunter",
+  "agent_name": "fix-main-hunter",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Mirror-first evidence for the guild guard (the global exists on live and forever, and on NO Classic branch) turned a vague 'the guard must still work' requirement into two pinnable facts: it installs on the modern pair when Blizzard_InspectUI loads, and it is a no-op on the Classic family. Classifying the guild case by the CLIENT'S OWN DATA (the fourth value of C_PaperDollInfo.GetInspectGuildInfo is nil for a player with no guild) instead of by the error text avoided a fragile string match whose wording varies by client and locale. Pins ride the harnesses that already own the mock environments, so the invocation count stayed at 70 and no new harness pattern was introduced.",
+    "what_was_hard": "The M-1 audit note claimed resolveTooltipUnit's dead IsUnit call was reachable from TacoTip_GSCallback; it is not — that caller passes no unit, so it takes the TooltipUtil/GetUnit arms. Only the callers that PASS a unit reach the dead branch. Separately, the first M-2 revert proof was not a faithful restore (it double-counted instead of restoring the old single-bucket wrapper) and had to be rewritten before the quoted red meant anything.",
+    "skill_gap": "Proving a swallow still swallows needs a proof that keeps the swallow checks GREEN while the counting checks go red; a naive revert proves neither cleanly. Recording which checks are expected to stay green is part of the proof, not a weakness in it."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

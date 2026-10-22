@@ -79,6 +79,34 @@ local TT_MARKER_METHODS = {
 local MANAGED_KEY = "show_gs_player"
 local SURFACE = "tooltip"
 
+-- The recovery journal's IDENTITY: what it is, not which build wrote it.
+--
+-- The identity used to be the capability FINGERPRINT, and the fingerprint
+-- includes the TacoTip version. So upgrading TacoTip changed the fingerprint,
+-- the journal on disk no longer matched, and the adapter latched a conflict
+-- that was never cleared -- because /reload does not fire PLAYER_LOGOUT, the
+-- journal stayed on disk, and `conflictLocked` had no reset path at all. The
+-- result was that the Extras tooltip surface stayed dead across every
+-- /reload AND the main add-on's show_gs_player (which this add-on had forced
+-- to false) was never restored.
+--
+-- The identity is now STABLE: the surface, the managed key, and a schema
+-- number that changes only when the RECORD's shape changes incompatibly.
+-- The fingerprint stays in the journal as a DIAGNOSTIC -- it says which build
+-- wrote the record -- and is no longer a lock condition.
+local RECOVERY_SCHEMA = 1
+
+-- Why the takeover is not running, in the user's words. The state is never
+-- silent: a conflict is stated in chat exactly once per session.
+local RECOVERY_MESSAGES = {
+    ["recovery-journal-mismatch"] = "the saved recovery record could not be read, so it was discarded and the tooltip takeover started fresh.",
+    ["recovery-config-replaced"] = "TacoTip's settings were replaced since the last session, so the saved recovery record was discarded.",
+    ["recovery-setting-conflict"] = "you changed TacoTip's own player GearScore setting, so the tooltip takeover is paused. Put it back and it resumes.",
+    ["recovery-compatibility-unsupported"] = "TacoTip is not compatible with this add-on, so the tooltip takeover is off.",
+    ["tooltip-lease-config-replaced"] = "TacoTip's settings were replaced while the tooltip takeover was running, so the takeover was released.",
+    ["tooltip-lease-setting-conflict"] = "you changed TacoTip's own player GearScore setting while the tooltip takeover was running, so the takeover was released.",
+}
+
 -- CallbackHandler owner keys this add-on has used, oldest first. The current
 -- one is derived from addonName at the call site; these are the predecessors a
 -- stale in-memory registry could still be holding. See RegisterInventoryReady.
@@ -1610,57 +1638,144 @@ local function clearJournal()
     end
 end
 
+-- Say it once. A conflict that is never stated is a conflict the user
+-- cannot act on, and the whole point of the recovery journal is that the
+-- add-on must not leave the main add-on's setting in a state nobody
+-- explained. One line per reason per session: the state is visible without
+-- becoming chat spam on every tick.
+local recoveryNotices = {}
+local function noteRecoveryOutcome(reason)
+    if type(reason) ~= "string" or reason == "" then
+        return
+    end
+    if recoveryNotices[reason] then
+        return
+    end
+    recoveryNotices[reason] = true
+    local chat = _G.DEFAULT_CHAT_FRAME
+    if type(chat) ~= "table" or type(chat.AddMessage) ~= "function" then
+        return
+    end
+    local message = RECOVERY_MESSAGES[reason] or reason
+    pcall(chat.AddMessage, chat,
+        "|cffff5555TacoTip Extras:|r " .. message)
+end
+
+-- Latch the conflict and say why.
+local function noteConflict(reason)
+    conflictLocked = true
+    internalReason = reason
+    noteRecoveryOutcome(reason)
+end
+
+-- Is this journal OURS?
+--
+-- A journal is ours when it names the same surface, the same managed key and
+-- the same record schema. A journal written before the identity existed
+-- carries no identity table, so the identity is derived from the shape it
+-- does have -- surface, key and schema number -- and a record left by an
+-- older build is still recognised as ours. That is the whole point: the
+-- identity has to survive an upgrade of EITHER add-on.
+local function journalIdentity(journal)
+    if type(journal) ~= "table" then
+        return nil
+    end
+    local entries = journal.entries
+    if type(entries) ~= "table" then
+        return nil
+    end
+    local record = entries[MANAGED_KEY]
+    if type(record) ~= "table" then
+        return nil
+    end
+    if journal.surface ~= SURFACE or record.owningSurface ~= SURFACE then
+        return nil
+    end
+    return {
+        surface = SURFACE,
+        key = MANAGED_KEY,
+        schema = tonumber(journal.schema) or RECOVERY_SCHEMA,
+    }
+end
+
+local function journalIsOurs(identity)
+    return identity ~= nil
+        and identity.surface == SURFACE
+        and identity.key == MANAGED_KEY
+        and identity.schema == RECOVERY_SCHEMA
+end
+
+-- Recover an interrupted takeover.
+--
+-- RESTORATIVE by default. A journal on disk means a session ended without
+-- PLAYER_LOGOUT while this add-on held the tooltip takeover, so the setting
+-- it forced may still be forced. The rule is narrow and honest:
+--
+--   * if the setting still holds the value this add-on forced, the takeover
+--     is simply resumed -- the original value is restored, the journal is
+--     cleared, and the lease is re-acquired. Whatever the fingerprint says
+--     (an upgraded TacoTip, a changed capability set) is a DIAGNOSTIC, not
+--     a lock.
+--   * if the setting no longer holds that value, the user changed it
+--     themselves. Their change wins: nothing is restored, the takeover is
+--     refused, and the reason is stated in chat.
+--
+-- The refusal is stable and self-healing: the journal is KEPT, so putting
+-- the setting back where this add-on left it lets the next read restore the
+-- original value and resume.
 local function recoverInterruptedLease()
     local journal, record = recoveryRecord()
     if not journal then
+        -- Nothing to recover, and nothing to conflict with. A conflict
+        -- latched against an earlier read is re-evaluated below rather than
+        -- carried for the rest of the session.
+        conflictLocked = false
         return true
     end
-    if type(journal) ~= "table" then
-        conflictLocked = true
-        internalReason = "recovery-journal-mismatch"
-        return false
-    end
     if not compatibility.supported then
-        conflictLocked = true
-        internalReason = "recovery-compatibility-unsupported"
+        noteConflict("recovery-compatibility-unsupported")
         return false
     end
-    if journal.surface ~= SURFACE
-        or journal.fingerprint ~= compatibility.fingerprint
-        or type(record) ~= "table"
-        or record.owningSurface ~= SURFACE
+    local identity = journalIdentity(journal)
+    if not journalIsOurs(identity)
         or record.forcedValue ~= false
         or type(record.originalValue) ~= "boolean"
         or type(record.owned) ~= "boolean" then
-        conflictLocked = true
-        internalReason = "recovery-journal-mismatch"
-        return false
+        -- A record this add-on cannot interpret. There is nothing in it to
+        -- act on, so it is discarded and the takeover starts fresh from the
+        -- current value -- with the reason stated, so the state is never
+        -- silent.
+        clearJournal()
+        noteRecoveryOutcome("recovery-journal-mismatch")
+        return true
     end
 
     local config = _G.TacoTipConfig
-    if config ~= compatibility.config then
-        conflictLocked = true
-        internalReason = "recovery-config-replaced"
-        return false
+    if type(config) ~= "table" or config ~= compatibility.config then
+        -- The configuration table this record refers to is gone (TacoTip was
+        -- reset or replaced). The old takeover is void, so the record is
+        -- discarded and the takeover starts fresh from the new value.
+        clearJournal()
+        noteRecoveryOutcome("recovery-config-replaced")
+        return true
     end
     if config[MANAGED_KEY] ~= record.forcedValue then
-        clearJournal()
-        conflictLocked = true
-        internalReason = "recovery-setting-conflict"
+        -- The user changed the setting themselves. Their change wins.
+        noteConflict("recovery-setting-conflict")
         return false
     end
     if record.owned then
         config[MANAGED_KEY] = record.originalValue
     end
     clearJournal()
+    conflictLocked = false
     return true
 end
 
 local function relinquishForConflict(reason)
     clearJournal()
     lease = nil
-    conflictLocked = true
-    internalReason = reason
+    noteConflict(reason)
 end
 
 local function releaseLease(reason)
@@ -1734,6 +1849,21 @@ local function acquireLease()
         return false
     end
     if conflictLocked then
+        -- The configuration has just been re-read, so a conflict latched
+        -- against the PREVIOUS read is re-evaluated from scratch instead of
+        -- being carried for the rest of the session. The lock exists to stop
+        -- a half-finished takeover from being repeated against a state that
+        -- has since changed -- it does not condemn the session.
+        --
+        -- The recovery is only re-run when no lease is live: a live lease's
+        -- own journal describes the takeover in progress, and recovering it
+        -- would undo the takeover that is running.
+        conflictLocked = false
+        if lease == nil and not recoverInterruptedLease() then
+            return false
+        end
+    end
+    if conflictLocked then
         return false
     end
     if not callbackRegistered then
@@ -1756,7 +1886,17 @@ local function acquireLease()
         owned = owned,
     }
     database.tacoTipRecovery = {
+        -- The identity is what the record IS; the fingerprint is only which
+        -- build wrote it. A record whose fingerprint no longer matches (an
+        -- upgraded TacoTip) is still OURS, and the recovery is restorative.
+        schema = RECOVERY_SCHEMA,
         surface = SURFACE,
+        key = MANAGED_KEY,
+        identity = {
+            surface = SURFACE,
+            key = MANAGED_KEY,
+            schema = RECOVERY_SCHEMA,
+        },
         fingerprint = compatibility.fingerprint,
         entries = { [MANAGED_KEY] = record },
     }
@@ -2078,10 +2218,22 @@ function Adapter.HandlePlayerRegenEnabled()
     return processEquipmentDeferred()
 end
 
+-- Score-colour fallback telemetry (hunter M-NEW1, debug ONLY). Both colour
+-- probes below fail silent to nil (the callers fall back to neutral grey),
+-- so a broken TT_GS.GetQuality was invisible. Every nil return is counted
+-- with the last reason kept; nothing returned and nothing displayed changes.
+local scoreColorFallbacks = 0
+local lastScoreColorReason = nil
+local function noteScoreColorFallback(reason)
+    scoreColorFallbacks = scoreColorFallbacks + 1
+    lastScoreColorReason = reason
+end
+
 function Adapter.GetEquipmentScoreColor(score)
     if not isTacoTipLoaded()
         or not versionAtLeast(getMetadataVersion(), MINIMUM_TACOTIP_VERSION)
         or not qualityBehaviorValid() then
+        noteScoreColorFallback("equipment-gate")
         return nil
     end
     local gearScore = _G.TT_GS
@@ -2096,15 +2248,18 @@ function Adapter.GetEquipmentScoreColor(score)
         and isFiniteUnitNumber(blue) then
         return red, green, blue
     end
+    noteScoreColorFallback(ok and "equipment-non-finite" or "equipment-pcall")
     return nil
 end
 
 function Adapter.GetCurrentScoreColor(score)
     if not Adapter.IsTooltipSurfaceActive() then
+        noteScoreColorFallback("current-surface-inactive")
         return nil
     end
     local gearScore = _G.TT_GS
     if type(gearScore) ~= "table" or type(gearScore.GetQuality) ~= "function" then
+        noteScoreColorFallback("current-no-quality")
         return nil
     end
     local ok, red, green, blue = pcall(
@@ -2118,7 +2273,17 @@ function Adapter.GetCurrentScoreColor(score)
         and isFiniteUnitNumber(blue) then
         return red, green, blue
     end
+    noteScoreColorFallback(ok and "current-non-finite" or "current-pcall")
     return nil
+end
+
+-- Debug accessor for the M-NEW1 counters above. Read-only: no display or
+-- behaviour change, for /ttgsdebug-style surfaces and the harness only.
+function Adapter.GetDebugState()
+    return {
+        scoreColorFallbacks = scoreColorFallbacks,
+        lastScoreColorReason = lastScoreColorReason,
+    }
 end
 
 function Adapter.GetCompatibility()
@@ -2172,6 +2337,8 @@ function Adapter.GetCapabilityReport()
         inspectorCapabilitiesMissing = inspectorMissing,
         inspectorPublishedVersion = inspectorVersion(library),
         fingerprint = compatibility and compatibility.fingerprint or nil,
+        scoreColorFallbacks = scoreColorFallbacks,
+        lastScoreColorReason = lastScoreColorReason,
     }
 end
 

@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-19T22:05:00Z",
+  "run_id": "batch8-main",
+  "agent_name": "fix-main-batch8",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Every client fact was re-verified against /home/sam/wow-ui-source on all five branches before a line was written, and the branch-qualified citation is in the code comment. That is what caught the three audit premises that turned out to be wrong (FauxScrollFrame_Update's arity, GameTooltip.FadeOut's existence on the Classic family, and the CanInspect API-doc entry): following the audit literally would have made a faithful mock LESS faithful and would have disabled a working feature for 112k users. The mock-fidelity contract turns the mirror into an executable table shared by BOTH add-ons' harnesses, so the next drift fails the suite instead of waiting for a human to read FrameXML.",
+    "what_was_hard": "Making the mock faithful enough for the pins to mean anything: the harness's flat GUID made getPlayerGUID return nil for the resolved guid, so every inventory read came back empty and the overlay pins would have passed on a zero; and the widget metatable's catch-all made every unknown field read as a function, so the hook-presence checks had to use rawget. Two further traps, both caught by revert proofs rather than by reading: an assertion block placed AFTER the results tally is recorded but never counted, and a contract adapter defined BEFORE the check() it closes over resolves to the global (nil) instead of the local. Both are now recorded in Tests/harness/README.md.",
+    "skill_gap": "Two of the three wrong premises came from an audit that had no shell access to the mirror and read a truncated line range. A grep-based absence claim over a range that stops two lines short of the return is a recurring failure mode; the mitigation is the same every time -- read the exact lines, on every branch, and cite them. Separately: an assertion that lands after the tally looks green forever, so a revert proof is the only thing that proves a pin can fail."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

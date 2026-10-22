@@ -1,0 +1,14 @@
+{
+  "signal_type": "outcome",
+  "run_id": "stage2",
+  "agent_name": "audit-stage2",
+  "quality_rating": 4,
+  "effort_to_merge": "minimal",
+  "issues_found": [
+    "junk-realm-key deletion arm untested (RankDB.lua:669-672)",
+    "heap GUID-tiebreak arm untested (no tied timestamps seeded)",
+    "specID unbounded in sanitizeID (door-caught, not capped)",
+    "stale file:line refs in CHANGELOG Fixed section (RankDB 125/219/393, RankBrowser 104, RankSync 897)"
+  ],
+  "timestamp": "2026-10-18T01:00:00Z"
+}

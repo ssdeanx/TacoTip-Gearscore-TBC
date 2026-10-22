@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T12:40:00Z",
+  "run_id": "fix-extras-operator-requests-items-3-4",
+  "agent_name": "fix-extras-operator-requests",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the client source settled BOTH questions in ITEM 3: BackdropTemplate really does mix in BackdropTemplateMixin (Backdrop.xml:5, Backdrop.lua:336/354/406 on all five branches), and ButtonFrameTemplate really does NOT — it inherits PortraitFrameTemplate -> PortraitFrameTemplateNoCloseButton -> PortraitFrameBaseTemplate, whose mixins are PortraitFrameMixin / PortraitFrameTemplateMixin, and paints its own background texture instead. The brief's premise that 'ButtonFrameTemplate gives it one' was wrong in its reasoning and right only in its conclusion (the browser looks fine). Modelling the absence honestly then required correcting an existing harness assertion that had been passing on the mock's own stub. Closing that fidelity gap is what made the bug visible at all.",
+    "what_was_hard": "The layout was not a single offset: the readout sat at rowTop()+26 and the sortable header buttons at headerTop()+4, which are the SAME y under the old constants — two widgets, one anchor. Fixing it properly meant giving the panel a set of named vertical BANDS rather than nudging a number, and deriving the row's icon anchors from the column table, which also fixed a pre-existing overlap where the spec icon was drawn on top of the first characters of the spec name. The first version of the band pin was too weak: it caught the original exact collision but not a two-pixel gap, which is just as unreadable.",
+    "skill_gap": "A pin that asserts 'these two are different' is weaker than one that asserts 'these two are far enough apart to be readable', and only the revert proof exposes the difference: the proof passed the first pin and failed the second. Also worth remembering: an existing harness assertion that passes on the mock's own stub may be asserting the mock rather than the client — the backdrop one had been green for the life of the feature."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

@@ -7,3 +7,10 @@ undefined/
 .omo/run-continuation/*.json
 docs/media/
 OLD/
+.ruff_cache/
+.vscode/
+.cortexkit/
+.omo/
+.opencode/
+.omg/
+OLD/

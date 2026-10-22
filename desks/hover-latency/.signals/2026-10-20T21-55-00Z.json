@@ -1,0 +1,31 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T21:55:00Z",
+  "run_id": "hoverlatency",
+  "agent_name": "hover-latency",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Measuring the hover path through the real library in a modelled client frame loop instead of reasoning from the symptom produced a cause with file:line evidence and numbers that could be compared before/after; the same driver then measured the candidate fixes instead of arguing about them, which is how the LIFO-ordering theory was refuted and the real cost (the scan taking the single pending inspect slot and opening the pacing window) was found.",
+    "what_was_hard": "One candidate harness carried a typo (nextitnessTime) that silently disabled DoInspect and produced beautiful numbers; it was caught by diffing the candidate against the shipped tree, and every candidate was re-measured afterwards. The 'scan always queues' variant broke two existing detect_test pins (the refused-scan learning), which forced the narrower policy the fix actually ships.",
+    "skill_gap": "Reconstructing a pre-fix library copy for before/after measurement without touching the working tree took a detour; it should have been the first thing staged under /tmp/opencode."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "summary": "Hover-latency regression proven and fixed in the library: the proximity scan was taking the single pending inspect slot and the global pacing window away from the hovered unit. The hovered unit now has the queue tick's Priority 1, is not held back by another unit's pacing window, and the scan stands down while it waits. Worst-case hover latency with the scan ON: classic 1.45s -> 0.20s at a 0.2s server round trip (the scan-off baseline is 0.20s). Tree green: main 71/71 x3 interpreters, Extras 42/42, luacheck 0/0 in 88 files, both release verifiers PASS.",
+  "artifacts": {
+    "journal": "desks/hover-latency/journal.md",
+    "pins": "Tests/harness/detect_test.lua",
+    "measurement_driver": "/tmp/opencode/hoverlat/bench.lua, /tmp/opencode/hoverlat/sequence.lua",
+    "revert_proof_driver": "/tmp/opencode/hoverlat/revert_proof.py"
+  },
+  "residual": "A scan request already in flight when the cursor arrives still costs the hovered unit one round trip (the client inspects one unit at a time). Removing it needs the hovered unit to take the slot from an in-flight scan request, which requires the pending/refusal attribution to be made per-request first."
+}

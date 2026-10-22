@@ -1,0 +1,70 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-21T13:02:42Z",
+  "run_id": "quittaintfix20261021",
+  "agent_name": "quit-taint-fix",
+  "summary": "The Classic Era exit-game refusal (ADDON_ACTION_FORBIDDEN / 'UNKNOWN()' from GameMenuFrame.lua:69) was carried by the vendored library replacing the client's global PlaySound. The game menu's own Logout/Quit closure calls that global two lines above the protected Logout()/Quit(), so the protected call ran in a tainted context. The sound interception moved to GetGameMessageInfo (never called by the game menu on any of the five clients), the client's global PlaySound is the client's own function again, only the inspect-range refusal has its sound muted (operator rule), and every addon callback that enters a Blizzard frame's script chain now runs inside securecall. A second pass re-verified every claim PER CLIENT (classic_era, classic_anniversary, classic_titan, forever, live are five clients, not two families), caught a defect the pass introduced (a '...' closure in a non-vararg function -- a Lua 5.1 compile error that took the Extras file down), closed two silent-failure gaps, and added a load-time securecall probe so a build that refused addon code to call it degrades instead of raising. A third pass reconciled an independent cross-client sweep, which found that the tooltip's STATUS BAR is a live global on every client (the '$parent' prefix creates it) -- a hook the 2026-10-20 audit had called dead code, and one this fix had left uncontained. It is contained now and pinned. The same sweep confirmed the replaced-global inventory per branch and that none of them collides with the game-menu path on any of the five clients. A publish-ready sweep then verified the house's own frozen invariants one by one (all hold), the locale hygiene in both packages (identical key sets, no duplicates, no empty values), and the packaging; it fixed a publish-readiness gap (the README's 'What's New in 0.8.4' did not mention the exit-game fix, and the release notes come from it), updated the operator's pre-upload test window with the exit-game test first, and corrected an Extras-harness mock that claimed a chain it did not implement. A publish-ready sweep then found that TacoTip Extras' Character/Inspect equipment summaries had been dead on every client: an unguarded HookScript on the paper-doll frame for a script it does not declare raised, unwound the bind and left the module uninitialized, silently. The hooks are now installed only on frames that declare the script (every skip and failure counted), the refresh now comes from the character and inspect panes (the paper doll's OnShow fired at creation), and the Extras' harness -- which had given every frame every script, so it could not see the class -- now models the client's real frame script sets.",
+  "artifact": "bench/audits/2026-10-21-quit-taint-carrier.md",
+  "journal": "desks/quit-taint-fix/journal.md",
+  "product_files_modified": [
+    ".luacheckrc",
+    "CHANGELOG.md",
+    "Libs/LibForeverInspector/LibForeverInspector.lua",
+    "README.md",
+    "TacoTip_Extras/.luacheckrc",
+    "TacoTip_Extras/CHANGELOG.md",
+    "TacoTip_Extras/Core.lua",
+    "TacoTip_Extras/Frames.lua",
+    "TacoTip_Extras/Tests/harness/load_test.lua",
+    "TacoTip_Extras/Tooltips.lua",
+    "Tests/harness/batch4_clock_test.lua",
+    "Tests/harness/batch8_pane_test.lua",
+    "Tests/harness/detect_test.lua",
+    "Tests/harness/fileguard_test.lua",
+    "Tests/harness/gearscore_test.lua",
+    "Tests/harness/load_test.lua",
+    "Tests/harness/options_test.lua",
+    "Tests/harness/settings_test.lua",
+    "Tests/harness/taint_test.lua",
+    "Tests/harness/talent_check.lua",
+    "Tests/harness/tooltip_test.lua",
+    "main.lua",
+    "options.lua"
+  ],
+  "validation": {
+    "main_harness": "71/71 on lua5.1, lua5.4 and luajit",
+    "extras_harness": "42/42",
+    "luacheck_root": "0 warnings / 0 errors in 88 files",
+    "luacheck_extras": "0 warnings / 0 errors in 26 files",
+    "verify_release": "PASS",
+    "verify_release_extras": "PASS",
+    "revert_to_fail": "proven on a copy: restoring the PlaySound detour makes the carrier pin RED (replaced=true); unwrapping runUntainted makes three containment pins RED (secureCalls=0)",
+    "per_client": "every client fact re-read from the mirror per branch: the game-menu closure lines (67/69, 67/69, 95/97, 166/168, 118/120), GetGameMessageInfo call sites (2/2/2/3/2 -- none on a game-menu path on any branch), securecall present and captured as a local on all five, xpcall forwarding extra arguments on all five, the shared GameTooltip's script set per branch, Mixin never firing on the shared tooltip on any client, GameTooltipStatusBar absent everywhere, InspectGuildFrame_Update only on forever/live; the independent cross-client sweep confirmed the replaced-global inventory, that no replaced global appears anywhere under Blizzard_GameMenu/ on any branch, and that SlashCmdList is only written when the client has none",
+    "publish_gates": "frozen invariants verified one by one (range gate, gearscore literals, retail bracket 1000, wire R;2/13 fields/240 bytes, saved-variable shapes, one-argument CanInspect at all four call sites, translations, deleted whisper path, TOC bands, inspect guild guard); locales: identical key sets in both packages, no duplicate key, no empty value; packaging: both verifiers PASS; revert-to-fail: carrier pin, four containment pins, the probe, and the Extras containment pin all proven red on copies",
+    "extras": "the Extras' four hooked frames now carry the client's real script sets in the harness; the unguarded-hook defect and the dead refresh are both pinned and revert-to-fail proven on copies; the Extras' containment is pinned (goes red when Core.RunUntainted is unwrapped)"
+  },
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the client's own closure for the refused call -- GameMenuFrame.lua:66-70 -- and asking what runs in it, found the carrier in two lines (PlaySound, then callback()). The prior audit's shared-GameTooltip hypothesis needed an unproven hop between sibling frames; the real carrier needed none. The second pass then treated each branch as its own client and the per-branch table is what proves the fix is inert on the other four.",
+    "what_was_hard": "Two read-only lanes were dispatched; the inventory lane had no shell and no mirror access, so its cross-client claims were unverifiable and the operator rejected the lane. Every client claim was then re-verified by hand with git show on the mirror.",
+    "skill_gap": "A lane without shell and mirror access should have said so before spending a full lane producing unverifiable claims. And the containment wrapper I wrote closed over '...' inside a non-vararg function -- a Lua 5.1 compile error that took a shipped file down; the harness caught it, and the shape to remember is that a containment which swallows a raise also swallows the evidence of the raise."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "next_step": "Operator reloads on Classic Era and tries to exit. If the refusal persists, the next carrier is in TacoTip_Extras (not loaded in the reported path) or in the securecall class itself -- only the client can settle either; the per-branch table in the artifact is what the next lane inherits.",
+  "limitations": [
+    "The operator's own statement (2026-10-21): the WoWUnit in-game suite is NO LONGER USED. It is not a coverage surface for this release, and the GetScript assumption inside it (Tests/TacoTip_Forever_Tests.lua:449) is moot because the file never runs. It is left in the tree, not deleted -- it carries uncommitted work against HEAD, and deleting it is the operator's decision.",
+    "The taint-propagation rule is engine-side and cannot be read from the FrameXML mirror: ASSUMED, not verified. The fix removes the carrier outright rather than relying on the rule.",
+    "Only Classic Era has ever been observed in game. Every claim about classic_anniversary, classic_titan, forever and live is a claim about the mirror.",
+    "Whether the operator's session had TacoTip Extras loaded is still unknown; the Extras' Blizzard-frame callbacks are contained now regardless."
+  ]
+}

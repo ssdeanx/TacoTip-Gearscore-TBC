@@ -1,0 +1,64 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T00:00:00Z",
+  "run_id": "restore",
+  "agent_name": "fix-main-restore",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "The pre-move text was still in my own revert-proof copies under /tmp/opencode (gearscore.lua.bak = 819 lines, options.lua.bak = 3267 lines), so the restore was a byte-exact copy plus the two post-move fixes rather than a retyped reconstruction. The pins were proven RED on a COPY of the tree under /tmp/opencode/mut (five separate mutations), never on the tree itself.",
+    "what_was_hard": "main.lua captures UnitExists at file scope (main.lua:373) and options_test.lua's mock answers false for every unit, so the tooltip unit never resolves there and the portrait branch cannot run in that harness - the slider/portrait agreement had to be pinned in tooltip_test.lua instead (the options UI had to be built there, with the dropdown surface installed for the block).",
+    "skill_gap": "I started editing before opening the desk, which risked colliding with the other lane; the workshop protocol (desk-open, desk-journal, signal-write, bench-read) should be the first step of any spawned lane."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "summary": "Restored gearscore.lua and options.lua to their pre-slash-move state and left the tree GREEN.",
+  "files_changed": [
+    "gearscore.lua",
+    "options.lua",
+    "CHANGELOG.md",
+    "Tests/harness/gearscore_test.lua",
+    "Tests/harness/options_test.lua",
+    "Tests/harness/tooltip_test.lua",
+    "desks/fix-main-restore/journal.md",
+    "desks/fix-main-restore/.signals/2026-10-20T00-00-00Z-restore.json"
+  ],
+  "restored_from": {
+    "gearscore.lua": "/tmp/opencode/gearscore.lua.bak (819 lines, verbatim) + the M2 resolver fix and the proxy-key doc paragraph",
+    "options.lua": "/tmp/opencode/options.lua.bak (3267 lines, verbatim) + the four zoom hunks"
+  },
+  "kept_from_post_move_work": [
+    "M2: the 'options' target no longer falls back to the debug snapshot",
+    "the proxy-aware SlashCmdList lookup and 'THE PROXY'S OWN KEY' documentation",
+    "TT.TooltipPortraitZoomDefault / TT.TooltipPortraitZoomRange (the ONE 0.75 default), both former 'or 0.7' fallbacks, slider range 30-100, sanitiser bound 0.3-1.0 with no clamp",
+    "the SetPortraitZoom raise counter (TT.ev.portraitZoomFailed) and its diag line",
+    "the extrasForwardFailed counter and the M1 diag surfacing in main.lua (main.lua was not edited at all)"
+  ],
+  "validation": {
+    "Tests/harness/run_all.sh lua5.1": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "Tests/harness/run_all.sh lua5.4": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "Tests/harness/run_all.sh luajit": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh lua5.1": "TOTAL 14 invocations: 14 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh lua5.4": "TOTAL 14 invocations: 14 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh luajit": "TOTAL 14 invocations: 14 passed, 0 failed",
+    "luacheck .": "Total: 0 warnings / 0 errors in 88 files",
+    "Tools/verify_release.sh --worktree": "verify_release: PASS (27 files from the working tree)",
+    "Tools/verify_release_extras.sh --worktree": "verify_release_extras: PASS (29 files from the working tree)"
+  },
+  "revert_red_proofs": [
+    "M2 debug-snapshot fallback restored -> 2 checks red (gearscore_test)",
+    "slider fallback back to 'or 0.7' -> 1 red (options_test) + 1 red (tooltip_test)",
+    "render fallback back to '0.7' -> 2 red (tooltip_test)",
+    "zoom raise counter dropped -> 2 red (tooltip_test)",
+    "M1 Extras-forward diagnostic line dropped -> 2 red (options_test)"
+  ],
+  "notes": "Nothing staged, nothing committed, TacoTip_Extras/ untouched. The tree is publishable: both package verifiers PASS and the harness matrix is green on all three interpreters."
+}

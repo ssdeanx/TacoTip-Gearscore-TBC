@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-19T23:50:00Z",
+  "run_id": "fix-extras-publish-2026-10-19",
+  "agent_name": "fix-extras-publish",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Pinning the six fixes INSIDE the two existing harness files (42 invocations unchanged) kept the proof honest and the suite shape frozen. The 'stale journal + changed TacoTip version' pin needed a real TacoTip version change to move the fingerprint, and the 'user changed the setting' pin needed the journal's original value to DIFFER from the user's value, or a restore would have been invisible to it. The rankbrowser harness needed a per-scope drive script (DRIVE_SCRIPT is scoped to the SURFACE_ACTIVE block, not file scope) and the pin had to read the row tooltip's two lines and the gear panel's title rather than the whole tooltip, because the add-on's own colour codes live on the same lines.",
+    "what_was_hard": "Proving the level-70 policy at the SCORING layer needed a hand-built revision whose socket cell is complete, because the scan path's socket capacity is 0 (a separate defect, reported not fixed). The item-1 pin could not be asserted as 'numeric on every client' without that.",
+    "skill_gap": "I twice asserted a render-level fact from a harness variable that was scoped to a block rather than to the file, and twice mistook a 'silently inert' gate for a working one. Read the scope before wiring a pin."
+  },
+  "escalation": {
+    "reason": "One finding was left unfixed and needs an operator decision: the socket capacity the scanner derives is always 0 (the prefix it matches has a trailing underscore the client does not use), so the three enhancement metrics are blocked on Retail and WoW Forever whatever the level-70 setting says. Fixing it changes published numbers and needs evidence from a live client.",
+    "blocked_on": "operator decision on the out-of-scope socket-capacity defect (desks/fix-extras-publish/journal.md, 2026-10-19)",
+    "recommendation": "Assign the socket-capacity fix separately with a live-client measurement of the stat-table field names, or accept the degraded metrics on the two Mainline clients as documented."
+  }
+}

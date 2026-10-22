@@ -44,42 +44,7 @@ local defaults = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "Enhancement analysis:",
     ["TOOLTIP_LABEL_COMPLETION"] = "Completion:",
-    ["TOOLTIP_LABEL_RANK"] = "Gearscore Rank:",
-
-    ["REMOTE_COMPLETE"] = "Complete",
-    ["REMOTE_UNAVAILABLE"] = "Unavailable",
-    ["REMOTE_PENDING"] = "Pending",
-    ["REMOTE_SUPPRESSED"] = "Suppressed",
-    ["REMOTE_NOT_OBSERVED"] = "Not observed",
-
-    ["INTEGRATION_COMPATIBLE"] = "Compatible",
-    ["INTEGRATION_INCOMPATIBLE"] = "Incompatible",
-    ["INTEGRATION_MISSING"] = "Not loaded",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "Tooltip",
-    ["OPTIONS_TAB_EQUIPMENT"] = "Character & Inspect",
-    ["SECTION_TOOLTIP"] = "Tooltip",
-    ["SECTION_EQUIPMENT"] = "Character & Inspect",
-    ["SECTION_HELP"] = "How scores are calculated",
-    ["SECTION_ADVANCED"] = "Advanced",
-
-    ["OPT_ENABLED"] = "Enable addon",
-    ["OPT_TOOLTIP_MODE"] = "Tooltip mode",
-    ["OPT_SHIFT_DETAILED"] = "Shift for Detailed",
-    ["OPT_FIELDS"] = "Tooltip fields",
-    ["OPT_MINIMAP"] = "Show minimap button",
-    ["OPT_SERVER_RANK"] = "Show server leaderboard rank",
-    ["OPT_HOW_SCORES_WORK"] = "How scores are calculated",
-    ["OPT_RESTORE"] = "Restore TacoTip settings",
-    ["OPT_RESET"] = "Reset enhancer settings",
-    ["OPT_EQUIPMENT_MODE"] = "Character & Inspect summary",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "Show Unenhanced GS in Detailed",
-    ["OPT_EQUIPMENT_UNLOCK"] = "Unlock summary positions",
-    ["OPT_EQUIPMENT_RESET"] = "Reset summary positions",
-    ["OPT_SCAN_NOW"] = "Scan now",
-    ["OPT_SCAN_NOW_DESC"] =
-    "Runs a scan pass over the players you can reach and fills in any GearScore it does not already know.",
+    ["TOOLTIP_LABEL_RANK"] = "GS Rank:",
 
     ["HELP_ENABLED_HEADING"] = "Enable addon",
     ["HELP_ENABLED_1"] =
@@ -139,6 +104,20 @@ local defaults = {
     ["HELP_SHOWSERVERRANK_1"] =
     "Displays the player's server GearScore ranking and class standing on tooltips when available from the background sync engine.",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "Comfortable rows",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "Grows the leaderboard rows for larger text. The list shows the same players in the same order with taller rows.",
+
+    -- Shaman Blue. The class colour is painted in the unit tooltip, the
+    -- character/inspect summary frame and the leaderboard row. Other locales
+    -- fall back to English through the per-key fallback in
+    -- TacoExtrasApplyLocale until translated.
+    ["HELP_SHAMANBLUE_HEADING"] = "Shaman Blue",
+    ["HELP_SHAMANBLUE_1"] =
+    "Shows the Shaman class name in blue instead of pink. Classic Era paints the Shaman class colour pink, so this matches the colour TacoTip itself uses.",
+    ["HELP_SHAMANBLUE_2"] =
+    "When TacoTip is installed, its own Shaman Blue setting also applies: turning it off there turns the blue off here as well, so the class colour is the same in both add-ons.",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "Open Server Leaderboard",
     ["HELP_OPENLEADERBOARD_1"] =
     "Opens the TacoTip GearScore Server Leaderboard window (/tt ranks) to browse realm-wide standings.",
@@ -191,26 +170,24 @@ local defaults = {
     ["MINIMAP_HINT_LEFT"] = "Left-click: leaderboard",
     ["MINIMAP_HINT_RIGHT"] = "Right-click: settings",
     ["MINIMAP_HINT_DRAG"] = "Drag to move",
-    ["BLANK_DESC"] = "Drag",
-    ["BLANK"] = "None",
 
     ["LB_TITLE"] = "TacoTip GearScore Leaderboard",
     ["LB_REALM"] = "Whole Realm",
     ["LB_SEARCH"] = "Search:",
+    ["LB_GUILD"] = "Guild:",
     ["LB_YOU"] = "YOU",
     ["LB_LOADING"] = "Loading rankings...",
     ["LB_EMPTY"] = "No records yet. Scores sync while you play.",
     ["LB_EMPTY_FILTERS"] = "No players match the current filters.",
+    ["LB_DB_UNAVAILABLE"] = "The rank database is unavailable, so no rankings can be shown.",
     ["LB_NOT_ESTABLISHED"] = "Not ranked yet",
     ["LB_ONLY_YOU"] = "Only your own character is registered on this realm so far.",
     ["LB_FILTER_ALL"] = "All Classes",
-    ["LB_MY_RANK"] = "My Rank",
     ["LB_TOP"] = "\226\150\178 Top",
     ["LB_MY_RANK_ARROW"] = "\226\150\188 My Rank",
     ["LB_SORTED_BY"] = "Sorted by %s %s",
     ["LB_SCAN"] = "Scan now",
     ["LB_SCAN_BUSY"] = "Scanning...",
-    ["LB_SCAN_IDLE"] = "Idle",
 
     -- Column headers. Uppercase in English because they sit above the data as a
     -- header row; a translation may choose its own casing.
@@ -219,11 +196,13 @@ local defaults = {
     ["LB_COL_SPECCLASS"] = "SPEC / CLASS",
     ["LB_COL_GS"] = "GEARSCORE",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "LEVEL",
     ["LB_COL_LASTSEEN"] = "LAST SEEN",
 
     -- Sort dropdown labels. These double as the "Sorted by X" suffix.
     ["SORT_GS_DESC"] = "GEARSCORE",
     ["SORT_ILVL_DESC"] = "iLVL",
+    ["SORT_LEVEL_DESC"] = "LEVEL",
     ["SORT_SEEN_DESC"] = "LAST SEEN",
 
     -- Row hover tooltip.
@@ -231,16 +210,30 @@ local defaults = {
     ["LB_TIP_UNKNOWNSPEC"] = "Unknown spec",
     ["LB_TIP_GS"] = "GearScore: %d",
     ["LB_TIP_ILVL"] = "Average iLvl: %.1f",
+    ["LB_TIP_PVP_RANK"] = "PvP rank: %s",
+    ["LB_TIP_ARENA"] = "Arena best: %d",
     ["LB_TIP_RANK"] = "GearScore rank: #%d",
-    ["LB_TIP_CLASSRANK"] = "Class rank: #%d",
     ["LB_TIP_LASTSEEN"] = "Last seen: %s",
+    -- Stage 5 trailing unit-tooltip lines. Other locales fall back to English
+    -- through the per-key fallback in TacoExtrasApplyLocale until translated.
+    ["LB_TIP_RANK_SYNCED"] = "Rank synced: %s",
+    -- The row's click affordance. Other locales fall back to English through
+    -- the per-key fallback in TacoExtrasApplyLocale until translated.
+    ["LB_TIP_CLICK_GEAR"] = "Click to view gear",
+
+    -- Announced when a scan's progress edge goes active->inactive. Other
+    -- locales fall back to English through the per-key fallback in
+    -- TacoExtrasApplyLocale until translated.
+    ["LB_SCAN_COMPLETE"] = "Scan complete - %d players tracked",
 
     -- Footer standing line.
     ["LB_FOOTER_STANDING"] =
     "Your Standing: #%d Overall | #%d Faction | #%d Class  -  %d players tracked",
     ["LB_FOOTER_NO_RANK"] = "%d players tracked - you have no ranking yet",
 
-
+    -- W6 summary strip (realm-at-a-glance header). Other locales fall back to
+    -- English through the per-key fallback in TacoExtrasApplyLocale.
+    ["LB_STAT_STRIP"] = "%d players | Top %d | Avg %d",
 
     ["TIME_UNKNOWN"] = "Unknown",
     ["TIME_JUST_NOW"] = "Just now",
@@ -251,8 +244,10 @@ local defaults = {
 
     ["GEAR_TITLE"] = "%s's Gear",
     ["GEAR_NOT_SCANNED"] = "This player has not been scanned yet, so no gear is available.",
-    ["GEAR_NO_ITEMS"] = "No gear recorded.",
-    ["GEAR_CLOSE"] = "Close",
+    -- Unknown-state hint: the session saw the player but yielded no gear and
+    -- nothing persisted exists. Other locales fall back to English through
+    -- the per-key fallback in TacoExtrasApplyLocale until translated.
+    ["GEAR_DATA_UNAVAILABLE"] = "Gear data is unavailable for this player right now. Press Scan now in the leaderboard, then try again.",
     ["GEAR_NO_OPPORTUNITIES"] = "no eligible opportunities",
     ["GEAR_UNAVAILABLE"] = "Equipment data unavailable",
     ["GEAR_SCANNING"] = "Scanning equipment...",
@@ -262,6 +257,7 @@ local defaults = {
     ["CLASS_DEATHKNIGHT"] = "Death Knight",
     ["CLASS_DEMONHUNTER"] = "Demon Hunter",
     ["CLASS_DRUID"] = "Druid",
+    ["CLASS_EVOKER"] = "Evoker",
     ["CLASS_HUNTER"] = "Hunter",
     ["CLASS_MAGE"] = "Mage",
     ["CLASS_MONK"] = "Monk",

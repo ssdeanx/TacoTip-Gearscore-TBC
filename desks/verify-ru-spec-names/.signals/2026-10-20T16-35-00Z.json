@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T16:35:00Z",
+  "run_id": "verify-ru-spec-names-2026-10-20",
+  "agent_name": "verify-ru-spec-names",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Direct scrapes beat search for this: Blizzard's three Russian class pages carry the spec names as plain headings, and wow.gg serves a markdown build of every Russian guide (/ru/guides/<spec>.md) whose H1 is the exact class+spec string. Eight names were confirmed from two independently fetched sources each with about a dozen requests, and only two SearXNG queries were needed to locate pages.",
+    "what_was_hard": "Two sources refused to yield: the Russian warcraft.wiki.gg paths redirect to the English main page whether the title is raw or percent-encoded (its own redirect double-encodes the title), and wowhead.com/ru guide pages are JS-rendered so only their indexed snippets expose the names. I did not repeat either request. The more useful discovery was that Blizzard's Russian Demon Hunter page lists a THIRD spec, Пожиратель (Devourer, retail 11.2), which the table deliberately omits because the classic clients have no such spec and lib.spec_table has no third entry to align it with.",
+    "skill_gap": "A name can be right and still be a trap: Пожиратель is Blizzard's own Russian string, but adding it would break the index alignment against lib.spec_table. Verification of a NAME is not verification of its POSITION, and the pin's length check is what protects that."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "signal_type": "outcome",
+  "run_id": "stage2b",
+  "agent_name": "audit-stage2",
+  "quality_rating": 4,
+  "effort_to_merge": "minimal",
+  "issues_found": [
+    "10-field and unknown-version refusal checks pass on pre-diet code in isolation (group diet-specific via versionReject count + 11-field refusal)",
+    "byte-claim exact fixtures ASSUMED (direction + 240-door fit verified: 237B max S)",
+    "EVOKER raw-token or-fallback defensive and unpinned"
+  ],
+  "timestamp": "2026-10-18T01:00:01Z"
+}

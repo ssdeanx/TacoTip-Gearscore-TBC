@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T01:40:00Z",
+  "run_id": "fixextrashunter",
+  "agent_name": "fix-extras-hunter",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the existing harness before touching it found a VACUOUS check: the locale specifier pin called count() for both sides of its comparison and count() closed over the translation, so it compared the translation with itself and could never fail -- that is why all ten non-English locales shipped a footer with every % stripped and the suite stayed green. Replacing it with an ordered specifier-SEQUENCE comparison against enUS turned a silent HIGH into a red pin. Driving the pins against the real add-on (a raising target:AddLine for the render latch, a raising listener for the fan-out counters, an over-long queue for the eviction) proved each fix by reverting it.",
+    "what_was_hard": "The FrameXML mirror cannot settle the GetItemStats stat-table key names: EMPTY_SOCKET appears zero times on every branch, because the stat table is engine-side. What the mirror DOES settle is the API's presence per client, which is enough to keep the three Classic clients' documented degradation honest. The item-2 fix also had to avoid a second wedge: dropping the binding on the failing path must not disarm the poll, or the surface would stay blank for a different reason.",
+    "skill_gap": "Driving the L-6 / M-7 pins needed a SECOND, ISOLATED Core instance loaded into its own namespace with its own stubs -- the live Core's initialize runs once and cannot be re-entered, so a live-tree pin would have had to break a real surface. Isolating was more code but left the live session untouched."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

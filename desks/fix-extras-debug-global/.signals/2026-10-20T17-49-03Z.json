@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T17:49:03Z",
+  "run_id": "fix-extras-debug-global-2026-10-20",
+  "agent_name": "fix-extras-debug-global",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the harness before trusting the brief: the Extras harness loads a SECOND, isolated Core.lua instance and fires its ADDON_LOADED, which is what made 'publish the global on every registration' wrong — the second instance republished a NEW closure while the slash entry kept the first one. Writing the global once (only when the name is free) makes the global and the slash entry provably the same object under any load order. Reverting on COPIES rather than the working tree kept every proof measurable and the tree untouched.",
+    "what_was_hard": "The brief's item 1 did not reproduce: the reported shadowing warning was already fixed in the tree by the previous desk (the inner local is 'chainCore', not 'core'), and the brief's line numbers were 12 lower than the current file's — it had been written against an intermediate version. The honest deliverable was a mutation proof on a copy (renaming the local back reproduces the exact warning) plus a 0/0 tree-wide lint, not a fabricated edit. A second subtlety: luacheck loads the NEAREST .luacheckrc per file, so the root config's 'shadowing = false' block for TacoTip_Extras/Tests/harness never applies, and the root run checks the Extras harness for shadowing exactly like the Extras' own run does.",
+    "skill_gap": "A brief can carry a premise that a concurrent lane has already resolved. Checking the premise against the tree (and against the previous lane's own copy) before editing is the difference between 'fixed' and 're-fixed', and a redundant rename would have churned a file another desk had just finished without changing a single lint outcome."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

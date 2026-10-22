@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T15:50:00Z",
+  "agent_name": "fix-extras-final-review",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Verifying every client claim directly against the local wow-ui-source checkout (all five origin/ branches) instead of trusting the review text; reusing ONE function object for both the global and the SlashCmdList registration so identity is a testable pin; proving every pin by reverting on COPIES in /tmp/opencode so the working tree was never disturbed",
+    "what_was_hard": "The harness's 'no locale defines a key enUS does not' invariant meant enUS had to gain the new keys too, or ten locales would have gone red; and the changelog's gear-panel claim was wrong in a way that needed the client XML checked on five branches rather than reasoned about",
+    "skill_gap": "The Extras harness lives in the repo but references the MAIN repo's Tests/harness/mock_contract.lua, so a copy-based revert proof needs the parent directory scaffolded too"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Main-add-on lane: call _G.TacoTipExtrasToggleLeaderboard (the function published at TacoTip_Extras/RankBrowser.lua:2852-2860) instead of rawget(SlashCmdList, 'TACOTIPRANKS'), which is nil at dispatch time on every client"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "signal_type": "outcome",
+  "run_id": "stage5",
+  "agent_name": "audit-stage5",
+  "quality_rating": 4,
+  "effort_to_merge": "minimal",
+  "issues_found": [
+    "unattributed tooltip-polish hunks (Compact icon + GS Rank label) need owning journal entry",
+    "search fallback missing final pcall (shape nit)",
+    "suffix lags one open behind priming (journaled, Core-scope followup)"
+  ],
+  "timestamp": "2026-10-18T16:28:12Z"
+}

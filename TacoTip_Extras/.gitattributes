@@ -1,0 +1,37 @@
+# Packaging attributes for the TacoTip Extras companion package.
+#
+# TacoTip Extras is a separate CurseForge project with its own package, so it
+# needs its own rules about what that package contains. The repository root's
+# .gitattributes marks `/TacoTip_Extras/** export-ignore`, because a TacoTip
+# archive must never carry a second .toc.
+#
+# The two rules do not conflict, because they are read in different scopes:
+#
+#   * A TacoTip archive is built from the repository root, so the paths are
+#     repository-relative and the root .gitattributes applies: the whole Extras
+#     subtree stays out of it.
+#   * An Extras archive is built from the subtree itself
+#     (`git archive HEAD:TacoTip_Extras`), so the paths are relative to the
+#     subtree and the root rule -- which names the `TacoTip_Extras/` prefix --
+#     does not match. Only the rules below apply to it.
+#
+# `Tools/verify_release_extras.sh` builds the Extras archive that way, prints
+# its file listing, and checks the package is the runtime add-on and nothing
+# else. This file is the single place that decides what an Extras package
+# contains.
+#
+# Note: in an attributes file a directory pattern does not recurse, so
+# directories use `path/**`, never `path/`.
+
+# The attributes file itself -- packaging metadata, not runtime.
+/.gitattributes export-ignore
+
+# The offline harness. Not shipped, opt-in, and it needs a game-free Lua.
+/Tests/** export-ignore
+
+# Lint configuration for the development tree.
+/.luacheckrc export-ignore
+
+# Marketing screenshots. `tt-2.tga` is the icon the TOC points at
+# (`## IconTexture`) and stays; no PNG is referenced by anything that ships.
+/**.png export-ignore

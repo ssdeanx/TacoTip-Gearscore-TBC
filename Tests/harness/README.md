@@ -6,10 +6,10 @@ environment. They need no game client and no WoWUnit.
 ## Run everything
 
 ```bash
-bash TacoTip_Forever/Tests/harness/run_all.sh
+bash Tests/harness/run_all.sh
 ```
 
-54 invocations across six harness files and all five clients. Exits non-zero on
+70 invocations across fifteen harness files and all five clients. Exits non-zero on
 the first failing harness, and prints the failing invocation names.
 
 The suite defaults to `lua5.1`, which is what WoW actually ships and therefore
@@ -17,11 +17,11 @@ the interpreter that matters. It is also measured green under `lua5.4`, as a
 second opinion — override the interpreter with `LUA`:
 
 ```bash
-LUA=lua5.4 bash TacoTip_Forever/Tests/harness/run_all.sh
+LUA=lua5.4 bash Tests/harness/run_all.sh
 ```
 
-Measured 2026-10-11 on this tree: **54/54 under `lua5.1`, 54/54 under
-`lua5.4`, 54/54 under `luajit`.** Keep it that way — a 5.4 failure is either a real portability bug
+Measured 2026-10-20 on this tree: **71/71 under `lua5.1`, 71/71 under
+`lua5.4`, 71/71 under `luajit`.** Keep it that way — a 5.4 failure is either a real portability bug
 in the addon or a broken mock, and both are worth knowing about. What the 5.4
 run is *not* is a target: do not bend an assertion, an expected value, or a
 `pcall` to make a 5.1-correct suite green on 5.4.
@@ -40,17 +40,21 @@ lua5.1 Tests/harness/locale_test.lua
 # per-locale font filtering
 lua5.1 Tests/harness/font_test.lua
 
+# localized specialization names: the ruRU Monk / Demon Hunter / Evoker names
+# are Blizzard's own Russian strings, not the German or English placeholders
+lua5.1 Tests/harness/specname_test.lua
+
 # full addon load, per client. args: <projectId> <iface> <slot4|slot7> <family> <bracket> <label> [pipeline]
 lua5.1 Tests/harness/load_test.lua 2  11509 slot4 classicEra 200  ERA
 lua5.1 Tests/harness/load_test.lua 5  20506 slot4 tbc        400  TBC
 lua5.1 Tests/harness/load_test.lua 11 38002 slot4 titanforge 1000 TITANFORGE
 lua5.1 Tests/harness/load_test.lua 1  16001 slot4 forever     200  FOREVER   pipeline
-lua5.1 Tests/harness/load_test.lua 1  120100 slot4 retail    1000 RETAIL    pipeline
+lua5.1 Tests/harness/load_test.lua 1  120105 slot4 retail    1000 RETAIL    pipeline
 
 # options UI build + exercise. args: <projectId> <iface> <label> [pipeline] [legacy] [nosettings|nocolor|nosharedmedia]
 lua5.1 Tests/harness/options_test.lua 2 11509 ERA
 lua5.1 Tests/harness/options_test.lua 11 38002 TITANFORGE
-lua5.1 Tests/harness/options_test.lua 1 120100 RETAIL pipeline
+lua5.1 Tests/harness/options_test.lua 1 120105 RETAIL pipeline
 lua5.1 Tests/harness/options_test.lua 2 11509 ERA legacy nosettings
 lua5.1 Tests/harness/options_test.lua 11 38002 TITANFORGE legacy nocolor nosharedmedia
 
@@ -60,18 +64,23 @@ lua5.1 Tests/harness/options_test.lua 11 38002 TITANFORGE legacy nocolor noshare
 # as a 20-way matrix (5 clients x 2 registration paths x 2 Pawn states).
 lua5.1 Tests/harness/settings_test.lua 2  11509 CLASSIC_ERA legacy settings pawn
 lua5.1 Tests/harness/settings_test.lua 11 38002 TITANFORGE legacy settings pawn
-lua5.1 Tests/harness/settings_test.lua 1  120100 RETAIL  pipeline settings pawn
+lua5.1 Tests/harness/settings_test.lua 1  120105 RETAIL  pipeline settings pawn
 lua5.1 Tests/harness/settings_test.lua 5  20506 TBC_ANNIV legacy nosettings nopawn
 
 # main.lua tooltip pipeline, behavioural. args: <projectId> <iface> <label> [pipeline] [debug]
 lua5.1 Tests/harness/tooltip_test.lua 2 11509 CLASSIC_ERA
 lua5.1 Tests/harness/tooltip_test.lua 11 38002 TITANFORGE
-lua5.1 Tests/harness/tooltip_test.lua 1 120100 RETAIL pipeline
+lua5.1 Tests/harness/tooltip_test.lua 1 120105 RETAIL pipeline
 
 # static talent table -> icon resolution, per expansion
 lua5.1 Tests/harness/talent_check.lua 2 11509 CLASSIC_ERA
 lua5.1 Tests/harness/talent_check.lua 5 20506 TBC_ANNIV
 lua5.1 Tests/harness/talent_check.lua 11 38002 TITANFORGE
+
+# batch 8: character / inspect pane refresh, instant-fade mode.
+# args: <projectId> <iface> <label> [pipeline]
+lua5.1 Tests/harness/batch8_pane_test.lua 2 11509 CLASSIC_ERA
+lua5.1 Tests/harness/batch8_pane_test.lua 1 120105 RETAIL pipeline
 ```
 
 ## What each harness covers
@@ -80,11 +89,13 @@ lua5.1 Tests/harness/talent_check.lua 11 38002 TITANFORGE
 | --- | --- |
 | `detect_test` | family + bracket per interface, flags mutually exclusive, Cata/Mists report unknown, `LibClassicInspector` alias |
 | `locale_test` | 11 locales register, selection by client locale, `locale_override` wins, unknown falls back to enUS, key count |
+| `specname_test` | the `ruRU` Monk / Demon Hunter / Evoker specialization names in `LibForeverInspector` are Blizzard's own Russian client strings, none of them appears anywhere in the `enUS` or the `deDE` list (the old German and English placeholders cannot come back), and the `enUS` and `deDE` tables are unchanged |
 | `font_test` | CJK fonts hidden on non-CJK locales, Details fonts dropped everywhere |
 | `load_test` | every file parses and loads, locale keys resolve, detected family/bracket match, pipeline-less clients register **zero** post-calls, and the **Pawn contract** holds on every client: `TT_PAWN` loaded, `GetScore(player)` does not raise, **nothing was written to the chat frame**, scale visibility is never probed, and every name passed to `PawnGetScaleColor` exists in that client's `PawnCommon.Scales` |
 | `options_test` | all 4 option pages build, every widget/control/slider/swatch is created, `RefreshOptionsUI` and `OpenOptionsPanel` run, character + inspect overlays come up |
-| `settings_test` | drives every control the build created and diffs `TacoTipConfig`, so it asserts **all 66 settings are reachable, each control writes only declared keys, values survive a save/load round-trip, out-of-range values are clamped, Reset configuration restores every default, and the correct registration API is used per client** — plus that the achievement-points and Pawn toggles are gated exactly where the feature is absent |
-| `tooltip_test` | the enhancement pipeline produces GearScore / iLvl / spec lines for self, other player, hostile NPC and items; both delivery paths (script hook **and** data post-call); dual-spec point readouts per group with inline `\|T` talent icons, active group, and the "points are small integers, not fileIDs" invariant |
+| `settings_test` | drives every control the build created and diffs `TacoTipConfig`, so it asserts **all 68 settings are reachable, each control writes only declared keys, values survive a save/load round-trip, out-of-range values are clamped, Reset configuration restores every default, and the correct registration API is used per client** — plus that the achievement-points and Pawn toggles are gated exactly where the feature is absent |
+| `tooltip_test` | the enhancement pipeline produces GearScore / iLvl / spec lines for self, other player, hostile NPC and items; both delivery paths (script hook **and** data post-call); dual-spec point readouts per group with inline `\|T` talent icons, active group, and the "points are small integers, not fileIDs" invariant; the guild guard's install path (modern pair only, Classic family is a no-op), its **swallow**, and its two counting buckets; a raising `IsUnit` does not abort the unit render; a raising `SetWidth` / `DoInspect` is counted |
+| `batch8_pane_test` | the character and inspect overlays repaint when their PANE opens (the frames that carry `hidden="true"` on every branch), exactly **one** inventory walk per pane open, the pending→ready transition repaints the open pane and a second callback does not walk again, the inspect refresh respects `InCombatLockdown()`, a raising character-pane refresh is counted and does not escape into the engine's item-load callback, and `/tacotip diag` prints the instant-fade mode in all three states |
 | `talent_check` | the ported static talent table resolves real icon textures per expansion (Vanilla 18 / TBC 23 / WotLK 31 talents in Warrior tab 1) |
 
 ## Mocking notes worth keeping
@@ -249,3 +260,97 @@ depend on the answer.
 `TooltipDataHandlerMixin` (Retail, Forever). Without it the harness models the
 Classic-family tooltips, which do not -- the case that used to register a
 post-call that never fired.
+
+## The client source of truth: `wow-ui-source`
+
+Every claim in this repository about what a client does -- which API exists on
+which family, what a frame's `hidden` attribute is, what a namespace function
+returns -- is checkable against Blizzard's own FrameXML, and the checkout lives
+next to this repo:
+
+    /home/sam/wow-ui-source
+
+It is a git checkout with one branch per client family:
+
+| branch | client |
+| :--- | :--- |
+| `origin/classic_era` | Classic Era / SoD (`11509`) |
+| `origin/classic_anniversary` | TBC Anniversary (`20506`) |
+| `origin/classic_titan` | WotLK Titanforge (`38002`) |
+| `origin/forever` | WoW Forever (`16001`) |
+| `origin/live` | Retail (`120105`) |
+
+Read it without checking anything out (the working tree may be on any branch,
+and it is never modified):
+
+    git -C /home/sam/wow-ui-source show origin/classic_era:Interface/AddOns/Blizzard_GameTooltip/Classic/GameTooltip.lua
+    git -C /home/sam/wow-ui-source grep -n 'FadeOut' origin/live -- '*.lua'
+
+Two rules for using it, both learned the hard way:
+
+* **A universal claim needs all five branches.** "Exactly four `StaticPopup`
+  frames" or "no `GameTooltip.FadeOut` on the Classic family" is only evidence
+  when every branch has been checked. One branch is an anecdote. Cite the
+  branch list, or the claim is not evidence.
+* **Absence of a consumer is not absence of an API.** `CanInspect` has no
+  upstream consumer in the classic tree and is absent from the generated API
+  docs -- but that does not make it nonexistent. Proof of absence is a
+  whole-tree sweep plus the generated docs, not a grep that found no callers.
+
+The mirror is also how a *mock* is checked: a mock's return arity and order
+should match the client's, and the table below is the record of the ones that
+were found wrong. It is kept here, rather than in a reviewer's head, because
+every one of these was invisible to the suite -- the suite was green while the
+mock and the client disagreed.
+
+**The table is now executable.** `Tests/harness/mock_contract.lua` holds the
+same facts as a data-driven contract -- per API: how many values the CLIENT
+publishes, how many the mock is expected to publish, and the branch-qualified
+mirror citation that established it -- and every harness that owns a contract
+API measures its mock and fails when the two disagree. The table below is the
+readable copy of that file; the contract is the authority.
+
+The contract lives in the MAIN add-on's harness tree and is the single source
+of truth for **both** add-ons: the Extras harnesses load it from
+`ROOT .. "/../Tests/harness/mock_contract.lua"` (loaded loudly -- a missing
+file raises rather than the assertion quietly disappearing) and assert their
+own mocks against it. The Extras `rankbrowser_test.lua` pins the two Extras
+arities (`GetSpecializationInfoByID`, `FauxScrollFrame_Update`); the Extras
+`load_test.lua` pins `UnitClass`.
+
+**A contract assertion must run where the mock is INSTALLED.** `options_test.lua`
+had a block of assertions that landed after the results tally, so they were
+recorded and never counted -- a revert proof caught it (the suite stayed green
+with the production change removed). An assertion that cannot fail is not a
+test.
+
+## Mock fidelity table
+
+| API | client (verified in the mirror) | mock | status |
+| :--- | :--- | :--- | :--- |
+| `GetClassAtlas(classFile)` | `SharedConstants.lua:44` -- `("classicon-%s"):format(className)`, no lowercasing | `load_test`, `rankbrowser_test` | exact |
+| `C_Item.GetItemInfo(id)` | `ItemButtonTemplate.lua:187` -- `itemName, itemLink, itemQuality, itemLevel, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture, ...` (19 values) | `gearscore_test` (11 values) | exact for every position the addon reads (#2 link, #3 quality, #4 level, #9 equip location) |
+| `TooltipUtil.GetDisplayedUnit(tooltip)` | `TooltipUtil.lua:40` -- `name, unit, guid` | `tooltip_test` | exact |
+| `GameTooltip:GetUnit()` | `Blizzard_PTRFeedback_Tooltips.lua:87` destructures **two** -- `name, unit` | `tooltip_test` (Classic path) | **was returning a third GUID value** -- the engine never returns one; the production branch reading it was unreachable in the real client |
+| `Settings.RegisterCanvasLayoutCategory(frame, name)` | `Blizzard_Settings.lua:161` -- a plain function on a namespace table, called with a dot | `settings_test` | exact |
+| `Settings.RegisterCanvasLayoutSubcategory(parent, frame, name)` | `Blizzard_Settings.lua:165` | `settings_test` | exact |
+| `Settings.RegisterAddOnCategory(category)` | `Blizzard_Settings.lua:133` | `settings_test` | exact |
+| `Settings.*` (same three) | as above | `options_test` | **was modelled with a phantom `self`** -- the first real argument landed in a dummy, and the recording table was never asserted on |
+| `FauxScrollFrame_GetOffset` / `_SetOffset` | `SecureScrollTemplates.lua:236/:241` | `rankbrowser_test` | exact |
+| `FauxScrollFrame_OnVerticalScroll` | `SecureScrollTemplates.lua:227` -- 4 params, `math.floor((value / itemHeight) + 0.5)` | `rankbrowser_test` | exact, including the rounding |
+| `FauxScrollFrame_Update` | `SecureScrollTemplates.lua:158` -- the function body ends at **:224** with `return showScrollBar;` (**one** value: 1 or nil) on **all five** branches | `rankbrowser_test` | exact. An audit recorded this API as returning NOTHING and the mock as "returning a value the real function never returns"; the mirror says the opposite on both counts -- the function body ends at :224, not :222 -- so the CONTRACT was corrected and the mock left alone. Changing the mock to the audited shape would have made it LESS faithful. |
+| `UnitClass(unit)` | `UnitUtil.lua:81` (live/forever) -- `localizedClassName, classToken, classID` (**3**); `InspectPaperDollFrame.lua:10` (Classic family) -- **2** | every MAIN harness, plus both Extras harnesses | **was one shape for five clients** (2 everywhere). Now per-family: 3 on the modern pair, 2 on the Classic family. The addon reads only #1/#2 today, so the gap was latent, not live. |
+| `GetSpecializationInfoByID(id)` | `ClubFinder.lua:599` -- **7** values | `tooltip_test`, `detect_test`, `fileguard_test`, and the Extras `rankbrowser_test` | **was 4** (and 0 in two MAIN harnesses). The addon reads #2 (name) and #4 (icon) only; #5+ were latent gaps. |
+| `GetPlayerInfoByGUID(guid)` | `ChatFrameUtil.lua:1007` -- #2 is `englishClass` | `gearscore_test`, `pawn_test` | exact |
+| `CheckInteractDistance(unit, dist)` | `UnitPopupSharedUtils.lua:194` -- boolean first | `detect_test` | exact |
+| `StaticPopup_Show(which, text1, text2, data, insertedFrame, customOnHide)` | `StaticPopup.lua:278` | no-op mock | compatible; the dialog's own behaviour is in-game only |
+| `ItemMixin` method set | `Blizzard_ObjectAPI/Classic/Item.lua` -- `GetItemID`, `GetItemLink`, `IsItemDataCached`, `ContinueOnItemLoad`, ... | `gearscore_test`, `batch2_pawn_test` | a safe subset; no invented method |
+| `C_Item.GetItemInfoInstant(link)` | `Blizzard_AuctionHouseSharedTemplates.lua:366` -- **the itemID is the FIRST return** | `tooltip_test` (returns the item ID); the other harnesses mock only the bare global | **was mocked as `nil` in every harness** -- accidentally faithful to the broken production read; the production read is namespace-first now and `tooltip_test` pins the ID (see the `main.lua` cold-path item request) |
+| `GetItemInfoInstant` (bare global) | exists only as a `Blizzard_DeprecatedItemScript` alias on the three Classic branches; **absent on `forever` and `live`** | n/a | the production read was namespace-first after the fix |
+| `C_PaperDollInfo.GetInspectGuildInfo(unit)` | `PaperDollInfoDocumentation.lua:95` (live) / `:104` (forever) -- **4** values: achievement points, member count, guild name, realm name | `tooltip_test` | exact. The **fourth** (the realm name) is nil for a player with no guild -- the precondition of Blizzard's own `InspectGuildFrame` defect, and the fact the guild guard reads to tell that defect from any other error. Pinned by the contract. |
+
+`C_Item.GetItemInfoInstant`'s return order is the one to remember: itemID
+first, and `select(4, ...)` is the equip slot (`CatalogShop_SharedUtil.lua:927`).
+The addon reads the first; a future caller reading a name from it will be
+reading a number.
+

@@ -11,13 +11,13 @@ local L = {
     ["LB_COL_SPECCLASS"] = "SPÉ / CLASSE",
     ["LB_MY_RANK_ARROW"] = "▼ Mon rang",
     ["GEAR_SCANNING"] = "Analyse de l'équipement...",
-    ["LB_SORTED_BY"] = "Trié par s s",
-    ["LB_FOOTER_NO_RANK"] = "d joueurs suivis - pas encore de classement",
+    ["LB_SORTED_BY"] = "Trié par %s %s",
+    ["LB_FOOTER_NO_RANK"] = "%d joueurs suivis - pas encore de classement",
     ["EQUIPMENT_CATEGORY_NAME"] = "Fenêtres d'équipement",
     ["MINIMAP_HINT_RIGHT"] = "Clic droit : options",
     ["COMPLETE"] = "Complet",
     ["GEAR_UNAVAILABLE"] = "Données d'équipement indisponibles",
-    ["LB_FOOTER_STANDING"] = "Votre classement : #d global | #d faction | #d classe  -  d joueurs suivis",
+    ["LB_FOOTER_STANDING"] = "Votre classement : #%d global | #%d faction | #%d classe  -  %d joueurs suivis",
     ["CATEGORY_NAME"] = "TacoTip Extras",
 
     ["INTRO"] =
@@ -43,42 +43,7 @@ local L = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "Analyse des améliorations :",
     ["TOOLTIP_LABEL_COMPLETION"] = "Complétion :",
-    ["TOOLTIP_LABEL_RANK"] = "Rang GearScore :",
-
-    ["REMOTE_COMPLETE"] = "Complet",
-    ["REMOTE_UNAVAILABLE"] = "Indisponible",
-    ["REMOTE_PENDING"] = "En attente",
-    ["REMOTE_SUPPRESSED"] = "Supprimé",
-    ["REMOTE_NOT_OBSERVED"] = "Non observé",
-
-    ["INTEGRATION_COMPATIBLE"] = "Compatible",
-    ["INTEGRATION_INCOMPATIBLE"] = "Incompatible",
-    ["INTEGRATION_MISSING"] = "Non chargé",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "Infobulle",
-    ["OPTIONS_TAB_EQUIPMENT"] = "Personnage et inspection",
-    ["SECTION_TOOLTIP"] = "Infobulle",
-    ["SECTION_EQUIPMENT"] = "Personnage et inspection",
-    ["SECTION_HELP"] = "Comment les scores sont calculés",
-    ["SECTION_ADVANCED"] = "Avancé",
-
-    ["OPT_ENABLED"] = "Activer le module",
-    ["OPT_TOOLTIP_MODE"] = "Mode d'infobulle",
-    ["OPT_SHIFT_DETAILED"] = "Maj pour le mode Détaillé",
-    ["OPT_FIELDS"] = "Champs de l'infobulle",
-    ["OPT_MINIMAP"] = "Afficher le bouton de minicarte",
-    ["OPT_SERVER_RANK"] = "Afficher le rang du classement du serveur",
-    ["OPT_HOW_SCORES_WORK"] = "Comment les scores sont calculés",
-    ["OPT_RESTORE"] = "Restaurer les réglages de TacoTip",
-    ["OPT_RESET"] = "Réinitialiser les réglages du module",
-    ["OPT_EQUIPMENT_MODE"] = "Résumé personnage et inspection",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "Afficher le GS non amélioré en Détaillé",
-    ["OPT_EQUIPMENT_UNLOCK"] = "Déverrouiller les positions du résumé",
-    ["OPT_EQUIPMENT_RESET"] = "Réinitialiser les positions du résumé",
-    ["OPT_SCAN_NOW"] = "Scanner maintenant",
-    ["OPT_SCAN_NOW_DESC"] =
-    "Lance une passe de scan sur les joueurs que vous pouvez atteindre et complète les GearScore encore inconnus.",
+    ["TOOLTIP_LABEL_RANK"] = "Rang GS :",
 
     ["HELP_ENABLED_HEADING"] = "Activer le module",
     ["HELP_ENABLED_1"] =
@@ -138,6 +103,16 @@ local L = {
     ["HELP_SHOWSERVERRANK_1"] =
     "Affiche le classement GearScore du joueur sur le serveur et sa place dans sa classe sur les infobulles, lorsque le moteur de synchronisation en arrière-plan la fournit.",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "Lignes confortables",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "Agrandit les lignes du classement pour un texte plus grand. La liste affiche les mêmes joueurs dans le même ordre, mais avec des lignes plus hautes.",
+
+    ["HELP_SHAMANBLUE_HEADING"] = "Chaman Bleu",
+    ["HELP_SHAMANBLUE_1"] =
+    "Affiche le nom de classe du chaman en bleu au lieu du rose. Classic Era peint la couleur de classe du chaman en rose, ce qui correspond à la couleur utilisée par TacoTip lui-même.",
+    ["HELP_SHAMANBLUE_2"] =
+    "Quand TacoTip est installé, son propre réglage Chaman Bleu s'applique aussi : le désactiver là désactive le bleu ici également, afin que la couleur de classe soit la même dans les deux modules.",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "Ouvrir le classement du serveur",
     ["HELP_OPENLEADERBOARD_1"] =
     "Ouvre la fenêtre du classement GearScore de TacoTip (/tt ranks) pour consulter les classements de tout le royaume.",
@@ -189,28 +164,27 @@ local L = {
     ["MINIMAP_HINT"] = "TacoTip Extras",
     ["MINIMAP_HINT_LEFT"] = "Clic gauche : classement",
     ["MINIMAP_HINT_DRAG"] = "Glisser pour déplacer",
-    ["BLANK_DESC"] = "Glisser",
-    ["BLANK"] = "Aucun",
 
     ["LB_TITLE"] = "Classement GearScore TacoTip",
     ["LB_REALM"] = "Tout le royaume",
     ["LB_SEARCH"] = "Recherche :",
+    ["LB_GUILD"] = "Guilde :",
     ["LB_YOU"] = "VOUS",
     ["LB_LOADING"] = "Chargement du classement...",
     ["LB_EMPTY"] = "Aucun enregistrement pour l'instant. Les scores se synchronisent pendant votre jeu.",
     ["LB_EMPTY_FILTERS"] = "Aucun joueur ne correspond aux filtres actuels.",
+    ["LB_DB_UNAVAILABLE"] = "La base de données des classements est indisponible, aucun classement ne peut être affiché.",
     ["LB_NOT_ESTABLISHED"] = "Pas encore de rang",
     ["LB_ONLY_YOU"] = "Pour l'instant, seul votre propre personnage est enregistré sur ce royaume.",
     ["LB_FILTER_ALL"] = "Tous",
-    ["LB_MY_RANK"] = "\226\152\148 Mon rang",
-    ["LB_TOP"] = "\226\152\160 Premier",
+    ["LB_TOP"] = "\226\150\178 Premier",
     ["LB_SCAN"] = "Scanner maintenant",
     ["LB_SCAN_BUSY"] = "Scan en cours...",
-    ["LB_SCAN_IDLE"] = "Inactif",
 
     ["LB_COL_RANK"] = "RANG",
     ["LB_COL_GS"] = "GEARSCORE",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "NIVEAU",
     ["LB_COL_PLAYER"] = "JOUEUR",
     ["LB_COL_LASTSEEN"] = "VU RÉCEMMENT",
 
@@ -218,14 +192,20 @@ local L = {
     ["LB_TIP_UNKNOWNSPEC"] = "Spécialisation inconnue",
     ["LB_TIP_GS"] = "GearScore : %d",
     ["LB_TIP_ILVL"] = "iLvl moyen : %.1f",
+    ["LB_TIP_PVP_RANK"] = "Rang PvP : %s",
+    ["LB_TIP_ARENA"] = "Meilleur en arène : %d",
     ["LB_TIP_RANK"] = "Rang GearScore : #%d",
-    ["LB_TIP_CLASSRANK"] = "Rang dans la classe : #%d",
     ["LB_TIP_LASTSEEN"] = "Vu la dernière fois : %s",
+    ["LB_TIP_RANK_SYNCED"] = "Rang synchronisé : %s",
+    ["LB_TIP_CLICK_GEAR"] = "Cliquez pour voir l'équipement",
+    ["LB_SCAN_COMPLETE"] = "Scan terminé - %d joueurs suivis",
 
     ["SORT_GS_DESC"] = "GEARSCORE",
     ["SORT_ILVL_DESC"] = "NIVEAU D'OBJET",
+    ["SORT_LEVEL_DESC"] = "NIVEAU",
     ["SORT_SEEN_DESC"] = "VU LA DERNIÈRE FOIS",
 
+    ["LB_STAT_STRIP"] = "%d joueurs | Max %d | Moy %d",
 
     ["TIME_JUST_NOW"] = "À l'instant",
     ["TIME_MIN_AGO"] = "il y a %d min",
@@ -234,14 +214,14 @@ local L = {
 
     ["GEAR_TITLE"] = "Équipement de %s",
     ["GEAR_NOT_SCANNED"] = "Ce joueur n'a pas encore été scanné ; aucun équipement n'est disponible.",
-    ["GEAR_NO_ITEMS"] = "Aucun équipement enregistré.",
-    ["GEAR_CLOSE"] = "Fermer",
+    ["GEAR_DATA_UNAVAILABLE"] = "Les données d'équipement ne sont pas disponibles pour ce joueur pour le moment. Appuie sur Scanner maintenant dans le classement, puis réessaie.",
 
     ["SCAN_PROGRESS"] = "%d / %d",
 
     ["CLASS_DEATHKNIGHT"] = "Chevalier de la Mort",
     ["CLASS_DEMONHUNTER"] = "Chasseur de démons",
     ["CLASS_DRUID"] = "Druide",
+    ["CLASS_EVOKER"] = "Évocateur",
     ["CLASS_HUNTER"] = "Chasseur",
     ["CLASS_MAGE"] = "Mage",
     ["CLASS_MONK"] = "Moine",

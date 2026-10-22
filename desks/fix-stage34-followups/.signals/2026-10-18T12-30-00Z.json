@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T12:30:00Z",
+  "run_id": "fix2",
+  "agent_name": "fix-stage34-followups",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "F1 clamp mirrors rank bound with cited site; F2 S-drop contained to G leg with oversize+depth pin failing pre-fix; F4/F6 pins reuse StoreGear/ParseGearIDs only, no new harness patterns",
+    "what_was_hard": "F2 drain loop needed 30 iterations (each flush nets -2) to leave clean queue; F5 needed Cache.makeSnapshot read to prove no bug",
+    "skill_gap": "none"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

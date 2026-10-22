@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T00:00:00Z",
+  "run_id": "batch3",
+  "agent_name": "fix-main-batch3",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "revert-to-fail caught 3 vacuous pins before they landed (D1 safeCall swallow, M10 helper not reading production, M9 load-captured UnitClass)",
+    "what_was_hard": "H11 second-raise suppression traced to frozen learned-ceiling rule; worked around test-side per constraint",
+    "skill_gap": "in-game pins unverifiable without a client"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Batch 4: yards-learned-on-non-range-raise; in-game confirmations incl. Retail colour-spread screenshot"
+  }
+}

@@ -11,13 +11,13 @@ local L = {
     ["LB_COL_SPECCLASS"] = "專精 / 職業",
     ["LB_MY_RANK_ARROW"] = "▼ 我的排名",
     ["GEAR_SCANNING"] = "正在讀取裝備...",
-    ["LB_SORTED_BY"] = "按 s s 排序",
-    ["LB_FOOTER_NO_RANK"] = "已記錄 d 名玩家 - 你還沒有排名",
+    ["LB_SORTED_BY"] = "按 %s %s 排序",
+    ["LB_FOOTER_NO_RANK"] = "已記錄 %d 名玩家 - 你還沒有排名",
     ["EQUIPMENT_CATEGORY_NAME"] = "裝備視窗",
     ["MINIMAP_HINT_RIGHT"] = "右鍵：設定",
     ["COMPLETE"] = "已完成",
     ["GEAR_UNAVAILABLE"] = "裝備資料無法取得",
-    ["LB_FOOTER_STANDING"] = "你的排名：總榜 #d | 陣營 #d | 職業 #d  -  已記錄 d 名玩家",
+    ["LB_FOOTER_STANDING"] = "你的排名：總榜 #%d | 陣營 #%d | 職業 #%d  -  已記錄 %d 名玩家",
     ["CATEGORY_NAME"] = "TacoTip Extras",
 
     ["INTRO"] =
@@ -43,42 +43,7 @@ local L = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "強化分析：",
     ["TOOLTIP_LABEL_COMPLETION"] = "完成度：",
-    ["TOOLTIP_LABEL_RANK"] = "裝備分數排名：",
-
-    ["REMOTE_COMPLETE"] = "完整",
-    ["REMOTE_UNAVAILABLE"] = "無法取得",
-    ["REMOTE_PENDING"] = "等待中",
-    ["REMOTE_SUPPRESSED"] = "已抑制",
-    ["REMOTE_NOT_OBSERVED"] = "未觀測",
-
-    ["INTEGRATION_COMPATIBLE"] = "相容",
-    ["INTEGRATION_INCOMPATIBLE"] = "不相容",
-    ["INTEGRATION_MISSING"] = "未載入",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "提示方塊",
-    ["OPTIONS_TAB_EQUIPMENT"] = "角色與檢視",
-    ["SECTION_TOOLTIP"] = "提示方塊",
-    ["SECTION_EQUIPMENT"] = "角色與檢視",
-    ["SECTION_HELP"] = "分數是如何計算的",
-    ["SECTION_ADVANCED"] = "進階",
-
-    ["OPT_ENABLED"] = "啟用插件",
-    ["OPT_TOOLTIP_MODE"] = "提示方塊模式",
-    ["OPT_SHIFT_DETAILED"] = "按住 Shift 顯示詳細",
-    ["OPT_FIELDS"] = "提示方塊欄位",
-    ["OPT_MINIMAP"] = "顯示小地圖按鈕",
-    ["OPT_SERVER_RANK"] = "顯示伺服器排名",
-    ["OPT_HOW_SCORES_WORK"] = "分數是如何計算的",
-    ["OPT_RESTORE"] = "還原 TacoTip 設定",
-    ["OPT_RESET"] = "重設插件設定",
-    ["OPT_EQUIPMENT_MODE"] = "角色與檢視摘要",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "在詳細模式顯示無強化分數",
-    ["OPT_EQUIPMENT_UNLOCK"] = "解鎖摘要位置",
-    ["OPT_EQUIPMENT_RESET"] = "重設摘要位置",
-    ["OPT_SCAN_NOW"] = "立即掃描",
-    ["OPT_SCAN_NOW_DESC"] =
-    "掃描目前可以檢視的玩家，並補上尚未取得的裝備分數。",
+    ["TOOLTIP_LABEL_RANK"] = "GS 排名：",
 
     ["HELP_ENABLED_HEADING"] = "啟用插件",
     ["HELP_ENABLED_1"] =
@@ -138,6 +103,16 @@ local L = {
     ["HELP_SHOWSERVERRANK_1"] =
     "在背景同步引擎提供資料時，於提示方塊中顯示玩家的伺服器裝備分數排名與職業排名。",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "寬鬆行高",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "加高排行榜的行，讓文字更大。列表顯示的仍是同樣的玩家和同樣的順序，只是行更高。",
+
+    ["HELP_SHAMANBLUE_HEADING"] = "薩滿藍色",
+    ["HELP_SHAMANBLUE_1"] =
+    "將薩滿的職業名稱顯示為藍色，而不是粉紅色。Classic Era 把薩滿的職業顏色畫成粉紅色，因此這裡與 TacoTip 本身使用的顏色一致。",
+    ["HELP_SHAMANBLUE_2"] =
+    "安裝了 TacoTip 時，它自己的薩滿藍色設定同樣生效：在那邊關閉，這裡也會關閉藍色，這樣兩個插件的職業顏色保持一致。",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "開啟伺服器排行榜",
     ["HELP_OPENLEADERBOARD_1"] =
     "開啟 TacoTip 裝備分數伺服器排行榜視窗（/tt ranks），瀏覽整個伺服器範圍的排名。",
@@ -189,27 +164,26 @@ local L = {
     ["MINIMAP_HINT"] = "TacoTip Extras",
     ["MINIMAP_HINT_LEFT"] = "左鍵：排行榜",
     ["MINIMAP_HINT_DRAG"] = "拖曳可移動",
-    ["BLANK_DESC"] = "拖曳",
-    ["BLANK"] = "無",
 
     ["LB_TITLE"] = "TacoTip 裝備分數排行榜",
     ["LB_REALM"] = "全伺服器",
     ["LB_SEARCH"] = "搜尋：",
+    ["LB_GUILD"] = "公會：",
     ["LB_YOU"] = "你",
     ["LB_LOADING"] = "正在載入排名...",
     ["LB_EMPTY"] = "尚無資料。分數會在你遊玩時同步。",
     ["LB_EMPTY_FILTERS"] = "沒有玩家符合目前的篩選條件。",
+    ["LB_DB_UNAVAILABLE"] = "排名資料庫無法使用，無法顯示排名。",
     ["LB_NOT_ESTABLISHED"] = "尚無排名",
     ["LB_ONLY_YOU"] = "本伺服器目前只記錄了你的角色。",
     ["LB_FILTER_ALL"] = "全部",
-    ["LB_MY_RANK"] = "\226\152\148 我的排名",
-    ["LB_TOP"] = "\226\152\160 榜首",
+    ["LB_TOP"] = "\226\150\178 榜首",
     ["LB_SCAN"] = "立即掃描",
     ["LB_SCAN_BUSY"] = "正在掃描...",
-    ["LB_SCAN_IDLE"] = "閒置",
 
     ["LB_COL_RANK"] = "排名",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "等級",
     ["LB_COL_PLAYER"] = "玩家",
     ["LB_COL_LASTSEEN"] = "最後上線",
     ["LB_COL_GS"] = "GEARSCORE",
@@ -218,14 +192,20 @@ local L = {
     ["LB_TIP_UNKNOWNSPEC"] = "未知天賦",
     ["LB_TIP_GS"] = "裝備分數：%d",
     ["LB_TIP_ILVL"] = "平均裝等：%.1f",
+    ["LB_TIP_PVP_RANK"] = "PvP 排名：%s",
+    ["LB_TIP_ARENA"] = "競技場最佳：%d",
     ["LB_TIP_RANK"] = "裝備分數排名：#%d",
-    ["LB_TIP_CLASSRANK"] = "職業排名：#%d",
     ["LB_TIP_LASTSEEN"] = "最近見到：%s",
+    ["LB_TIP_RANK_SYNCED"] = "排名已同步：%s",
+    ["LB_TIP_CLICK_GEAR"] = "點擊查看裝備",
+    ["LB_SCAN_COMPLETE"] = "掃描完成 - 已記錄 %d 名玩家",
 
     ["SORT_GS_DESC"] = "裝備分數",
     ["SORT_ILVL_DESC"] = "物品等級",
+    ["SORT_LEVEL_DESC"] = "等級",
     ["SORT_SEEN_DESC"] = "最近見到",
 
+    ["LB_STAT_STRIP"] = "%d 名玩家 | 最高 %d | 平均 %d",
 
     ["TIME_JUST_NOW"] = "剛剛",
     ["TIME_MIN_AGO"] = "%d 分鐘前",
@@ -234,14 +214,14 @@ local L = {
 
     ["GEAR_TITLE"] = "%s 的裝備",
     ["GEAR_NOT_SCANNED"] = "該玩家尚未掃描，因此沒有可顯示的裝備。",
-    ["GEAR_NO_ITEMS"] = "沒有記錄到裝備。",
-    ["GEAR_CLOSE"] = "關閉",
+    ["GEAR_DATA_UNAVAILABLE"] = "目前無法取得該玩家的裝備資料。請在排行榜中點擊立即掃描，然後再試一次。",
 
     ["SCAN_PROGRESS"] = "%d / %d",
 
     ["CLASS_DEATHKNIGHT"] = "死亡騎士",
     ["CLASS_DEMONHUNTER"] = "惡魔獵手",
     ["CLASS_DRUID"] = "德魯伊",
+    ["CLASS_EVOKER"] = "喚能師",
     ["CLASS_HUNTER"] = "獵人",
     ["CLASS_MAGE"] = "法師",
     ["CLASS_MONK"] = "武僧",

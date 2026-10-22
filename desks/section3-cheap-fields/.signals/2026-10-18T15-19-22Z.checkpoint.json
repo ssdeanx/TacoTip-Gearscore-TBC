@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-18T15:19:22Z",
+  "run_id": "stage3",
+  "agent_name": "section3-cheap-fields",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Brief-exact implementation; harness caught 3 real defects during development (version gate count, digest burst ordering, top-4 ranking). Real-serializer byte measurement confirmed door math.",
+    "what_was_hard": "Digest-burst budget interaction with pre-existing FatOne/FatTwo rows; modern-vs-classic PvP gating without client-identity checks.",
+    "skill_gap": "In-game verification of the 8 open questions still needs a live client."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

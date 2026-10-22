@@ -5,6 +5,7 @@
 local _hp = ((arg and arg[0]) or "Tests/harness/load_test.lua"):gsub("\\", "/")
 local _hd = _hp:match("^(.*)/[^/]*$") or "."
 local ROOT = dofile(_hd .. "/root.lua") .. "/"
+local MOCKC = dofile(_hd .. "/mock_contract.lua")
 
 local projectId, iface, layout = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 -- Optional: blank out a Blizzard global before load, to prove that a file-scope
@@ -14,6 +15,7 @@ local missingGlobal = arg[8]
 local expectFamily, expectBracket = arg[4], tonumber(arg[5])
 local label = arg[6] or ""
 local usePipeline = (arg[7] == "pipeline")
+MOCKC.setFamily(MOCKC.normaliseFamily(expectFamily))
 
 local REALG = _G
 local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
@@ -27,8 +29,58 @@ local hookScriptCalls, postCallRegs, events = {}, {}, {}
 local hookedGlobals = {}
 -- Pawn call log, populated by the Pawn mock in baseEnv().
 local PAWN = {}
+
+-- Templates that carry the BACKDROP API.
+--
+-- Only a template that mixes in BackdropTemplateMixin has SetBackdrop /
+-- SetBackdropColor / SetBackdropBorderColor, and the only such template is
+-- BackdropTemplate itself. Verified on ALL FIVE branches:
+--   origin/classic_era          Interface/AddOns/Blizzard_SharedXML/Backdrop.xml:5
+--   origin/classic_anniversary  Interface/AddOns/Blizzard_SharedXML/Backdrop.xml:5
+--   origin/classic_titan        Interface/AddOns/Blizzard_SharedXML/Backdrop.xml:5
+--   origin/forever              Interface/AddOns/Blizzard_SharedXML/Backdrop.xml:5
+--   origin/live                 Interface/AddOns/Blizzard_SharedXML/Backdrop.xml:5
+--       <Frame name="BackdropTemplate" mixin="BackdropTemplateMixin" virtual="true">
+--   and the mixin, on every one of them:
+--   Interface/AddOns/Blizzard_SharedXML/Backdrop.lua:336 / :406 / :429
+--       SetBackdrop / SetBackdropColor / SetBackdropBorderColor
+--
+-- The rule is recorded in Tests/harness/mock_contract.lua (RULES.backdropTemplate)
+-- so the contract lives in one place.
+local BACKDROP_TEMPLATES = { BackdropTemplate = true }
+
 local function newFrame(kind, name, parent, template)
-    local f = { GetName = function() return name end, __kind = kind, __name = name }
+    -- __template is recorded so the template the client was asked for is a
+    -- decidable fact, not a detail the mock swallowed. The Extras harness
+    -- records it the same way.
+    local f = { GetName = function() return name end, __kind = kind, __name = name,
+        __template = template }
+    -- The backdrop API is TEMPLATE-DEPENDENT, and the client is the authority.
+    --
+    -- The generic no-op surface below (the __index fallback) answers EVERY key
+    -- with a function, so before this rule a plain CreateFrame("Frame", ...)
+    -- "had" SetBackdrop in the harness. In the client it does not, and an
+    -- `if f.SetBackdrop then` guard is the client's own way of asking that
+    -- question -- a mock that always answers yes makes the guard unobservable.
+    -- That is exactly how the Extras' gear panel shipped TRANSPARENT.
+    --
+    -- A frame WITH a backdrop template gets the three members as real
+    -- functions; a frame WITHOUT one has them recorded as ABSENT, which the
+    -- __index below consults first (via rawget, because reading t.__absent
+    -- through __index would recurse forever).
+    local backdropCapable = type(template) == "string"
+        and BACKDROP_TEMPLATES[template] == true
+    if backdropCapable then
+        f.SetBackdrop = function() end
+        f.SetBackdropColor = function() end
+        f.SetBackdropBorderColor = function() end
+    else
+        f.__absent = {
+            SetBackdrop = true,
+            SetBackdropColor = true,
+            SetBackdropBorderColor = true,
+        }
+    end
     -- Scripts this frame declares. Which tooltip scripts exist is CLIENT-SPECIFIC:
     -- the Classic template declares OnTooltipSetUnit / OnTooltipSetItem /
     -- OnTooltipSetSpell, while Retail's SharedTooltipTemplate declares only
@@ -84,11 +136,11 @@ local function newFrame(kind, name, parent, template)
         if k == "RegisterEvent" then return function(_, e) events[#events + 1] = tostring(e) end end
         if k == "CreateFontString" then return function() return newFrame("FontString") end end
         if k == "CreateTexture" then return function() return newFrame("Texture") end end
-        -- A real frame simply does not have some methods (Retail's GameTooltip has
-        -- no SetBackdrop). Keys listed in __absent must read as nil, otherwise the
-        -- mock invents a method the client does not have and any feature test
-        -- built on it silently takes the wrong branch -- which is exactly how the
-        -- backdrop Mixin shipped to Retail.
+        -- A real frame simply does not have some methods (no tooltip chain on
+        -- any of the five clients defines SetBackdrop). Keys listed in __absent
+        -- must read as nil, otherwise the mock invents a method the client does
+        -- not have and any feature test built on it silently takes the wrong
+        -- branch -- which is exactly how the backdrop Mixin shipped to Retail.
         -- rawget, and never for the internal fields themselves: reading t.__absent
         -- through __index would recurse forever.
         local absent = rawget(t, "__absent")
@@ -107,13 +159,29 @@ local function baseEnv()
     REALG.print = function() end
     REALG.GetLocale = function() return "enUS" end
     REALG.InCombatLockdown = function() return false end
+    -- `securecall` -- the engine's taint-containment global, present on every
+    -- supported client (Blizzard captures it as a local the same way it captures
+    -- `forceinsecure`: Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
+    -- `local securecall = securecall;`). The mock counts the calls that went
+    -- through it, so a taint pin can tell "addon code ran inside a Blizzard
+    -- frame's script chain" from "it ran contained".
+    REALG.securecall = function(fn, ...)
+        REALG.__secureCalls = (REALG.__secureCalls or 0) + 1
+        return fn(...)
+    end
     REALG.UnitExists = function() return false end
     REALG.UnitIsPlayer = function() return false end
     REALG.UnitIsUnit = function() return false end
     REALG.UnitLevel = function() return 1 end
     REALG.UnitRace = function() return "" end
     REALG.UnitGUID = function() return nil end
-    REALG.UnitClass = function() return "Warrior", "WARRIOR" end
+    -- UnitClass publishes THREE values on the modern pair
+    -- (localizedClassName, classToken, classID) and TWO on the Classic
+    -- family; the mock published two on every client. See
+    -- Tests/harness/mock_contract.lua for the mirror citations.
+    --   origin/live, origin/forever: UnitUtil.lua:81 `select(3, UnitClass("player"))`
+    --   origin/classic_era etc.:      InspectPaperDollFrame.lua:10
+    REALG.UnitClass = MOCKC.unitClassMock(function() return "Warrior", "WARRIOR" end)
     REALG.UnitName = function() return "Test" end
     REALG.UnitPower = function() return 0 end
     REALG.UnitPowerMax = function() return 100 end
@@ -226,12 +294,25 @@ local function baseEnv()
     if (usePipeline) then
         REALG.CharacterModelFrame = nil
     end
-    -- Real tooltip templates, per family:
-    --   Classic family  SharedTooltipTemplate, no NineSlice, no SetBackdrop
-    --   Retail / Forever SharedTooltipArtTemplate, HAS a NineSlice child, and does
-    --                   NOT mix in BackdropTemplateMixin -- so no SetBackdrop
-    -- See Blizzard_SharedXML/SharedTooltipTemplates.xml on the live and
-    -- classic_era branches of wow-ui-source.
+    -- Real tooltip templates, per family. Mirror-verified against
+    -- wow-ui-source (Interface/AddOns/Blizzard_SharedXML/):
+    --   Classic family  GameTooltipTemplate -> GameTooltipCommonTemplate,
+    --                   TooltipBackdropTemplate. TooltipBackdropTemplate has a
+    --                   NineSlice child AND mixes in
+    --                   TooltipBackdropTemplateMixin, which defines
+    --                   SetBackdropColor / SetBackdropBorderColor (routing to
+    --                   NineSlice:SetCenterColor / SetBorderColor).
+    --   Retail / Forever GameTooltipTemplate -> SharedTooltipTemplate ->
+    --                   SharedTooltipArtTemplate, which also has a NineSlice
+    --                   child but mixes in neither BackdropTemplateMixin nor
+    --                   TooltipBackdropTemplateMixin: NO SetBackdropColor.
+    -- SetBackdrop belongs to BackdropTemplateMixin, which no tooltip chain
+    -- mixes in, so it is absent on all five -- it is the graft detector, not a
+    -- client difference.
+    -- Sources: Blizzard_SharedXML/SharedTooltipTemplates.xml and
+    -- Blizzard_SharedXML/Classic/GameTooltipTemplate.xml on the Classic
+    -- branches; Blizzard_GameTooltip/Mainline/GameTooltip.xml on forever/live.
+    --
     -- Tooltip frames the addon hooks, with the scripts their real template
     -- declares. Modern tooltips have NO OnTooltipSetUnit / OnTooltipSetItem /
     -- OnTooltipSetSpell; Classic tooltips have all three. Hooking one that does
@@ -247,24 +328,59 @@ local function baseEnv()
 
     local gt = newFrame("GameTooltip", "GameTooltip")
     gt.__scripts = tooltipScripts
-    -- Classic-family tooltip: no NineSlice, no SetBackdrop. Modern tooltip:
-    -- NineSlice present, still no SetBackdrop. In BOTH cases SetBackdrop is
-    -- absent -- that is the whole point, and the old feature test could not tell
-    -- them apart.
+    -- EVERY client reaches a NineSlice child (see the template comment above).
+    -- The mock previously modelled the Classic family as having none, which was
+    -- untrue and taught the harness the wrong contract: it made the addon's
+    -- legacy no-NineSlice fallback look like the live path on three of the five
+    -- clients. Assigned explicitly rather than left to newFrame's generic no-op
+    -- fallback, so its presence is a decidable fact.
+    gt.NineSlice = newFrame("Frame", "GameTooltipNineSlice")
+    -- The NineSlice child is a PLAIN frame in the client: it inherits
+    -- NineSlicePanelTemplate -> NineSliceCodeTemplate, and neither mixes in
+    -- BackdropTemplateMixin (origin/live
+    --   Interface/AddOns/Blizzard_SharedXML/Mainline/SharedUIPanelTemplates.xml:381).
+    -- So it has NO backdrop API, which newFrame now records for it. The
+    -- explicit clearing of that set is gone: it would hand the child a
+    -- SetBackdrop the client does not give it.
+    --
+    -- SetBackdrop is absent from all five tooltip chains (BackdropTemplateMixin
+    -- is never mixed in), which is what makes it the graft detector: if the
+    -- addon ever grafts the mixin onto a tooltip, this key becomes a function
+    -- and the check below fails.
     gt.__absent = {
-        SetBackdrop = true, SetBackdropColor = true, SetBackdropBorderColor = true,
-        NineSlice = true,
+        SetBackdrop = true,
+        SetBackdropColor = true,
+        SetBackdropBorderColor = true,
     }
     -- WOW_PROJECT_MAINLINE is 1; the constant is assigned further down in this
     -- same env block, so compare against the literal.
-    if (projectId == 1) then
-        gt.__absent.NineSlice = nil
-        gt.NineSlice = newFrame("Frame", "GameTooltipNineSlice")
-        gt.NineSlice.__absent = {}
+    if (projectId ~= 1) then
+        -- TooltipBackdropTemplateMixin surface. Explicit assignment, not the
+        -- generic no-op surface, so the availability assertion below tests the
+        -- modelled member rather than the fallback that answers every key.
+        gt.SetBackdropColor = function() end
+        gt.SetBackdropBorderColor = function() end
+        -- The members exist on the Classic tooltip, so they must not also be
+        -- recorded as absent: a raw member wins over __index, but a contract
+        -- that claims a member is both present and absent is not a contract.
+        gt.__absent.SetBackdropColor = nil
+        gt.__absent.SetBackdropBorderColor = nil
+    else
+        gt.__absent.SetBackdropColor = true
+        gt.__absent.SetBackdropBorderColor = true
     end
     REALG.GameTooltip = gt
     -- Present on every supported client, and required for the backdrop fallback.
-    REALG.BackdropTemplateMixin = { SetBackdrop = function() end }
+    -- The mixin carries the whole backdrop API in the client, not just
+    -- SetBackdrop (Backdrop.lua:336 / :406 / :429), so the mock carries the
+    -- whole set: a Mixin onto a legacy tooltip has to grant the same members
+    -- the client would.
+    REALG.BackdropTemplateMixin = {
+        SetBackdrop = function() end,
+        GetBackdrop = function() return nil end,
+        SetBackdropColor = function() end,
+        SetBackdropBorderColor = function() end,
+    }
     REALG.Mixin = function(object, mixin)
         for k, v in pairs(mixin) do object[k] = v end
     end
@@ -324,7 +440,7 @@ local function baseEnv()
         local ttFrame = REALG.GameTooltip
         ttFrame.IsTooltipType = function() return true end
         ttFrame.GetPrimaryTooltipData = function() return nil end
-        ttFrame.GetUnit = function() return "n", "mouseover", nil end
+        ttFrame.GetUnit = function() return "n", "mouseover" end
     else
         REALG.TooltipDataProcessor = nil
         REALG.TooltipUtil = nil
@@ -343,10 +459,26 @@ local function baseEnv()
     end
     for _, nm in ipairs({ "ShoppingTooltip1", "ShoppingTooltip2", "ItemRefTooltip",
             "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2", "WorldMapTooltip",
-            "WorldMapCompareTooltip1", "WorldMapCompareTooltip2", "SmallTextTooltip",
-            "GameTooltipStatusBar" }) do
+            "WorldMapCompareTooltip1", "WorldMapCompareTooltip2", "SmallTextTooltip" }) do
         local f = REALG[nm]
         if (f and f.__scripts) then f.__scripts = tooltipScripts end
+    end
+
+    -- The tooltip STATUS BAR is not a tooltip: it is a <StatusBar> child, and it
+    -- declares NO OnHide on ANY of the five clients. The classic chain declares
+    -- exactly <OnValueChanged>
+    -- (classic_era:Blizzard_SharedXML/Classic/GameTooltipTemplate.xml:138-148)
+    -- and the modern pair adds <OnLoad>/<OnUpdate>
+    -- (live and forever:Blizzard_GameTooltip/Mainline/GameTooltip.xml:9-23).
+    --
+    -- Handing it `tooltipScripts` above (as this mock used to) made the add-on's
+    -- `GameTooltipStatusBar:HookScript("OnHide")` look legal: the HookScript
+    -- raise could never fire, so a file-scope abort of the REST of main.lua was
+    -- unobservable in this suite. `OnValueChanged` is the one script every
+    -- client declares, so it is the only one recorded here — over-declaring is
+    -- precisely what hid the defect.
+    if (REALG.GameTooltipStatusBar) then
+        REALG.GameTooltipStatusBar.__scripts = { OnValueChanged = true }
     end
 
     REALG.Item = nil
@@ -526,26 +658,78 @@ local checks = {
             .. tostring(missingGlobal) .. ")" },
 }
 
--- Backdrop template contract. The signal for "this tooltip needs the legacy
--- BackdropTemplateMixin" is the ABSENCE of NineSlice, not the absence of
--- SetBackdrop: Retail and WoW Forever use SharedTooltipArtTemplate, which has a
--- NineSlice child and does NOT mix in BackdropTemplateMixin, so GameTooltip has
--- no SetBackdrop even though it renders correctly. Testing SetBackdrop made the
--- Mixin run on exactly the two clients that must not have it.
+-- Backdrop template contract.
+--
+-- SHARED truth, all five clients: the tooltip reaches a NineSlice child
+-- (Classic via GameTooltipTemplate -> TooltipBackdropTemplate; Forever/Retail
+-- via GameTooltipTemplate -> SharedTooltipTemplate -> SharedTooltipArtTemplate).
+--
+-- DIFFERING member, asserted separately rather than folded into the presence
+-- check: only the Classic chain mixes in TooltipBackdropTemplateMixin, so only
+-- there does the tooltip expose SetBackdropColor / SetBackdropBorderColor
+-- (routing to NineSlice). Forever/Retail expose neither.
+--
+-- The addon must NOT re-run its legacy graft on any of them: the graft would
+-- come in through BackdropTemplateMixin, whose SetBackdrop is absent from every
+-- tooltip chain, so `gt.SetBackdrop` becoming a function is the regression.
+-- Verified by mutation, each reverted after the failure was observed:
+--   (a) restoring the old no-NineSlice Classic mock fails the NineSlice check
+--       on the three Classic clients;
+--   (b) granting a modern mock SetBackdropColor fails the differing-member
+--       check on Forever/Retail;
+--   (c) making main.lua's backdrop graft unconditional fails the graft check on
+--       all five.
+-- The mock-fidelity contract (proctor HI-12). The UnitClass mock must
+-- publish the arity the CLIENT publishes on this family: three values on the
+-- modern pair, two on the Classic family. The mock used to publish two on
+-- every client, which is exactly the gap the contract now closes.
+do
+    local function contractCheck(name, cond, detail)
+        checks[#checks + 1] = { cond, name .. (detail and (" -- " .. tostring(detail)) or "") }
+    end
+    MOCKC.assertArity(contractCheck, "UnitClass", REALG.UnitClass)
+end
+
 do
     local gt = REALG.GameTooltip
     local modern = (expectFamily == "retail" or expectFamily == "forever")
+    checks[#checks + 1] = { gt and gt.NineSlice ~= nil,
+        "tooltip has a NineSlice child on every client" }
     if (modern) then
-        checks[#checks + 1] = { gt and gt.NineSlice ~= nil,
-            "modern tooltip has a NineSlice child" }
-        checks[#checks + 1] = { gt and gt.SetBackdrop == nil,
-            "BackdropTemplateMixin is NOT grafted onto a NineSlice tooltip" }
+        checks[#checks + 1] = { gt and gt.SetBackdropColor == nil,
+            "modern tooltip exposes NO SetBackdropColor (differing member)" }
+        checks[#checks + 1] = { gt and gt.SetBackdropBorderColor == nil,
+            "modern tooltip exposes NO SetBackdropBorderColor (differing member)" }
     else
-        checks[#checks + 1] = { gt and gt.NineSlice == nil,
-            "Classic tooltip has no NineSlice child" }
-        checks[#checks + 1] = { gt and type(gt.SetBackdrop) == "function",
-            "Classic tooltip keeps the legacy SetBackdrop fallback" }
+        checks[#checks + 1] = { gt and type(gt.SetBackdropColor) == "function",
+            "Classic tooltip exposes SetBackdropColor (differing member)" }
+        checks[#checks + 1] = { gt and type(gt.SetBackdropBorderColor) == "function",
+            "Classic tooltip exposes SetBackdropBorderColor (differing member)" }
     end
+    checks[#checks + 1] = { gt and gt.SetBackdrop == nil,
+        "BackdropTemplateMixin is NOT grafted onto the tooltip" }
+end
+
+-- The backdrop API is TEMPLATE-DEPENDENT in the client, and the harness must
+-- model that, not the other way round.
+--
+-- A plain CreateFrame("Frame", ...) has NO SetBackdrop / SetBackdropColor /
+-- SetBackdropBorderColor: only a template that mixes in BackdropTemplateMixin
+-- carries them, and the only such template is BackdropTemplate. The mock used
+-- to hand the whole set to EVERY frame (its __index fallback answers any key
+-- with a function), so `if f.SetBackdrop then` -- the client's own way of
+-- asking whether a frame has a backdrop -- could never be observed. That is
+-- how the Extras' gear panel shipped TRANSPARENT: the guard was skipped in the
+-- client and the harness could not see it.
+--
+-- The rule and its client-source citations live in
+-- Tests/harness/mock_contract.lua (RULES.backdropTemplate), so the contract is
+-- in one place.
+do
+    local function contractCheck(name, cond, detail)
+        checks[#checks + 1] = { cond, name .. (detail and (" -- " .. tostring(detail)) or "") }
+    end
+    MOCKC.assertBackdropTemplateRule(contractCheck, REALG.CreateFrame)
 end
 
 -- The actual 1.3 fix: a client WITHOUT the data pipeline must register ZERO
@@ -847,6 +1031,107 @@ do
     checks[#checks + 1] = { themedOk,
         "each themed 256x32 border declares edgeSize 32 (first bad: "
             .. tostring(themedMissing) .. ")" }
+end
+
+-- ---------------------------------------------------------------------------
+-- Batch 7 item 2: a string-typed Pawn version global must not abort the load
+-- ---------------------------------------------------------------------------
+--
+-- main.lua's Pawn probe compared the RAW version globals with `>= 2.0538` /
+-- `>= 2.0`. A string-typed version raises "attempt to compare string with
+-- number", and because the probe runs at FILE SCOPE that raise aborts the
+-- whole add-on load -- every feature main.lua defines after that line is lost,
+-- and the player gets a silently broken tooltip. pawn.lua and options.lua
+-- were guarded in an earlier batch; main.lua was not.
+--
+-- The whole add-on is loaded a SECOND time here with both Pawn version
+-- globals hostile (non-numeric strings), which is the only way to prove the
+-- claim "the addon still loads": a file-scope raise in ANY of the twenty
+-- files would surface as a load failure, and the failure text names the
+-- comparison that raised.
+--
+-- The second pass runs after every other check has been collected, so the
+-- environment it rebuilds cannot disturb them.
+do
+    for k in STD.pairs(REALG) do REALG[k] = nil end
+    baseEnv()
+    -- Hostile Pawn version globals: not numbers. The API trio is removed as
+    -- well, so the file-scope snapshot resolves Pawn as ABSENT -- which is
+    -- what makes the SECOND compare site reachable: /tacotip diag only calls
+    -- the live re-probe when the snapshot says Pawn is not loaded.
+    REALG.PawnClassicLastUpdatedVersion = "2.0538-beta"
+    REALG.PawnLastUpdatedVersion = "not-a-version"
+    REALG.PawnGetItemData = nil
+    REALG.PawnGetSingleValueFromItem = nil
+    REALG.PawnGetScaleColor = nil
+
+    local failed2 = nil
+    for _, rel in ipairs(order) do
+        local ok, err = pcall(run, rel)
+        if (not ok) then failed2 = rel .. ": " .. tostring(err); break end
+    end
+    local TT2 = REALG.TacoTip_Forever
+    checks[#checks + 1] = {
+        failed2 == nil,
+        "the whole add-on loads with a string-typed Pawn version global"
+            .. (failed2 and (" -- " .. tostring(failed2)) or "") }
+    checks[#checks + 1] = {
+        TT2 ~= nil and TT2.LOAD_OK == true,
+        "...and main.lua reaches the end of the file (stage="
+            .. tostring(TT2 and TT2.LOAD_STAGE) .. ")" }
+    -- The live re-probe (the second of the two compare sites) must not raise
+    -- either. It is reached through /tacotip diag -- reportSilentFailures
+    -- calls isPawnAvailableNow() -- so driving the diagnostic exercises the
+    -- second comparison with the same hostile globals still in place.
+    local probeOK, probeErr
+    if (TT2 and type(TT2.PrintDiagnostics) == "function") then
+        probeOK, probeErr = pcall(TT2.PrintDiagnostics, TT2)
+    else
+        probeOK = false
+        probeErr = "TT.PrintDiagnostics missing"
+    end
+    checks[#checks + 1] = {
+        probeOK,
+        "the live Pawn probe does not raise on a string-typed version"
+            .. (probeErr and (" -- " .. tostring(probeErr)) or "") }
+end
+
+-- The unit render must not decide from screen geometry.
+--
+-- 0.8.4 regression: the portrait's side was read from tooltip:GetRight() inside
+-- TT:ApplyTooltipAppearance. The tooltip has not been laid out at that point (the
+-- modern post-call runs before the client's own Show) and the saved anchor is
+-- applied at the END of the same function, so the read measured the client's
+-- default corner; the portrait was then placed off-screen. getPortraitSideRightEdge
+-- is the one sanctioned reader, because it answers where the tooltip is ABOUT to
+-- be. Every other anchor in the appearance path is frame-relative, and a new
+-- geometry read here would be the same bug waiting for a different symptom.
+do
+    local fh = io.open(ROOT .. "main.lua", "r")
+    local okScan, problem = false, "main.lua unreadable"
+    if fh then
+        local src = fh:read("*a")
+        fh:close()
+        local first = src:find("function TT:ApplyTooltipAppearance", 1, true)
+        local last = first and src:find("\nend\n", first, 1, true)
+        if not (first and last) then
+            problem = "TT:ApplyTooltipAppearance not found in main.lua"
+        else
+            local body = src:sub(first, last)
+            local found = nil
+            for _, pattern in ipairs({
+                ":GetRight%(", ":GetLeft%(", ":GetTop%(",
+                ":GetBottom%(", ":GetWidth%(", ":GetHeight%(",
+            }) do
+                if body:find(pattern) then found = pattern end
+            end
+            okScan = found == nil
+            problem = found and ("geometry read in the render: " .. tostring(found)) or nil
+        end
+    end
+    checks[#checks + 1] = { okScan,
+        "the unit render does not decide from screen geometry"
+            .. (problem and (" -- " .. problem) or "") }
 end
 
 local bad = 0

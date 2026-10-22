@@ -1,0 +1,42 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-21T14:32:33Z",
+  "run_id": "extraspublishreview20261021",
+  "agent_name": "extras-publish-review-2026-10-21",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Per-branch XML parsing with a namespace-aware parser settled the frames whose <Scripts> blocks matter (PaperDollFrame, InspectPaperDollFrame, InspectFrame, the shared GameTooltip and its template). The whole-tree sweep for InspectFrame_UnitChanged settled the dead post-hook. The verifier and both suites ran clean in the lane.",
+    "what_was_hard": "Frame:HasScript and Frame:HookScript validation semantics are engine-side, and the two available pieces of evidence (the add-on's operator-witnessed note in Options.lua:594-613 and Blizzard's own Spinner.lua:8) point in opposite directions. The mirror cannot settle it, so it was escalated with a one-line in-game probe rather than reported as a defect.",
+    "skill_gap": "Reading the XML with a namespace-aware parser from the start. The first probe pass reported Scripts=[] for every frame because the default namespace broke findall('./Scripts'); that would have produced a false 'no scripts declared' answer for the whole of A3 and A4."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Before publishing, run /dump PaperDollFrame:HasScript(\"OnSizeChanged\") in game. If false, the two OnSizeChanged hooks at TacoTip_Extras/Frames.lua:1356 and :1405 raise and the character/inspect surfaces die on all five clients; the fix is the same HasScript guard Options.lua:626-635 already uses. If true, nothing to do."
+  },
+  "artifact": "bench/audits/2026-10-21-extras-publish-review.md",
+  "validation": {
+    "mirror_status_unchanged": true,
+    "repo_status_no_product_file_change": true,
+    "repo_status_new_paths_mine_only": [
+      "desks/extras-publish-review-2026-10-21/",
+      "bench/audits/2026-10-21-extras-publish-review.md"
+    ],
+    "repo_status_new_paths_from_concurrent_lanes": [
+      "bench/audits/2026-10-21-publish-gate-verification.md",
+      "desks/main-publish-sweep-2026-10-21/"
+    ],
+    "extras_harness": "42/42 PASS (lua 5.1 / lua 5.4 / luajit)",
+    "luacheck": "0 warnings / 0 errors in 26 files",
+    "verify_release_extras": "PASS (--worktree)",
+    "findings_blocking_confirmed": 0,
+    "findings_should_fix": 4,
+    "findings_nit": 7
+  }
+}

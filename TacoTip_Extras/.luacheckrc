@@ -32,11 +32,16 @@ read_globals = {
     "GetTime",
     "GetWeaponEnchantInfo",
     "GUIDIsPlayer",
-    -- WoW's wall clock. RankDB stamps records with it and RankBrowser renders
-    -- relative times from it. It is a Blizzard global, not a missing local:
-    -- the root .luacheckrc declares it too, and reaching the local config from
-    -- `cd TacoTip_Extras && luacheck .` is what made it look undeclared.
-    "time",
+    -- The engine's taint-containment global, present on every supported
+    -- client (Blizzard captures it as a local the same way it captures
+    -- `forceinsecure`: Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
+    -- `local securecall = securecall;`). Read, never written.
+    "securecall",
+    -- WoW's server wall clock (epoch seconds). RankDB stamps and validates
+    -- records with it, RankBrowser renders relative times from it, and Scanner
+    -- stamps inspection records with it. It is a Blizzard global, not a
+    -- missing local, and every call site guards it.
+    "GetServerTime",
     "UIDropDownMenu_AddButton",
     "UIDropDownMenu_CreateInfo",
     "UIDropDownMenu_Initialize",
@@ -51,14 +56,13 @@ read_globals = {
 }
 
 globals = {
-    -- Core.lua registers /ttgsdebug. NOTE THE ASYMMETRY: Core.lua assigns
-    -- SLASH_TTGSEDEBUG1 as a BARE global while its own guard reads
-    -- `SlashCmdList.TTGSEDEBUG ~= nil`, and Options.lua assigns
-    -- _G.SLASH_TTGSE1 for /ttgs. Blizzard pairs a `SLASH_NAME1` global with
-    -- `SlashCmdList.NAME`; the two files spell that pairing differently.
-    -- Reported, NOT fixed -- it is runtime behaviour and phase 2 owns it.
-    "SLASH_TTGSEDEBUG1",
-    "SLASH_TTGSE1",
+    -- Core.lua registers /ttgsdebug and Options.lua registers /ttgs. Both
+    -- write through _G today (an earlier revision wrote one of them as a BARE
+    -- global while the other used _G, so the same slash-command pair was
+    -- declared two different ways). The live names are declared here so a
+    -- revert to the bare form fails the check instead of shipping.
+    "SLASH_TTEXTRASDEBUG1",
+    "SLASH_TTEXTRAS1",
     -- SlashCmdList must be WRITABLE, not merely readable: both files assign
     -- fields on it at initialize time.
     "SlashCmdList",

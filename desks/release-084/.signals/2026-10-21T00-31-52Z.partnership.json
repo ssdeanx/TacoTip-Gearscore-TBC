@@ -1,0 +1,23 @@
+{
+  "signal_type": "partnership",
+  "subtype": "partnership",
+  "timestamp": "2026-10-21T00:31:52Z",
+  "run_id": "release-084",
+  "agent_name": "release-084",
+  "self_assessment": {
+    "intent": 2,
+    "confidence": 2,
+    "accuracy": 2,
+    "completeness": 2
+  },
+  "patterns": {
+    "what_worked": "Dispatching the two live defects to lanes with disjoint file scopes, and owning the one regression I could prove (the font delta) instead of leaving it open.",
+    "what_was_hard": "Guessing in the open instead of dispatching; duplicated content across four workshop docs; told the operator the tree was publish-ready before two client-visible behaviours were verified.",
+    "skill_gap": "Mirror-constant pins — a harness pin that copies the production constant cannot catch a change to that constant. One such pin hid the font regression. The pattern needs a sweep, not a one-off fix."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

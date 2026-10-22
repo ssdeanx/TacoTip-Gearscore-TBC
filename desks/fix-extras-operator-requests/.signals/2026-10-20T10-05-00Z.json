@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T10:05:00Z",
+  "run_id": "fix-extras-operator-requests-2026-10-20",
+  "agent_name": "fix-extras-operator-requests",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the client source first (wow-ui-source) settled the pink-versus-blue question with citations instead of assumption: Classic Era loads Vanilla/ClassColors.lua (SHAMAN = 0.96, 0.55, 0.73 pink) while TBC/Wrath load TBC/ClassColors.lua (SHAMAN = 0, 0.44, 0.87 blue, identical to the main add-on's SHAMAN_BLUE_COLOR). Building ONE resolver in Core and having all three surfaces call it is what makes 'they agree' a structural property rather than a hope. Every pin was reverted on a copy of the tree and shown to go red.",
+    "what_was_hard": "The saved tooltip mode carries no 'the user set this' marker, so the old default and a deliberate choice are indistinguishable - the requested migration cannot be done safely, and the task's own rule says not to override a saved value. A schema bump is not an escape hatch either: initializeDatabase treats schema > 2 as a future schema and force-disables the equipment windows. The character/inspect frame's rendered text is not observable through the mock (anonymous FontStrings), so that surface is pinned structurally rather than behaviourally, and that is stated rather than papered over.",
+    "skill_gap": "Two harness traps cost real time and are now recorded in the journal: an `and`/`or` expression truncates a multiple return to one value (the colour helper's green and blue read nil), and a module file that publishes itself on the namespace returns nothing from loadfile."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

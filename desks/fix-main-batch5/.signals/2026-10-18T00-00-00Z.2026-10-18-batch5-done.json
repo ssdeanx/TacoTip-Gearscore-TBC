@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T00:00:00Z",
+  "run_id": "batch5",
+  "agent_name": "fix-main-batch5",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Revert-to-fail on every item before restoring green; exact pre-batch HEAD consulted for restore targets; hand-math reproduced Batch-4 totals exactly, confirming the reference set.",
+    "what_was_hard": "detect_test mirror is a 4th mapping site not listed in the brief; updated under Batch-4 deviation precedent to avoid a suite that pins 1000 and 2000 simultaneously.",
+    "skill_gap": "In-game pins (Forever Tests retail expectation, live Retail screenshot) not runnable offline."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Operator in-game check before publish: Retail character frame shows constant Artifact at live ilvl (expected under hold); confirm no Lua errors on Retail login + /tacotip diag."
+  }
+}

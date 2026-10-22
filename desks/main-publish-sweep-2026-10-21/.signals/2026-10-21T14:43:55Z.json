@@ -1,0 +1,51 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-21T14:43:55Z",
+  "run_id": "mainpublishsweep20261021",
+  "agent_name": "main-publish-sweep-2026-10-21",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Establishing the engine rule for HookScript from Blizzard's OWN shipped code (SkillFrame has no Scripts element yet Blizzard hooks its OnShow; PTR_IssueReporter is a template-less CreateFrame yet Blizzard hooks its OnHide) turned the highest-severity class from a guess into a per-branch table. Extracting the 2864 generated API-doc files per branch and then doing a whole-tree Interface/ sweep separately caught that the classic branches' API docs are an incomplete set, which would have produced a false absence report.",
+    "what_was_hard": "Deciding whether 'not in the generated API docs' means 'not in the client' on the classic branches, and separating the classic pair's byte-identical files from their behaviour. Also keeping the four per-branch client claims (five clients, not two families) straight across roughly 200 mirror greps.",
+    "skill_gap": "I did not have a mechanical way to prove the engine-default frame script set (OnShow/OnHide/OnUpdate/...) from the mirror alone; I had to infer it from two pieces of Blizzard shipping code. An explicit engine-side source would settle it."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "artifacts": [
+    "bench/audits/2026-10-21-main-publish-sweep.md",
+    "desks/main-publish-sweep-2026-10-21/journal.md"
+  ],
+  "scope": "READ-ONLY publish-ready sweep of the MAIN add-on. No product file modified.",
+  "validation": {
+    "mirror_status_unchanged": "PASS - git -C /home/sam/wow-ui-source status --porcelain returns the same three entries as the baseline captured before any command in this lane (?? .vscode/, ?? SKILL.md, ?? reference/)",
+    "repo_status_product_files_unchanged": "PASS - git status --short shows no change to any product file; the only additions are this desk and bench/audits/2026-10-21-main-publish-sweep.md",
+    "provenance": "PASS - every path:line cited in the bench artifact came from a command run in this lane",
+    "evidence_labels": "PASS - every client claim names its branch and carries VERIFIED / ASSUMED / UNKNOWN",
+    "harness": "PASS - bash Tests/harness/run_all.sh -> 71/71",
+    "luacheck": "PASS - luacheck . -> 0 warnings / 0 errors in 88 files",
+    "package_verifier": "PASS - bash Tools/verify_release.sh --worktree -> PASS (27 files)"
+  },
+  "verdicts": {
+    "B1_invariants": "8/8 HOLD (the classic-era inspect range gate, the gearscore formula, the retail bracket at the shared 1000, the wire format, the saved-variable shapes, the one-argument CanInspect, no invented translations to the extent this lane can establish, and the inspect-frame guild guard). One additive drift: a new saved-variable key scan=true at options.lua:235.",
+    "B2_hook_sites": "NO hook site can raise on any of the five branches. The three tooltip-specific hooks are HasScript-guarded; the rest hook OnShow/OnHide, which are engine-default frame scripts.",
+    "B3_containment": "The mechanism is clean (argument forwarding, the load-time probe, no '...' in a non-vararg inner function, no lost return value). One should-fix: main.lua:3418 and main.lua:3434 are not fully self-contained, so a raise there is silent under securecall but propagates on the fallback path.",
+    "B4_CanInspect_arity": "HOLDS. The only call to the client's global is LibForeverInspector.lua:5073 pcall(api, unit) - ONE argument. No product file mentions CanInspect. The API is documented with one argument on all five branches.",
+    "B5_locale_parity": "Same 239-key set in all 11 files, no empty value, no key in only one locale. ORDER differs in all ten non-English files (a block reorder).",
+    "B6_toc_and_package": "Every toc-listed file exists; verify_release.sh --worktree PASSes with 27 files. Two UNTRACKED vendored libraries sit in Libs/ and would ship in a folder-zipped package.",
+    "B7_client_apis": "No unguarded call to a client API the mirror lacks, per branch. METHOD CORRECTION: the classic branches' generated API docs are an incomplete set, so on classic an absence claim needs the whole-tree sweep."
+  },
+  "findings": {
+    "blocking": 0,
+    "should_fix": 1,
+    "nit": 7
+  }
+}

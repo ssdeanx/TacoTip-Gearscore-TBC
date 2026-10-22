@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T17:10:00Z",
+  "run_id": "fix-extras-operator-requests-mock-fidelity-frames",
+  "agent_name": "fix-extras-operator-requests",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "The mirror settled the client's default decisively and in the way that mattered: Blizzard's own panels carry hidden=\"true\" on the FRAME and never on the template (AddonList.xml:120 and GameMenuFrame, both using ButtonFrameTemplate), and Blizzard's code creates frames and then hides them explicitly (Blizzard_Calendar.lua: eventButton = CreateFrame(...) then eventButton:Hide()). So the template does not hide, the engine leaves a created frame visible, and the Extras' browser window -- created with ButtonFrameTemplate and never hidden -- was on screen from the moment it was built, with the first toggle closing it rather than opening it. The mock's hidden-by-default frames had hidden that, and the fix is the same in both directions: model the client, and make the production code explicit about the state it wants.",
+    "what_was_hard": "Nothing was hard, which is itself the finding: a mock that disagrees with the client about a default can hide a user-visible bug for as long as the mock lives, and the disagreement is invisible from the add-on's side. The two Extras harnesses had it independently, and changing both was safe -- 42/42 stayed green -- which says the production code's visibility handling was already explicit everywhere it mattered except in the one place it did not.",
+    "skill_gap": "A mock's defaults are claims about the client, and they deserve the same citation as any other claim. Neither harness said where 'created frames are hidden' came from, because nobody had ever checked. The general form: when a mock encodes a default (a frame is hidden, a method exists, a template is known), the default needs a source or it needs to be deleted -- an uncited default is a silent assumption about the client, and it will eventually be wrong."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

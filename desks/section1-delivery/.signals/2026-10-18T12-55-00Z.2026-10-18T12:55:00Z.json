@@ -1,0 +1,17 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "run_id": "stage1",
+  "agent_name": "section1-delivery",
+  "timestamp": "2026-10-18T12:55:00Z",
+  "summary": "Stage 1 delivery correctness delivered: RankSync.lua + /ttgsdebug telemetry + 16 harness checks + CHANGELOG. Suite 42/42 on lua5.1/lua5.4/luajit, luacheck 0 warnings / 0 errors. One real implementation defect caught and fixed by the new checks (dropped second record in an over-long digest pair). Working tree only; nothing staged or committed.",
+  "artifacts": [
+    "TacoTip_Extras/RankSync.lua",
+    "TacoTip_Extras/Core.lua",
+    "TacoTip_Extras/Tests/harness/load_test.lua",
+    "TacoTip_Extras/CHANGELOG.md",
+    "desks/section1-delivery/journal.md",
+    "desks/section1-delivery/.signals/2026-10-18T12:54:16Z.json",
+    "desks/section1-delivery/.signals/2026-10-18T12:55:00Z.json"
+  ]
+}

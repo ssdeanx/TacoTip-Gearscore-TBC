@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T14:26:30Z",
+  "run_id": "stage2",
+  "agent_name": "section2-storage",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Stage 2 complete and review-ready: RankDB amortized cap engine (lazy per-realm entryCount + oldest-timestamp-first min-heap with candidate validation and forward-replace re-file), PruneAllRealms/PruneAggressive with emptied-key deletion, dead-field write-off with tolerant reads, realm field + per-realm filing + feature-detected UnitIsSameServer scan gate with counted skips, SAVED_VARIABLES_TOO_LARGE aggressive prune (7d / half-cap) wired in Core, login prune deferred via C_Timer.After(0) with execute-time arming. 34 new named Stage-2 checks, each failing pre-Stage-2; suite 42/42 green x3 interpreters; LINT 0 warnings/0 errors; Stage-1 door re-measured (105-byte realm-tagged S/T under the 240 door, maximal-caps refused as before); CHANGELOG section inserted between Tier A and the --- only.",
+    "what_was_hard": "Three test-block failure modes had to be root-caused before green: (1) the block's PEW fires left the scanner pending at gen 2 killing all Tooltips checks -- fixed with a bounded OnUpdate pump after the last fire; (2) the TOO_LARGE deleted-key check had to precede any GetRecord because getDB resurrects emptied realm keys on read; (3) the deliberately-empty skip branch in the evict loop was luacheck's one warning -- restructured flat->nested with no behavior change.",
+    "skill_gap": "none observed"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

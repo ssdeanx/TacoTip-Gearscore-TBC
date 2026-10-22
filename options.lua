@@ -1,22 +1,113 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.4"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
-local LoadAddOn = _G.LoadAddOn
 local tinsert = tinsert or table.insert
 
+--- Runs a function so that it cannot taint the frame whose script chain it
+--- executes in.
+---
+--- `securecall` is the engine's own containment primitive; Blizzard uses it
+--- for exactly this shape -- `Blizzard_BuffFrame/BuffFrame.lua:991`
+--- `securecall(self.UpdateDuration, self, self.timeLeft); -- Taint issue with
+--- SecondsToTimeAbbrev`, and `Blizzard_CatalogShop_Outbound.lua:17`
+--- `securecall("GameTooltip_Hide");`. It is an engine global on every
+--- supported client (`Blizzard_FrameXML/SharedPetBattleTemplates.lua:5`
+--- `local securecall = securecall;`).
+---
+--- Why the options panel needs it: the hover tooltips below write to the
+--- SHARED GameTooltip (`SetOwner`, `ClearLines`, `SetText`, `Show`). The
+--- shared tooltip is the frame the game menu's own buttons anchor to, and
+--- addon code that mutates it from inside a Blizzard frame's script chain
+--- taints that chain -- the taint then reaches the game menu and the
+--- Logout/Quit button is refused (ADDON_ACTION_FORBIDDEN). See main.lua's
+--- runUntainted for the full argument.
+local secureCallFn = nil
+if (type(securecall) == "function") then
+    -- Probed once at load, for the same reason as main.lua's copy: the probe
+    -- proves the engine actually runs a function through `securecall` from
+    -- this add-on's context, so a build that ever refused addon code to call
+    -- it degrades to the direct call instead of raising on every hover.
+    local probeRan = false
+    local probeOk = pcall(securecall, function() probeRan = true end)
+    if (probeOk and probeRan) then
+        secureCallFn = securecall
+    end
+end
+
+local function runUntainted(fn, ...)
+    if (secureCallFn) then
+        return secureCallFn(fn, ...)
+    end
+    return fn(...)
+end
 
 
-local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and
-    type(_G.PawnGetScaleColor) == "function"
-local pawnClassicVer = rawget(_G, "PawnClassicLastUpdatedVersion")
-local pawnRetailVer = rawget(_G, "PawnLastUpdatedVersion")
-local isPawnLoaded = (pawnClassicVer and pawnClassicVer >= 2.0538) or (pawnRetailVer and pawnRetailVer >= 2.0) or
-    pawnApiPresent
+
+-- Forward declaration: assigned below once TT exists. applyScanSetting (and
+-- the registration helpers) call it at runtime, never at load.
+local recordOptionsRegFailure
+
+
+
+-- Late-load re-evaluation (hunter C3): no file-scope snapshot is kept here.
+-- Refresh reads the LIVE state so a Pawn installed/enabled after TacoTip
+-- enables the checkbox without a /reload. Routes to the single home
+-- (TT_PAWN.IsAvailable, pawn.lua -- Batch 5 N3); the inline probe below runs
+-- only when pawn.lua itself is absent (an invalid state) and keeps the same
+-- shape, with the same tonumber guard so a string-typed version global
+-- cannot raise here either.
+local function isPawnAvailableNow()
+    local pawn = rawget(_G, "TT_PAWN")
+    local probe = pawn and pawn.IsAvailable
+    if (type(probe) == "function") then
+        return probe()
+    end
+    local classicVer = rawget(_G, "PawnClassicLastUpdatedVersion")
+    local retailVer = rawget(_G, "PawnLastUpdatedVersion")
+    local apiPresent = type(_G.PawnGetItemData) == "function" and
+        type(_G.PawnGetSingleValueFromItem) == "function" and
+        type(_G.PawnGetScaleColor) == "function"
+    local classicNum = tonumber(classicVer)
+    local retailNum = tonumber(retailVer)
+    return (classicNum and classicNum >= 2.0538) or (retailNum and retailNum >= 2.0) or
+        apiPresent
+end
 
 local Detours = LibStub("LibDetours-1.0")
 local CI = LibStub("LibForeverInspector")
+
+-- The proximity scan (GearScore collection for nearby players) is toggled
+-- through LibForeverInspector's public SetScanEnabled / scanEnabled API.
+-- Returns true when the library accepted the new state, false otherwise.
+-- Failures are recorded for /tacotip diag (problems[]) with a one-shot chat
+-- line -- a panel that just never appears is the exact silence hunter H7
+-- exists to end. Never prints on success.
+local function applyScanSetting(enabled)
+    if (type(LibStub) ~= "function" and type(LibStub) ~= "table") then
+        recordOptionsRegFailure("scan apply (no LibStub)", nil)
+        return false
+    end
+    local ok, inspector = pcall(LibStub, "LibForeverInspector", true)
+    if (not ok or type(inspector) ~= "table") then
+        recordOptionsRegFailure("scan apply (no inspector)", ok and nil or inspector)
+        return false
+    end
+    if (type(inspector.SetScanEnabled) ~= "function") then
+        recordOptionsRegFailure("scan apply (no SetScanEnabled)", nil)
+        return false
+    end
+    -- Narrow pcall: only the setter itself is guarded, so a raise names the
+    -- apply rather than the whole options panel, and the error is logged
+    -- instead of swallowed.
+    local okApply, errApply = pcall(inspector.SetScanEnabled, inspector, enabled and true or false)
+    if (not okApply) then
+        recordOptionsRegFailure("scan apply", errApply)
+        return false
+    end
+    return true
+end
 
 local L = _G.TACOTIP_LOCALE
 local TT = _G[addOnName]
@@ -24,6 +115,25 @@ local TT = _G[addOnName]
 if (not TT) then
     TT = {}
     rawset(_G, addOnName, TT)
+end
+
+-- Options-side failure ledger for hunter H7. Registration and scan-apply
+-- failures are recorded here (deduped, one chat line per distinct failure)
+-- and surfaced by main.lua's /tacotip diag problems[] -- the panel reads the
+-- shared TT table, never a setter, so reporting cannot perturb the UI.
+recordOptionsRegFailure = function(which, err)
+    TT.optionsRegErrors = TT.optionsRegErrors or {}
+    local entry = "options registration failed: " .. tostring(which)
+    if (err ~= nil) then
+        entry = entry .. " (" .. tostring(err) .. ")"
+    end
+    for _, e in ipairs(TT.optionsRegErrors) do
+        if (e == entry) then
+            return
+        end
+    end
+    TT.optionsRegErrors[#TT.optionsRegErrors + 1] = entry
+    print("|cff59f0dcTacoTip:|r " .. entry)
 end
 
 -- Safe-call wrapper. Routes errors through Blizzard's geterrorhandler()
@@ -100,7 +210,11 @@ local DEFAULTS = {
     instant_fade = false,
     anchor_mouse = false,
     anchor_mouse_world = true,
-    anchor_mouse_spells = true,
+    -- Off by default: a spell/action-button tooltip must respect the saved
+    -- custom tooltip position unless the user opts into mouse anchoring.
+    -- When this was true, the SetDefaultAnchor hook returned early for spell
+    -- owners and the saved position was never applied to them.
+    anchor_mouse_spells = false,
     inspect_gs_offset_x = 0,
     inspect_gs_offset_y = 0,
     inspect_ilvl_offset_x = 0,
@@ -117,6 +231,12 @@ local DEFAULTS = {
     show_realm = false,
     show_role_icon = true,
     show_separators = false,
+    -- Proximity scan: inspect in-range players automatically so GearScore is
+    -- collected without hovering. Named "scan" because the runtime scan
+    -- diagnostics in main.lua already use that name (settings_test.lua requires
+    -- a declared key to appear in a runtime file); nil/absent means enabled,
+    -- matching the library default.
+    scan = true,
     tooltip_delay = 0,
     tooltip_max_width = 0,
     custom_anchor = "TOPLEFT",
@@ -129,6 +249,28 @@ function TT:GetDefaults()
     end
     return copy
 end
+
+-- The portrait zoom's ONE source of truth.
+--
+-- The shipped default lives in DEFAULTS, but two other places repeated a
+-- DIFFERENT literal (0.7) as their fallback: the slider's displayed value
+-- and the render path in main.lua. With no saved zoom value the slider
+-- therefore showed 70 while the portrait was rendered at 75 -- the number
+-- the player saw was not the number they got.
+--
+-- These two fields are the single source both consumers read:
+--   TT.TooltipPortraitZoomDefault -- the value to use when none is saved.
+--   TT.TooltipPortraitZoomRange   -- the bounds the slider and the
+--                                    sanitiser enforce (min, max).
+--
+-- The RANGE is unchanged: 0.3 to 1.0, exactly what the slider (30-100) and
+-- the sanitiser have always expressed. The zoom is applied exactly as the
+-- player set it -- no cap, no clamp.
+TT.TooltipPortraitZoomDefault = DEFAULTS.tooltip_portrait_zoom
+TT.TooltipPortraitZoomRange = {
+    min = 0.3,
+    max = 1.0,
+}
 
 function TT:ApplyConfigDefaults(config)
     if (not config or type(config) ~= "table") then
@@ -145,6 +287,70 @@ function TT:ApplyConfigDefaults(config)
     end
 end
 
+-- Media allowlist backing for SafeSanitizeConfig. Mirrors the two sources the
+-- choice lists are built from (see TT:GetTooltipFontChoices and siblings):
+-- the builtin tables in textures.lua plus the LibSharedMedia registry when it
+-- is present. Accepts a path or a display name, like the render-time resolver
+-- (resolveConfiguredMediaValue) does. It cannot reuse the choice getters:
+-- they are defined further down this file and do not exist yet when the first
+-- load sanitizes.
+local mediaBuiltinTableName = {
+    tooltip_font = "builtinTooltipFonts",
+    tooltip_bar_texture = "builtinStatusBarTextures",
+    tooltip_background_texture = "builtinTooltipBackgrounds",
+    tooltip_border_texture = "builtinTooltipBorders",
+}
+local mediaSharedMediaType = {
+    tooltip_font = "font",
+    tooltip_bar_texture = "statusbar",
+    tooltip_background_texture = "background",
+    tooltip_border_texture = "border",
+}
+
+local function isKnownMediaValue(settingKey, value)
+    if (type(value) ~= "string" or value == "") then
+        return false
+    end
+    local builtins = TT[mediaBuiltinTableName[settingKey]]
+    if (type(builtins) == "table") then
+        for _, entry in ipairs(builtins) do
+            if (entry.value == value or entry.text == value) then
+                return true
+            end
+        end
+    end
+    if (LibStub) then
+        local okLib, media = pcall(LibStub, "LibSharedMedia-3.0", true)
+        if (okLib and type(media) == "table") then
+            local mediaType = mediaSharedMediaType[settingKey]
+            if (type(media.HashTable) == "function") then
+                local okTable, registered = pcall(media.HashTable, media, mediaType)
+                if (okTable and type(registered) == "table") then
+                    for name, path in pairs(registered) do
+                        if (path == value or name == value) then
+                            return true
+                        end
+                    end
+                end
+            elseif (type(media.List) == "function" and type(media.Fetch) == "function") then
+                local okList, handles = pcall(media.List, media, mediaType)
+                if (okList and type(handles) == "table") then
+                    for _, handle in ipairs(handles) do
+                        if (handle == value) then
+                            return true
+                        end
+                        local okFetch, path = pcall(media.Fetch, media, mediaType, handle, true)
+                        if (okFetch and path == value) then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- Validates and repairs common saved-variable corruption patterns that can
 -- cause the tooltip to break silently (wrong types, out-of-range values).
 -- Called after defaults are applied every load, so even partially-corrupt
@@ -155,6 +361,28 @@ function TT:SafeSanitizeConfig(config)
     end
 
     local defaults = DEFAULTS
+
+    -- The corrupt-saved-data ledger (final hardening pass).
+    --
+    -- A hand-edited TacoTipConfig must fail CLOSED (every repair below resets
+    -- the key to its shipped default) and RECOVER to the defaults (it does).
+    -- What it did not do was SAY so: a player whose settings had been repaired
+    -- had no way to learn that one of their options had been silently reset.
+    -- The number of repaired settings is counted and the first one is named;
+    -- /tacotip diag reports both.
+    --
+    -- The count is from the LAST pass, not a running total: the sanitiser runs
+    -- at load and again when the options page is built, and a corrupt key is
+    -- repaired ONCE -- the second pass finds it already correct. A running
+    -- total would therefore count the same repair twice.
+    local repaired = 0
+    local firstRepair = nil
+    local function repair(key)
+        repaired = repaired + 1
+        if (not firstRepair) then
+            firstRepair = tostring(key)
+        end
+    end
 
     -- Type-check known boolean keys and reset to default if they are not
     -- actually a boolean.  WoW's saved-variable system sometimes serialises
@@ -171,11 +399,12 @@ function TT:SafeSanitizeConfig(config)
         "instant_fade", "anchor_mouse", "anchor_mouse_world",
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_honor_rank", "show_ilvl_inline", "show_realm",
-        "show_role_icon", "show_separators"
+        "show_role_icon", "show_separators", "scan"
     }
     for _, key in ipairs(booleanKeys) do
         local val = config[key]
         if (val ~= nil and type(val) ~= "boolean") then
+            repair(key)
             config[key] = defaults[key]
         end
     end
@@ -183,39 +412,76 @@ function TT:SafeSanitizeConfig(config)
     -- Sanitise numeric slider/range keys so out-of-bounds values from
     -- corruption or old versions do not cause layout or logic issues.
     if (type(config.class_icon_size) ~= "number" or config.class_icon_size < 8 or config.class_icon_size > 32) then
+        repair("class_icon_size")
         config.class_icon_size = defaults.class_icon_size
     end
     if (type(config.tooltip_portrait_scale) ~= "number" or config.tooltip_portrait_scale < 0.5 or config.tooltip_portrait_scale > 2) then
+        repair("tooltip_portrait_scale")
         config.tooltip_portrait_scale = defaults.tooltip_portrait_scale
     end
-    if (type(config.tooltip_portrait_zoom) ~= "number" or config.tooltip_portrait_zoom < 0.3 or config.tooltip_portrait_zoom > 1) then
-        config.tooltip_portrait_zoom = defaults.tooltip_portrait_zoom
+    if (type(config.tooltip_portrait_zoom) ~= "number"
+            or config.tooltip_portrait_zoom < TT.TooltipPortraitZoomRange.min
+            or config.tooltip_portrait_zoom > TT.TooltipPortraitZoomRange.max) then
+        repair("tooltip_portrait_zoom")
+        config.tooltip_portrait_zoom = TT.TooltipPortraitZoomDefault
     end
     if (type(config.tooltip_font_size) ~= "number" or config.tooltip_font_size < 8 or config.tooltip_font_size > 20) then
+        repair("tooltip_font_size")
         config.tooltip_font_size = defaults.tooltip_font_size
     end
     if (type(config.tooltip_border_edge_size) ~= "number" or config.tooltip_border_edge_size < 4 or config.tooltip_border_edge_size > 48) then
+        repair("tooltip_border_edge_size")
         config.tooltip_border_edge_size = defaults.tooltip_border_edge_size
     end
     if (type(config.tooltip_border_alpha) ~= "number" or config.tooltip_border_alpha < 0 or config.tooltip_border_alpha > 1) then
+        repair("tooltip_border_alpha")
         config.tooltip_border_alpha = defaults.tooltip_border_alpha
     end
     if (type(config.tooltip_background_alpha) ~= "number" or config.tooltip_background_alpha < 0 or config.tooltip_background_alpha > 1) then
+        repair("tooltip_background_alpha")
         config.tooltip_background_alpha = defaults.tooltip_background_alpha
     end
     if (type(config.tip_style) ~= "number" or config.tip_style < 1 or config.tip_style > 5) then
+        repair("tip_style")
         config.tip_style = defaults.tip_style
     end
 
 
     if (type(config.tooltip_delay) ~= "number" or config.tooltip_delay < 0 or config.tooltip_delay > 5) then
+        repair("tooltip_delay")
         config.tooltip_delay = defaults.tooltip_delay
     end
     if (type(config.tooltip_max_width) ~= "number" or config.tooltip_max_width < 0 or config.tooltip_max_width > 500) then
+        repair("tooltip_max_width")
         config.tooltip_max_width = defaults.tooltip_max_width
     end
     if (config.tooltip_border_texture == "Tooltip enlarged" or config.tooltip_border_texture == nil) then
+        repair("tooltip_border_texture")
         config.tooltip_border_texture = defaults.tooltip_border_texture
+    end
+    -- Fixed-string allowlists for the remaining free-text keys. The slash path
+    -- only ever writes the five cycled literals for custom_anchor
+    -- (options.lua:441-459), but a hand-edited SavedVariables value bypasses
+    -- it and reaches tooltip:SetPoint, which raises from a hooksecurefunc
+    -- post-hook (main.lua:2916-2917). Reset anything else to the default.
+    -- Media keys are validated against the same two sources the choice lists
+    -- are built from (builtin tables + LibSharedMedia registry), so a value
+    -- the UI could have offered always survives; anything else resets,
+    -- matching the render-time fallback instead of diverging from it.
+    if (config.custom_anchor ~= "TOPLEFT" and config.custom_anchor ~= "TOPRIGHT"
+            and config.custom_anchor ~= "BOTTOMLEFT" and config.custom_anchor ~= "BOTTOMRIGHT"
+            and config.custom_anchor ~= "CENTER") then
+        repair("custom_anchor")
+        config.custom_anchor = defaults.custom_anchor
+    end
+    for _, mediaKey in ipairs({
+        "tooltip_font", "tooltip_bar_texture",
+        "tooltip_background_texture", "tooltip_border_texture",
+    }) do
+        if (not isKnownMediaValue(mediaKey, config[mediaKey])) then
+            repair(mediaKey)
+            config[mediaKey] = defaults[mediaKey]
+        end
     end
     -- Character/inspect overlay offsets: typed edit boxes historically wrote
     -- unclamped integers; repair out-of-range or corrupt saved values to the
@@ -229,6 +495,7 @@ function TT:SafeSanitizeConfig(config)
         local val = config[key]
         if (type(val) ~= "number" or val ~= val or val == math.huge or val == -math.huge
                 or val < -300 or val > 300) then
+            repair(key)
             config[key] = defaults[key] or 0
         end
     end
@@ -241,9 +508,46 @@ function TT:SafeSanitizeConfig(config)
     } do
         local val = config[key]
         if (type(val) ~= "number" or val < 0 or val > 1) then
+            repair(key)
             config[key] = defaults[key]
         end
     end
+
+    -- Publish the ledger. Read-only for the config itself: nothing above
+    -- changes behaviour, this only counts what was changed.
+    TT.ev = TT.ev or {}
+    TT.ev.configRepairs = repaired
+    TT.ev.lastConfigRepair = firstRepair
+end
+
+-- Whether this client can do an instant fade at all.
+--
+-- GameTooltip.FadeOut is an ENGINE method: it has no Lua definition on any
+-- branch (a whole-tree sweep of origin/classic_era,
+-- origin/classic_anniversary, origin/classic_titan, origin/forever and
+-- origin/live finds none, and it is absent from the generated API docs on all
+-- five), so "no Lua definition" is not evidence that it does not exist. The
+-- evidence that it DOES exist on every supported client is Blizzard's own
+-- call sites:
+--   origin/classic_era, origin/classic_anniversary, origin/classic_titan:
+--     Interface/AddOns/Blizzard_UnitFrame/Classic/UnitFrame.lua:447
+--       GameTooltip:FadeOut();   (in UnitFrame_OnLeave)
+--   origin/forever:
+--     Interface/AddOns/Blizzard_UnitFrame/Mainline/UnitFrame.lua:393
+--   origin/live:
+--     Interface/AddOns/Blizzard_UnitFrame/Mainline/UnitFrame.lua:386
+-- and on the Classic family UnitFrame_OnLeave is wired to the OnLeave of
+-- PlayerFrame.xml:374 and TargetFrame.xml:380 -- so the call runs every time
+-- the mouse leaves the player or target frame. If the method did not exist
+-- there, every unit frame would raise on mouse-out.
+--
+-- So the check below is a RUNTIME capability probe, not a client-family
+-- table: on a client that genuinely has no GameTooltip.FadeOut the option has
+-- nothing to act on, so it is offered but DISABLED and explained, rather than
+-- left settable and silently inert. On every supported client the method is
+-- present and nothing changes.
+local function instantFadeSupported()
+    return (GameTooltip and type(GameTooltip.FadeOut) == "function") and true or false
 end
 
 local function updateInstantFadeState(enabled)
@@ -254,12 +558,35 @@ local function updateInstantFadeState(enabled)
             TT.frame:UnregisterEvent("UPDATE_MOUSEOVER_UNIT")
         end
     end
+    if (not instantFadeSupported()) then
+        -- The client cannot fade instantly. Recorded as "unsupported" so
+        -- /tacotip diag says the client CANNOT do it, not merely that the
+        -- option is off.
+        TT.InstantFadeMode = "unsupported"
+        return
+    end
     if (enabled) then
-        Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
-            tooltipFrame:Hide()
+        -- Secure post-hook, never a method replacement (see main.lua
+        -- GameMenu-quit taint fix). Preserves GameTooltip.FadeOut identity;
+        -- Hide-after-fade reads as instant. Toggle and default (off) unchanged.
+        Detours:SecureHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
+            -- runUntainted: a hooksecurefunc post-hook does not replace the
+            -- hooked function, but its BODY still runs as addon code inside the
+            -- caller's script chain -- here the unit frame's OnLeave
+            -- (Blizzard_UnitFrame/Classic/UnitFrame.lua:447
+            -- `GameTooltip:FadeOut();`). Uncontained, that taints the unit
+            -- frame, and the taint reaches the game menu. main.lua's twin of
+            -- this hook carries the same guard.
+            return runUntainted(safeCall, function()
+                if (TacoTipConfig and TacoTipConfig.instant_fade and tooltipFrame) then
+                    tooltipFrame:Hide()
+                end
+            end)
         end)
+        TT.InstantFadeMode = "secure-hook"
     else
-        Detours:DetourUnhook(TT, GameTooltip, "FadeOut")
+        Detours:SecureUnhook(TT, GameTooltip, "FadeOut")
+        TT.InstantFadeMode = "standard-fade"
     end
 end
 
@@ -293,6 +620,9 @@ local function resetCfg()
     if (hadConfig) then
         TacoTipConfig.conf_version = addOnVersion
     end
+    -- Keep the live inspector in step with the restored default (enabled), so
+    -- the checkbox and the running scan cannot disagree after a reset.
+    applyScanSetting(TacoTipConfig.scan ~= false)
     -- Invalidated here, at the choke point, because the two reset routes do NOT
     -- agree: the reset button goes on to call RefreshOptionsUI -> modernGetConfig
     -- (which invalidates), while /tacotip reset only refreshes the root page. So
@@ -339,6 +669,12 @@ if not TacoTipConfig or type(TacoTipConfig) ~= "table" then
     resetCfg()
 else
     TT:ApplyConfigDefaults(TacoTipConfig)
+    -- Push the saved proximity-scan preference to the live inspector now.
+    -- options.lua loads after the library but before main.lua, so this is what
+    -- makes "off" survive a /reload instead of reverting to the library's own
+    -- default. nil (a configuration saved before this option existed) means
+    -- enabled, which leaves existing installs unchanged.
+    applyScanSetting(TacoTipConfig.scan ~= false)
 end
 
 local optionsFrame
@@ -384,13 +720,26 @@ local function registerSlashCommands()
         if (cmd == "custom" or cmd == "unlock" or cmd == "move" or cmd == "mover") then
             showTooltipMover()
         elseif (cmd == "default") then
-            if (not TacoTipConfig.custom_pos) then
-                print("|cff59f0dcTacoTip:|r " .. L["Custom tooltip position disabled."])
-            end
-            if (TacoTipDragButton) then
-                TacoTipDragButton:_Disable(true)
+            -- The confirmation used to print ONLY when there was nothing to
+            -- disable, and stayed silent in the case where a custom position
+            -- really was cleared -- so the message was exactly inverted
+            -- relative to the effect. The text describes the RESULTING state,
+            -- so it is true either way: print it once, after the reset. This
+            -- also matches the bootstrap handler in gearscore.lua, which has
+            -- always printed it unconditionally.
+            --
+            -- The mover call is protected and counted: a raising _Disable used
+            -- to abort the whole command before the configuration was reset,
+            -- leaving the position custom and saying nothing.
+            if (TacoTipDragButton and TacoTipDragButton._Disable) then
+                if (not pcall(TacoTipDragButton._Disable, TacoTipDragButton, true)) then
+                    TT.ev = TT.ev or {}
+                    TT.ev.moverDisableFailed = (TT.ev.moverDisableFailed or 0) + 1
+                    print("|cff59f0dcTacoTip:|r The tooltip mover could not be disabled.")
+                end
             end
             TacoTipConfig.custom_pos = nil
+            print("|cff59f0dcTacoTip:|r " .. L["Custom tooltip position disabled."])
         elseif (cmd == "reset") then
             resetCfg()
             if (optionsFrame and optionsFrame:IsShown() and optionsFrame.Refresh) then
@@ -398,8 +747,22 @@ local function registerSlashCommands()
             end
             print("|cff59f0dcTacoTip:|r " .. L["Configuration has been reset to default."])
         elseif (cmd == "save") then
-            if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
-                TacoTipDragButton:_Save()
+            if (TacoTipDragButton and TacoTipDragButton.IsShown and TacoTipDragButton:IsShown()) then
+                -- The save call is protected and counted: a raising _Save used
+                -- to abort the command with the position silently unsaved.
+                if (not pcall(TacoTipDragButton._Save, TacoTipDragButton)) then
+                    TT.ev = TT.ev or {}
+                    TT.ev.moverSaveFailed = (TT.ev.moverSaveFailed or 0) + 1
+                    print("|cff59f0dcTacoTip:|r The tooltip position could not be saved.")
+                end
+            else
+                -- The command was typed and NOTHING happened. Say so, in the
+                -- same words the bootstrap handler in gearscore.lua uses, so
+                -- the command is not a dead end. Counted, and surfaced in
+                -- /tacotip diag.
+                TT.ev = TT.ev or {}
+                TT.ev.moverSaveSkipped = (TT.ev.moverSaveSkipped or 0) + 1
+                print("|cff59f0dcTacoTip:|r Tooltip mover is not currently shown.")
             end
         elseif (cmd == "help") then
             print("|cff59f0dcTacoTip:|r /tacotip - open TacoTip options")
@@ -437,6 +800,14 @@ local function registerSlashCommands()
                 print("|cff59f0dcTacoTip:|r main.lua did not finish loading, so diagnostics are unavailable.")
                 print("|cff59f0dcTacoTip:|r Enable a Lua error handler (BugSack/Swatter) and /reload.")
             end
+        elseif (TT and TT.ForwardExtrasSlashCommand and TT.ForwardExtrasSlashCommand(cmd)) then
+            -- TacoTip Extras owns the leaderboard sub-commands ("/tt lb" and
+            -- friends). Forwarded BEFORE the options-panel fallback, so the
+            -- leaderboard opens instead of the settings page. The resolver
+            -- lives in gearscore.lua (one implementation, shared with the
+            -- bootstrap handler) and returns false when the Extras is not
+            -- loaded, which leaves the behaviour below exactly as it was.
+            return
         else
             if (openOptionsPanel) then
                 openOptionsPanel()
@@ -475,20 +846,113 @@ local legacyChildCategoriesRegistered = false
 local settingsCategoryRegistered = false
 local settingsSubcategoriesRegistered = false
 
+-- Options load-leg ledger (hunter H-NEW2): the six LoadAddOn probes below
+-- used to vanish on failure, leaving the options panel missing with zero
+-- diag. Failures are counted (TT.ev.optionsLoadFailures) with the last
+-- error kept (TT.ev.lastOptionsLoadError) and surfaced in
+-- reportSilentFailures problems[]. _G.LoadAddOn is read at call time, never
+-- captured, so a late loader (and the harness forced-failure pin) is seen.
+local function noteOptionsLoadFailure(which, ok, result)
+    if (ok and result) then
+        return true
+    end
+    if (TT) then
+        TT.ev = TT.ev or {}
+        TT.ev.optionsLoadFailures = (TT.ev.optionsLoadFailures or 0) + 1
+        local why = (not ok) and tostring(result) or "returned falsy"
+        TT.ev.lastOptionsLoadError = "LoadAddOn " .. tostring(which) .. " (" .. why .. ")"
+    end
+    return false
+end
+
+-- Which of the six LoadAddOn targets exist on which client family.
+--
+-- A target that does not exist on the detected client is NOT APPLICABLE: it
+-- can only fail, and counting that failure would put a false "options load
+-- failures" entry in /tacotip diag for an addon that was never meant to be on
+-- that client. A target that IS applicable and fails to load is a real
+-- failure: it still counts and still surfaces.
+--
+-- Mirror evidence (branch-qualified; the `Interface/AddOns/` directory
+-- listing of each branch, `git ls-tree -d origin/<branch>:Interface/AddOns`):
+--   origin/classic_era, origin/classic_anniversary, origin/classic_titan:
+--     Blizzard_Settings                    ABSENT
+--     Blizzard_Settings_Shared             PRESENT
+--     Blizzard_SettingsDefinitions         ABSENT
+--     Blizzard_SettingsDefinitions_Shared  PRESENT
+--     Blizzard_OptionsUI                   ABSENT
+--     Blizzard_InterfaceOptions            ABSENT
+--   origin/forever, origin/live:
+--     Blizzard_Settings                    PRESENT
+--     Blizzard_Settings_Shared             PRESENT
+--     Blizzard_SettingsDefinitions         ABSENT
+--     Blizzard_SettingsDefinitions_Shared  PRESENT
+--     Blizzard_OptionsUI                   ABSENT
+--     Blizzard_InterfaceOptions            ABSENT
+--
+-- The family is "unknown" on a client the library could not identify. There
+-- every target is treated as applicable, so a genuine failure is reported
+-- rather than silently swallowed.
+local OPTIONS_LOAD_ABSENT_ON = {
+    ["Blizzard_Settings"] = {
+        classicEra = true, tbc = true, titanforge = true,
+    },
+    ["Blizzard_Settings_Shared"] = {},
+    ["Blizzard_SettingsDefinitions"] = {
+        classicEra = true, tbc = true, titanforge = true, forever = true, retail = true,
+    },
+    ["Blizzard_SettingsDefinitions_Shared"] = {},
+    ["Blizzard_OptionsUI"] = {
+        classicEra = true, tbc = true, titanforge = true, forever = true, retail = true,
+    },
+    ["Blizzard_InterfaceOptions"] = {
+        classicEra = true, tbc = true, titanforge = true, forever = true, retail = true,
+    },
+}
+
+local function optionsLoadTargetApplicable(which)
+    local family = CI and CI.family or nil
+    if (not family or family == "unknown") then
+        return true
+    end
+    local absent = OPTIONS_LOAD_ABSENT_ON[which]
+    if (not absent) then
+        return true
+    end
+    return not absent[family]
+end
+
+local function optionsLoadAddOn(which)
+    if (not optionsLoadTargetApplicable(which)) then
+        -- Not applicable on this client: not a failure, and not worth a call.
+        return true
+    end
+    local loadFn = _G.LoadAddOn
+    if (not loadFn) then
+        return noteOptionsLoadFailure(which, true, nil)
+    end
+    local ok, result = pcall(loadFn, which)
+    return noteOptionsLoadFailure(which, ok, result)
+end
+
 local function ensureSettingsUI()
     if (_G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory) then
         return true
     end
-    if (LoadAddOn) then
+    if (_G.LoadAddOn) then
         -- "Blizzard_Settings" / "Blizzard_SettingsDefinitions" only exist on
-        -- Retail. The Classic clients (and Forever) ship Blizzard_Settings_Shared
-        -- and Blizzard_SettingsDefinitions_Shared instead, and all of these are
-        -- already non-LoadOnDemand, so this is belt-and-braces rather than a
-        -- hard requirement.
-        pcall(LoadAddOn, "Blizzard_Settings")
-        pcall(LoadAddOn, "Blizzard_Settings_Shared")
-        pcall(LoadAddOn, "Blizzard_SettingsDefinitions")
-        pcall(LoadAddOn, "Blizzard_SettingsDefinitions_Shared")
+        -- the modern pair. The Classic clients (and Forever) ship
+        -- Blizzard_Settings_Shared and Blizzard_SettingsDefinitions_Shared
+        -- instead, and all of these are already non-LoadOnDemand, so this is
+        -- belt-and-braces rather than a hard requirement.
+        --
+        -- Which of the six targets is even ATTEMPTED is decided by
+        -- OPTIONS_LOAD_ABSENT_ON above: a target that does not exist on this
+        -- client is skipped, not attempted and counted as a failure.
+        optionsLoadAddOn("Blizzard_Settings")
+        optionsLoadAddOn("Blizzard_Settings_Shared")
+        optionsLoadAddOn("Blizzard_SettingsDefinitions")
+        optionsLoadAddOn("Blizzard_SettingsDefinitions_Shared")
     end
     return _G.Settings and _G.Settings.RegisterCanvasLayoutCategory and _G.Settings.RegisterAddOnCategory
 end
@@ -498,20 +962,33 @@ local function registerSettingsSubcategories()
         return settingsSubcategoriesRegistered
     end
 
-    local ok = pcall(function()
-        modernSubcategories.tooltips = modernSubcategories.tooltips or
-            _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.tooltips,
-                optionsPages.tooltips.name)
-        modernSubcategories.positioning = modernSubcategories.positioning or
-            _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.positioning,
-                optionsPages.positioning.name)
-        modernSubcategories.characterInspect = modernSubcategories.characterInspect or
-            _G.Settings.RegisterCanvasLayoutSubcategory(addOnOptionsCategory, optionsPages.characterInspect,
-                optionsPages.characterInspect.name)
-    end)
+    -- Narrow pcalls (hunter H7): one guard per subcategory so a raise names
+    -- the failing child instead of swallowing all three into one boolean.
+    local specs = {
+        { key = "tooltips", page = optionsPages.tooltips },
+        { key = "positioning", page = optionsPages.positioning },
+        { key = "characterInspect", page = optionsPages.characterInspect },
+    }
+    local allOk = true
+    for _, spec in ipairs(specs) do
+        if (not modernSubcategories[spec.key]) then
+            local okSub, sub = pcall(_G.Settings.RegisterCanvasLayoutSubcategory,
+                addOnOptionsCategory, spec.page, spec.page.name)
+            if (okSub and sub) then
+                modernSubcategories[spec.key] = sub
+            else
+                allOk = false
+                if (not okSub) then
+                    recordOptionsRegFailure("settings subcategory " .. spec.key, sub)
+                end
+            end
+        end
+    end
 
-    settingsSubcategoriesRegistered = ok and modernSubcategories.tooltips and modernSubcategories.positioning and
-        modernSubcategories.characterInspect and true or settingsSubcategoriesRegistered
+    if (allOk and modernSubcategories.tooltips and modernSubcategories.positioning and
+        modernSubcategories.characterInspect) then
+        settingsSubcategoriesRegistered = true
+    end
     return settingsSubcategoriesRegistered
 end
 
@@ -520,21 +997,39 @@ local function registerLegacyChildCategories()
         return legacyChildCategoriesRegistered
     end
 
-    local ok = pcall(function()
-        InterfaceOptions_AddCategory(optionsPages.tooltips)
-        InterfaceOptions_AddCategory(optionsPages.positioning)
-        InterfaceOptions_AddCategory(optionsPages.characterInspect)
-    end)
+    -- Narrow pcalls (hunter H7): one guard per child page.
+    local specs = {
+        { key = "tooltips", page = optionsPages.tooltips },
+        { key = "positioning", page = optionsPages.positioning },
+        { key = "characterInspect", page = optionsPages.characterInspect },
+    }
+    local allOk = true
+    for _, spec in ipairs(specs) do
+        local okChild, errChild = pcall(InterfaceOptions_AddCategory, spec.page)
+        if (not okChild) then
+            allOk = false
+            recordOptionsRegFailure("legacy child " .. spec.key, errChild)
+        end
+    end
 
-    legacyChildCategoriesRegistered = ok and true or legacyChildCategoriesRegistered
+    if (allOk) then
+        legacyChildCategoriesRegistered = true
+    end
     return legacyChildCategoriesRegistered
 end
 
 local function registerOptionsCategory()
     local registeredAny = false
 
-    local ok = pcall(function()
-        if (not settingsCategoryRegistered and ensureSettingsUI()) then
+    -- Narrow pcalls (hunter H7): the settings probe, the category pair and
+    -- the legacy pair are guarded separately so a raise names the step.
+    local okEnsure, canSettings = pcall(ensureSettingsUI)
+    if (not okEnsure) then
+        recordOptionsRegFailure("settings UI probe", canSettings)
+        canSettings = false
+    end
+    if (not settingsCategoryRegistered and canSettings) then
+        local okCat, errCat = pcall(function()
             addOnOptionsCategory = addOnOptionsCategory or
                 _G.Settings.RegisterCanvasLayoutCategory(optionsFrame, optionsFrame.name)
             if (addOnOptionsCategory) then
@@ -542,29 +1037,36 @@ local function registerOptionsCategory()
                 settingsCategoryRegistered = true
                 registeredAny = true
             end
+        end)
+        if (not okCat) then
+            recordOptionsRegFailure("settings category", errCat)
         end
+    end
 
-        if (settingsCategoryRegistered) then
-            registerSettingsSubcategories()
-        end
+    if (settingsCategoryRegistered) then
+        registerSettingsSubcategories()
+    end
 
-        if (not InterfaceOptions_AddCategory and LoadAddOn) then
-            pcall(LoadAddOn, "Blizzard_OptionsUI")
-            pcall(LoadAddOn, "Blizzard_InterfaceOptions")
-        end
+    if (not InterfaceOptions_AddCategory and _G.LoadAddOn) then
+        optionsLoadAddOn("Blizzard_OptionsUI")
+        optionsLoadAddOn("Blizzard_InterfaceOptions")
+    end
 
-        if (not legacyCategoryRegistered and InterfaceOptions_AddCategory) then
-            InterfaceOptions_AddCategory(optionsFrame)
+    if (not legacyCategoryRegistered and InterfaceOptions_AddCategory) then
+        local okLeg, errLeg = pcall(InterfaceOptions_AddCategory, optionsFrame)
+        if (not okLeg) then
+            recordOptionsRegFailure("legacy category", errLeg)
+        else
             legacyCategoryRegistered = true
             registeredAny = true
         end
+    end
 
-        if (legacyCategoryRegistered) then
-            registerLegacyChildCategories()
-        end
-    end)
+    if (legacyCategoryRegistered) then
+        registerLegacyChildCategories()
+    end
 
-    return ok and (registeredAny or settingsCategoryRegistered or legacyCategoryRegistered) or false
+    return registeredAny or settingsCategoryRegistered or legacyCategoryRegistered
 end
 
 local optionsBootstrapFrame = CreateFrame("Frame")
@@ -590,6 +1092,22 @@ registerOptionsCategory()
 
 optionsFrame:Hide()
 
+-- Record one failed attempt to open the options panel.
+--
+-- The three protected calls below used to DISCARD their results, so a raising
+-- one aborted the open with nothing said and nothing counted: the player
+-- typed /tacotip, no panel appeared, and the add-on could not say why. The
+-- result is captured, the failure is counted, and the player is told in one
+-- plain chat line. The counter and the last error are surfaced by
+-- /tacotip diag.
+local function noteOptionsPanelFailure(which, err)
+    TT.ev = TT.ev or {}
+    TT.ev.optionsPanelOpenFailed = (TT.ev.optionsPanelOpenFailed or 0) + 1
+    TT.ev.lastOptionsPanelError = tostring(which) .. ": " .. tostring(err)
+    print("|cff59f0dcTacoTip:|r The options panel could not be opened ("
+        .. tostring(which) .. ").")
+end
+
 openOptionsPanel = function()
     registerOptionsCategory()
     if (settingsCategoryRegistered and _G.Settings and _G.Settings.OpenToCategory and addOnOptionsCategory) then
@@ -600,14 +1118,31 @@ openOptionsPanel = function()
                 return
             end
         end
-        pcall(_G.Settings.OpenToCategory, optionsFrame.name)
+        -- The fallback (open by NAME) discarded its result, so a raising call
+        -- aborted the open with no panel and no message.
+        local ok, err = pcall(_G.Settings.OpenToCategory, optionsFrame.name)
+        if (not ok) then
+            noteOptionsPanelFailure("Settings.OpenToCategory", err)
+        end
         return
     end
     if (legacyCategoryRegistered and InterfaceOptionsFrame_OpenToCategory) then
+        -- The Show call is a convenience: OpenToCategory shows the panel
+        -- itself, so its failure is counted but does not by itself mean the
+        -- panel failed to open.
         if (_G.InterfaceOptionsFrame_Show) then
-            pcall(_G.InterfaceOptionsFrame_Show)
+            local showOK, showErr = pcall(_G.InterfaceOptionsFrame_Show)
+            if (not showOK) then
+                TT.ev = TT.ev or {}
+                TT.ev.optionsPanelShowFailed = (TT.ev.optionsPanelShowFailed or 0) + 1
+                TT.ev.lastOptionsPanelError = "InterfaceOptionsFrame_Show: "
+                    .. tostring(showErr)
+            end
         end
-        pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
+        local ok, err = pcall(InterfaceOptionsFrame_OpenToCategory, optionsFrame)
+        if (not ok) then
+            noteOptionsPanelFailure("InterfaceOptionsFrame_OpenToCategory", err)
+        end
         return
     end
     print("|cff59f0dcTacoTip:|r Options panel is unavailable on this client. Use /tacotip custom to move the tooltip.")
@@ -975,7 +1510,11 @@ function TT:GetResolvedTooltipBorderEdgeSize()
         -- cannot change a declared size.
         return math.floor(configured)
     end
-    return 16
+    -- Absent or out-of-range setting: the SHIPPED default, which is the single
+    -- source of truth in DEFAULTS above. It was a literal 16 here, which
+    -- disagreed with the default the profile actually resolves to (20) and with
+    -- the description string the player reads.
+    return DEFAULTS.tooltip_border_edge_size
 end
 
 -- The edge size a border choice declares for itself, or nil when it defers to
@@ -1014,15 +1553,23 @@ local function showHoverTooltip(frame, title, text)
     if (not frame or not text or text == "") then
         return
     end
-    GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
-    GameTooltip:ClearLines()
-    if (title and title ~= "") then
-        GameTooltip:SetText(title, 1, 0.82, 0)
-        GameTooltip:AddLine(text, 1, 1, 1, true)
-    else
-        GameTooltip:SetText(text, 1, 1, 1, 1)
-    end
-    GameTooltip:Show()
+    -- runUntainted: this writes to the SHARED GameTooltip from inside the
+    -- options panel's own frame script chain. Containment keeps the shared
+    -- tooltip -- the frame the game menu's buttons anchor to -- free of the
+    -- taint this write would otherwise carry. The payload is called through
+    -- safeCall so a raise is still REPORTED (geterrorhandler) instead of
+    -- being swallowed by the containment.
+    return runUntainted(safeCall, function()
+        GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+        GameTooltip:ClearLines()
+        if (title and title ~= "") then
+            GameTooltip:SetText(title, 1, 0.82, 0)
+            GameTooltip:AddLine(text, 1, 1, 1, true)
+        else
+            GameTooltip:SetText(text, 1, 1, 1, 1)
+        end
+        GameTooltip:Show()
+    end)
 end
 
 local function attachHoverTooltip(frame, title, text)
@@ -1037,7 +1584,9 @@ local function attachHoverTooltip(frame, title, text)
             showHoverTooltip(self, title, text)
         end)
         frame:SetScript("OnLeave", function()
-            GameTooltip:Hide()
+            return runUntainted(safeCall, function()
+                GameTooltip:Hide()
+            end)
         end)
     end
 end
@@ -2020,6 +2569,29 @@ local function buildTooltipsPage()
     controls.pawnScorePlayer:SetPoint("TOPLEFT", content, "TOPLEFT", 234, builder.y)
     builder.y = builder.y - 30
 
+    -- The only user-facing control for the background proximity scan, which
+    -- issues inspection requests on its own. Wired to the library's public
+    -- setter so unchecking it actually stops the requests instead of only
+    -- hiding a checkbox.
+    controls.scanNearby = createOptionsCheckbox(content, nil,
+        "Scan nearby players",
+        "Automatically inspect in-range players near you so their GearScore is collected without hovering over each one.",
+        function(self, value)
+            TacoTipConfig.scan = value
+            local ok = applyScanSetting(value)
+            -- The checkbox follows the library, not the request (hunter H7):
+            -- on success the apply moved lib.scanEnabled to value, so reflect
+            -- it; on failure the scan did not move and Refresh reconciles.
+            if (ok and self and self.SetChecked) then
+                local okLib, lib = pcall(LibStub, "LibForeverInspector", true)
+                if (okLib and type(lib) == "table" and type(lib.scanEnabled) == "boolean") then
+                    self:SetChecked(lib.scanEnabled)
+                end
+            end
+        end)
+    controls.scanNearby:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 30
+
     controls.showTeam = createOptionsCheckbox(content, nil, L["Faction Icon"],
         L["Show player's faction icon (Horde/Alliance) in tooltips"],
         function(_, value)
@@ -2180,7 +2752,7 @@ local function buildTooltipsPage()
     controls.tooltipBorderEdgeSize = createOptionsSlider(content, nil,
         L["OPTIONS_TOOLTIP_BORDER_THICKNESS"] or "Border thickness",
         L["OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC"] or
-        "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 16px.",
+        "Control how thick the tooltip border appears. Higher values create a wider, more prominent border edge. Default is 20px.",
         function(value)
             TacoTipConfig.tooltip_border_edge_size = value
         end, 4, 48, 1)
@@ -2228,7 +2800,7 @@ local function buildTooltipsPage()
 
     controls.tooltipMaxWidth = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_MAX_WIDTH"] or "Tooltip max width",
         L["OPTIONS_TOOLTIP_MAX_WIDTH_DESC"] or
-        "Set a maximum width for the tooltip to prevent it from becoming too wide with long names or guild titles. Set to 0 for no limit.",
+        "Set a maximum width for the tooltip to prevent it from becoming too wide with long names or guild titles. Set to 0 for the default limit (320).",
         function(value)
             TacoTipConfig.tooltip_max_width = value
         end, 0, 500, 10)
@@ -2280,12 +2852,25 @@ local function buildTooltipsPage()
     controls.tooltipPortraitInvertSide:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 34
 
+    -- The zoom's RANGE is unchanged: 30-100 on the slider, which is 0.30 to
+    -- 1.00 -- and it is read from the ONE source of truth
+    -- (TT.TooltipPortraitZoomRange), so the slider and the sanitiser can
+    -- never drift apart. The zoom is applied exactly as the player set it:
+    -- no cap, no clamp, no changed bound.
+    --
+    -- The DESCRIPTION states the range's meaning, so the top of the range is
+    -- not a surprise: higher is closer, and the top is a face close-up. The
+    -- localized string already says "lower is further, higher is closer" in
+    -- every shipped locale; this is the English fallback for a client whose
+    -- locale table has no such key.
     controls.tooltipPortraitZoom = createOptionsSlider(content, nil, L["OPTIONS_PORTRAIT_ZOOM"] or "Portrait zoom",
         L["OPTIONS_PORTRAIT_ZOOM_DESC"] or
-        "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face.",
+        "Controls how close the 3D portrait model appears. Higher values zoom in on the character's face; the top of the range is a face close-up.",
         function(value)
             TacoTipConfig.tooltip_portrait_zoom = value / 100
-        end, 30, 100, 5)
+        end,
+        math.floor(TT.TooltipPortraitZoomRange.min * 100),
+        math.floor(TT.TooltipPortraitZoomRange.max * 100), 5)
     controls.tooltipPortraitZoom:SetPoint("TOPLEFT", content, "TOPLEFT", 4, builder.y)
     controls.tooltipPortraitZoom.valueText:SetPoint("LEFT", controls.tooltipPortraitZoom, "RIGHT", 8, 0)
     builder.y = builder.y - 56
@@ -2365,9 +2950,20 @@ local function buildTooltipsPage()
         controls.showTarget:SetChecked(TacoTipConfig.show_target)
         controls.gearScorePlayer:SetChecked(TacoTipConfig.show_gs_player)
         controls.pawnScorePlayer:SetChecked(TacoTipConfig.show_pawn_player)
-        controls.pawnScorePlayer:SetDisabled(not isPawnLoaded)
-        controls.pawnScorePlayer.label:SetText(isPawnLoaded and (L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") or
+        local pawnNow = isPawnAvailableNow()
+        controls.pawnScorePlayer:SetDisabled(not pawnNow)
+        controls.pawnScorePlayer.label:SetText(pawnNow and (L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") or
             ((L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores") .. " (" .. L["requires Pawn"] .. ")"))
+        -- nil/absent means enabled, mirroring the library's own default.
+        -- The checkbox follows the LIBRARY state, not just the config
+        -- (hunter H7): if an apply failed or the library appeared late the
+        -- two can disagree, and the control must show what actually scans.
+        do
+            local okLib, lib = pcall(LibStub, "LibForeverInspector", true)
+            local actual = (okLib and type(lib) == "table" and type(lib.scanEnabled) == "boolean")
+                and lib.scanEnabled or (TacoTipConfig.scan ~= false)
+            controls.scanNearby:SetChecked(actual)
+        end
         controls.showTeam:SetChecked(TacoTipConfig.show_team)
         controls.showClassIcon:SetChecked(TacoTipConfig.show_class_icon)
         controls.classColoredBorderToggle:SetChecked(TacoTipConfig.tooltip_border_use_class)
@@ -2406,7 +3002,13 @@ local function buildTooltipsPage()
         controls.tooltipPortrait3D:SetChecked(TacoTipConfig.tooltip_portrait_3d)
         controls.tooltipPortraitInvertSide:SetChecked(TacoTipConfig.tooltip_portrait_invert_side)
         controls.tooltipPortrait3D:SetDisabled(not TacoTipConfig.tooltip_portrait)
-        controls.tooltipPortraitZoom:SetValueSilently(math.floor((TacoTipConfig.tooltip_portrait_zoom or 0.7) * 100 + 0.5))
+        -- The slider shows the value the portrait is rendered with: the saved
+        -- value, or the ONE default (options.lua's DEFAULTS, published as
+        -- TT.TooltipPortraitZoomDefault) when there is none. It used to
+        -- repeat a different literal (0.7) here, so with no saved value the
+        -- slider read 70 while the portrait was rendered at 75.
+        controls.tooltipPortraitZoom:SetValueSilently(math.floor(
+            (TacoTipConfig.tooltip_portrait_zoom or TT.TooltipPortraitZoomDefault) * 100 + 0.5))
         controls.tooltipPortraitZoom:SetDisabled(not TacoTipConfig.tooltip_portrait)
         controls.classIconSize:SetValueSilently(TacoTipConfig.class_icon_size or 20)
         controls.tooltipFontChoice:SetValue(TT:GetResolvedTooltipFont())
@@ -2570,6 +3172,26 @@ local function buildPositioningPage()
         end)
     controls.instantFade:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
     builder.y = builder.y - 38
+
+    -- A client with no GameTooltip.FadeOut cannot do an instant fade at all.
+    -- The option is then offered, DISABLED, and explained -- an option that is
+    -- settable and silently inert is worse than one that says why it cannot
+    -- be used. The probe is a runtime capability check (see
+    -- instantFadeSupported), so on every supported client -- which all have the
+    -- method -- nothing here changes.
+    --
+    -- The explanation is a plain English literal, NOT a locale-table lookup:
+    -- the Locale files are not touched by this change, and the harness asserts
+    -- that every locale key the source uses exists in the locale table. It is
+    -- shown only on a client where the feature cannot work at all.
+    if (not instantFadeSupported()) then
+        local why = createWrappedText(content, "GameFontHighlightSmall", 560,
+            "Not available on this client: it has no instant-fade API, so this option cannot be used.")
+        why:SetPoint("TOPLEFT", content, "TOPLEFT", 34, builder.y + 16)
+        controls.instantFade.description = why
+        controls.instantFade:SetDisabled(true)
+        builder.y = builder.y - 22
+    end
 
     controls.tooltipDelay = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_DELAY"] or "Tooltip delay (ms)",
         L["OPTIONS_TOOLTIP_DELAY_DESC"] or

@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T16:58:00Z",
+  "run_id": "verify-ru-spec-names-2026-10-20-pass2",
+  "agent_name": "verify-ru-spec-names",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 4,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Wowhead's Russian locale serves one page per spec whose heading carries the client's own class+spec string (the /ru/ guide paths do not exist in that locale, the talent-calc paths do), and wago.tools exposes the client's strings as plain CSV from DB2 tables without any JavaScript. ChrSpecialization.Name_lang plus its OrderIndex column is the strongest evidence available: it gives the name AND its position in one row.",
+    "what_was_hard": "warcraft.wiki.gg's Russian pages redirect to the English main page on every URL form tried, so the operator's first cross-check choice was unusable and wago.tools was used instead. Finding the spec-name table needed a wrong turn first: the names are not in GlobalStrings at all (a retail GlobalStrings grep for all eight names returns nothing) and PlayerSpec does not exist under that name in either build — the table is ChrSpecialization.",
+    "skill_gap": "I wrote a wrong claim into a code comment in the first pass: I said appending the third Demon Hunter spec would shift the other two out of index alignment. The DB's OrderIndex (0=Истребление, 1=Месть, 2=Пожиратель) disproves it — appending does not shift. Verification of a NAME is not verification of its POSITION or its CONSEQUENCE, and a confident, plausible-sounding comment needs the same evidence as code."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

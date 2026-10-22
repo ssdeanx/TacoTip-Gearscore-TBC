@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T20:50:00Z",
+  "run_id": "scancrash",
+  "agent_name": "scan-crash",
+  "self_assessment": {
+    "intent": 4,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 3
+  },
+  "patterns": {
+    "what_worked": "Measuring before fixing: the bundled CallbackHandler-1.0 dispatches under an xpcall and discards its result, so a consumer callback's raise never reaches the library -- that changed the shape of the whole fix and the pins. Fuzzing both capture paths over 54 client shapes found the four unguarded client calls that were the only raisers in the Extras. Every change carries a revert-to-fail proof on a copy under /tmp/opencode, and the witness for the engine pin is the NEXT INSPECT (NotifyInspect) rather than the cache, so it can actually go red.",
+    "what_was_hard": "The brief's premise about a consumer-callback raise aborting cacheUnitData did not reproduce, so the fail-capable pin had to be anchored on a raise that genuinely reaches the library (the unguarded GetTime read in uptimeSeconds). Separately, /tacotip diag's printed field list lives in main.lua, which a parallel lane owns, so the engine counter rides lib.inspectStats (the data /tacotip diag reads) and is printed by /ttgsdebug instead; the exact one-line main.lua addition is proposed in the final report.",
+    "skill_gap": "Proof that a pin can fail has to come before the pin is written, not after: the first version of the engine pin asserted a scenario that passed on the unfixed code, and only the harness output showed it was vacuous."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

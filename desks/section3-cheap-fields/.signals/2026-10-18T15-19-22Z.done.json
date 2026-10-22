@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T15:19:22Z",
+  "run_id": "stage3",
+  "agent_name": "section3-cheap-fields",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "12/12 named checks green; 42/42 invocations x3 interpreters; LINT 0/0; scope held to 8 files; enUS-only locale keys.",
+    "what_was_hard": "Pre-fix revert-run impossible (no diet-tree commit); failure-by-construction argued per check instead.",
+    "skill_gap": "Classic UnitLevel function form and modern-marker absence need live-client confirmation."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

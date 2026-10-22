@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-19T23:45:00Z",
+  "run_id": "fix-main-batch7-2026-10-19",
+  "agent_name": "fix-main-batch7",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Every mirror claim was re-verified from source rather than taken on trust: INVTYPE_HANDS exists in none of the five branches while INVTYPE_HAND exists in all five; the bare GetItemInfoInstant global exists only where Deprecated_ItemScript.lua:10 aliases it (three Classic branches), and that file is absent on forever/live; the bare global has 0 call sites per branch; GameTooltip:GetUnit has 0 three-value destructures per branch while the sibling TooltipUtil.GetDisplayedUnit returns three; and the four Settings functions are plain dot-called with no self. Two pins had to be re-shaped after they caught my own inconsistency: the swap guard initially left the failure counters untouched (so a swapped call did not turn the suite red), and the live Pawn probe was short-circuited by 'not isPawnLoaded' until the Pawn API trio was also removed from the second load. The pcall'd probe kept the swap-guard pin reporting cleanly instead of taking the harness down.",
+    "what_was_hard": "Reaching the file-local label table from the harness needed a debug accessor (GetSlotRows) rather than source-scraping the table; pinning item 4 required installing the request counter BEFORE the addon loads, because gearscore.lua captures C_Item.RequestLoadItemDataByID at file scope - a counter swapped in afterwards would never be seen by the throttle. The unit-resolution chain had to be observed through TacoTip_GSCallback, which is the only public path that resolves with NO unit argument, and the reachability argument for the guid arm needed the mock-arity pin placed next to the resolver it constrains rather than in a distant block.",
+    "skill_gap": "Two of the five original pins were wrong on the first pass and only the harness caught it. Pin design should assume the assertion can be satisfied by accident and be written to fail for the right reason before it is trusted. The second addition also showed that a mock can be unfaithful without any test failing - thirteen mock sites published a third value from an API that returns two, and the whole suite stayed green, so a fidelity fact has to be pinned explicitly or it will be lost again."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

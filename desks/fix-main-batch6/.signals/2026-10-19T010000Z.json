@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-19T23:09:05Z",
+  "run_id": "batch6",
+  "agent_name": "fix-main-batch6",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "all 4 HIGH + 2 cheap fixed with revert-to-fail pins on every item; mock-fidelity bugs diagnosed via ev ledger + direct probes",
+    "what_was_hard": "taint mock __index dummy broke ticker Cancel + IsShown reads; H-NEW2 ungated-surfacing tradeoff per explicit spec",
+    "skill_gap": "none"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

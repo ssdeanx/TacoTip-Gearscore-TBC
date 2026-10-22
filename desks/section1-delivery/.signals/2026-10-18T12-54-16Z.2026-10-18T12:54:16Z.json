@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "run_id": "stage1",
+  "agent_name": "section1-delivery",
+  "timestamp": "2026-10-18T12:54:16Z",
+  "summary": "Stage 1 delivery-correctness implementation complete and green across the full suite.",
+  "state": {
+    "implementation": {
+      "RankSync.lua": "rewritten: rawSend outcome capture + counters, same-transport answering, channel probe/dead/re-probe state machine, 240-byte enqueue door with two-single digest split, 8-char request-id cap, INSTANCE_CHAT group transport, gated once-per-request whisper fallback, once-per-session post-proof self re-broadcast, GetDebugState snapshot",
+      "Core.lua": "/ttgsdebug extended with RankSync outcome buckets and channel state",
+      "Tests/harness/load_test.lua": "16 new named checks + phase-isolation sweeps; protocol block runs as a closure for the 200-local limit",
+      "CHANGELOG.md": "Stage 1 section under [1.2.3]; stale RankSync.lua:497 syncNow citation updated to :897"
+    },
+    "validation": {
+      "suite": "bash Tests/harness/run_all.sh -> TOTAL 42 invocations: 42 passed, 0 failed (lua5.1, lua5.4, luajit)",
+      "lint": "LINT=1 -> luacheck Total: 0 warnings / 0 errors in 26 files, exit=0"
+    },
+    "incident": "fat-digest split initially dropped the second record of an over-long pair; harness check caught it; RankSync.lua respondToQuery now enqueues both singles",
+    "next": "final report with per-item rationale, whisper citations, check-name list, desk path and signal files"
+  }
+}

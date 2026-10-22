@@ -1,6 +1,10 @@
-## Interface: 11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100
+## Interface: 11509, 20506, 38002, 16001, 120105
 ## Title: TacoTip Tests
 ## Notes: Opt-in WoWUnit suite. Copy this folder to Interface/AddOns/TacoTipTests/ and enable it alongside TacoTip, then run /tttest.
+-- NOT CURRENTLY IN USE (operator, 2026-10-21). The coverage this release rests on is the OFFLINE harness
+-- (Tests/harness/run_all.sh, 71 invocations x 3 interpreters) plus the operator's in-game pass through
+-- bench/audits/2026-10-20-pre-publish-test-window.md. Nothing here runs in CI or in the package, and no
+-- claim of coverage may rest on it. It is kept in the tree, not deleted, because it carries uncommitted work.
 ## Author: AcidBomb
 ## DefaultState: disabled
 ## Dependencies: TacoTip

@@ -1,0 +1,34 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-21T13:20:04Z",
+  "run_id": "taintcrossclient20261021",
+  "agent_name": "taint-crossclient-2026-10-21",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Per-branch reads of the mirror with explicit path:line for every claim; whole-tree sweeps plus the generated API docs for the two absence-shaped questions (GameTooltipStatusBar, InspectGuildFrame_Update); the sibling-declaration trick ( -> GameTooltipTextLeft1) turned an unverifiable absence into a sourced, branch-qualified correction.",
+    "what_was_hard": "Q3 could not be closed to VERIFIED: the XML loader is engine C++, so 'a named $parent <Frames> child becomes a Lua global' could only be proven for a <Layers> sibling. Every <Frames> case I could resolve to a concrete name (MirrorTimer1/2/3) is referenced nowhere in the tree, so the step stays ASSUMED and is written as such.",
+    "skill_gap": "A python sweep over the whole XML tree to resolve every $parent child to a concrete global timed out at 120s and was abandoned; a bounded, per-file approach worked but cost several round trips."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "validation": {
+    "mirror_status_porcelain_unchanged": true,
+    "repo_product_files_unchanged": true,
+    "new_paths_only": [
+      "desks/taint-crossclient-2026-10-21/",
+      "bench/audits/2026-10-21-crossclient-taint-surfaces.md"
+    ],
+    "every_citation_from_a_command_run_in_this_lane": true,
+    "every_client_claim_branch_qualified_and_labelled": true
+  },
+  "artifact": "bench/audits/2026-10-21-crossclient-taint-surfaces.md"
+}

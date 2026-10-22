@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T16:05:00Z",
+  "run_id": "fix-extras-operator-requests-item-4-refined",
+  "agent_name": "fix-extras-operator-requests",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Making the frame's height the SUM of the bands, and deriving every band offset by walking back up that same stack, is what makes the overlap structurally impossible rather than merely absent today: the offsets and the height are the same number by construction, so a future change to the row count or the band heights cannot re-introduce the collision the operator photographed. Reading the geometry the window ACTUALLY built -- the anchors, not the declared constants -- is what let the harness assert distinct bands rather than the presence of widgets, which was the weak version of the same pin.",
+    "what_was_hard": "Lua 5.1 caps a function at 60 upvalues and RankBrowser.CreateUI is already at the ceiling, so the first attempt at the layout -- six more locals in CreateUI -- made the file stop loading entirely with 'function at line 2108 has more than 60 upvalues'. Moving the arithmetic into its own function was not a style choice, it was the only way to land the change, and it is the kind of ceiling that a real project discovers only by hitting it. The harness's NUM_ROWS also had to be revisited deliberately, since it carries an explicit instruction not to be silently re-tuned.",
+    "skill_gap": "Two pins were measuring the mock rather than the client: a FontString with no explicit height measured zero tall, so every text band looked empty, and the header widgets were not exposed, so their line could not be compared with the plain headers. A geometry pin needs the client geometry -- the template's size, a FontString's auto-size, the real anchors -- or it is measuring the mock. Related: the mock's SetPoint used to discard the anchor entirely, so every layout question was unanswerable until it was made to record it."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

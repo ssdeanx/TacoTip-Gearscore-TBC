@@ -89,6 +89,19 @@ local GEM_BONUS = 5
 local MAIN_HAND_SLOT = 16
 local OFF_HAND_SLOT = 17
 
+-- The number of gem positions an item link carries.
+--
+-- ParseEquippedLink reads the enchant field and then EXACTLY three gem fields
+-- (the payload's fields 3 to 6), so the parsed gem list has three positions
+-- and no more. That number is the bound the socket capacity is reconciled
+-- against: a capacity that cannot hold the gems the link reports is too
+-- SMALL, and a capacity above the number of positions the link carries is too
+-- LARGE. Both are contradictions -- neither can publish a number.
+--
+-- Exported so the Scanner uses the SAME bound rather than a second copy of it.
+local SOCKET_POSITIONS = 3
+Scoring.SOCKET_POSITIONS = SOCKET_POSITIONS
+
 local function isFiniteNumber(value)
     return type(value) == "number"
         and value == value
@@ -529,12 +542,41 @@ local function readSocketEvidence(item, parsed)
     end
 
     if parsed then
-        for index = 1, 3 do
-            local socketGemID = 0
-            if index <= sockets.capacity then
-                socketGemID = sockets.gemIDs[index]
+        -- The capacity is the DOCUMENTED API's answer (Scanner.readSocketCapacity
+        -- reads C_Item.GetItemNumSockets). The item's own gem list -- parsed
+        -- from the EQUIPPED item's link -- is the cross-check, and it is
+        -- checked in BOTH directions.
+        --
+        -- TOO SMALL: the capacity cannot hold a gem the link reports. The gems
+        -- sit in socket order, so the LAST occupied position is the bound --
+        -- a gem in position 3 with a capacity of 2 is a contradiction, and so
+        -- is a capacity of 0 on an item that has any gem at all.
+        local lastOccupied = 0
+        for index = 1, SOCKET_POSITIONS do
+            if parsed.gemIDs[index] ~= 0 then
+                lastOccupied = index
             end
-            if socketGemID ~= parsed.gemIDs[index] then
+        end
+        if sockets.capacity < lastOccupied then
+            return nil, makeBlocker("contradictory", "socket-gem-mismatch-" .. lastOccupied)
+        end
+
+        -- TOO LARGE: the capacity exceeds the number of gem positions the
+        -- item's link carries, so the two cannot be reconciled. The old
+        -- cross-check only ever rejected a capacity that was too small, so a
+        -- count above what the item's gems can account for was used as read
+        -- and could publish a number above what the item justifies.
+        if sockets.capacity > SOCKET_POSITIONS then
+            return nil, makeBlocker("contradictory", "socket-capacity-exceeds-gem-list")
+        end
+
+        -- And every socket the capacity claims must carry the gem the link
+        -- reports -- position by position, not just in aggregate. Only the
+        -- positions the link HAS are compared: a position past the link's
+        -- three gem fields is not a disagreement about a gem, it is the
+        -- capacity exceeding the gem list, which is the branch above.
+        for index = 1, math.min(sockets.capacity, SOCKET_POSITIONS) do
+            if sockets.gemIDs[index] ~= parsed.gemIDs[index] then
                 return nil, makeBlocker("contradictory", "socket-gem-mismatch-" .. index)
             end
         end
@@ -545,7 +587,7 @@ local function readSocketEvidence(item, parsed)
     for index = 1, sockets.capacity do
         if sockets.gemIDs[index] > 0 then
             filled = filled + 1
-        elseif index <= 3 then
+        elseif index <= SOCKET_POSITIONS then
             emptyScoreBearing = emptyScoreBearing + 1
         end
     end
@@ -685,17 +727,34 @@ local function occupancyBlocker(slot)
 end
 
 local function enhancementPolicy(revision, policy)
+    -- A MISSING policy is an explicit failure, never a silent "restricted".
+    --
+    -- This function used to default a nil policy to "restricted to level 70",
+    -- and that default is exactly what hid the bug it now guards: no
+    -- production call site passed a policy, so the level-70 gate applied to
+    -- every player on every client while the Options checkbox only flipped the
+    -- RENDER gate -- unchecking it made Potential GS / Delta / Completion read
+    -- "Unavailable" rather than show a value.
+    --
+    -- A nil policy now blocks the three enhancement metrics with a named
+    -- reason. That is distinguishable from the level gate's own
+    -- "suppressed" / "level-policy" verdict (a policy that says "restrict"
+    -- and a character that is not level 70), and it surfaces in the debug
+    -- state instead of reading as a deliberate restriction.
+    if policy == nil then
+        return nil, makeBlocker("unknown", "enhancement-policy-missing")
+    end
+    if type(policy) ~= "table" then
+        return nil, makeBlocker("contradictory", "enhancement-policy")
+    end
+    if policy.restrictEnhancementMetricsToLevel70 ~= nil
+        and type(policy.restrictEnhancementMetricsToLevel70) ~= "boolean" then
+        return nil, makeBlocker("contradictory", "enhancement-policy")
+    end
+
     local restrictToLevel70 = true
-    if policy ~= nil then
-        if type(policy) ~= "table" or (
-            policy.restrictEnhancementMetricsToLevel70 ~= nil
-            and type(policy.restrictEnhancementMetricsToLevel70) ~= "boolean"
-        ) then
-            return nil, makeBlocker("contradictory", "enhancement-policy")
-        end
-        if policy.restrictEnhancementMetricsToLevel70 ~= nil then
-            restrictToLevel70 = policy.restrictEnhancementMetricsToLevel70
-        end
+    if policy.restrictEnhancementMetricsToLevel70 ~= nil then
+        restrictToLevel70 = policy.restrictEnhancementMetricsToLevel70
     end
 
     if not restrictToLevel70 then
@@ -735,6 +794,24 @@ end
 
 function Scoring.Evaluate(revision, policy)
     local result = { metrics = {}, items = {} }
+    -- The policy the result was computed under, stamped onto the result.
+    --
+    -- The result is cached (Scanner's current state, the remote cache) and the
+    -- level-70 gate is baked into it, so a cached result alone cannot say
+    -- whether it still answers the user's setting. The stamp is what lets a
+    -- reader tell "computed while the restriction was ON" from "computed while
+    -- it was OFF" -- and it is diagnostic only: it never rides the wire (the
+    -- wire carries named fields, not the result table) and it never changes a
+    -- metric.
+    --
+    -- A nil value means "no boolean policy was applied" -- an invalid or
+    -- missing policy -- which is distinct from both true and false.
+    local appliedPolicy
+    if type(policy) == "table"
+        and type(policy.restrictEnhancementMetricsToLevel70) == "boolean" then
+        appliedPolicy = policy.restrictEnhancementMetricsToLevel70
+    end
+    result.policy = { restrictEnhancementMetricsToLevel70 = appliedPolicy }
     if type(revision) ~= "table" or type(revision.slots) ~= "table" then
         local blocker = makeBlocker("unknown", "revision")
         result.metrics.baseGS = blockedMetric(blocker)

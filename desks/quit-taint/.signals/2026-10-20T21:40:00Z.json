@@ -1,0 +1,29 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T21:40:00Z",
+  "run_id": "quittaint",
+  "agent_name": "quit-taint",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Proving the chain per branch by exact file:line against origin/-qualified FrameXML settled two standing contradictions at once: the operator's error line numbers (66/69) identify a classic-family client and match origin/classic_era exactly, and GameTooltip.FadeOut has no Lua definition on any branch while Blizzard calls it unguarded on all five - which makes workshop.md's 'only on live and forever' wrong and options.lua/main.lua right. The structural link that finally made the chain coherent was MainMenuFrameTemplates.lua:39 (GetAppropriateTooltip -> the shared GameTooltip): our hooks and the quit path share one object.",
+    "what_was_hard": "The taint propagation rule itself is engine-side and is written down nowhere in the mirror, so the hop from the shared GameTooltip to the GameMenu's Logout button stays ASSUMED. The brief's stated hypothesis (taint flows GameTooltip -> UIParent -> GameMenuFrame) does not survive the source: UIParent is protected=\"true\" on all three classic branches and is not in the XML at all on forever/live. Chasing the hierarchy rule instead of the shared-object rule was the dead end; the fix is to stop putting addon code in the shared tooltip's script chain, not to reason about UIParent.",
+    "skill_gap": "The FrameXML mirror cannot settle engine behaviour (taint propagation, protected-function gating, whether an engine-provided method exists at runtime). A brief that expects the mirror to prove an engine rule needs the operator's in-game A/B as the deciding rung, and the brief should have said so - 'prove from the client source' was only satisfiable for the call chain, not for the taint semantics."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "artifacts": [
+    "bench/audits/2026-10-20-quit-taint.md"
+  ],
+  "corrections_to_standing_knowledge": [
+    "workshop.md -> 'GameTooltip.FadeOut exists only on live and forever' is wrong: FadeOut has no Lua definition on any branch and Blizzard calls it unguarded on all five (classic family Blizzard_UnitFrame/Classic/UnitFrame.lua:447; forever Mainline/UnitFrame.lua:393; live Mainline/UnitFrame.lua:386). options.lua:483-506 and main.lua:4792-4807 are correct as written."
+  ]
+}

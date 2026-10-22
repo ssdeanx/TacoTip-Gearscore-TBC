@@ -11,13 +11,13 @@ local L = {
     ["LB_COL_SPECCLASS"] = "СПЕЦ. / КЛАСС",
     ["LB_MY_RANK_ARROW"] = "▼ Моё место",
     ["GEAR_SCANNING"] = "Сканирование экипировки...",
-    ["LB_SORTED_BY"] = "Сортировка: s s",
-    ["LB_FOOTER_NO_RANK"] = "d игроков - рейтинга пока нет",
+    ["LB_SORTED_BY"] = "Сортировка: %s %s",
+    ["LB_FOOTER_NO_RANK"] = "%d игроков - рейтинга пока нет",
     ["EQUIPMENT_CATEGORY_NAME"] = "Окна экипировки",
     ["MINIMAP_HINT_RIGHT"] = "ПКМ: настройки",
     ["COMPLETE"] = "Завершено",
     ["GEAR_UNAVAILABLE"] = "Данные об экипировке недоступны",
-    ["LB_FOOTER_STANDING"] = "Ваше место: #d общий | #d фракция | #d класс  -  d игроков",
+    ["LB_FOOTER_STANDING"] = "Ваше место: #%d общий | #%d фракция | #%d класс  -  %d игроков",
     ["CATEGORY_NAME"] = "TacoTip Extras",
 
     ["INTRO"] =
@@ -43,42 +43,7 @@ local L = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "Анализ улучшений:",
     ["TOOLTIP_LABEL_COMPLETION"] = "Завершённость:",
-    ["TOOLTIP_LABEL_RANK"] = "Место по GearScore:",
-
-    ["REMOTE_COMPLETE"] = "Готово",
-    ["REMOTE_UNAVAILABLE"] = "Недоступно",
-    ["REMOTE_PENDING"] = "Ожидает",
-    ["REMOTE_SUPPRESSED"] = "Подавлено",
-    ["REMOTE_NOT_OBSERVED"] = "Не наблюдалось",
-
-    ["INTEGRATION_COMPATIBLE"] = "Совместимо",
-    ["INTEGRATION_INCOMPATIBLE"] = "Несовместимо",
-    ["INTEGRATION_MISSING"] = "Не загружено",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "Подсказки",
-    ["OPTIONS_TAB_EQUIPMENT"] = "Персонаж и осмотр",
-    ["SECTION_TOOLTIP"] = "Подсказки",
-    ["SECTION_EQUIPMENT"] = "Персонаж и осмотр",
-    ["SECTION_HELP"] = "Как считаются значения",
-    ["SECTION_ADVANCED"] = "Дополнительно",
-
-    ["OPT_ENABLED"] = "Включить дополнение",
-    ["OPT_TOOLTIP_MODE"] = "Режим подсказки",
-    ["OPT_SHIFT_DETAILED"] = "Shift для подробного режима",
-    ["OPT_FIELDS"] = "Поля подсказки",
-    ["OPT_MINIMAP"] = "Показать кнопку на миникарте",
-    ["OPT_SERVER_RANK"] = "Показать место в рейтинге сервера",
-    ["OPT_HOW_SCORES_WORK"] = "Как считаются значения",
-    ["OPT_RESTORE"] = "Восстановить настройки TacoTip",
-    ["OPT_RESET"] = "Сбросить настройки дополнения",
-    ["OPT_EQUIPMENT_MODE"] = "Сводка персонажа и осмотра",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "Показывать GS без улучшений в подробном режиме",
-    ["OPT_EQUIPMENT_UNLOCK"] = "Разблокировать позиции сводки",
-    ["OPT_EQUIPMENT_RESET"] = "Сбросить позиции сводки",
-    ["OPT_SCAN_NOW"] = "Проверить сейчас",
-    ["OPT_SCAN_NOW_DESC"] =
-    "Проверяет игроков, которых вы можете достать прямо сейчас, и заполняет недостающие значения GearScore.",
+    ["TOOLTIP_LABEL_RANK"] = "Ранг GS:",
 
     ["HELP_ENABLED_HEADING"] = "Включить дополнение",
     ["HELP_ENABLED_1"] =
@@ -138,6 +103,16 @@ local L = {
     ["HELP_SHOWSERVERRANK_1"] =
     "Показывает в подсказках место игрока по GearScore на сервере и место в классе, когда это доступно от фоновой системы синхронизации.",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "Просторные строки",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "Увеличивает высоту строк рейтинга, чтобы текст был крупнее. Список показывает тех же игроков в том же порядке, но в более высоких строках.",
+
+    ["HELP_SHAMANBLUE_HEADING"] = "Синий Шаман",
+    ["HELP_SHAMANBLUE_1"] =
+    "Показывает имя класса Шаман синим цветом вместо розового. Classic Era красит цвет класса Шаман в розовый, поэтому это тот же цвет, который использует сам TacoTip.",
+    ["HELP_SHAMANBLUE_2"] =
+    "Если установлен TacoTip, применяется и его собственная настройка Синий Шаман: выключенная там, она выключает синий цвет и здесь, чтобы цвет класса был одинаковым в обоих дополнениях.",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "Открыть рейтинг сервера",
     ["HELP_OPENLEADERBOARD_1"] =
     "Открывает окно рейтинга GearScore TacoTip (/tt ranks), чтобы посмотреть общий рейтинг всего мира.",
@@ -189,28 +164,27 @@ local L = {
     ["MINIMAP_HINT"] = "TacoTip Extras",
     ["MINIMAP_HINT_LEFT"] = "ЛКМ: таблица",
     ["MINIMAP_HINT_DRAG"] = "Перетащите, чтобы переместить",
-    ["BLANK_DESC"] = "Перетащите",
-    ["BLANK"] = "Нет",
 
     ["LB_TITLE"] = "Рейтинг GearScore TacoTip",
     ["LB_REALM"] = "Весь мир",
     ["LB_SEARCH"] = "Поиск:",
+    ["LB_GUILD"] = "Гильдия:",
     ["LB_YOU"] = "ВЫ",
     ["LB_LOADING"] = "Загрузка рейтинга...",
     ["LB_EMPTY"] = "Пока нет данных. Значения синхронизируются по мере игры.",
     ["LB_EMPTY_FILTERS"] = "Нет игроков, подходящих под текущие фильтры.",
+    ["LB_DB_UNAVAILABLE"] = "База данных рейтинга недоступна, показать рейтинг невозможно.",
     ["LB_NOT_ESTABLISHED"] = "Места пока нет",
     ["LB_ONLY_YOU"] = "Пока в этом мире записан только ваш персонаж.",
     ["LB_FILTER_ALL"] = "Все",
-    ["LB_MY_RANK"] = "\226\152\148 Моё место",
-    ["LB_TOP"] = "\226\152\160 Верх",
+    ["LB_TOP"] = "\226\150\178 Верх",
     ["LB_SCAN"] = "Проверить сейчас",
     ["LB_SCAN_BUSY"] = "Проверка...",
-    ["LB_SCAN_IDLE"] = "Ожидание",
 
     ["LB_COL_RANK"] = "МЕСТО",
     ["LB_COL_GS"] = "GEARSCORE",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "УР.",
     ["LB_COL_PLAYER"] = "ИГРОК",
     ["LB_COL_LASTSEEN"] = "БЫЛ В СЕТИ",
 
@@ -218,14 +192,20 @@ local L = {
     ["LB_TIP_UNKNOWNSPEC"] = "Неизвестная специализация",
     ["LB_TIP_GS"] = "GearScore: %d",
     ["LB_TIP_ILVL"] = "Средний уровень предметов: %.1f",
+    ["LB_TIP_PVP_RANK"] = "Ранг PvP: %s",
+    ["LB_TIP_ARENA"] = "Лучший результат на арене: %d",
     ["LB_TIP_RANK"] = "Место по GearScore: #%d",
-    ["LB_TIP_CLASSRANK"] = "Место в классе: #%d",
     ["LB_TIP_LASTSEEN"] = "Виден: %s",
+    ["LB_TIP_RANK_SYNCED"] = "Ранг синхронизирован: %s",
+    ["LB_TIP_CLICK_GEAR"] = "Нажмите, чтобы посмотреть снаряжение",
+    ["LB_SCAN_COMPLETE"] = "Проверка завершена - %d игроков",
 
     ["SORT_GS_DESC"] = "GEARSCORE",
     ["SORT_ILVL_DESC"] = "УРОВЕНЬ ПРЕДМЕТОВ",
+    ["SORT_LEVEL_DESC"] = "УРОВЕНЬ",
     ["SORT_SEEN_DESC"] = "ВИДЕН",
 
+    ["LB_STAT_STRIP"] = "%d игроков | Лучший %d | Средний %d",
 
     ["TIME_JUST_NOW"] = "Только что",
     ["TIME_MIN_AGO"] = "%d мин назад",
@@ -234,14 +214,14 @@ local L = {
 
     ["GEAR_TITLE"] = "Снаряжение: %s",
     ["GEAR_NOT_SCANNED"] = "Этот игрок ещё не проверен, поэтому снаряжение недоступно.",
-    ["GEAR_NO_ITEMS"] = "Нет записанных предметов.",
-    ["GEAR_CLOSE"] = "Закрыть",
+    ["GEAR_DATA_UNAVAILABLE"] = "Данные о снаряжении для этого игрока сейчас недоступны. Нажмите Проверить сейчас в таблице рейтинга и повторите попытку.",
 
     ["SCAN_PROGRESS"] = "%d / %d",
 
     ["CLASS_DEATHKNIGHT"] = "Рыцарь смерти",
     ["CLASS_DEMONHUNTER"] = "Охотник на демонов",
     ["CLASS_DRUID"] = "Друид",
+    ["CLASS_EVOKER"] = "Пробудитель",
     ["CLASS_HUNTER"] = "Охотник",
     ["CLASS_MAGE"] = "Маг",
     ["CLASS_MONK"] = "Монах",

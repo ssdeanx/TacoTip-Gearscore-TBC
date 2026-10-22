@@ -54,6 +54,12 @@ local function check(name, cond, detail)
     if not cond then allok = false end
 end
 
+-- The mock-fidelity contract (proctor HI-12): the mock must publish the
+-- arity the CLIENT publishes, so the next drift fails the suite instead of
+-- waiting for a human to read FrameXML. See Tests/harness/mock_contract.lua.
+local MOCKC = dofile(_hd .. "/mock_contract.lua")
+MOCKC.setFamily("retail")
+
 -- Minimal environment every client shares.
 local function baseEnv()
     REALG._G = REALG
@@ -67,13 +73,35 @@ local function baseEnv()
     _G.C_SpecializationInfo = { GetSpecializationInfo = function() end }
     _G.CanInspect = function() return false end
     _G.NotifyInspect = function() return true end
+    -- THE 0.7.9 REGRESSION MOCK. ClearInspectPlayer() is a real client API on
+    -- every branch (origin/live: Blizzard_InspectUI/Mainline/
+    -- Blizzard_InspectUI.lua:104; origin/classic_era: Blizzard_InspectUI/
+    -- Vanilla/Blizzard_InspectUI.lua:85) and Blizzard calls it only from
+    -- InspectFrame_OnHide. The library called it from inside INSPECT_READY in
+    -- 0.7.9, which purged the inspected unit and left the paperdoll EMPTY.
+    --
+    -- The mock stays a no-op to the client -- nothing else changes -- and
+    -- COUNTS the call, because the guarantee to pin is the ABSENCE of the
+    -- call and nothing else can observe an absence.
+    _G.__clearInspectPlayerCalls = 0
+    _G.ClearInspectPlayer = function()
+        _G.__clearInspectPlayerCalls = (_G.__clearInspectPlayerCalls or 0) + 1
+    end
     _G.InCombatLockdown = function() return false end
     _G.GetNamePlates = function() return {} end
     _G.UnitIsPlayer = function() return false end
     _G.UnitGUID = function() return nil end
     _G.GetInventoryItemLink = function() end
     _G.GetPlayerInfoByGUID = function() end
-    _G.GetSpecializationInfoByID = function() end
+    -- GetSpecializationInfoByID publishes SEVEN values (id, name,
+    -- description, texture, role, class, classDisplayName). The stub
+    -- published none, which is the same latent gap as the four-value mock
+    -- the proctor flagged -- the addon reads #2 and #4 today, so #5+ were
+    -- invisible. origin/live: ClubFinder.lua:599 destructures exactly seven.
+    -- See Tests/harness/mock_contract.lua.
+    _G.GetSpecializationInfoByID = function()
+        return nil, nil, nil, nil, nil, nil, nil
+    end
     _G.GetItemInfo = function() end
     _G.GetQuestDifficultyColor = function() end
     _G.GetComparisonAchievementPoints = function() end
@@ -91,9 +119,14 @@ end
 -- which is the state a client would be in if the bundled lib were ever missing
 -- -- the probe guard then cannot install and must degrade to a no-op rather than
 -- raise at file scope.
+
+-- The mock-fidelity contract (proctor HI-12). The mock must publish the
+-- arity the CLIENT publishes, so the next drift fails the suite instead of
+-- waiting for a human to read FrameXML. See Tests/harness/mock_contract.lua.
 local function run(projectId, iface, layout, projectConsts, patches, opts)
     for k in STD.pairs(REALG) do REALG[k] = nil end
     baseEnv()
+    MOCKC.assertArity(check, "GetSpecializationInfoByID", _G.GetSpecializationInfoByID)
     if (patches) then
         for k, v in STD.pairs(patches) do _G[k] = v end
     end
@@ -156,6 +189,7 @@ local function bracket(ci)
     if ci:IsClassic() then return 200 end
     if ci:IsTBC() then return 400 end
     if ci:IsForever() then return 200 end
+    if ci:IsRetail() then return 1000 end
     return 1000
 end
 
@@ -168,8 +202,8 @@ local SCENARIOS = {
     { n = "Classic Era 11509",  p = P.WOW_PROJECT_CLASSIC,                 i = 11509,  f = "classicEra",  b = 200 },
     { n = "TBC Anniversary",    p = P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, i = 20506,  f = "tbc",         b = 400 },
     { n = "Titanforge 38002",   p = P.WOW_PROJECT_WRATH_CLASSIC,           i = 38002,  f = "titanforge",  b = 1000 },
-    { n = "WoW Forever 16001",  p = P.WOW_PROJECT_MAINLINE,               i = 16001,  f = "forever",     b = 200 },
-    { n = "Retail 120100",      p = P.WOW_PROJECT_MAINLINE,               i = 120100, f = "retail",      b = 1000 },
+    { n = "WoW Forever 16001",  p = P.WOW_PROJECT_MAINLINE,               i = 16001,  f = "forever",   b = 200 },
+    { n = "Retail 120105",      p = P.WOW_PROJECT_MAINLINE,               i = 120105, f = "retail",      b = 1000 },
     -- WoW Forever with WOW_PROJECT_ID unset (engine-defined on camelot) must
     -- still resolve via the interface band, and must NOT fall back to retail.
     { n = "Forever, WOW_PROJECT_ID nil", p = nil, i = 16001, f = "forever", b = 200 },
@@ -184,8 +218,11 @@ local SCENARIOS = {
     -- with TBC's 400 item-level bracket and TBC's other family behaviours.
     { n = "REAL camelot consts, WOW_PROJECT_ID nil", p = nil, i = 16001, f = "forever", b = 200, c = CAMELOT_CONSTS },
     -- Unrecognised clients must be reported unknown, not silently defaulted.
-    { n = "Cata",   p = P.WOW_PROJECT_CATACLYSM_CLASSIC, i = 40402, f = "unknown", u = true },
-    { n = "Mists",  p = P.WOW_PROJECT_MISTS_CLASSIC,       i = 50504, f = "unknown", u = true },
+    -- Unrecognised clients keep the 1000 default (gearscore.lua names it
+    -- explicitly so a future family is visible there). The bracket is pinned
+    -- here so a change to the unknown default fails loudly in-harness (M10).
+    { n = "Cata",   p = P.WOW_PROJECT_CATACLYSM_CLASSIC, i = 40402, f = "unknown", b = 1000, u = true },
+    { n = "Mists",  p = P.WOW_PROJECT_MISTS_CLASSIC,       i = 50504, f = "unknown", b = 1000, u = true },
 }
 
 -- Each scenario runs under BOTH plausible GetBuildInfo layouts, so no result
@@ -250,7 +287,7 @@ do
     end
     local mainline = {
         { "Forever", P.WOW_PROJECT_MAINLINE, 16001 },
-        { "Retail", P.WOW_PROJECT_MAINLINE, 120100 },
+        { "Retail", P.WOW_PROJECT_MAINLINE, 120105 },
     }
     for _, c in ipairs(mainline) do
         check("CanInspect " .. c[1] .. ": CanInspect alone accepted",
@@ -273,7 +310,7 @@ do
         { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC,   20506,  false },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,             38002,  false },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                  16001,  true },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,                 120100,  true },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,                 120105,  true },
     }
 
     local function scanEnv(opts)
@@ -297,6 +334,11 @@ do
         env.CheckInteractDistance = function() return opts.nearby ~= false end
         env.InCombatLockdown = function() return opts.combat == true end
         env.NotifyInspect = function() return true end
+        -- Deterministic uptime clock: the fresh-cache pin below stamps with
+        -- this same value, so the comparison stays in one domain (Batch 4 C2:
+        -- isCacheFresh fails open without a clock, which a wall-clock stamp
+        -- would read as stale).
+        env.GetTime = function() return 1000000 end
         local plates = opts.plates or { "n1" }
         env.GetNamePlates = function()
             local out = {}
@@ -329,7 +371,7 @@ do
         -- between a scan that collects coverage and a scan that spams the server.
         ci = run(project, iface, "slot4", CONSTS, scanEnv())
         ci:SetScanEnabled(true)
-        ci.cache["Player-n1"] = { time = time() }
+        ci.cache["Player-n1"] = { time = 1000000 }
         ci.ScanNearby()
         check("ScanNearby skips fresh cache " .. name,
             (ci:GetInspectStats().scanEnqueued or 0) == 0,
@@ -432,7 +474,7 @@ do
 
     -- Mainline keeps the either-signal rule: distance false, CanInspect true is
     -- still inspectable there, and no hysteresis is involved.
-    local ci2 = run(P.WOW_PROJECT_MAINLINE, 120100, "slot4", CONSTS, {
+    local ci2 = run(P.WOW_PROJECT_MAINLINE, 120105, "slot4", CONSTS, {
         UnitExists = function() return true end,
         UnitIsConnected = function() return true end,
         UnitIsDeadOrGhost = function() return false end,
@@ -737,6 +779,13 @@ do
     --    is in flight. With the slot released, the second unit's own answer can
     --    no longer be resolved (it is neither target nor mouseover), so its data
     --    is discarded and requested again -- observable as `ready` not moving.
+    --
+    --    Watchdog grace (hunter H10) refines the first half: n1's late answer
+    --    now resolves through the grace window and populates n1's cache (+1)
+    --    instead of being discarded -- the answer is genuine server data, and
+    --    resolving it cannot release n2's slot (the release rule still compares
+    --    guids). The invariant that matters -- n2's in-flight request completes
+    --    -- is unchanged and is now asserted directly on n2's cache.
     local ciC, tickC = build({})
     local handlerC = ciC.frame.scripts.OnEvent
     local readyBefore = ciC:GetInspectStats().ready or 0
@@ -744,11 +793,305 @@ do
     ciC:DoInspect("n2")                                  -- slot taken -> queued
     clock = clock + 4
     tickC.cb()                                           -- watchdog drops n1; queue sends n2
+    check("the watchdog recorded whose request stalled",
+        ciC:GetInspectStats().lastWatchdogUnit == "n1",
+        "lastWatchdogUnit=" .. tostring(ciC:GetInspectStats().lastWatchdogUnit))
     handlerC(ciC.frame, "INSPECT_READY", "Player-n1")    -- n1's LATE answer
     handlerC(ciC.frame, "INSPECT_READY", "Player-n2")    -- n2's own answer
     check("a late answer for an earlier request does not drop the request in flight",
-        (ciC:GetInspectStats().ready or 0) == readyBefore + 1,
+        (ciC:GetInspectStats().ready or 0) == readyBefore + 2,
         "ready " .. tostring(readyBefore) .. " -> " .. tostring(ciC:GetInspectStats().ready))
+    check("...and the in-flight unit's own data resolved",
+        type(ciC.cache["Player-n2"]) == "table",
+        "n2 cached=" .. tostring(ciC.cache["Player-n2"] ~= nil))
+end
+
+-- ==========================================================================
+-- A RAISE IN THE INSPECT_READY HANDLER'S CACHE STEP MUST NOT LEAVE THE
+-- PENDING INSPECT SLOT SET.
+--
+-- The handler releases the pending inspect slot AFTER it has cached the unit
+-- and handed the data to the consumer callbacks. A raise anywhere in that
+-- block used to abort the handler before the release, so the slot stayed set:
+-- the queue never issued another inspect, and NO unit scored again until the
+-- client was reloaded. One add-on's error cost every add-on's tooltip its
+-- scores.
+--
+-- The witness is the NEXT INSPECT, not the cache: with the slot released the
+-- engine dispatches the following request (NotifyInspect is called); with the
+-- slot still set the request is only QUEUED and never goes out.
+--
+-- WHERE THE RAISE COMES FROM, and why it is injected the way it is:
+--
+--   * A CONSUMER callback that raises CANNOT reach the library. The bundled
+--     CallbackHandler-1.0 v7 dispatches every handler under
+--     `xpcall(method, errorhandler, ...)` and DISCARDS the result
+--     (Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua:27-34), and in game
+--     `geterrorhandler()(err)` displays the error and returns. So the
+--     consumer's raise is swallowed by the dispatch on every client, and the
+--     library's cache step always completes. That is asserted below as a
+--     TRUTH, not as a fail-capable pin.
+--
+--   * The cache step's OWN client reads are almost all pcall-guarded
+--     internally, but one is not: `uptimeSeconds()` (the first line of
+--     cacheUnitData) calls GetTime() bare. A raise there DOES abort the
+--     handler and DOES leak the pending slot -- the exact failure mode this
+--     pin is about. So the pin injects the raise there, which is a real hole
+--     in the real code path rather than a contrived one.
+-- ==========================================================================
+do
+    local clock = 20000
+    local notifies = 0
+    local armedClockRaise = false
+
+    local ci = run(P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, "slot4", CONSTS, {
+        -- The library's own frame must retain its scripts, or its OnEvent
+        -- handler is unreachable from any test.
+        CreateFrame = function()
+            local f = { scripts = {} }
+            f.RegisterEvent = function() end
+            f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+            f.GetScript = function(self, name) return self.scripts[name] end
+            return f
+        end,
+        UnitExists = function(u)
+            return u == nil or u == "player" or u == "n1" or u == "n2" or u == "n3"
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        UnitDistanceSquared = function() return 100, true end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function()
+            notifies = notifies + 1
+            return true
+        end,
+        -- ONE-SHOT: the armed flag is consumed by the first read, so the raise
+        -- lands inside the cache step (the first line of cacheUnitData) and
+        -- nowhere else in the handler.
+        GetTime = function()
+            if armedClockRaise then
+                armedClockRaise = false
+                error("injected clock raise")
+            end
+            return clock
+        end,
+        GetNamePlates = function() return {} end,
+        C_Timer = {
+            After = function() end,
+            NewTicker = function()
+                return { Cancel = function() end }
+            end,
+        },
+    })
+
+    local handler = ci.frame.scripts.OnEvent
+    check("the INSPECT_READY handler is reachable for the cache-raise pin",
+        type(handler) == "function")
+
+    -- -----------------------------------------------------------------
+    -- SCENARIO 1: a CONSUMER callback that raises.
+    --
+    -- The bundled CallbackHandler dispatches every handler under
+    -- `xpcall(method, errorhandler, ...)` and DISCARDS the result, and in
+    -- game `geterrorhandler()(err)` displays the error and returns. So the
+    -- consumer's raise is swallowed by the dispatch on every client: the
+    -- cache step completes, the cache is written, and the pending slot is
+    -- released. This is asserted as a TRUTH about the dispatch, so the next
+    -- release knows it.
+    -- -----------------------------------------------------------------
+    local consumerRaised = false
+    ci.RegisterCallback("TacoTipProbe", "INVENTORY_READY", function()
+        consumerRaised = true
+        error("consumer raised")
+    end)
+
+    ci:DoInspect("n1")
+    check("the first inspect went out",
+        notifies == 1,
+        "notifies=" .. tostring(notifies))
+
+    -- Past the pacing window, so the NEXT request is dispatched rather than
+    -- queued. The watchdog is deliberately NOT driven: it would release the
+    -- slot on its own and hide the defect this pin is about.
+    clock = clock + 5
+
+    local consumerOk, consumerErr = pcall(handler, ci.frame, "INSPECT_READY", "Player-n1")
+    check("a raising consumer callback does not escape the INSPECT_READY handler",
+        consumerOk == true,
+        tostring(consumerErr))
+    check("the consumer callback ran (its raise is swallowed by the dispatch, as the client does)",
+        consumerRaised == true,
+        "consumerRaised=" .. tostring(consumerRaised))
+    check("...and the cache step completed, so the unit's data is there",
+        type(ci.cache["Player-n1"]) == "table",
+        "n1 cached=" .. tostring(ci.cache["Player-n1"] ~= nil))
+
+    -- The witness for scenario 1: the slot was released, so the next request
+    -- is DISPATCHED rather than queued.
+    ci:DoInspect("n2")
+    check("a raising consumer callback does NOT leave the pending inspect slot set",
+        notifies == 2,
+        "notifies=" .. tostring(notifies)
+            .. " (1 = the request was only queued, the slot was still held)")
+
+    -- -----------------------------------------------------------------
+    -- SCENARIO 2: a raise inside the cache step itself.
+    --
+    -- The cache step's own client reads are almost all pcall-guarded
+    -- internally, but one is not: `uptimeSeconds()` (the first line of
+    -- cacheUnitData) calls GetTime() bare. A raise there DOES abort the
+    -- handler and DOES leak the pending slot -- the exact failure mode this
+    -- pin is about. So the pin injects the raise there, which is a real hole
+    -- in the real code path rather than a contrived one.
+    -- -----------------------------------------------------------------
+    clock = clock + 5
+    armedClockRaise = true
+    local raised, raisedErr = pcall(handler, ci.frame, "INSPECT_READY", "Player-n2")
+    check("a raise in the cache step does not escape the INSPECT_READY handler",
+        raised == true,
+        tostring(raisedErr))
+
+    local stats = ci:GetInspectStats()
+    check("...and the raise is COUNTED, never swallowed silently",
+        (stats.inspectReadyErrors or 0) == 1,
+        "inspectReadyErrors=" .. tostring(stats.inspectReadyErrors))
+    check("...and the MESSAGE is kept",
+        type(stats.lastInspectReadyError) == "string"
+            and stats.lastInspectReadyError:find("injected clock raise", 1, true) ~= nil,
+        "lastInspectReadyError=" .. tostring(stats.lastInspectReadyError))
+
+    -- The witness for scenario 2: the slot was released DESPITE the raise, so
+    -- the next request is DISPATCHED rather than queued.
+    ci:DoInspect("n3")
+    check("a raise in the cache step does NOT leave the pending inspect slot set",
+        notifies == 3,
+        "notifies=" .. tostring(notifies)
+            .. " (2 = the request was only queued, the slot was still held)")
+end
+
+-- ==========================================================================
+-- THE 0.7.9 RIGHT-CLICK INSPECT REGRESSION -- and the InspectFrame.unit
+-- fallback that came with the fix.
+--
+-- 0.7.9 shipped a `ClearInspectPlayer()` call INSIDE the INSPECT_READY
+-- handler, right after the inventory links were cached. ClearInspectPlayer()
+-- purges the inspected unit from the client engine, so Blizzard's own
+-- InspectPaperDollItemSlotButton_Update then found GetInventoryItemTexture
+-- returning nil for all 18 equipment slots and reset every button to its empty
+-- background texture: "Right-click inspect stripped all gear from the paperdoll
+-- on Retail and WoW Forever" (CHANGELOG.md, 0.7.9). Blizzard itself only ever
+-- calls it from InspectFrame_OnHide
+-- (origin/live: Blizzard_InspectUI/Mainline/Blizzard_InspectUI.lua:104;
+--  origin/classic_era: Blizzard_InspectUI/Vanilla/Blizzard_InspectUI.lua:85).
+--
+-- THE FIX IS THE ABSENCE OF THE CALL, so no check on what the call DOES can
+-- prove it: only a COUNT of the call can. The mock in baseEnv below stays a
+-- no-op to the client and RECORDS that it was called, so the guarantee is
+-- provable offline -- the operator cannot test this in game before publishing.
+--
+-- The second pin is the other half of the same fix: an inspect of a unit that
+-- is NEITHER the target NOR the mouseover -- a right-click inspect of a
+-- party/raid member out of the guild roster, or out of chat -- has to resolve
+-- through InspectFrame.unit, or the answer is discarded and the data is
+-- requested again later.
+-- ==========================================================================
+do
+    local clock = 12000
+    local ci = run(P.WOW_PROJECT_MAINLINE, 120105, "slot4", CONSTS, {
+        CreateFrame = function()
+            local f = { scripts = {} }
+            f.RegisterEvent = function() end
+            f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+            f.GetScript = function(self, name) return self.scripts[name] end
+            return f
+        end,
+        UnitExists = function(u) return u == "player" or u == "target" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            if (u == "target") then return "Player-n1" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetInventoryItemLink = function() return nil end,
+        GetTime = function() return clock end,
+    })
+    local handler = ci.frame and ci.frame.scripts and ci.frame.scripts.OnEvent
+    check("the INSPECT_READY handler is reachable for the 0.7.9 pin",
+        type(handler) == "function")
+    if (type(handler) == "function") then
+        local callsBefore = rawget(_G, "__clearInspectPlayerCalls") or 0
+        local ok, err = pcall(handler, ci.frame, "INSPECT_READY", "Player-n1")
+        check("the inspect completes", ok, tostring(err))
+        -- The control: the inspect really ran. Without this the counter below
+        -- would be zero because NOTHING happened, which is the same number the
+        -- regression produces.
+        check("...and the inspected unit's data is cached",
+            type(ci.cache["Player-n1"]) == "table",
+            "cached=" .. tostring(ci.cache["Player-n1"] ~= nil))
+        check("an inspect NEVER calls ClearInspectPlayer (the 0.7.9 regression)",
+            (rawget(_G, "__clearInspectPlayerCalls") or 0) == callsBefore,
+            "ClearInspectPlayer calls="
+                .. tostring((rawget(_G, "__clearInspectPlayerCalls") or 0) - callsBefore))
+    end
+end
+
+-- THE InspectFrame.unit FALLBACK. The unit below is NEITHER the target NOR the
+-- mouseover -- UnitExists says so -- so the ONLY way its answer can resolve is
+-- through InspectFrame.unit, which is what a right-click inspect of a
+-- non-targeted party/raid member (guild roster, chat link) leaves behind.
+do
+    local clock = 13000
+    local ci = run(P.WOW_PROJECT_MAINLINE, 120105, "slot4", CONSTS, {
+        CreateFrame = function()
+            local f = { scripts = {} }
+            f.RegisterEvent = function() end
+            f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+            f.GetScript = function(self, name) return self.scripts[name] end
+            return f
+        end,
+        -- Neither "target" nor "mouseover" exists: the fallback is the ONLY
+        -- resolution path left, so removing it fails the check below.
+        UnitExists = function(u) return u == "player" or u == "guildmate" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetInventoryItemLink = function() return nil end,
+        GetTime = function() return clock end,
+        -- The frame the client leaves behind after a right-click inspect.
+        InspectFrame = { unit = "guildmate" },
+    })
+    local handler = ci.frame and ci.frame.scripts and ci.frame.scripts.OnEvent
+    check("the INSPECT_READY handler is reachable for the InspectFrame.unit pin",
+        type(handler) == "function")
+    if (type(handler) == "function") then
+        local ok, err = pcall(handler, ci.frame, "INSPECT_READY", "Player-guildmate")
+        check("the inspect of a non-targeted unit completes", ok, tostring(err))
+        check("an inspect of a unit that is neither target nor mouseover resolves "
+                .. "through InspectFrame.unit and caches its data",
+            type(ci.cache["Player-guildmate"]) == "table",
+            "cached=" .. tostring(ci.cache["Player-guildmate"] ~= nil))
+    end
 end
 
 -- A UNIT WITH NO DATA HAS NO SPECIALIZATION, and must say so rather than
@@ -782,6 +1125,78 @@ do
         ci:GetSpecialization("n1", 1) == 2 and ci:GetSpecialization("n1", 2) == 3,
         "group1=" .. tostring(ci:GetSpecialization("n1", 1))
             .. " group2=" .. tostring(ci:GetSpecialization("n1", 2)))
+    -- A cache record that EXISTS yet carries no spec data (modern client where
+    -- GetInspectSpecialization was restricted/absent) is still an unknown unit:
+    -- the tail fallback must stay nil-able, not invent spec 1.
+    ci.cache["Player-n1"] = { time = clock }
+    check("...and a cached-but-specless record reports NO specialization (not 1)",
+        ci:GetSpecialization("n1") == nil,
+        "spec=" .. tostring(ci:GetSpecialization("n1")))
+    -- The active-group twin: nil guid and unknown units claim no group; a
+    -- record with resolved group data but no marker defaults to 1; a stored
+    -- marker is honoured. Callers fall back via `or 1`, so nil degrades to
+    -- the old display without asserting unprovided knowledge.
+    check("a nil guid reports NO active group (not 1)",
+        ci:GetActiveTalentGroup(nil) == nil,
+        "group=" .. tostring(ci:GetActiveTalentGroup(nil)))
+    check("an uncached unit reports NO active group (not 1)",
+        ci:GetActiveTalentGroup("n2") == nil,
+        "group=" .. tostring(ci:GetActiveTalentGroup("n2")))
+    check("...and a cached-but-dataless record reports NO active group (not 1)",
+        ci:GetActiveTalentGroup("n1") == nil,
+        "group=" .. tostring(ci:GetActiveTalentGroup("n1")))
+    ci.cache["Player-n1"] = { specIndexByGroup = { [1] = 2 } }
+    check("...but a record with a resolved group defaults to group 1",
+        ci:GetActiveTalentGroup("n1") == 1,
+        "group=" .. tostring(ci:GetActiveTalentGroup("n1")))
+    ci.cache["Player-n1"] = { specIndexByGroup = { [1] = 2, [2] = 3 }, activeGroup = 2 }
+    check("...and a stored active-group marker is honoured",
+        ci:GetActiveTalentGroup("n1") == 2,
+        "group=" .. tostring(ci:GetActiveTalentGroup("n1")))
+end
+
+-- QUEUE OVERFLOW IS COUNTED, NOT SILENT. The queue holds 25; the 26th insert
+-- evicts the oldest (the first queued unit). The drop count, the evicted guid
+-- and its queue age are what /tacotip diag reports.
+do
+    local clock = 20000
+    local env = {
+        UnitExists = function(u)
+            return u == nil or u == "player"
+                or (type(u) == "string" and u:match("^n%d+$") ~= nil)
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        UnitDistanceSquared = function() return 100, true end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return clock end,
+    }
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
+    ci:DoInspect("n1") -- takes the pending slot; everything after queues
+    for i = 2, 26 do ci:DoInspect("n" .. i) end -- 25 queued: exactly full
+    check("a full queue records no drop",
+        (ci:GetInspectStats().queueDropped or 0) == 0,
+        "queueDropped=" .. tostring(ci:GetInspectStats().queueDropped))
+    clock = clock + 5
+    ci:DoInspect("n27") -- overflow: evicts n2, the oldest queued unit
+    local st = ci:GetInspectStats()
+    check("a 26th queued unit evicts the oldest and counts the drop",
+        (st.queueDropped or 0) == 1,
+        "queueDropped=" .. tostring(st.queueDropped))
+    check("...and records the evicted guid",
+        st.lastQueueDropGuid == "Player-n2",
+        "lastQueueDropGuid=" .. tostring(st.lastQueueDropGuid))
+    check("...and the evicted unit's queue age",
+        st.lastQueueDropAge == 5,
+        "lastQueueDropAge=" .. tostring(st.lastQueueDropAge))
 end
 
 -- REGRESSION GUARD: the pre-existing roster auto-scan is independent of the
@@ -798,7 +1213,7 @@ do
         { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506,  false },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002,  false },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                16001,  true },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,                120100, true },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,                120105, true },
     }
     for _, c in ipairs(ROSTER_CLIENTS) do
         local name, project, iface = c[1], c[2], c[3]
@@ -1009,7 +1424,7 @@ do
         { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC,  20506 },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,            38002 },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                 16001 },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,                120100 },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,                120105 },
     }
 
     for _, c in ipairs(CLIENTS) do
@@ -1188,7 +1603,7 @@ do
         { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, false },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002, false },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                16001, false },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,               120100, false },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,               120105, false },
     }
 
     for _, c in ipairs(CLIENTS) do
@@ -1224,6 +1639,22 @@ do
                 AddMessage = function(self, message, r, g, b, hold, messageType)
                     shown[#shown + 1] = { message = message, messageType = messageType }
                 end,
+                -- The client's own path for a message that carries a message type
+                -- (UIErrorsFrame.lua:16-21 -> TryDisplayMessage -> :140-149):
+                -- the message is added FIRST and the sound is played SECOND, from
+                -- the same function, and the sound is played whether or not the
+                -- message was added. A mock that plays the sound from inside
+                -- AddMessage would never play it for a swallowed message -- the
+                -- exact "a pin that cannot fail" shape.
+                TryDisplayMessage = function(self, messageType, message, r, g, b)
+                    self:AddMessage(message, r, g, b, 1.0, messageType)
+                    local _, soundKitID, voiceID = GetGameMessageInfo(messageType)
+                    if (voiceID) then
+                        C_Sound.PlayVocalErrorSound(voiceID)
+                    elseif (soundKitID) then
+                        PlaySound(soundKitID)
+                    end
+                end,
             },
             C_Sound = {
                 PlayVocalErrorSound = function(voiceID)
@@ -1242,12 +1673,13 @@ do
                     -- (Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:137) --
                     -- because the messageType is the LAST argument, and a mock
                     -- that gets that wrong tests a call shape the client never
-                    -- makes.
-                    UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, refusedMessageType)
-                    local sound = rawget(_G, "C_Sound")
-                    if (type(sound) == "table" and type(sound.PlayVocalErrorSound) == "function") then
-                        sound.PlayVocalErrorSound(10)
-                    end
+                    -- makes. The message goes out through the frame's own
+                    -- TryDisplayMessage, which is the client's path for a
+                    -- message that carries a message type
+                    -- (UIErrorsFrame.lua:20 -> :140-149): the message is added
+                    -- first and the sound is played second, from the same
+                    -- function.
+                    UIErrorsFrame:TryDisplayMessage(refusedMessageType, "Out of range", 1, 0, 0)
                     return false
                 end
                 return true
@@ -1367,7 +1799,7 @@ do
 
         -- Not ours, not swallowed: an unrelated message reaches the frame.
         local beforeUnrelated = #shown
-        _G.UIErrorsFrame:AddMessage("Some unrelated error", 1, 0, 0, 1.0, 3)
+        _G.UIErrorsFrame:TryDisplayMessage(3, "Some unrelated error", 1, 0, 0)
         check(name .. " probe guard: an unrelated error still displays",
             #shown == beforeUnrelated + 1,
             "shown=" .. tostring(#shown) .. " (was " .. tostring(beforeUnrelated) .. ")")
@@ -1439,6 +1871,7 @@ do
     local caseClock = 6000
     local yards = 15
     local shown, voices, sounds, notified = {}, {}, {}, {}
+    local carrierPinChecked = false
 
     -- A fresh Classic Era client per case. The mock CanInspect refuses silently
     -- (returns false, emits nothing) so each test chooses exactly when and how
@@ -1461,12 +1894,15 @@ do
             -- inspect" refusal, 9 = a name-less refusal with only a sound kit,
             -- 10 = a message type this client cannot resolve at all,
             -- 11 = a range refusal carrying BOTH a sound kit and a voice -- the
-            -- shape that arms a stale sound latch if both are armed.
+            -- shape that arms a stale sound latch if both are armed,
+            -- 12 = a range refusal carrying only a sound kit -- the shape the
+            -- client's sound-kit path (TryDisplayMessage -> PlaySound) takes.
             GetGameMessageInfo = function(mt)
                 if (mt == 7) then return "ERR_OUT_OF_RANGE", nil, 10 end
                 if (mt == 8) then return "ERR_INVALID_INSPECT_TARGET", nil, nil end
                 if (mt == 9) then return "ERR_UNIT_NOT_FOUND", 999, nil end
                 if (mt == 11) then return "ERR_OUT_OF_RANGE", 999, 10 end
+                if (mt == 12) then return "ERR_OUT_OF_RANGE", 999, nil end
                 return nil
             end,
             C_Sound = {
@@ -1485,10 +1921,41 @@ do
                 AddMessage = function(self, message, r, g, b, hold, messageType)
                     shown[#shown + 1] = { message = message, messageType = messageType }
                 end,
+                -- The client's own path for a message that carries a message type
+                -- (UIErrorsFrame.lua:20 -> TryDisplayMessage -> :140-149): the
+                -- message is added FIRST and the sound is played SECOND, from
+                -- the same function, and the sound is played whether or not the
+                -- message was added. A mock that plays the sound from inside
+                -- AddMessage would never play it for a swallowed message -- the
+                -- exact "a pin that cannot fail" shape.
+                TryDisplayMessage = function(self, messageType, message, r, g, b)
+                    self:AddMessage(message, r, g, b, 1.0, messageType)
+                    local _, soundKitID, voiceID = GetGameMessageInfo(messageType)
+                    if (voiceID) then
+                        C_Sound.PlayVocalErrorSound(voiceID)
+                    elseif (soundKitID) then
+                        PlaySound(soundKitID)
+                    end
+                end,
             }
         end
         for k, v in pairs(patches or {}) do env[k] = v end
-        return run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
+        local originalPlaySound = env.PlaySound
+        local probe = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, env)
+        if (not carrierPinChecked) then
+            carrierPinChecked = true
+            -- THE CARRIER PIN. The client's global PlaySound must survive the
+            -- load untouched. The game menu's own Logout/Quit callback calls
+            -- it, and the protected Logout()/Quit() two lines later is REFUSED
+            -- when it is addon code:
+            --     [ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip' tried to call the
+            --     protected function 'UNKNOWN()'.
+            -- (origin/classic_era:Interface/AddOns/Blizzard_GameMenu/Shared/GameMenuFrame.lua:66-70)
+            check("probe guard taint: the client's global PlaySound is not replaced",
+                _G.PlaySound == originalPlaySound,
+                "replaced=" .. tostring(_G.PlaySound ~= originalPlaySound))
+        end
+        return probe
     end
 
     -- 1. THE ASYNC DELIVERY. The query refuses; no request is made, so nothing
@@ -1498,7 +1965,7 @@ do
     probeA:DoInspect("target")
     check("probe guard async: a refused query makes no request",
         #notified == 0, "requests=" .. tostring(#notified))
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    _G.UIErrorsFrame:TryDisplayMessage(7, "Out of range", 1, 0, 0)
     check("probe guard async: a refusal delivered AFTER the call is swallowed",
         #shown == 0 and (probeA:GetInspectStats().suppressed or 0) == 1,
         "shown=" .. tostring(#shown) .. " suppressed=" .. tostring(probeA:GetInspectStats().suppressed))
@@ -1510,7 +1977,7 @@ do
     --    non-range refusal at 5yd would block every unit at 5yd+ for the session.
     local probeB = newEra()
     probeB:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("You can't inspect that unit.", 1, 0, 0, 1.0, 8)
+    _G.UIErrorsFrame:TryDisplayMessage(8, "You can't inspect that unit.", 1, 0, 0)
     local statsB = probeB:GetInspectStats()
     check("probe guard classify: a non-range refusal is swallowed but teaches no range",
         #shown == 0 and (statsB.suppressed or 0) == 1 and statsB.learnedRange == nil
@@ -1521,29 +1988,51 @@ do
     -- above is not passing because learning is broken.
     local probeB2 = newEra()
     probeB2:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    _G.UIErrorsFrame:TryDisplayMessage(7, "Out of range", 1, 0, 0)
     check("probe guard classify: a range refusal still teaches the ceiling",
         probeB2:GetInspectStats().learnedRange == yards,
         "learned=" .. tostring(probeB2:GetInspectStats().learnedRange))
 
-    -- 3. THE SOUND LATCHES. Only the sound the client will actually play is
-    --    armed, it is swallowed once, and it does not swallow a later sound.
+    -- 3. THE SOUND. The refusal's sound is muted AT THE POINT THE CLIENT ASKS
+    --    FOR IT -- GetGameMessageInfo, where the client reads the sound kit id
+    --    (origin/classic_era:Interface/AddOns/Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:140-149)
+    --    -- and NOT at PlaySound.
+    --
+    --    WHY NOT PlaySound: the client's global PlaySound is also what the game
+    --    menu's own Logout/Quit callback calls, two lines before the protected
+    --    Logout()/Quit() (origin/classic_era:Interface/AddOns/Blizzard_GameMenu/Shared/GameMenuFrame.lua:66-70).
+    --    A replaced PlaySound ran addon code inside that closure, and the
+    --    engine refused the protected call that followed:
+    --        [ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip' tried to call the
+    --        protected function 'UNKNOWN()'.
+    --    The operator saw it every time they tried to exit the game.
+    --
+    --    OPERATOR RULE: only the INSPECT RANGE refusal has its sound muted. A
+    --    refusal that is not about distance stays audible -- the text is still
+    --    swallowed, but the player is told that something happened.
     local probeC = newEra()
     probeC:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("Unit not found.", 1, 0, 0, 1.0, 9)   -- sound kit, no voice
-    _G.PlaySound(999)                                                 -- the client's own sound
-    check("probe guard sound: a sound-only refusal swallows its sound once",
-        #shown == 0 and #sounds == 0, "sounds=" .. tostring(#sounds))
-    _G.PlaySound(999)                                                 -- a later, unrelated sound
-    check("probe guard sound: the next sound with the same id still plays",
+    _G.UIErrorsFrame:TryDisplayMessage(12, "Out of range", 1, 0, 0)   -- range refusal, sound kit, no voice
+    check("probe guard sound: a range refusal with a sound kit plays no sound",
+        #shown == 0 and #sounds == 0,
+        "shown=" .. tostring(#shown) .. " sounds=" .. tostring(#sounds))
+    -- The client's own sound is untouched -- the global is still the client's.
+    _G.PlaySound(999)
+    check("probe guard sound: the client's own sound still plays",
         #sounds == 1, "sounds=" .. tostring(#sounds))
+    -- A refusal that is NOT about the inspect range keeps its sound.
+    local probeC1 = newEra()
+    probeC1:DoInspect("target")
+    _G.UIErrorsFrame:TryDisplayMessage(9, "Unit not found.", 1, 0, 0)  -- not a range refusal, sound kit
+    check("probe guard sound: a refusal that is not about range keeps its sound",
+        #shown == 0 and #sounds == 1,
+        "shown=" .. tostring(#shown) .. " sounds=" .. tostring(#sounds))
     -- A message with a voice arms the voice, not the sound kit.
     local probeC2 = newEra()
     probeC2:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
-    _G.C_Sound.PlayVocalErrorSound(10)
+    _G.UIErrorsFrame:TryDisplayMessage(7, "Out of range", 1, 0, 0)    -- range refusal with a voice
     _G.PlaySound(999)
-    check("probe guard sound: a voiced refusal does not arm the sound kit",
+    check("probe guard sound: a voiced range refusal does not arm the sound kit",
         #voices == 0 and #sounds == 1,
         "voices=" .. tostring(#voices) .. " sounds=" .. tostring(#sounds))
     -- The shape that matters: a message carrying BOTH ids. The client plays the
@@ -1551,8 +2040,7 @@ do
     -- leave a latch that swallows a later, unrelated sound.
     local probeC3 = newEra()
     probeC3:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 11)
-    _G.C_Sound.PlayVocalErrorSound(10)
+    _G.UIErrorsFrame:TryDisplayMessage(11, "Out of range", 1, 0, 0)   -- both ids
     _G.PlaySound(999)
     check("probe guard sound: a message with both ids arms only the voice",
         #voices == 0 and #sounds == 1,
@@ -1568,12 +2056,21 @@ do
         AddMessage = function(self, message, r, g, b, hold, messageType)
             shown[#shown + 1] = { message = message, messageType = messageType }
         end,
+        TryDisplayMessage = function(self, messageType, message, r, g, b)
+            self:AddMessage(message, r, g, b, 1.0, messageType)
+            local _, soundKitID, voiceID = GetGameMessageInfo(messageType)
+            if (voiceID) then
+                C_Sound.PlayVocalErrorSound(voiceID)
+            elseif (soundKitID) then
+                PlaySound(soundKitID)
+            end
+        end,
     }
     probeD:DoInspect("target")
     check("probe guard retry: installed on the next probe",
         probeD.inspectSuppressorInstalled == true,
         "installed=" .. tostring(probeD.inspectSuppressorInstalled))
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    _G.UIErrorsFrame:TryDisplayMessage(7, "Out of range", 1, 0, 0)
     check("probe guard retry: and it swallows from then on",
         #shown == 0, "shown=" .. tostring(#shown))
 
@@ -1590,7 +2087,7 @@ do
     })
     probeE:DoInspect("target")          -- request goes out; window + pending armed
     inspecting = true
-    _G.UIErrorsFrame:AddMessage("Out of range", 1, 0, 0, 1.0, 7)
+    _G.UIErrorsFrame:TryDisplayMessage(7, "Out of range", 1, 0, 0)
     check("probe guard player: while InspectFrame is up, the message displays",
         #shown == 1, "shown=" .. tostring(#shown))
     inspecting = false
@@ -1599,7 +2096,7 @@ do
     --    open window is the evidence, because it is only open around our call.
     local probeF = newEra()
     probeF:DoInspect("target")
-    _G.UIErrorsFrame:AddMessage("Irgendeine Meldung", 1, 0, 0, 1.0, 10)
+    _G.UIErrorsFrame:TryDisplayMessage(10, "Irgendeine Meldung", 1, 0, 0)
     check("probe guard unnamed: a message with no resolvable name is still swallowed",
         #shown == 0 and (probeF:GetInspectStats().suppressed or 0) == 1,
         "shown=" .. tostring(#shown) .. " suppressed=" .. tostring(probeF:GetInspectStats().suppressed))
@@ -1702,7 +2199,7 @@ do
         { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC,  20506 },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,            38002 },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                 16001 },
-        { "Retail",          P.WOW_PROJECT_MAINLINE,                120100 },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,                120105 },
     }) do
         local name = c[1]
         local tickB = 7000
@@ -1787,7 +2284,7 @@ end
 do
     for _, c in ipairs({
         { "WoW Forever", P.WOW_PROJECT_MAINLINE, 16001 },
-        { "Retail",      P.WOW_PROJECT_MAINLINE, 120100 },
+        { "Retail",      P.WOW_PROJECT_MAINLINE, 120105 },
     }) do
         local name = c[1]
         local tick = 9000
@@ -1872,6 +2369,532 @@ end
             (fb:GetInspectStats().scanEnqueued or 0) == 1,
             "enqueued=" .. tostring(fb:GetInspectStats().scanEnqueued)
                 .. " fallback=" .. tostring(fb:GetInspectStats().scanFallback))
+    end
+end
+
+-- HUNTER H5: an absent C_Timer.NewTicker is recorded, not silent, and the
+-- install is retried when the client gains the API late (ADDON_LOADED).
+-- Revert map: drop lib.tickersInstalled -> still-true here; drop the
+-- ADDON_LOADED arm -> post-load install never happens.
+do
+    -- baseEnv's C_Timer carries After only, which is exactly the degraded
+    -- client: the engine is inert and the state must say so.
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS)
+    check("absent NewTicker records tickersInstalled=false",
+        ci.tickersInstalled == false,
+        "tickersInstalled=" .. tostring(ci.tickersInstalled))
+    check("...and the stats report surfaces it",
+        ci:GetInspectStats().tickersInstalled == false,
+        "stats=" .. tostring(ci:GetInspectStats().tickersInstalled))
+
+    -- The client gains C_Timer late. The frame must retain its scripts for the
+    -- ADDON_LOADED handler to be reachable (baseEnv's CreateFrame discards
+    -- them, so this run uses a retaining one -- same shape as the GetTime
+    -- handler-reachability block above).
+    local tickers = {}
+    local late = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        CreateFrame = function()
+            local f = { scripts = {} }
+            f.RegisterEvent = function() end
+            f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+            f.GetScript = function(self, name) return self.scripts[name] end
+            return f
+        end,
+        UnitExists = function() return true end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return 1 end,
+    })
+    check("still uninstallable before the API appears",
+        late.tickersInstalled == false,
+        "tickersInstalled=" .. tostring(late.tickersInstalled))
+    _G.C_Timer = {
+        After = function() end,
+        NewTicker = function(interval, fn)
+            local h = { interval = interval, cb = fn }
+            function h:Cancel() end
+            tickers[#tickers + 1] = h
+            return h
+        end,
+    }
+    local handler = late.frame and late.frame.scripts and late.frame.scripts.OnEvent
+    check("ADDON_LOADED handler is reachable for the late-install pin",
+        type(handler) == "function")
+    if (type(handler) == "function") then
+        local okLate, errLate = pcall(handler, late.frame, "ADDON_LOADED", "SomeAddon")
+        check("late ADDON_LOADED does not raise", okLate, tostring(errLate))
+    end
+    check("...and the tickers install once C_Timer appears",
+        late.tickersInstalled == true,
+        "tickersInstalled=" .. tostring(late.tickersInstalled))
+    local queueT, scanT
+    for _, t in ipairs(tickers) do
+        if (t.interval == 0.5) then queueT = t end
+        if (t.interval == late.scanInterval) then scanT = t end
+    end
+    check("late install registers the queue ticker", queueT ~= nil)
+    check("late install registers the scan ticker", scanT ~= nil)
+end
+
+-- HUNTER H10 (queue half): dispatched queue entries record their wait, so
+-- diag can tell a slow queue from a stalled one. Revert: drop the wait
+-- accounting -> max/avg stay nil.
+do
+    local clock = 30000
+    local tickers = {}
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        CreateFrame = function()
+            local f = { scripts = {} }
+            f.RegisterEvent = function() end
+            f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+            f.GetScript = function(self, name) return self.scripts[name] end
+            return f
+        end,
+        UnitExists = function(u)
+            return u == nil or u == "player"
+                or (type(u) == "string" and u:match("^n%d+$") ~= nil)
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        UnitDistanceSquared = function() return 100, true end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return clock end,
+        C_Timer = {
+            After = function() end,
+            NewTicker = function(interval, fn)
+                local h = { interval = interval, cb = fn }
+                function h:Cancel() end
+                tickers[#tickers + 1] = h
+                return h
+            end,
+        },
+    })
+    local queueT
+    for _, t in ipairs(tickers) do
+        if (t.interval == 0.5) then queueT = t end
+    end
+    check("queue ticker present for the wait-stats pin", queueT ~= nil)
+    if (queueT) then
+        local handler = ci.frame.scripts.OnEvent
+        ci:DoInspect("n1") -- takes the pending slot
+        ci:DoInspect("n2") -- queued
+        ci:DoInspect("n3") -- queued
+        -- Answer n1 WITHOUT moving the clock: the handler's eager tick sees
+        -- now < nextInspectTime and defers to C_Timer.After (a no-op here),
+        -- so the queue is still intact for the hand-driven tick below.
+        handler(ci.frame, "INSPECT_READY", "Player-n1")
+        clock = clock + 5
+        queueT.cb()
+        local st = ci:GetInspectStats()
+        -- LIFO pops n3 first: enqueued 5s ago, dispatched now.
+        check("a dispatched queue entry records its wait",
+            (st.maxQueueWait or 0) == 5 and (st.queueWaitCount or 0) >= 1,
+            "max=" .. tostring(st.maxQueueWait) .. " count=" .. tostring(st.queueWaitCount))
+        check("...and the average wait is the total over the count",
+            st.avgQueueWait ~= nil and st.queueWaitCount ~= nil
+                and st.queueWaitTotal ~= nil
+                and math.abs(st.avgQueueWait - st.queueWaitTotal / st.queueWaitCount) < 0.0001,
+            "avg=" .. tostring(st.avgQueueWait))
+    end
+end
+
+-- HUNTER H11: a raising NotifyInspect stamps lastErrorAt with the uptime, so
+-- diag can tell a stale error from a fresh one. Counters are not merged:
+-- refusals and raises stay separate by design. Driven through DoInspect on
+-- two fresh units (a rejected unit carries a cooldown and must not re-raise).
+--
+-- NOTE: no UnitDistance in this env, deliberately. noteInspectRejected learns
+-- a range ceiling from any numeric yards it is handed -- including a NON-range
+-- raise -- so a measurable unit would teach a bogus ceiling that blocks the
+-- second raise. That learning rule is FROZEN for this batch (operator
+-- constraint), hence the unmeasurable units here; the observation is journaled
+-- as a possible Batch-4 item.
+do
+    local clock = 41000
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, {
+        UnitExists = function() return true end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() error("BATCH3_PIN_RAISE", 0) end,
+        GetTime = function() return clock end,
+        GetNamePlates = function() return {} end,
+    })
+    ci:DoInspect("target")
+    local st = ci:GetInspectStats()
+    check("a raising engine call records lastError",
+        type(st.lastError) == "string" and st.lastError:find("BATCH3_PIN_RAISE", 1, true) ~= nil,
+        "lastError=" .. tostring(st.lastError))
+    check("...stamped with the uptime of the raise",
+        st.lastErrorAt == clock, "lastErrorAt=" .. tostring(st.lastErrorAt))
+    clock = clock + 50
+    ci:DoInspect("mouseover")
+    check("...and the stamp moves with the next raise",
+        ci:GetInspectStats().lastErrorAt == clock,
+        "lastErrorAt=" .. tostring(ci:GetInspectStats().lastErrorAt))
+end
+
+-- THE INSPECT TRIGGER'S THREE-STATE ANSWER.
+--
+-- lib:DoInspect used to answer with a plain boolean whose `true` covered BOTH
+-- "queued" (the unit was accepted and is still waiting) and "ready" (the unit's
+-- data is already here). The two meanings were indistinguishable, so a caller
+-- could not tell a pending unit from an inspected one. The answer is now
+-- explicit:
+--
+--   false    not inspected -- refused, unavailable, or out of reach
+--   "queued" accepted, PENDING -- the request went out, or the unit is in the
+--            queue. The unit's data is NOT here yet.
+--   true     data ready -- the cache holds fresh data for the unit
+--
+-- Each state is asserted here against the REAL library, and the library's OWN
+-- consumer is asserted too: the proximity scan counts an accepted-but-pending
+-- unit as enqueued, exactly as it counted the old boolean's `true`.
+do
+    local clock = 51000
+    local function triEnv(canInspect)
+        return {
+            UnitExists = function(u)
+                return u == nil or u == "player" or u == "n1" or u == "n2" or u == "n3"
+                    or u == "mouseover"
+            end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                return "Player-" .. tostring(u)
+            end,
+            CanInspect = function() return canInspect end,
+            CheckInteractDistance = function() return true end,
+            NotifyInspect = function() return true end,
+            GetTime = function() return clock end,
+        }
+    end
+
+    -- 1. The contract is PUBLISHED, so a caller compares against the
+    --    library's own names instead of keeping a copy of them.
+    local ci = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, triEnv(true))
+    check("the library publishes the three-state names",
+        type(ci.inspectStates) == "table"
+            and ci.inspectStates.REFUSED == false
+            and ci.inspectStates.QUEUED == "queued"
+            and ci.inspectStates.READY == true,
+        "queued=" .. tostring(ci.inspectStates and ci.inspectStates.QUEUED))
+
+    -- 2. READY: the unit's data is already here. This is the only state that
+    --    may be answered with `true`.
+    ci.cache["Player-n2"] = { time = clock }
+    local readyState = ci:DoInspect("n2")
+    check("a unit whose data is here is READY (true)",
+        readyState == true,
+        "state=" .. tostring(readyState))
+
+    -- 3. QUEUED: accepted, pending -- the request went out and the answer has
+    --    not. This is the state the old boolean could not express: it answered
+    --    `true` here, the same answer it gave for a unit whose data was ready.
+    local queuedState = ci:DoInspect("n1")
+    check("an accepted unit is PENDING ('queued'), not 'ready'",
+        queuedState == "queued",
+        "state=" .. tostring(queuedState))
+
+    -- 4. QUEUED for a unit that has to WAIT: the pending slot is taken by n1,
+    --    so n3 is queued rather than dispatched. Still pending, still not ready.
+    local waitingState = ci:DoInspect("n3")
+    check("a unit that waits its turn is PENDING too",
+        waitingState == "queued",
+        "state=" .. tostring(waitingState))
+
+    -- 5. ...and a unit that is ALREADY queued answers the same way. The old
+    --    code answered `true` here too, and this is where a caller that read
+    --    the answer as "inspected" would have been wrong.
+    local againState = ci:DoInspect("n3")
+    check("a unit that is already queued is still PENDING",
+        againState == "queued",
+        "state=" .. tostring(againState))
+
+    -- 6. REFUSED: the client will not inspect the unit. A separate library
+    --    instance, because a refusal is remembered per unit.
+    local ciRefused = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, triEnv(false))
+    local refusedState = ciRefused:DoInspect("n1")
+    check("a refused unit is NOT inspected (false)",
+        refusedState == false,
+        "state=" .. tostring(refusedState))
+
+    -- 7. The library's OWN consumer: the scan reads the pending state as
+    --    "accepted" and counts the unit, exactly as the old boolean's `true`
+    --    did. A caller-side change that made the pending state falsy would
+    --    silently stop the proximity scan from enqueuing anything.
+    local ciScan = run(P.WOW_PROJECT_CLASSIC, 11509, "slot4", CONSTS, triEnv(true))
+    local enqBefore = ciScan:GetInspectStats().scanEnqueued or 0
+    ciScan.ScanNearby()
+    check("the scan still counts an accepted-but-pending unit as enqueued",
+        (ciScan:GetInspectStats().scanEnqueued or 0) > enqBefore,
+        "scanEnqueued=" .. tostring(ciScan:GetInspectStats().scanEnqueued))
+end
+
+-- ==========================================================================
+-- THE HOVERED UNIT MUST NOT WAIT BEHIND THE PROXIMITY SCAN.
+--
+-- The operator's report (verbatim): "sometimes it when i hover it shows up
+-- right away other times it takes forever. it was fast before, now its buggy
+-- mess."
+--
+-- MEASURED with a harness driver that runs the REAL library through a
+-- modelled client frame loop (the library's own 0.5s queue ticker and 2.0s
+-- scan ticker, a server round trip, "mouseover" existing only while the
+-- cursor is over a unit). Metric: seconds from the hover to the hovered
+-- unit's data landing -- the moment main.lua's INVENTORY_READY handler
+-- re-renders the tooltip with the scores.
+--
+--   Classic Era, a 40-point sweep of the hover moment:
+--
+--     server round trip    scan OFF    scan ON (before)    scan ON (now)
+--           0.2s               0.20            1.45               0.20
+--           0.5s               0.50            1.75               0.75
+--           1.0s               1.00            1.80               1.75
+--           2.0s               2.00            3.75               3.75
+--
+--   The hover was never slow in itself: with the scan OFF it took exactly
+--   one server round trip on every client. The proximity scan was taking the
+--   single pending inspect slot and opening the global pacing window, so the
+--   hovered unit's own request was queued behind it and the scores arrived a
+--   round trip late.
+--
+--   Three mechanisms are pinned here, one per change, and each of them goes
+--   RED on the old code:
+--     A. the scan's candidates are QUEUED, never dispatched on the spot, so
+--        the scan cannot take the pending slot away from the unit the player
+--        is looking at;
+--     B. the hovered unit is dispatched BEFORE a scan candidate that was
+--        queued after it (the queue is drained newest-first, so the hover used
+--        to wait behind it);
+--     C. the hovered unit is not held back by a pacing window that ANOTHER
+--        unit's request opened -- that window is the anti-re-request
+--        throttle for the same render pass, not a delay for a fresh hover.
+do
+    local CLIENTS = {
+        { "Classic Era",     P.WOW_PROJECT_CLASSIC,                 11509 },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC,  20506 },
+        { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,            38002 },
+        { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                 16001 },
+        { "Retail",          P.WOW_PROJECT_MAINLINE,                120105 },
+    }
+    -- Two round trips: one SHORTER than INSPECT_DELAY (so a pacing window
+    -- is still open after the answer) and one LONGER (so the window has
+    -- closed and the queue order is what decides).
+    local FAST_TRIP = 0.2
+    local SLOW_TRIP = 1.2
+
+    -- A modelled client: one clock, the library's two tickers, and a server
+    -- that answers an inspect request one round trip later.
+    --
+    -- opts.mouseover: the cursor is on a player (the default) or on the
+    -- ground. The cursor being on a player is the state the whole regression
+    -- lives in: "mouseover" exists, the unit under it is a player, and its
+    -- data is not here yet.
+    local function build(project, iface, opts)
+        opts = opts or {}
+        local trip = opts.trip or FAST_TRIP
+        local clock = 1000
+        local tickers = {}
+        local requests = {}
+        local arrivals = {}
+        local hoverUnit = "h1"
+        local env = {
+            -- The library's own frame must retain its scripts, or its OnEvent
+            -- handler is unreachable from any test.
+            CreateFrame = function()
+                local f = { scripts = {} }
+                f.RegisterEvent = function() end
+                f.SetScript = function(self, name, fn) self.scripts[name] = fn end
+                f.GetScript = function(self, name) return self.scripts[name] end
+                return f
+            end,
+            UnitExists = function(u)
+                if (u == "mouseover") then return opts.mouseover ~= false end
+                return u == nil or u == "player" or u == "other"
+                    or (type(u) == "string" and u:match("^n%d$") ~= nil)
+            end,
+            UnitIsConnected = function() return true end,
+            UnitIsDeadOrGhost = function() return false end,
+            UnitIsPlayer = function() return true end,
+            UnitIsUnit = function() return false end,
+            UnitGUID = function(u)
+                if (u == "player") then return "Player-self" end
+                if (u == "mouseover") then return "Player-" .. tostring(hoverUnit) end
+                return "Player-" .. tostring(u)
+            end,
+            -- Five yards: close enough to ask.
+            UnitDistanceSquared = function() return 25, true end,
+            CanInspect = function() return true end,
+            CheckInteractDistance = function() return true end,
+            IsInGroup = function() return false end,
+            GetTime = function() return clock end,
+            -- One enemy nameplate: the scan's candidate.
+            GetNamePlates = function()
+                return { { GetUnit = function() return "n1" end } }
+            end,
+            NotifyInspect = function(u)
+                requests[#requests + 1] = u
+                arrivals[#arrivals + 1] = { at = clock + trip, unit = u }
+                return true
+            end,
+            C_Timer = {
+                After = function() end,
+                NewTicker = function(interval, fn)
+                    local h = { interval = interval, cb = fn }
+                    function h:Cancel() end
+                    tickers[#tickers + 1] = h
+                    return h
+                end,
+            },
+        }
+        local ci = run(project, iface, "slot4", CONSTS, env)
+        local handler = ci.frame.scripts.OnEvent
+        local queueT
+        for _, t in ipairs(tickers) do
+            if (t.interval == 0.5) then queueT = t end
+        end
+        -- Advance the clock and deliver every answer that falls due.
+        local function advance(seconds)
+            local target = clock + seconds
+            while (true) do
+                local nextAt = nil
+                for _, a in ipairs(arrivals) do
+                    if (a.at <= target + 1e-9 and (nextAt == nil or a.at < nextAt)) then
+                        nextAt = a.at
+                    end
+                end
+                if (nextAt == nil) then break end
+                clock = nextAt
+                local due = {}
+                for i = #arrivals, 1, -1 do
+                    if (arrivals[i].at <= clock + 1e-9) then
+                        due[#due + 1] = arrivals[i].unit
+                        table.remove(arrivals, i)
+                    end
+                end
+                for _, u in ipairs(due) do
+                    handler(ci.frame, "INSPECT_READY", env.UnitGUID(u))
+                end
+            end
+            clock = target
+        end
+        local function tick()
+            if (queueT and queueT.cb) then queueT.cb() end
+        end
+        -- The cursor moves onto a unit: the library's own UPDATE_MOUSEOVER_UNIT
+        -- handler asks for it, exactly as it does in the client.
+        local function hover(unit)
+            hoverUnit = unit
+            handler(ci.frame, "UPDATE_MOUSEOVER_UNIT", "mouseover")
+        end
+        return ci, requests, advance, tick, hover
+    end
+
+    for _, c in ipairs(CLIENTS) do
+        local name, project, iface = c[1], c[2], c[3]
+
+        -- A. While the unit under the cursor is waiting for its own data, the
+        --    scan must not take the single pending inspect slot: it queues its
+        --    candidate instead, and the queue tick dispatches it once the
+        --    player is no longer waiting.
+        do
+            local ci, requests = build(project, iface, { trip = FAST_TRIP })
+            ci:SetScanEnabled(true)
+            ci.ScanNearby()
+            local st = ci:GetInspectStats()
+            check(name .. ": the scan does not take the pending inspect slot",
+                (#requests == 0) and ((st.scanEnqueued or 0) == 1),
+                "requests=" .. #requests .. " scanEnqueued=" .. tostring(st.scanEnqueued))
+        end
+
+        -- B. The hovered unit is dispatched BEFORE a scan candidate that was
+        --    queued after it. The queue is drained newest-first, so on the old
+        --    code the scan's candidate went first and the hovered unit waited
+        --    a whole round trip behind it.
+        do
+            local ci, requests, advance, tick, hover = build(project, iface, { trip = SLOW_TRIP })
+            ci:SetScanEnabled(true)
+            ci:DoInspect("other")      -- another unit takes the slot
+            hover("h1")                -- the hovered unit has to wait for it
+            ci.ScanNearby()            -- the scan queues a candidate AFTER the hover
+            advance(SLOW_TRIP)         -- "other" answers; the slot frees
+            tick()                     -- the tick dispatches what is next
+            check(name .. ": the hovered unit is dispatched before a queued scan candidate",
+                (#requests >= 2) and (requests[2] == "mouseover"),
+                "requests=" .. table.concat(requests, ","))
+        end
+
+        -- C. The hovered unit is not held back by a pacing window that
+        --    ANOTHER unit's request opened.
+        do
+            local ci, requests, advance, hover = build(project, iface, { trip = FAST_TRIP })
+            ci:DoInspect("other")      -- opens the pacing window
+            advance(FAST_TRIP)         -- "other" answers; the slot frees, the window stays open
+            hover("h1")                -- the player hovers
+            check(name .. ": the hovered unit is not held back by a pacing window",
+                (#requests == 2) and (requests[2] == "mouseover"),
+                "requests=" .. table.concat(requests, ","))
+        end
+
+        -- D. The end-to-end symptom: with the scan ON, the hovered unit's data
+        --    lands after ONE server round trip.
+        do
+            local ci, requests, advance, hover = build(project, iface, { trip = FAST_TRIP })
+            ci:SetScanEnabled(true)
+            ci.ScanNearby()            -- the scan has a candidate
+            hover("h1")                -- the player hovers
+            advance(FAST_TRIP)         -- the server answers
+            check(name .. ": with the scan ON the hovered unit's data lands in one round trip",
+                (ci.cache["Player-h1"] ~= nil) and (#requests == 1),
+                "requests=" .. table.concat(requests, ",")
+                    .. " cached=" .. tostring(ci.cache["Player-h1"] ~= nil))
+        end
+
+        -- E. ...and the fix must not have silenced the scan. With nothing
+        --    waiting under the cursor the scan asks for its candidate exactly
+        --    as it always did -- that request is what teaches this client its
+        --    real inspect range -- and the queue tick collects it when it was
+        --    queued.
+        do
+            local ci, requests, advance = build(project, iface,
+                { trip = FAST_TRIP, mouseover = false })
+            ci:SetScanEnabled(true)
+            ci.ScanNearby()            -- asked for on the spot: nothing is waiting
+            advance(FAST_TRIP)         -- the server answers
+            check(name .. ": the scan still asks for its candidate when nothing is waiting",
+                (#requests == 1) and (requests[1] == "n1")
+                    and (ci.cache["Player-n1"] ~= nil),
+                "requests=" .. table.concat(requests, ",")
+                    .. " cached=" .. tostring(ci.cache["Player-n1"] ~= nil))
+        end
     end
 end
 

@@ -100,9 +100,24 @@ local function makeSnapshot(entry)
     return snapshot
 end
 
+-- Listener fan-out failures (final hunter M-3).
+--
+-- The fan-out is pcall-guarded on purpose: a raising listener must not stop
+-- the other listeners, and it must not abort the publish that is already
+-- committed. But the guard made the failure INVISIBLE, and the cache entry
+-- was already mutated when the listener raised -- so the update was lost with
+-- nothing said and nothing counted. Counted here with the last message kept,
+-- and printed by /ttgsdebug (Core.lua).
+local listenerErrors = 0
+local lastListenerError = nil
+
 local function notify(guid, snapshot)
     for listener in pairs(listeners) do
-        pcall(listener, guid, clone(snapshot))
+        local ok, err = pcall(listener, guid, clone(snapshot))
+        if not ok then
+            listenerErrors = listenerErrors + 1
+            lastListenerError = tostring(err)
+        end
     end
 end
 
@@ -279,6 +294,41 @@ function Cache.GetFresh(guid)
     return nil
 end
 
+-- Re-evaluate every COMPLETE entry's stored revision and replace its result.
+--
+-- The level-70 gate is part of the SCORED result, not of the render, so a
+-- settings change cannot be honoured by re-rendering what is already cached:
+-- the cached result was computed under the old policy and would keep reading
+-- the old verdict. The revision is the immutable INPUT, so re-running the
+-- scorer over it is the honest way to answer the new setting -- no rescan, no
+-- re-inspection, no new item data.
+--
+-- The evaluator is a function taking a revision and returning a new result.
+-- Entries that are not complete, or whose revision is missing, are left
+-- alone; an evaluator that raises leaves that entry alone too. Returns the
+-- number of results replaced.
+--
+-- The access order is deliberately NOT touched: a settings change is not a
+-- read, and moving the LRU order would evict an entry the user is looking at
+-- for a reason that has nothing to do with freshness.
+function Cache.ReevaluateAll(evaluator)
+    if type(evaluator) ~= "function" then
+        return 0
+    end
+    local replaced = 0
+    for guid, entry in pairs(entries) do
+        if entry.state == "complete" and type(entry.revision) == "table" then
+            local ok, result = pcall(evaluator, entry.revision)
+            if ok and type(result) == "table" then
+                entry.result = clone(result)
+                replaced = replaced + 1
+                notify(guid, makeSnapshot(entry))
+            end
+        end
+    end
+    return replaced
+end
+
 function Cache.Subscribe(listener)
     if type(listener) ~= "function" then
         return false
@@ -289,4 +339,13 @@ end
 
 function Cache.Unsubscribe(listener)
     listeners[listener] = nil
+end
+
+-- Debug accessor for the listener fan-out counter above (read-only). Printed
+-- by /ttgsdebug (Core.lua) and read by the harness.
+function Cache.GetDebugState()
+    return {
+        listenerErrors = listenerErrors,
+        lastListenerError = lastListenerError,
+    }
 end

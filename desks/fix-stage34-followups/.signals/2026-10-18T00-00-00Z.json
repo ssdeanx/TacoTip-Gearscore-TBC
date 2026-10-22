@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-18T11:50:00Z",
+  "run_id": "fix2",
+  "agent_name": "fix-stage34-followups",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 2
+  },
+  "patterns": {
+    "what_worked": "bench-read of section4-gear, fix-oracle-findings, audit-stage34 journals plus both briefs; reconciled StoreGear future-t vs ValidateRecord now+300, S-leg evict vs D-leg drop, Cache.Get vs GetFresh panel leg, mapGearRun vs ParseGearIDs first-wins",
+    "what_was_hard": "F5 safety hinges on Cache.makeSnapshot stripping revision on stale; F2 full-queue pin needs throttle-fill without new harness patterns",
+    "skill_gap": "none"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

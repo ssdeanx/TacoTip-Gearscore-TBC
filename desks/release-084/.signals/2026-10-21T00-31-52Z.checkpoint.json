@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-21T00:31:52Z",
+  "run_id": "release-084",
+  "agent_name": "release-084",
+  "self_assessment": {
+    "intent": 3,
+    "confidence": 3,
+    "accuracy": 3,
+    "completeness": 2
+  },
+  "patterns": {
+    "what_worked": "The FrameXML mirror and the client DB settled every client-behaviour question. Revert-to-fail proofs caught vacuous pins. The two live lanes were scoped to disjoint file sets so they cannot collide.",
+    "what_was_hard": "The operator reports client-visible symptoms in his own words, and I repeatedly answered in the wrong frame (character frame vs tooltip) and guessed instead of dispatching a lane to read the code. I called the tree publish-ready while two client-visible behaviours were still unverified.",
+    "skill_gap": "The first briefs of this session omitted the four-skill protocol, and I did not keep my own desk trail while the release ran."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

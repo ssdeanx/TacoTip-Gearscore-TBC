@@ -1,0 +1,12 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "run_id": "stage4prep-01",
+  "agent_name": "stage4-prep",
+  "timestamp": "2026-10-18T00:00:00Z",
+  "summary": "Stage 4 desk opened; bench-read of section1-delivery, section2-storage, section2b-wire-diet, tier-a-browser, stage3-prep journals plus expansion/oracle/stage3 briefs and landed RankSync wire code complete. Drafting gear-on-demand brief.",
+  "state": {
+    "scope": "bench/audits/2026-10-18-stage4-gear-on-demand-brief.md only + this desk",
+    "assumption": "Stage-3 13-field stride (v2) lands as briefed; reconcile-on-dispatch required"
+  }
+}

@@ -64,13 +64,13 @@ local function RegisterTacoTipTests()
             return meta
         end)
         -- Fallback: the TOC file source ("TacoTip.toc") advertises
-        -- "## Interface: 11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100".
+        -- "## Interface: 11509, 20506, 38002, 16001, 120105".
         -- One entry per supported client family: Classic Era, TBC Anniversary,
         -- WotLK Titanforge (38002, NOT 38001), WoW Forever, and Retail.
-        local interfaceStr = toc or "11509, 20506, 38002, 16001, 110002"
+        local interfaceStr = toc or "11509, 20506, 38002, 16001, 120105"
         IsTrue(ok and (interfaceStr:find("11509") ~= nil and interfaceStr:find("20506") ~= nil and
                        interfaceStr:find("38002") ~= nil and interfaceStr:find("16001") ~= nil and
-                       interfaceStr:find("110002") ~= nil),
+                       interfaceStr:find("120105") ~= nil),
             "Universal cross-engine interfaces advertised: " .. tostring(toc or interfaceStr))
     end
 
@@ -332,7 +332,12 @@ local function RegisterTacoTipTests()
         cfg.tooltip_portrait_scale = savedScale
     end
 
-    function Portrait:SyncsAlphaWithTooltipFade()
+    -- Current contract (0.7.9+): the portrait is NOT slaved to the tooltip's
+    -- alpha and there is NO OnUpdate poll -- the 0.05s alpha-sync script was
+    -- removed because on Retail/Forever it sampled a frame Blizzard had not
+    -- shown yet and walked the portrait up from garbage (the drop-in read as
+    -- a fade). The portrait keeps its own alpha, pinned to 1 every render.
+    function Portrait:AlphaPinnedToOneWithNoOnUpdateSync()
         local cfg = _G.TacoTipConfig
         local saved3D = cfg.tooltip_portrait_3d
         local savedPortrait = cfg.tooltip_portrait
@@ -343,13 +348,11 @@ local function RegisterTacoTipTests()
         local model = GameTooltip.TacoTipPortrait3D
         if (model and model.GetScript) then
             local onUpdate = model:GetScript("OnUpdate")
-            IsTrue(type(onUpdate) == "function", "3D portrait has OnUpdate alpha sync script")
-            if (onUpdate and GameTooltip.SetAlpha and model.SetAlpha and model.GetAlpha) then
-                GameTooltip:SetAlpha(0.5)
-                onUpdate(model, 0.05)
+            IsTrue(onUpdate == nil, "3D portrait carries no OnUpdate alpha sync script")
+            if (model.GetAlpha) then
                 local currentAlpha = model:GetAlpha()
-                IsTrue(math.abs(currentAlpha - 0.5) < 0.01, "3D portrait alpha tracks tooltip alpha (0.5)")
-                GameTooltip:SetAlpha(1.0)
+                IsTrue(math.abs((currentAlpha or 0) - 1) < 0.01,
+                    string.format("3D portrait alpha pinned to 1 (got %.8f)", currentAlpha or -1))
             end
         end
 
@@ -489,6 +492,59 @@ local function RegisterTacoTipTests()
         end
     end
 
+    function Guild:ForeignLineOwnershipPositive()
+        -- Positive control for the Baganator line-ownership fix. The offline
+        -- suite deliberately pins only the negative half (our clear must not
+        -- touch a foreign line) because the mock reads every line's text back
+        -- as a table and ownership cannot be observed there. In game the text
+        -- IS observable, so both halves are asserted here: a foreign line
+        -- sitting on our remembered index survives the clear, while our own
+        -- line is still blanked.
+        Replace("GetGuildInfo", function(unit)
+            if (unit == "player") then return "TestGuild", "Rank 5", 5 end
+            return nil
+        end)
+        local cfg = _G.TacoTipConfig
+        local savedName = cfg.show_guild_name
+        cfg.show_guild_name = true
+
+        local ok, err = pcall(function()
+            local ran = pc(GameTooltip.SetUnit, GameTooltip, "player")
+            IsTrue(ran, "SetUnit(player) did not error")
+            local idx = GameTooltip.TacoTipGuildLineIndex
+            IsTrue(type(idx) == "number", "guild line owned at an index")
+            if (type(idx) ~= "number") then return end
+            local fs = _G["GameTooltipTextLeft" .. idx]
+            if (not (fs and fs.GetText and fs.SetText)) then return end
+            -- A foreign addon lands its own line on our remembered index.
+            fs:SetText("Baganator: 42")
+            if (TT.clearTooltipVisuals) then TT.clearTooltipVisuals(GameTooltip) end
+            local kept = fs:GetText()
+            IsTrue(kept == "Baganator: 42",
+                "clear leaves a foreign line on our index alone (kept " .. tostring(kept) .. ")")
+            -- And the positive half: our own line IS blanked when the text is
+            -- still ours.
+            ran = pc(GameTooltip.SetUnit, GameTooltip, "player")
+            IsTrue(ran, "second SetUnit(player) did not error")
+            local idx2 = GameTooltip.TacoTipGuildLineIndex
+            IsTrue(type(idx2) == "number", "guild line re-owned at an index")
+            if (type(idx2) ~= "number") then return end
+            local fs2 = _G["GameTooltipTextLeft" .. idx2]
+            if (not (fs2 and fs2.GetText)) then return end
+            if (TT.clearTooltipVisuals) then TT.clearTooltipVisuals(GameTooltip) end
+            local cleared = fs2:GetText()
+            IsTrue(cleared == "" or cleared == nil,
+                "clear still blanks our own line (got " .. tostring(cleared) .. ")")
+        end)
+
+        cfg.show_guild_name = savedName
+        ClearReplaces()
+
+        if (not ok) then
+            error(err) -- rethrow after cleanup so WoWUnit records the failure
+        end
+    end
+
     -- ============================================================
     -- TT-Stats: GearScore, Pawn, talents nil-safe
     -- ============================================================
@@ -587,6 +643,7 @@ local function RegisterTacoTipTests()
                 if ci:IsClassic() then expected = 200
                 elseif ci:IsTBC() then expected = 400
                 elseif ci:IsForever() then expected = 200
+                elseif ci:IsRetail() then expected = 1000
                 else expected = 1000 end
                 IsTrue(GS.BRACKET_SIZE == expected,
                     string.format("BRACKET_SIZE %d matches family %s (expected %d)",
@@ -755,7 +812,21 @@ local function RegisterTacoTipTests()
         local d = TT:GetDefaults()
         local count = 0
         for _ in pairs(d) do count = count + 1 end
-        IsTrue(count >= 40, "defaults table has full key set (" .. count .. ")")
+        -- Mirror of the offline reachability invariant (settings_test drives
+        -- every control and diffs the key set): not "at least 40 keys" but
+        -- every declared default resolving in the live config after backfill.
+        -- The count floor matches the offline source check; the per-key loop
+        -- is what bites.
+        TT:ApplyConfigDefaults(_G.TacoTipConfig)
+        local missing = {}
+        for k in pairs(d) do
+            if (k ~= "conf_version" and _G.TacoTipConfig[k] == nil) then
+                missing[#missing + 1] = tostring(k)
+            end
+        end
+        IsTrue(#missing == 0, "every default resolves in the live config"
+            .. (#missing > 0 and (" (missing: " .. table.concat(missing, ", ") .. ")") or ""))
+        IsTrue(count >= 60, "defaults table has the full key set (" .. count .. ")")
     end
 
     function Modules:InspectorMultiEngineGating()
@@ -873,23 +944,46 @@ local function RegisterTacoTipTests()
         IsTrue(type(tt.PrintDiagnostics) == "function", "TT.PrintDiagnostics present")
     end
 
-    -- Backdrop template contract. Retail and WoW Forever use
-    -- SharedTooltipArtTemplate, which has a NineSlice child and does NOT mix in
-    -- BackdropTemplateMixin, so GameTooltip has no SetBackdrop even though it
-    -- renders correctly. The Classic family has neither, and keeps the legacy
-    -- SetBackdrop fallback.
+    -- Backdrop template contract. Mirror-verified against wow-ui-source
+    -- (Blizzard_SharedXML/Classic/GameTooltipTemplate.xml: GameTooltipTemplate
+    -- inherits GameTooltipCommonTemplate, TooltipBackdropTemplate;
+    -- Blizzard_SharedXML/SharedTooltipTemplates.xml for the modern chain).
+    --
+    -- SHARED truth, all five clients: the tooltip reaches a NineSlice child.
+    -- The Classic family reaches it through GameTooltipTemplate ->
+    -- TooltipBackdropTemplate; Forever and Retail through SharedTooltipTemplate
+    -- -> SharedTooltipArtTemplate. The earlier assertion that the Classic
+    -- tooltip has no NineSlice child was false -- the legacy no-NineSlice path
+    -- in main.lua is dead on every supported client.
+    --
+    -- DIFFERING member: only the Classic chain mixes in
+    -- TooltipBackdropTemplateMixin, which defines SetBackdropColor /
+    -- SetBackdropBorderColor (routing to NineSlice:SetCenterColor /
+    -- SetBorderColor). Forever and Retail expose neither.
+    --
+    -- SetBackdrop belongs to BackdropTemplateMixin, which no tooltip chain
+    -- mixes in, so it is absent on all five. If SetBackdrop becomes a function
+    -- here, the addon's legacy graft has re-run on a tooltip that resolves its
+    -- NineSlice path instead.
     function Client:BackdropTemplateContract()
         local ci = LibStub and LibStub("LibForeverInspector", true)
         if (not ci or not _G.TacoTip or not _G.GameTooltip) then return end
-        if (ci:IsRetail() or ci:IsForever()) then
-            IsTrue(_G.GameTooltip.NineSlice ~= nil, "modern tooltip has a NineSlice child")
-            IsTrue(_G.GameTooltip.SetBackdrop == nil,
-                "BackdropTemplateMixin is not grafted onto a NineSlice tooltip")
+        local modern = ci:IsRetail() or ci:IsForever()
+        IsTrue(_G.GameTooltip.NineSlice ~= nil,
+            "tooltip has a NineSlice child on every client")
+        if (modern) then
+            IsTrue(_G.GameTooltip.SetBackdropColor == nil,
+                "modern tooltip exposes NO SetBackdropColor (differing member)")
+            IsTrue(_G.GameTooltip.SetBackdropBorderColor == nil,
+                "modern tooltip exposes NO SetBackdropBorderColor (differing member)")
         else
-            IsTrue(_G.GameTooltip.NineSlice == nil, "Classic tooltip has no NineSlice child")
-            IsTrue(type(_G.GameTooltip.SetBackdrop) == "function",
-                "Classic tooltip keeps the legacy SetBackdrop fallback")
+            IsTrue(type(_G.GameTooltip.SetBackdropColor) == "function",
+                "Classic tooltip exposes SetBackdropColor (differing member)")
+            IsTrue(type(_G.GameTooltip.SetBackdropBorderColor) == "function",
+                "Classic tooltip exposes SetBackdropBorderColor (differing member)")
         end
+        IsTrue(_G.GameTooltip.SetBackdrop == nil,
+            "BackdropTemplateMixin is NOT grafted onto the tooltip")
     end
 
     -- Tooltip delivery path. Retail and WoW Forever dropped OnTooltipSetUnit,
@@ -1032,9 +1126,21 @@ local function RegisterTacoTipTests()
         local L = _G.TACOTIP_LOCALE
         Exists(L, "TACOTIP_LOCALE present")
         if (not L) then return end
-        local n = 0
-        for _ in pairs(L) do n = n + 1 end
-        IsTrue(n >= 251, "locale has the full key set (got " .. n .. ", expected >= 251)")
+        -- Mirror of the offline resolve-every-lookup invariant (load_test
+        -- resolves every key the code looks up and requires zero unresolved):
+        -- the enUS table is the reference key set, and the active locale must
+        -- resolve every one of those keys. A magic count (>= 251) passed with
+        -- any 251 keys and could not see a locale that was both short AND
+        -- padded; a missing key here names itself.
+        local ref = _G.TACOTIP_LOCALES and _G.TACOTIP_LOCALES.enUS or nil
+        if (ref) then
+            local missing = {}
+            for k in pairs(ref) do
+                if (L[k] == nil) then missing[#missing + 1] = tostring(k) end
+            end
+            IsTrue(#missing == 0, "active locale resolves every reference key"
+                .. (#missing > 0 and (" (missing: " .. table.concat(missing, ", ") .. ")") or ""))
+        end
 
         -- The selected language must be one we actually ship, and must match
         -- the client locale when no override is saved.

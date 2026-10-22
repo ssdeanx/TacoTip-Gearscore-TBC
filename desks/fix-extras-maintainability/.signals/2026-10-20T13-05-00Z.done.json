@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T13:05:00Z",
+  "run_id": "extras-maintainability-pass",
+  "agent_name": "fix-extras-maintainability",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Resolving the locale READ set from the SOURCES (literal L[\"KEY\"] plus the five dynamic families: the HELP table's names and line counts, CLASS_ORDER and its \"UNKNOWN\" fallback, the COLUMNS labels, the SORTS values, the choice tables' keys) rather than from a hand-written list -- that is what proved CLASS_UNKNOWN was still read and 38 other keys were not. The new 'identical key set' pin then found a defect the audit never named: five keys enUS defined and the ten translations did not. Verifying the item-7 claim against the wow-ui-source mirror rather than against the add-on's own assumption, and finding the client's own globals (CharacterFrameTitleText, ItemUpgradeFrameTitleText) on the same templates, turned an ASSUMED naming rule into a VERIFIED one. Doing every revert on a copy under /tmp/opencode/mut so the working tree was never mutated.",
+    "what_was_hard": "The audit's line numbers for item 3 were stale, so the first reading of RankBrowser.lua was not the code being changed; re-reading cost a detour. The 'identical key set' pin was not in the audit's list of pins but was implied by the wording, and it failed on the untouched tree -- which meant item 2 needed five translations on top of the 38 deletions, a scope the operator's decision did not anticipate. One mutation (a second `return` in the same block) is a Lua 5.1 syntax error and proved nothing; it had to be rewritten as a behaviour change that still parses.",
+    "skill_gap": "Writing a mutation that is a valid Lua 5.1 program as well as a behaviour change -- `return` must be the last statement in a block, which is not obvious until the loader says \"'end' expected\"."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Operator in-game pass on Classic Era for the two paths only a client shows: the footer's \"▲ Top\" button (ten locales changed, and the client renders the template's own title now that the harness models it) and Escape with the gear panel open. The Extras' status strings remain English by decision, so the Options page in a non-English client is the place to look and expect English."
+  }
+}

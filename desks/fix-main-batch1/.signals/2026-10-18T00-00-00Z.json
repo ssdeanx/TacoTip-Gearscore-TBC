@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-18T00:00:00Z",
+  "run_id": "batch1",
+  "agent_name": "fix-main-batch1",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 2
+  },
+  "patterns": {
+    "what_worked": "bench-read of all four stage6 reports plus journals; baseline suite 54/54",
+    "what_was_hard": "none yet",
+    "skill_gap": null
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

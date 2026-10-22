@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T10:05:00Z",
+  "run_id": "fixmainslashforwarding",
+  "agent_name": "fix-main-slash-forwarding",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the toc and both slash registrations settled WHICH handler is live before any edit: options.lua loads after gearscore.lua and deliberately REPLACES the bootstrap handler, so the runtime handler is options.lua's and the fix had to land there as well as in the bootstrap. One resolver, published on the namespace (TT.ForwardExtrasSlashCommand), so the two handlers cannot drift. The pin drives SlashCmdList.TACOTIP itself -- the function WoW calls -- and counts the options panel opening on BOTH client paths (Settings.OpenToCategory and InterfaceOptionsFrame_OpenToCategory), because a modern-only counter would read zero in the nosettings legacy variants and let the pin pass for the wrong reason. Reverting each forwarding branch separately produced 10 and 9 red checks.",
+    "what_was_hard": "The brief's file:line pointers named gearscore.lua's BOOTSTRAP handler as 'the main addon's /tt handler', but the live handler is options.lua's (it replaces the bootstrap). Fixing only the cited file would have looked done and changed nothing in game. The other part of the brief -- an in-game-only diagnosis of the Extras rank browser -- was abandoned when the operator reported the premise was false; the honest move was to stop, not to ship a speculative 'fix' into code that now works.",
+    "skill_gap": "Distinguishing 'the harness mock says X' from 'the client does X' needed the FrameXML mirror at /home/sam/wow-ui-source: Blizzard's own code (Dispatcher:RegisterScript rejecting anything where type(frame) ~= 'table'; UIParent_OnEvent assigning self.newToys) establishes that client frames are TABLES, which disproved the 'real frames are userdata' claim in the Extras' own comments and invalidated a whole hypothesis before it was reported."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T12:40:00Z",
+  "run_id": "extras-silent-failures",
+  "agent_name": "fix-extras-silent-failures",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Fixing the mode rule in ONE place (Core.ApplyTooltipFieldModeRule) instead of the two copies that had drifted; recording the dropdown's initializer and its menu items in the harness mock, which is what made the hard-coded-English menu visible at all; a guarded evaluator handed to Cache.ReevaluateAll so the raise is captured once instead of twice; every pin reverted on a copy so no revert ever touched the working tree.",
+    "what_was_hard": "The named audit file bench/audits/2026-10-20-final-hunter2.md does not exist, so the nine findings came from the task text rather than from the report; the hit-rect 'floor' wording admits two readings, and only one of them keeps the expansion following the label text, which is what the pin requires; the locale translations had to be written twice because the first pass used wrong Unicode code points for koKR.",
+    "skill_gap": "Writing the korean and russian strings as typed characters instead of \\u escapes -- the escape pass produced '최재'/\"폼균\" for \"최고\"/\"평균\" and had to be redone."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Operator in-game pass on Classic Era for the two paths only a client shows: closing the leaderboard with the gear panel open, and the mode dropdown reading in the player's language."
+  }
+}

@@ -1,9 +1,9 @@
-## Interface: 11509, 20506, 38002, 16001, 120100
+## Interface: 11509, 20506, 38002, 16001, 120105
 ## Title: |cffd4a84bTacoTip|r |cffbcc3ccExtras|r
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: AcidBomb
 ## X-Curse-Project-ID: 1741092
-## Version: 1.2.2
+## Version: 1.2.3
 ## Dependencies: TacoTip
 ## SavedVariables: TacoTipExtrasDB
 ## IconTexture: Interface\AddOns\TacoTip_Extras\tt-2.tga

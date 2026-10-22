@@ -11,13 +11,13 @@ local L = {
     ["LB_COL_SPECCLASS"] = "专精 / 职业",
     ["LB_MY_RANK_ARROW"] = "▼ 我的排名",
     ["GEAR_SCANNING"] = "正在读取装备...",
-    ["LB_SORTED_BY"] = "按 s s 排序",
-    ["LB_FOOTER_NO_RANK"] = "已记录 d 名玩家 - 你还没有排名",
+    ["LB_SORTED_BY"] = "按 %s %s 排序",
+    ["LB_FOOTER_NO_RANK"] = "已记录 %d 名玩家 - 你还没有排名",
     ["EQUIPMENT_CATEGORY_NAME"] = "装备窗口",
     ["MINIMAP_HINT_RIGHT"] = "右键：设置",
     ["COMPLETE"] = "已完成",
     ["GEAR_UNAVAILABLE"] = "装备数据不可用",
-    ["LB_FOOTER_STANDING"] = "你的排名：总榜 #d | 阵营 #d | 职业 #d  -  已记录 d 名玩家",
+    ["LB_FOOTER_STANDING"] = "你的排名：总榜 #%d | 阵营 #%d | 职业 #%d  -  已记录 %d 名玩家",
     ["CATEGORY_NAME"] = "TacoTip Extras",
 
     ["INTRO"] =
@@ -43,42 +43,7 @@ local L = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "强化分析：",
     ["TOOLTIP_LABEL_COMPLETION"] = "完成度：",
-    ["TOOLTIP_LABEL_RANK"] = "装备分数排名：",
-
-    ["REMOTE_COMPLETE"] = "完整",
-    ["REMOTE_UNAVAILABLE"] = "不可用",
-    ["REMOTE_PENDING"] = "等待中",
-    ["REMOTE_SUPPRESSED"] = "已抑制",
-    ["REMOTE_NOT_OBSERVED"] = "未观测",
-
-    ["INTEGRATION_COMPATIBLE"] = "兼容",
-    ["INTEGRATION_INCOMPATIBLE"] = "不兼容",
-    ["INTEGRATION_MISSING"] = "未加载",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "提示框",
-    ["OPTIONS_TAB_EQUIPMENT"] = "角色与查看",
-    ["SECTION_TOOLTIP"] = "提示框",
-    ["SECTION_EQUIPMENT"] = "角色与查看",
-    ["SECTION_HELP"] = "分数是如何计算的",
-    ["SECTION_ADVANCED"] = "高级",
-
-    ["OPT_ENABLED"] = "启用插件",
-    ["OPT_TOOLTIP_MODE"] = "提示框模式",
-    ["OPT_SHIFT_DETAILED"] = "按住 Shift 显示详细",
-    ["OPT_FIELDS"] = "提示框字段",
-    ["OPT_MINIMAP"] = "显示小地图按钮",
-    ["OPT_SERVER_RANK"] = "显示服务器排名",
-    ["OPT_HOW_SCORES_WORK"] = "分数是如何计算的",
-    ["OPT_RESTORE"] = "恢复 TacoTip 设置",
-    ["OPT_RESET"] = "重置插件设置",
-    ["OPT_EQUIPMENT_MODE"] = "角色与查看摘要",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "在详细模式显示无强化分数",
-    ["OPT_EQUIPMENT_UNLOCK"] = "解锁摘要位置",
-    ["OPT_EQUIPMENT_RESET"] = "重置摘要位置",
-    ["OPT_SCAN_NOW"] = "立即扫描",
-    ["OPT_SCAN_NOW_DESC"] =
-    "扫描当前可以查看的玩家，并补全尚未获取的装备分数。",
+    ["TOOLTIP_LABEL_RANK"] = "GS 排名：",
 
     ["HELP_ENABLED_HEADING"] = "启用插件",
     ["HELP_ENABLED_1"] =
@@ -138,6 +103,16 @@ local L = {
     ["HELP_SHOWSERVERRANK_1"] =
     "在后台同步引擎提供数据时，于提示框中显示玩家的服务器装备分数排名与职业排名。",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "宽松行高",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "加高排行榜的行，让文字更大。列表显示的仍是同样的玩家和同样的顺序，只是行更高。",
+
+    ["HELP_SHAMANBLUE_HEADING"] = "萨满蓝色",
+    ["HELP_SHAMANBLUE_1"] =
+    "把萨满祭司的职业名称显示为蓝色，而不是粉色。Classic Era 把萨满祭司的职业颜色画成粉色，因此这里与 TacoTip 本身使用的颜色一致。",
+    ["HELP_SHAMANBLUE_2"] =
+    "安装了 TacoTip 时，它自己的萨满蓝色设置同样生效：在那边关闭，这里也会关闭蓝色，这样两个插件的职业颜色保持一致。",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "打开服务器排行榜",
     ["HELP_OPENLEADERBOARD_1"] =
     "打开 TacoTip 装备分数服务器排行榜窗口（/tt ranks），浏览整个服务器范围的排名。",
@@ -189,28 +164,27 @@ local L = {
     ["MINIMAP_HINT"] = "TacoTip Extras",
     ["MINIMAP_HINT_LEFT"] = "左键：排行榜",
     ["MINIMAP_HINT_DRAG"] = "拖动可移动",
-    ["BLANK_DESC"] = "拖动",
-    ["BLANK"] = "无",
 
     ["LB_TITLE"] = "TacoTip 装备分数排行榜",
     ["LB_REALM"] = "全服务器",
     ["LB_SEARCH"] = "搜索：",
+    ["LB_GUILD"] = "公会：",
     ["LB_YOU"] = "你",
     ["LB_LOADING"] = "正在加载排名...",
     ["LB_EMPTY"] = "暂无数据。分数会在你游戏时同步。",
     ["LB_EMPTY_FILTERS"] = "没有玩家符合当前筛选条件。",
+    ["LB_DB_UNAVAILABLE"] = "排名数据库不可用，无法显示排名。",
     ["LB_NOT_ESTABLISHED"] = "暂无排名",
     ["LB_ONLY_YOU"] = "本服务器目前只记录了你的角色。",
     ["LB_FILTER_ALL"] = "全部",
-    ["LB_MY_RANK"] = "\226\152\148 我的排名",
-    ["LB_TOP"] = "\226\152\160 榜首",
+    ["LB_TOP"] = "\226\150\178 榜首",
     ["LB_SCAN"] = "立即扫描",
     ["LB_SCAN_BUSY"] = "正在扫描...",
-    ["LB_SCAN_IDLE"] = "空闲",
 
     ["LB_COL_RANK"] = "排名",
     ["LB_COL_GS"] = "GEARSCORE",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "等级",
     ["LB_COL_PLAYER"] = "玩家",
     ["LB_COL_LASTSEEN"] = "最后在线",
 
@@ -218,14 +192,20 @@ local L = {
     ["LB_TIP_UNKNOWNSPEC"] = "未知天赋",
     ["LB_TIP_GS"] = "装备分数：%d",
     ["LB_TIP_ILVL"] = "平均装等：%.1f",
+    ["LB_TIP_PVP_RANK"] = "PvP 排名：%s",
+    ["LB_TIP_ARENA"] = "竞技场最佳：%d",
     ["LB_TIP_RANK"] = "装备分数排名：#%d",
-    ["LB_TIP_CLASSRANK"] = "职业排名：#%d",
     ["LB_TIP_LASTSEEN"] = "最近见到：%s",
+    ["LB_TIP_RANK_SYNCED"] = "排名已同步：%s",
+    ["LB_TIP_CLICK_GEAR"] = "点击查看装备",
+    ["LB_SCAN_COMPLETE"] = "扫描完成 - 已记录 %d 名玩家",
 
     ["SORT_GS_DESC"] = "装备分数",
     ["SORT_ILVL_DESC"] = "物品等级",
+    ["SORT_LEVEL_DESC"] = "等级",
     ["SORT_SEEN_DESC"] = "最近见到",
 
+    ["LB_STAT_STRIP"] = "%d 名玩家 | 最高 %d | 平均 %d",
 
     ["TIME_JUST_NOW"] = "刚刚",
     ["TIME_MIN_AGO"] = "%d 分钟前",
@@ -234,14 +214,14 @@ local L = {
 
     ["GEAR_TITLE"] = "%s 的装备",
     ["GEAR_NOT_SCANNED"] = "该玩家尚未扫描，因此没有可显示的装备。",
-    ["GEAR_NO_ITEMS"] = "没有记录到装备。",
-    ["GEAR_CLOSE"] = "关闭",
+    ["GEAR_DATA_UNAVAILABLE"] = "目前无法获取该玩家的装备数据。请在排行榜中点击立即扫描，然后重试。",
 
     ["SCAN_PROGRESS"] = "%d / %d",
 
     ["CLASS_DEATHKNIGHT"] = "死亡骑士",
     ["CLASS_DEMONHUNTER"] = "恶魔猎手",
     ["CLASS_DRUID"] = "德鲁伊",
+    ["CLASS_EVOKER"] = "唤魔师",
     ["CLASS_HUNTER"] = "猎人",
     ["CLASS_MAGE"] = "法师",
     ["CLASS_MONK"] = "武僧",

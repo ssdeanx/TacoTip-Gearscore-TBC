@@ -1,0 +1,18 @@
+# section2b-wire-diet — Journal
+
+## 2026-10-18 — Desk opened
+- **Purpose:** Amend the just-landed Stage 2 storage work per operator decision — redesign the RankSync wire stride ONCE, pre-release: versioned stride, faction/realm/class-string/spec-name OFF the wire, numeric specID ON the wire, inbound records filed under the LOCAL realm.
+- **Scope:** TacoTip_Extras/RankDB.lua, RankSync.lua, Core.lua (only if needed), RankBrowser.lua (faction-line/spec-display fallbacks only), Tests/harness/load_test.lua, Tests/harness/rankbrowser_test.lua (new display-fallback checks only), TacoTip_Extras/CHANGELOG.md (own this round). NOT Tooltips.lua, README, TOC, Locale/, other desks.
+- **Context (bench-read):** section1-delivery landed Stage 1 delivery (counted outcomes, 240-byte door, same-channel answers); section2-storage landed Stage 2 storage hygiene (11-field wire stride w/ realm as field 11, per-realm DB keying, amortized cap, login prune, TOO_LARGE handler, UnitIsSameServer scan gate with counted foreign skip); tier-a-browser landed browser UX + LB_SCAN_COMPLETE strings.
+- **Concurrency:** an Oracle desk (audit-stage1) is READING RankSync/RankDB/load_test/CHANGELOG concurrently — make each file's edits in as few decisive writes as practical; every file self-consistent after each write.
+- **Next step:** read Tests/harness/load_test.lua END-TO-END (mandatory first step), then map the new stride positions and edit.
+
+## 2026-10-18 — [signal:checkpoint] Wire diet landed, suite green
+
+- **Worked on:** full section2b scope per operator decision (A) + Oracle blocker (B). RankSync: versioned 9-field stride `R;1;guid;name;classID;gs;ilvl;ts;specID` (WIRE_VERSION=1, RECORD_FIELDS=9), class token derived at ingest via static CLASS_TOKEN_BY_ID, old 10-/11-field + unknown-version refused+counted (versionReject); whisper deleted end to end (send path, 84-token resolver + 64-ring, call site, WHISPER answer arm, 5 debug counters) replaced by counted `answerNoTransport` skip. RankDB: ValidateRecord keeps classID/specID (sanitizeID), faction optional Alliance/Horde-or-nil, realm dropped; StoreRecord files local (dropped `or clean.realm`). Core: whisper debug line → no-transport/version-reject/foreign-realm skips line. RankBrowser: CLASS_FILE_BY_ID + classTokenOf + specDisplayOf (GetSpecializationInfoByID, verified global on all five branches in SharedXML/UnitUtil.lua) with stored-string fallbacks; faction line unchanged (already conditional). Tests: stride/round-trip/version/skip/local-filing checks in load_test (flagship 334), 14 display-fallback checks in rankbrowser_test (136). CHANGELOG: Stage-1 whisper claims deleted, Stage-2 rewritten to FINAL design, Wire-diet subsection added, measured savings (75→48 B typical, 400→227 validator-max).
+- **Validation:** `bash TacoTip_Extras/Tests/harness/run_all.sh` → `TOTAL 42 invocations: 42 passed, 0 failed` (lua5.1/5.4/luajit); `LINT=1` → `Total: 0 warnings / 0 errors in 26 files`, `luacheck exit=0`. Baseline before edits was also 42/42. Mid-lane repairs: missing classID/specID locals (8 fails), isolationSweep advancing fake clock past the 120 s re-probe window (plain tick), `sr` shadow lint (renamed cr/cg/cb).
+- **Current state:** all production + test + changelog edits complete, suite green, signals emitted (checkpoint + done, run_id stage2b). No commit, no staging. Pre-existing tree modifications (Locale, Scanner, Tooltips, README, bench) untouched.
+- **Next step:** operator merge pass; the explicitly out-of-scope Oracle items below remain for the next fixer lane.
+
+## 2026-10-18 — [signal:done] Wire diet complete, review-ready
+- Suite green quoted above; desk path `desks/section2b-wire-diet/`, signals in `.signals/` (run_id stage2b). No commit, no staging.

@@ -10,6 +10,7 @@ end
 local Scanner = namespace.Scanner
 local Cache = namespace.Cache
 local Adapter = namespace.TacoTipAdapter
+local Core = namespace.Core
 local Tooltips = {}
 namespace.Tooltips = Tooltips
 
@@ -64,6 +65,99 @@ local renderAttempts = 0
 local renderRows = 0
 local pollTicks = 0
 local pollWorkTicks = 0
+
+-- Stage 5 tooltip session clock (epoch, guarded server-clock read). The
+-- freshness line mirrors the browser's W7 ticks: it renders only for rank
+-- rows older than the session. 0 means "no session yet" and renders nothing.
+-- Hunter L-NEW5: this clock and the browser's browserSessionStart
+-- (RankBrowser.lua) are INDEPENDENT module locals, deliberately: each
+-- surface defines "this session" as its own first successful
+-- GetServerTime-guarded read -- here once at tooltip-surface Initialize
+-- (below), there at browser open (markSessionStart). Both derive from the
+-- same server epoch and both treat 0 as "no session", so staleness is
+-- always relative to the surface that renders it.
+local tooltipSessionStart = 0
+
+-- Hunter M-NEW5: RankDB.GetRecord raises swallowed by pcall (display-only
+-- suppression is INTENTIONAL -- a rank-store failure must never break the
+-- unit tooltip -- but it was invisible). Counted here, surfaced in
+-- GetDebugState below; no display change.
+local rankRecordErrors = 0
+local lastRankRecordError = nil
+local function noteRankRecordError(err)
+    rankRecordErrors = rankRecordErrors + 1
+    lastRankRecordError = tostring(err)
+end
+
+-- ---------------------------------------------------------------------------
+-- Render error boundary
+-- ---------------------------------------------------------------------------
+--
+-- `rendering` is a LATCH, not a flag: while it is true every later render is
+-- refused. It used to be set on entry to renderPlayerTooltip and cleared only
+-- on four NORMAL returns, so ANY raise between the set and the clear left it
+-- true for the rest of the session: the Extras tooltip surface stopped
+-- rendering, with no error, no counter, and no way back short of /reload.
+-- The trigger paths are real -- makeRows -> RankDB.GetPlayerRank ->
+-- table.sort on a non-numeric timestamp, string.format on a bad field,
+-- target:AddLine, Cache.Get's recursive clone.
+--
+-- The boundary below has the same shape as the main add-on's
+-- handlePipelineError (main.lua): the FIRST report of a distinct message goes
+-- out in full, a repeat is counted as suppressed, the per-message counts live
+-- in a bounded map, and the last few suppressed messages live in a bounded
+-- ring. What is ADDED here -- and what the main add-on does not need, because
+-- it owns no latch -- is that the latch is cleared on EVERY path out of the
+-- render, including the raising one. That is the whole point of it.
+--
+-- The counters survive a Shutdown on purpose, exactly like the driver
+-- counters above: they measure what the driver did, and zeroing them would
+-- make a shutdown look like a driver that never ran.
+local renderErrors = 0
+local renderErrorsSuppressed = 0
+local lastRenderError = nil
+local reportedRenderErrors = {}
+local renderErrorSeen = {}
+local renderErrorRing = {}
+local RENDER_ERROR_RING_MAX = 5
+local RENDER_ERROR_DISTINCT_MAX = 50
+
+local function noteRenderError(message)
+    renderErrors = renderErrors + 1
+    local text = tostring(message)
+    lastRenderError = text
+
+    if reportedRenderErrors[text] then
+        -- A repeat of a message already reported. Counted, and the last few
+        -- repeats kept in a bounded ring so a wedging surface stays
+        -- diagnosable without an unbounded log.
+        renderErrorsSuppressed = renderErrorsSuppressed + 1
+        renderErrorSeen[text] = (renderErrorSeen[text] or 1) + 1
+        if #renderErrorRing < RENDER_ERROR_RING_MAX then
+            renderErrorRing[#renderErrorRing + 1] = text
+        else
+            table.remove(renderErrorRing, 1)
+            renderErrorRing[#renderErrorRing + 1] = text
+        end
+        return text
+    end
+
+    -- The FIRST report of a distinct message goes out in full. The set of
+    -- reported messages is bounded: past the cap a new distinct message is
+    -- still counted and still named in /ttgsdebug, it just does not get its
+    -- own chat line every single time.
+    local distinct = 0
+    for _ in pairs(reportedRenderErrors) do distinct = distinct + 1 end
+    if distinct < RENDER_ERROR_DISTINCT_MAX then
+        reportedRenderErrors[text] = true
+    end
+    if type(_G.DEFAULT_CHAT_FRAME) == "table"
+        and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
+        pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
+            "|cffff5555TacoTip Extras:|r tooltip render failed: " .. text)
+    end
+    return text
+end
 
 local lastEnhancementStatus = {
     status = "not-observed",
@@ -359,15 +453,24 @@ local function playerClassColor(unit)
     if type(_G.UnitClass) == "function" then
         local ok, _, classToken = pcall(_G.UnitClass, unit)
         if ok and type(classToken) == "string" then
-            local colors = _G.CUSTOM_CLASS_COLORS
-            local entry = type(colors) == "table" and colors[classToken] or nil
-            if type(entry) ~= "table"
-                or not validColor(entry.r, entry.g, entry.b) then
-                colors = _G.RAID_CLASS_COLORS
-                entry = type(colors) == "table" and colors[classToken] or nil
-            end
-            if type(entry) == "table" and validColor(entry.r, entry.g, entry.b) then
-                return entry.r, entry.g, entry.b, classToken
+            -- The CHAIN lives in Core (Core.GetClassColor), so the tooltip,
+            -- the character/inspect frame and the leaderboard row cannot drift
+            -- apart. What stays here is this surface's own two rules: the
+            -- colour must be three finite numbers in 0..1 (an out-of-range
+            -- community colour is refused, not painted), and the fallback is
+            -- neutral grey.
+            --
+            -- Core owns WHERE a colour comes from; this surface owns whether
+            -- it is acceptable and what to draw when nothing is.
+            local core = namespace.Core
+            if type(core) == "table"
+                and type(core.GetClassColor) == "function" then
+                local red, green, blue = core.GetClassColor(classToken, {
+                    accept = validColor,
+                })
+                if validColor(red, green, blue) then
+                    return red, green, blue, classToken
+                end
             end
             return NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE, classToken
         end
@@ -404,11 +507,30 @@ local function readLevel(revision)
     return nil
 end
 
-local function enhancementMetricsSuppressed(revision)
-    local restricted = settings
+-- Is the level-70 rule in force?
+--
+-- ONE source of truth: the same accessor the scorer is handed
+-- (Core.GetEnhancementPolicy). The render gate used to read the settings
+-- table directly while the scorer read a policy, which is how the two could
+-- disagree -- the scorer restricted the metrics to level 70 while the render
+-- gate believed the user had switched the restriction off, and the three
+-- metrics then read "Unavailable" instead of showing a value.
+local function level70RestrictionEnabled()
+    local core = namespace.Core
+    if type(core) == "table" and type(core.GetEnhancementPolicy) == "function" then
+        local ok, policy = pcall(core.GetEnhancementPolicy)
+        if ok and type(policy) == "table"
+            and type(policy.restrictEnhancementMetricsToLevel70) == "boolean" then
+            return policy.restrictEnhancementMetricsToLevel70
+        end
+    end
+    return settings
         and settings.tooltip
         and settings.tooltip.restrictEnhancementMetricsToLevel70 == true
-    if not restricted then
+end
+
+local function enhancementMetricsSuppressed(revision)
+    if not level70RestrictionEnabled() then
         return false
     end
     return readLevel(revision) ~= 70
@@ -592,7 +714,7 @@ local function serverRankEnabled()
     return true
 end
 
-local function getRankRow(guid, unit)
+local function getRankRow(guid, unit, mode)
     if not serverRankEnabled() then
         return nil
     end
@@ -621,12 +743,18 @@ local function getRankRow(guid, unit)
     end
 
     local className
+    local classFile
     local g = _G
     local uClass = rawget(g, "UnitClass")
     if type(uClass) == "function" and unit then
-        local ok, locClass = pcall(uClass, unit)
-        if ok and type(locClass) == "string" and locClass ~= "" then
-            className = locClass
+        local ok, locClass, token = pcall(uClass, unit)
+        if ok then
+            if type(locClass) == "string" and locClass ~= "" then
+                className = locClass
+            end
+            if type(token) == "string" then
+                classFile = token
+            end
         end
     end
 
@@ -644,29 +772,156 @@ local function getRankRow(guid, unit)
             end
         end
         return NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE
-    end
-
-    local orr, org, orb = rankColor(overall, totalRanked)
+    end    local orr, org, orb = rankColor(overall, totalRanked)
     local crr, crg, crb = rankColor(classRank or overall, totalRanked)
     local classRed, classGreen, classBlue = playerClassColor(unit)
 
     local text
     if classRank and className then
         -- [#2 Warrior] -- square brackets, class rank and name inside, overall
-        -- rank outside. The brackets stay WHITE so they read as punctuation
-        -- instead of borrowing whichever number sits next to them, and the class
-        -- NAME is drawn in the class colour so it reads at a glance.
+        -- rank outside. Every mode uses the short "GS Rank:" label. The
+        -- brackets stay WHITE so they read as punctuation instead of borrowing
+        -- whichever number sits next to them. In Compact the class NAME is
+        -- replaced by the player's normal 14px class icon, with no class-colour
+        -- tint; if the client cannot resolve the class atlas (or GetClassAtlas
+        -- is absent) the line degrades to the class name. Detailed and Minimal
+        -- keep the class name in its class colour.
+        local classDisplay = className
+        local classColored = true
+        if mode == "Compact" then
+            local getAtlas = rawget(g, "GetClassAtlas")
+            if type(getAtlas) == "function"
+                and type(classFile) == "string" and classFile ~= "" then
+                local ok, atlas = pcall(getAtlas, classFile)
+                if ok and type(atlas) == "string" and atlas ~= "" then
+                    classDisplay = "|A:" .. atlas .. ":14:14|a"
+                    classColored = false
+                end
+            end
+        end
         text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
             .. colorText("#" .. tostring(overall), orr, org, orb) .. " "
             .. colorText("[", 1, 1, 1)
             .. colorText("#" .. tostring(classRank), crr, crg, crb) .. " "
-            .. colorText(className, classRed, classGreen, classBlue)
+            .. (classColored
+                and colorText(classDisplay, classRed, classGreen, classBlue)
+                or classDisplay)
             .. colorText("]", 1, 1, 1)
     else
         text = labelText(L["TOOLTIP_LABEL_RANK"]) .. " "
             .. colorText("#" .. tostring(overall), orr, org, orb)
     end
     return { text = text }
+end
+
+-- Stage 5 trailing tooltip line (scope deliberately narrow: one optional
+-- muted line behind the existing content, reusing the row-tooltip muted
+-- pattern -- never a redesign of the unit tooltip):
+--
+--   Freshness: "Rank synced <relative>" -- only when the displayed rank
+--      row is older than the session (mirrors the W7 tick data, no new
+--      source). A fresh row states nothing; no rank row renders the line.
+--
+-- The input feeds through captureRenderInputs, so the change gate covers
+-- it: a line whose input didn't change never repaints.
+
+local function tooltipNow()
+    local clock = rawget(_G, "GetServerTime")
+    if type(clock) == "function" then
+        local okClock, nowClock = pcall(clock)
+        if okClock and type(nowClock) == "number" then
+            return nowClock
+        end
+    end
+    return 0
+end
+
+local function formatRankAge(timestamp, now)
+    if not timestamp or timestamp <= 0 then return L["TIME_UNKNOWN"] or "Unknown" end
+    local diff = now - timestamp
+    if diff < 60 then return L["TIME_JUST_NOW"] or "Just now" end
+    if diff < 3600 then
+        return string.format(L["TIME_MIN_AGO"] or "%d min ago", math.floor(diff / 60))
+    end
+    if diff < 86400 then
+        return string.format(L["TIME_HOUR_AGO"] or "%d hr ago", math.floor(diff / 3600))
+    end
+    local days = math.floor(diff / 86400)
+    if days == 1 then return L["TIME_YESTERDAY"] or "Yesterday" end
+    return string.format(L["TIME_DAY_AGO"] or "%d d ago", days)
+end
+
+local function rankLineInputs(guid)
+    local inputs = { timestamp = 0 }
+    if type(guid) ~= "string" or guid == "" then
+        return inputs
+    end
+    local ranks = namespace.RankDB
+    if type(ranks) ~= "table" then
+        return inputs
+    end
+    if type(ranks.GetRecord) == "function" then
+        local okRec, record = pcall(ranks.GetRecord, guid)
+        if okRec and type(record) == "table" then
+            inputs.timestamp = tonumber(record.timestamp) or 0
+        elseif not okRec then
+            noteRankRecordError(record)
+        end
+    end
+    return inputs
+end
+
+-- Debug accessor for the Adapter M-NEW1 score-colour fallback counters
+-- (hunter M-NEW1, debug ONLY). Read-only: reports what the adapter counted,
+-- changes nothing displayed. Nil adapter state reads as zero/unknown.
+function Tooltips.GetDebugState()
+    local adapterState = nil
+    if (Adapter and type(Adapter.GetDebugState) == "function") then
+        local ok, state = pcall(Adapter.GetDebugState)
+        if (ok and type(state) == "table") then
+            adapterState = state
+        end
+    end
+    return {
+        scoreColorFallbacks = (adapterState and adapterState.scoreColorFallbacks) or 0,
+        lastScoreColorReason = (adapterState and adapterState.lastScoreColorReason) or nil,
+        rankRecordErrors = rankRecordErrors,
+        lastRankRecordError = lastRankRecordError,
+    }
+end
+
+-- The Stage-5 trailing line for one GUID, exposed for the harness: the
+-- only new tooltip surface, pinnable without driving a full unit render.
+function Tooltips.GetRankExtraLines(guid)
+    local lines = {}
+    if type(guid) ~= "string" or guid == "" then
+        return lines
+    end
+    local ranks = namespace.RankDB
+    if type(ranks) ~= "table" then
+        return lines
+    end
+    local record = nil
+    if type(ranks.GetRecord) == "function" then
+        local okRec, rec = pcall(ranks.GetRecord, guid)
+        if okRec and type(rec) == "table" then
+            record = rec
+        elseif not okRec then
+            noteRankRecordError(rec)
+        end
+    end
+    if type(record) ~= "table" then
+        return lines
+    end
+    local ts = tonumber(record.timestamp) or 0
+    if tooltipSessionStart > 0 and ts > 0 and ts < tooltipSessionStart then
+        lines[#lines + 1] = {
+            text = string.format(L["LB_TIP_RANK_SYNCED"] or "Rank synced: %s",
+                formatRankAge(ts, tooltipNow())),
+            red = NEUTRAL_RED, green = NEUTRAL_GREEN, blue = NEUTRAL_BLUE,
+        }
+    end
+    return lines
 end
 
 local function makeRows(mode, revision, result, unit, scope, guid)
@@ -710,9 +965,12 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         if #parts > 0 then
             rows[1] = { text = table.concat(parts, "   ") }
         end
-        local rankRow = getRankRow(guid, unit)
+        local rankRow = getRankRow(guid, unit, mode)
         if rankRow then
             rows[#rows + 1] = rankRow
+        end
+        for _, extraLine in ipairs(Tooltips.GetRankExtraLines(guid)) do
+            rows[#rows + 1] = extraLine
         end
         return rows
     end
@@ -762,9 +1020,12 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         if #secondary > 0 then
             rows[#rows + 1] = { text = table.concat(secondary, "   ") }
         end
-        local rankRow = getRankRow(guid, unit)
+        local rankRow = getRankRow(guid, unit, mode)
         if rankRow then
             rows[#rows + 1] = rankRow
+        end
+        for _, extraLine in ipairs(Tooltips.GetRankExtraLines(guid)) do
+            rows[#rows + 1] = extraLine
         end
         return rows
     end
@@ -969,9 +1230,12 @@ local function makeRows(mode, revision, result, unit, scope, guid)
         classGreen,
         classBlue
     )
-    local rankRow = getRankRow(guid, unit)
+    local rankRow = getRankRow(guid, unit, mode)
     if rankRow then
         rows[#rows + 1] = rankRow
+    end
+    for _, extraLine in ipairs(Tooltips.GetRankExtraLines(guid)) do
+        rows[#rows + 1] = extraLine
     end
     return rows
 end
@@ -1034,9 +1298,13 @@ local function captureRenderInputs(into, guid, source, mode, unit)
     into.fieldCompletion = fieldEnabled("completion")
     local t = settings.tooltip or {}
     into.warningColors = t.warningColors == true
-    into.restrictToLevel70 =
-        t.restrictEnhancementMetricsToLevel70 == true
+    into.restrictToLevel70 = level70RestrictionEnabled()
     into.showServerRank = serverRankEnabled()
+    -- Stage 5 trailing line: the rank timestamp.
+    -- Same input the line renders from, so a repaint only happens when the
+    -- line itself could have changed.
+    local lineInputs = rankLineInputs(guid)
+    into.rankTimestamp = lineInputs.timestamp
 end
 
 local function renderInputsUnchanged(current, target, guid, source, mode, unit)
@@ -1052,6 +1320,7 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
     end
 
     local classRed, classGreen, classBlue, classToken = playerClassColor(unit)
+    local fresh = rankLineInputs(guid)
     return current.shiftDown == shiftIsDown()
         and current.classToken == classToken
         and current.classRed == classRed
@@ -1064,21 +1333,17 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
         and current.fieldAverageItemLevel == fieldEnabled("averageItemLevel")
         and current.fieldCompletion == fieldEnabled("completion")
         and current.warningColors == (settings.tooltip.warningColors == true)
-        and current.restrictToLevel70
-            == (settings.tooltip.restrictEnhancementMetricsToLevel70 == true)
+        and current.restrictToLevel70 == level70RestrictionEnabled()
         and current.showServerRank == serverRankEnabled()
+        and current.rankTimestamp == fresh.timestamp
 end
 
-local function renderPlayerTooltip(target)
-    if not initialized or rendering then
-        return false
-    end
-    rendering = true
-
+-- The render BODY. It owns no latch: the wrapper below owns that, so the
+-- latch cannot be stranded by a raise anywhere in here.
+local function renderPlayerTooltipBody(target)
     local unit, guid = validatePlayerUnit(target)
     if not unit or not Adapter.IsTooltipSurfaceActive() then
         clearBinding()
-        rendering = false
         return false
     end
 
@@ -1092,7 +1357,6 @@ local function renderPlayerTooltip(target)
     if binding and renderInputsUnchanged(binding, target, guid, source, mode, unit) then
         local currentLines = numberOfLines(target)
         if currentLines ~= nil and currentLines == binding.lineCountAfter then
-            rendering = false
             return true
         end
     end
@@ -1111,7 +1375,6 @@ local function renderPlayerTooltip(target)
         local confirmOK, currentGUID = pcall(_G.UnitGUID, unit)
         if not confirmOK or currentGUID ~= guid then
             clearBinding()
-            rendering = false
             return false
         end
         rendered = addRows(
@@ -1129,7 +1392,33 @@ local function renderPlayerTooltip(target)
     if rendered then
         renderRows = renderRows + 1
     end
+    return rendered
+end
+
+-- The render ENTRY. The latch is taken here and released here, so the
+-- surface cannot be wedged by a raise: the xpcall handler records the
+-- failure, the latch is cleared on the way out, and the next render is
+-- allowed to run.
+--
+-- The failing render also drops its binding: a half-built binding would make
+-- the change gate believe the tooltip is already up to date, so the surface
+-- would stay blank for a DIFFERENT reason. The poll is deliberately NOT
+-- disarmed -- the tooltip is still on screen, and the point of the boundary
+-- is that the surface can render again on the very next tick.
+local function renderPlayerTooltip(target)
+    if not initialized or rendering then
+        return false
+    end
+    rendering = true
+    local ok, rendered = xpcall(function()
+        return renderPlayerTooltipBody(target)
+    end, noteRenderError)
     rendering = false
+    if not ok then
+        binding = nil
+        resetEnhancementStatus()
+        return false
+    end
     return rendered
 end
 
@@ -1285,6 +1574,10 @@ function Tooltips.GetDriverState()
         rows = renderRows,
         pollTicks = pollTicks,
         pollWorkTicks = pollWorkTicks,
+        renderErrors = renderErrors,
+        renderErrorsSuppressed = renderErrorsSuppressed,
+        lastRenderError = lastRenderError,
+        renderErrorRing = renderErrorRing,
     }
 end
 
@@ -1345,6 +1638,40 @@ function Tooltips.Initialize(runtimeSettings)
         OnHide = onTooltipCleared,
     }
 
+    -- Every handler installed on the SHARED GameTooltip runs contained.
+    --
+    -- Addon code inside a Blizzard frame's script chain taints that frame, and
+    -- the taint reaches the game menu, where the Logout/Quit button -- whose
+    -- callback is the engine function, so a reporter can only name it
+    -- 'UNKNOWN()' -- is refused:
+    --     [ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip' tried to call the protected
+    --     function 'UNKNOWN()'.
+    -- `securecall` is the engine's own containment primitive and Blizzard uses
+    -- it for exactly this shape (Blizzard_BuffFrame/BuffFrame.lua:991
+    -- `securecall(self.UpdateDuration, self, self.timeLeft); -- Taint issue
+    -- with SecondsToTimeAbbrev`). It is present on every supported client.
+    local function contained(fn)
+        -- The bounded body is a vararg function on purpose: it forwards the
+        -- callback's arguments to `fn` unchanged. A plain closure cannot --
+        -- `...` outside a vararg function is a compile error in the Lua 5.1
+        -- WoW ships.
+        local function bounded(...)
+            -- The pcall is INSIDE the containment on purpose: `securecall`
+            -- swallows a raise and returns nil, so a pcall outside it would
+            -- report the callback as having succeeded and the error counter
+            -- would never move. The reporter is the surface's own
+            -- (noteRenderError): it counts, keeps the last message, and hands
+            -- it to the client's error handler once per distinct message.
+            local ok, err = pcall(fn, ...)
+            if not ok then
+                noteRenderError(err)
+            end
+        end
+        return function(...)
+            return Core.RunUntainted(bounded, ...)
+        end
+    end
+
     -- Ask ONCE which scripts this client declares. HasScript cannot change
     -- between this read and the hooks below, and the answer decides the poll,
     -- so it must not be re-derived per hook.
@@ -1364,7 +1691,7 @@ function Tooltips.Initialize(runtimeSettings)
     }) do
         if declares[script] then
             local hooked = pcall(
-                tooltip.HookScript, tooltip, script, SCRIPT_HANDLERS[script]
+                tooltip.HookScript, tooltip, script, contained(SCRIPT_HANDLERS[script])
             )
             if hooked and script == "OnTooltipSetUnit" then
                 unitHooked = true
@@ -1377,7 +1704,7 @@ function Tooltips.Initialize(runtimeSettings)
     local pollHooked = false
     if not declares.OnTooltipSetUnit and declares.OnUpdate then
         pollHooked = pcall(
-            tooltip.HookScript, tooltip, "OnUpdate", onTooltipUpdatePoll
+            tooltip.HookScript, tooltip, "OnUpdate", contained(onTooltipUpdatePoll)
         )
     end
 
@@ -1398,7 +1725,7 @@ function Tooltips.Initialize(runtimeSettings)
         -- cannot be hooked, arm now instead and let the poll's own IsShown
         -- test decide: more work per tick, same result.
         if declares.OnShow
-            and pcall(tooltip.HookScript, tooltip, "OnShow", onTooltipShow) then
+            and pcall(tooltip.HookScript, tooltip, "OnShow", contained(onTooltipShow)) then
             pollArmed = false
         else
             pollArmed = true
@@ -1406,6 +1733,10 @@ function Tooltips.Initialize(runtimeSettings)
     end
 
     initialized = true
+
+    -- Stage 5 session clock for the freshness line (mirrors the browser's W7
+    -- session start). Guarded like every other clock read in this file.
+    tooltipSessionStart = tooltipNow()
 
     localListener = localPublished
     remoteListener = remotePublished

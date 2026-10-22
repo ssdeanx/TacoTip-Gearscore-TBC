@@ -37,6 +37,105 @@ Potential GS adds only confirmed missing eligible permanent enchants and confirm
 
 Potential GS and Completion do not rate best-in-slot gear, recommend specific enhancements, or measure raid readiness. Incomplete remote data is shown as unavailable, never as zero.]]
 
+-- ---------------------------------------------------------------------------
+-- The counted action-failure boundary
+-- ---------------------------------------------------------------------------
+--
+-- A button or a checkbox that changes something and then calls into another
+-- module is a SILENT NO-OP when that call raises: the box is ticked, the
+-- setting is written, and the surface the setting governs keeps the old
+-- rendering -- with nothing said and nothing counted. Two checkboxes did
+-- exactly that ("Comfortable rows" and "Shaman Blue" both discarded the
+-- result of RankBrowser.RebuildUI), and three action buttons called into
+-- Core and RankBrowser with no guard at all.
+--
+-- So every call's RESULT is captured here. A failure is counted, the reason
+-- is kept, and the player is told in one plain chat line naming the problem
+-- -- the same shape as printOptionsLine and as the main add-on's counters.
+-- The counter and the last reason are surfaced by /ttgsdebug (Core.lua's
+-- surfaces block).
+--
+-- The forward declaration of printOptionsLine lives here because the
+-- boundary is declared before the function itself (see the assignment
+-- further down this file).
+local printOptionsLine
+
+local actionFailures = 0
+local lastActionFailure = nil
+
+-- Record one failed options-page action: count it, keep the reason, and say
+-- it once in the chat frame.
+local function noteActionFailure(reason, err, message)
+    actionFailures = actionFailures + 1
+    lastActionFailure = reason .. ": " .. tostring(err)
+    printOptionsLine(message
+        or (tostring(reason) .. " failed; nothing was changed."))
+end
+
+-- Run one options-page action so that a raise can never be a silent no-op.
+--
+-- Returns the action's own result on success and false on a raise.
+local function runOptionsAction(reason, fn)
+    local ok, result = pcall(fn)
+    if not ok then
+        noteActionFailure(reason, result)
+        return false
+    end
+    return result
+end
+
+-- Rebuild the leaderboard after a setting that changes its rendering.
+--
+-- Returns true when the rebuild happened, false when it failed or the module
+-- is absent. The caller never has to guess.
+local function rebuildLeaderboard(reason)
+    local browser = namespace.RankBrowser
+    if type(browser) ~= "table" or type(browser.RebuildUI) ~= "function" then
+        return false
+    end
+    local ok, err = pcall(browser.RebuildUI)
+    if ok then
+        return true
+    end
+    noteActionFailure(reason, err,
+        "the server leaderboard could not be rebuilt after \""
+            .. tostring(reason)
+            .. "\" was changed; the window still shows the old layout.")
+    return false
+end
+
+-- Run one leaderboard action on behalf of an options-page button.
+--
+-- The action buttons used to call straight into RankBrowser, so a raising
+-- action left the player with a button that had been pressed and nothing to
+-- show for it. The result is captured, counted and named here. The MISSING
+-- module case keeps its own wording (the caller prints that one); only a
+-- RAISE is handled here.
+local function runBrowserAction(methodName, reason)
+    local browser = namespace.RankBrowser
+    if type(browser) ~= "table" or type(browser[methodName]) ~= "function" then
+        return false
+    end
+    local ok, err = pcall(browser[methodName])
+    if ok then
+        return true
+    end
+    noteActionFailure(reason, err,
+        "the server leaderboard could not complete \""
+            .. tostring(reason)
+            .. "\"; nothing was changed.")
+    return false
+end
+
+-- The diagnostic snapshot /ttgsdebug reads. Same shape as the other modules'
+-- GetDebugState accessors.
+function Options.GetDebugState()
+    return {
+        actionFailures = actionFailures,
+        lastActionFailure = lastActionFailure,
+    }
+end
+
 local HELP = {
     Enabled = {
         heading = "Enable addon",
@@ -125,6 +224,19 @@ local HELP = {
             "Displays the player's server GearScore ranking and class standing on tooltips when available from the background sync engine.",
         },
     },
+    ComfortableRows = {
+        heading = "Comfortable rows",
+        lines = {
+            "Grows the leaderboard rows for larger text. The list shows the same players in the same order with taller rows.",
+        },
+    },
+    ShamanBlue = {
+        heading = "Shaman Blue",
+        lines = {
+            "Shows the Shaman class name in blue instead of pink. Classic Era paints the Shaman class colour pink, so this matches the colour TacoTip itself uses.",
+            "When TacoTip is installed, its own Shaman Blue setting also applies: turning it off there turns the blue off here as well, so the class colour is the same in both add-ons.",
+        },
+    },
     openLeaderboard = {
         heading = "Open Server Leaderboard",
         lines = {
@@ -196,27 +308,54 @@ local HELP = {
     },
 }
 
+-- The mode names, resolved through the LOCALE with the English literal as
+-- the fallback -- the same shape every other control in this file uses
+-- (L[key] or literal).
+--
+-- The dropdown used to carry the English literals in EVERY language: it was
+-- the one control the player reads the mode from, and it read "Disabled",
+-- "Minimal", "Compact" and "Detailed" in ruRU exactly as in enUS. Every
+-- locale already carries MODE_* for these words.
 local MODE_CHOICES = {
-    { value = "Disabled", text = "Disabled" },
-    { value = "Minimal",  text = "Minimal" },
-    { value = "Compact",  text = "Compact" },
-    { value = "Detailed", text = "Detailed" },
+    { value = "Disabled", key = "MODE_DISABLED", text = "Disabled" },
+    { value = "Minimal",  key = "MODE_MINIMAL",  text = "Minimal" },
+    { value = "Compact",  key = "MODE_COMPACT",  text = "Compact" },
+    { value = "Detailed", key = "MODE_DETAILED", text = "Detailed" },
 }
 
 local EQUIPMENT_MODE_CHOICES = {
-    { value = "Disabled", text = "Disabled" },
-    { value = "Basic",    text = "Basic" },
-    { value = "Detailed", text = "Detailed" },
+    { value = "Disabled", key = "MODE_DISABLED", text = "Disabled" },
+    { value = "Basic",    key = "MODE_BASIC",    text = "Basic" },
+    { value = "Detailed", key = "MODE_DETAILED", text = "Detailed" },
 }
 
-local FIELD_KEYS = {
-    "gearScore",
-    "baseGS",
-    "potentialGS",
-    "delta",
-    "averageItemLevel",
-    "completion",
-}
+-- The display text of one choice: the locale's word when the locale has one,
+-- the English literal otherwise.
+local function choiceText(choice)
+    if type(choice) ~= "table" then
+        return nil
+    end
+    local key = choice.key
+    if type(key) == "string" then
+        local localized = L[key]
+        if type(localized) == "string" and localized ~= "" then
+            return localized
+        end
+    end
+    return choice.text
+end
+
+-- The display text of a mode VALUE, for the control that shows the mode in
+-- effect. An unknown value is shown as it is: the mode is a stored string
+-- and an unrecognised one is better shown than hidden.
+local function modeText(choices, value)
+    for _, choice in ipairs(choices) do
+        if choice.value == value then
+            return choiceText(choice)
+        end
+    end
+    return value
+end
 
 local DIAGNOSTIC_SLOTS = {
     [1] = true,
@@ -265,7 +404,17 @@ local ENHANCEMENT_REASONS = {
     ["socket-capability"] = "socket capability is unavailable",
     ["socket-capacity-unavailable"] = "socket capacity is unavailable",
     ["socket-capacity-invalid"] = "socket capacity is invalid",
-    ["socket-order-unverified-above-three"] = "installed socket ordering is unverified",
+    -- The socket capacity comes from the documented socket-count API, and the
+    -- item's own gem list is the cross-check against it. This is the TOO-LARGE
+    -- branch of that cross-check: the reported capacity exceeds the gem
+    -- positions the item's link carries, so the two cannot be reconciled and
+    -- the socket-based metrics are withheld rather than published.
+    --
+    -- The socket-ordering label that used to sit here is GONE, and deliberately
+    -- so: the capacity is no longer a sum of stat-table keys, so no code path
+    -- produces that reason any more, and a label for it would be a label for a
+    -- reason that can never occur.
+    ["socket-capacity-exceeds-gem-list"] = "socket capacity exceeds the item's gem list",
     ["ranged-subtype-unverified"] = "ranged enchant eligibility is unverified",
     ["invalid-native-link"] = "the native item link is invalid",
     ["inventory-id-link-contradiction"] = "item identity evidence is contradictory",
@@ -282,6 +431,39 @@ local ENHANCEMENT_REASONS = {
     ["level-policy"] = "hidden by the level policy",
 }
 
+-- The socket cross-check produces a DYNAMIC reason code: the socket position
+-- that contradicts the capacity is part of the code itself
+-- ("socket-gem-mismatch-2"), so no fixed table can hold one entry per index
+-- and the panel used to show the raw code to the player.
+--
+-- The family is resolved by a documented PREFIX rule instead: an exact key in
+-- ENHANCEMENT_REASONS always wins, and a code that matches the family pattern
+-- resolves to the family sentence. A new index needs no new entry.
+--
+-- The index is IN the code, so this family's raw code is DIAGNOSTIC ONLY: the
+-- player-facing line carries the sentence, and the raw code stays where it
+-- belongs -- the diagnostic-slot blocker line, which shows the raw code for
+-- every reason, mapped or not. No other reason changes shape.
+local SOCKET_GEM_MISMATCH_PATTERN = "^socket%-gem%-mismatch%-%d+$"
+local SOCKET_GEM_MISMATCH_LABEL =
+    "the item's socket count and its gem list disagree"
+
+-- Returns the player-facing label for a reason code -- nil when the code has
+-- no label -- and whether the raw code itself is diagnostic only.
+local function resolveEnhancementReason(reason)
+    if type(reason) ~= "string" then
+        return nil, false
+    end
+    local exact = ENHANCEMENT_REASONS[reason]
+    if exact ~= nil then
+        return exact, false
+    end
+    if string.match(reason, SOCKET_GEM_MISMATCH_PATTERN) then
+        return SOCKET_GEM_MISMATCH_LABEL, true
+    end
+    return nil, false
+end
+
 local settings
 local panel
 local category
@@ -291,6 +473,14 @@ local registrationMode = "none"
 local slashHandler
 local controls = {}
 local equipmentControls = {}
+-- The CHECKBOXES, kept apart from the rest of the controls.
+--
+-- `controls` also holds the dropdown, the action buttons and the status
+-- lines, and those are not checkboxes. Keeping the checkboxes in their own
+-- list is what lets Options.Refresh re-label and re-measure exactly the
+-- controls that carry a label -- no guessing from the table's contents.
+local checkboxes = {}
+local equipmentCheckboxes = {}
 local activeHelpOwner
 
 -- Author credit shown in the Options panel footer.
@@ -540,18 +730,11 @@ local function adoptReturnedSettings(value)
     end
 end
 
-local function allTooltipFieldsDisabled()
-    local fields = fieldSettings()
-    if not fields then
-        return true
-    end
-    for _, key in ipairs(FIELD_KEYS) do
-        if fields[key] == true then
-            return false
-        end
-    end
-    return true
-end
+-- The empty-field rule used to be implemented HERE as well as in Core's
+-- normalise: a second copy of the same rule, which is how the two drifted
+-- and how the mode was lost for good. The rule now lives in ONE place
+-- (Core.ApplyTooltipFieldModeRule), so the local copy -- and the local
+-- field list it needed -- are gone.
 
 local function applyTooltipSettings()
     local tooltips = namespace.Tooltips
@@ -633,7 +816,127 @@ local function setControlEnabled(control, enabled)
     end
 end
 
-local function createCheckbox(id, text, x, y, callback, helpWidth)
+-- The tooltip page is TWO COLUMNS of checkboxes, and the geometry between
+-- them is what the operator's screenshot caught.
+--
+--   left column   x = 16
+--   right column  x = 290
+--
+-- The right column starts at RIGHT_COLUMN_X, so a left-column label that
+-- runs past it lands on the right column's control -- which is exactly what
+-- "Restrict Potential, Completion, and warnings to level 70" did: it is one
+-- long line with no width cap, so it ran straight through the "Show server
+-- leaderboard rank" control and its label.
+--
+-- Every label is therefore capped to its COLUMN's width and wraps inside it,
+-- so the two columns of labels line up and neither reaches the other.
+local RIGHT_COLUMN_X = 290
+local PANEL_CONTENT_RIGHT = 590
+-- The check button's own size, from the template the client gives it:
+--   origin/classic_era          Interface/AddOns/Blizzard_FrameXML/DeprecatedTemplates.xml:5-6
+--   origin/classic_anniversary  Interface/AddOns/Blizzard_FrameXML/DeprecatedTemplates.xml:5-6
+--   origin/classic_titan        Interface/AddOns/Blizzard_FrameXML/DeprecatedTemplates.xml:5-6
+--   origin/forever              Interface/AddOns/Blizzard_FrameXML/DeprecatedTemplates.xml:5-6
+--   origin/live                 Interface/AddOns/Blizzard_FrameXML/DeprecatedTemplates.xml:5-6
+--       <CheckButton name="OptionsBaseCheckButtonTemplate" inherits="UICheckButtonTemplate" virtual="true">
+--           <Size x="26" y="26"/>
+local CHECKBOX_SIZE = 26
+local LABEL_GAP = 2
+
+-- The width a label may use, derived from the column its control is in.
+local function columnLabelWidth(x)
+    if x < RIGHT_COLUMN_X then
+        return RIGHT_COLUMN_X - x - CHECKBOX_SIZE - LABEL_GAP
+    end
+    return PANEL_CONTENT_RIGHT - x - CHECKBOX_SIZE - LABEL_GAP
+end
+
+-- The hit rect covers the button AND its label, and nothing beyond.
+--
+-- It used to be a flat 240 or 500 pixels to the RIGHT, which reached
+-- straight across the column gap: a left-column control's clickable
+-- region -- and the button highlight the client draws over it -- landed on
+-- the right column's control, which is what made the right column hard to
+-- click and paint as a box. The expansion is now the LABEL's own width,
+-- capped at the column, so it can never reach the next column.
+--
+-- The order of SetHitRectInsets' arguments is (left, right, top, bottom),
+-- verified in the client source and not guessed:
+--   origin/classic_era  Interface/AddOns/Blizzard_APIDocumentationGenerated/
+--     SimpleFrameAPIDocumentation.lua:1150-1153
+--       { Name = "left" }, { Name = "right" }, { Name = "top" }, { Name = "bottom" }
+-- and Blizzard's own calls use the second argument as a RIGHT expansion:
+--   origin/classic_era  Interface/AddOns/Blizzard_Calendar/Classic/
+--     Blizzard_Calendar.lua:3799
+--       self:SetHitRectInsets(0, -CalendarCreateEventAutoApproveCheckText:GetWidth(), 0, 0)
+--
+-- The expansion is RECOMPUTED, not measured once at creation. Two things
+-- invalidate a measurement taken at creation:
+--
+--   * a FontString measured before its font is loaded measures ZERO, and a
+--     label with no hit rect stops being clickable -- and the panel is
+--     built long before the player opens it;
+--   * a locale change rewrites the label's text in place
+--     (TacoExtrasApplyLocale MUTATES the locale table), so the
+--     measurement is stale the moment the language changes.
+--
+-- The label's own width is the FLOOR: when the client cannot measure the
+-- text at all, the expansion falls back to the width the label already
+-- has instead of collapsing to nothing.
+local function applyCheckboxHitRect(check, label, cap)
+    if type(check) ~= "table" or type(label) ~= "table" then
+        return 0
+    end
+    local measured = 0
+    if type(label.GetStringWidth) == "function" then
+        local okWidth, width = pcall(label.GetStringWidth, label)
+        if okWidth and type(width) == "number" and width > 0 then
+            measured = width
+        end
+    end
+    local own = 0
+    if type(label.GetWidth) == "function" then
+        local okOwn, width = pcall(label.GetWidth, label)
+        if okOwn and type(width) == "number" and width > 0 then
+            own = width
+        end
+    end
+    local expansion = measured
+    if expansion <= 0 then
+        -- The floor: the label's own width, so an unmeasurable label keeps
+        -- a clickable region instead of losing one.
+        expansion = own
+    end
+    if expansion > cap then
+        expansion = cap
+    end
+    if type(check.SetHitRectInsets) == "function" then
+        check:SetHitRectInsets(0, -expansion, 0, 0)
+    end
+    return expansion
+end
+
+-- Re-set a checkbox's label from the locale and re-measure its hit rect.
+--
+-- Called from Options.Refresh, so the label always carries the CURRENT
+-- language's words and the hit rect always matches them.
+local function refreshCheckboxLabel(check)
+    if type(check) ~= "table" then
+        return
+    end
+    local label = check.optionLabel
+    if type(label) ~= "table" then
+        return
+    end
+    local text = check.optionHelpKey and helpHeading(check.optionHelpKey) or nil
+    text = text or check.optionText
+    if type(label.SetText) == "function" then
+        label:SetText(text)
+    end
+    applyCheckboxHitRect(check, label, check.optionLabelWidth or 0)
+end
+
+local function createCheckbox(id, text, x, y, callback)
     local name = addonName .. "Option" .. id
     local check = CreateFrame(
         "CheckButton",
@@ -644,21 +947,56 @@ local function createCheckbox(id, text, x, y, callback, helpWidth)
     check:SetPoint("TOPLEFT", panel, "TOPLEFT", x, y)
 
     local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    label:SetPoint("LEFT", check, "RIGHT", 2, 1)
+    label:SetPoint("LEFT", check, "RIGHT", LABEL_GAP, 1)
     -- The label comes from the locale, keyed by the SAME id the help popup uses.
     -- Label and help heading are the same words, so deriving both from one place
     -- is what stops them drifting apart; `text` stays as the English fallback.
     label:SetText(helpHeading(id) or text)
+    -- The label is capped to its COLUMN and wraps inside it. Without the cap a
+    -- long label ran across the column gap and into the next column's
+    -- control; with it, the two columns of labels line up and a long label
+    -- takes a second line instead of a second column.
+    local labelWidth = columnLabelWidth(x)
+    if type(label.SetWidth) == "function" then
+        label:SetWidth(labelWidth)
+    end
+    if type(label.SetWordWrap) == "function" then
+        label:SetWordWrap(true)
+    end
+    if type(label.SetJustifyH) == "function" then
+        label:SetJustifyH("LEFT")
+    end
     check.optionLabel = label
+    -- What Options.Refresh needs to put the label back the way the locale
+    -- says it should be, and to re-measure it.
+    check.optionText = text
+    check.optionHelpKey = id
+    check.optionLabelWidth = labelWidth
     check:SetScript("OnClick", function(self)
         callback(self:GetChecked() == true)
     end)
-    if type(check.SetHitRectInsets) == "function" then
-        check:SetHitRectInsets(0, -(helpWidth or 240), 0, 0)
-    end
+    applyCheckboxHitRect(check, label, labelWidth)
     attachHelp(check, id)
     controls[id] = check
+    checkboxes[#checkboxes + 1] = check
     return check
+end
+
+-- Apply the empty-field mode rule.
+--
+-- The rule lives in Core (one implementation, so the Options page and the
+-- settings normalise cannot disagree). It forces the mode to "Disabled"
+-- while no field is enabled -- and REMEMBERS the mode the player had, so
+-- re-enabling a field restores it. The old code forced the mode here AND
+-- in the normalise, and neither remembered anything, so unticking every
+-- field lost the mode permanently.
+local function applyEmptyFieldModeRule()
+    local core = namespace.Core
+    if type(core) == "table"
+        and type(core.ApplyTooltipFieldModeRule) == "function" then
+        return core.ApplyTooltipFieldModeRule()
+    end
+    return nil
 end
 
 local function createFieldCheckbox(id, text, key, x, y)
@@ -668,9 +1006,7 @@ local function createFieldCheckbox(id, text, key, x, y)
             return
         end
         fields[key] = value
-        if allTooltipFieldsDisabled() then
-            tooltipSettings().mode = "Disabled"
-        end
+        applyEmptyFieldModeRule()
         applyTooltipSettings()
     end)
 end
@@ -682,10 +1018,18 @@ local function setMode(value)
     end
     for _, choice in ipairs(MODE_CHOICES) do
         if choice.value == value then
+            -- The EXPLICIT pick is recorded first, so the empty-field rule
+            -- below remembers THIS mode (not the one it replaced) if no
+            -- field is enabled.
             tooltip.mode = value
-            if value ~= "Disabled" and allTooltipFieldsDisabled() then
-                tooltip.mode = "Disabled"
+            if value == "Disabled" then
+                -- An explicit "Disabled" is the player's own choice: it is
+                -- not a forced state, so nothing is remembered and nothing
+                -- is restored later.
+                tooltip.modeDisabledByEmptyFields = nil
+                tooltip.modeBeforeEmptyFields = nil
             end
+            applyEmptyFieldModeRule()
             applyTooltipSettings()
             return
         end
@@ -709,7 +1053,9 @@ local function createModeDropdown()
     UIDropDownMenu_Initialize(dropDown, function(frame)
         for _, choice in ipairs(MODE_CHOICES) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = choice.text
+            -- The label comes from the locale, resolved at MENU-BUILD time --
+            -- so the list a player opens reads in their language.
+            info.text = choiceText(choice)
             info.value = choice.value
             info.checked = false
             info.func = function(item)
@@ -751,20 +1097,40 @@ local function createEquipmentCheckbox(id, text, y, callback)
     )
     check:SetPoint("TOPLEFT", equipmentPanel, "TOPLEFT", 16, y)
     local label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    label:SetPoint("LEFT", check, "RIGHT", 2, 1)
+    label:SetPoint("LEFT", check, "RIGHT", LABEL_GAP, 1)
     -- The label comes from the locale, keyed by the SAME id the help popup uses.
     -- Label and help heading are the same words, so deriving both from one place
     -- is what stops them drifting apart; `text` stays as the English fallback.
     label:SetText(helpHeading(id) or text)
+    -- Capped to the panel's content width and wrapped, on the same rule as the
+    -- tooltip page's columns: a label may not run past the content, and the
+    -- hit rect may not either.
+    local labelWidth = PANEL_CONTENT_RIGHT - 16 - CHECKBOX_SIZE - LABEL_GAP
+    if type(label.SetWidth) == "function" then
+        label:SetWidth(labelWidth)
+    end
+    if type(label.SetWordWrap) == "function" then
+        label:SetWordWrap(true)
+    end
+    if type(label.SetJustifyH) == "function" then
+        label:SetJustifyH("LEFT")
+    end
     check.optionLabel = label
+    -- What Options.Refresh needs to put the label back the way the locale
+    -- says it should be, and to re-measure it.
+    check.optionText = text
+    check.optionHelpKey = id
+    check.optionLabelWidth = labelWidth
     check:SetScript("OnClick", function(self)
         callback(self:GetChecked() == true)
     end)
-    if type(check.SetHitRectInsets) == "function" then
-        check:SetHitRectInsets(0, -500, 0, 0)
-    end
+    -- The hit rect covers the button and its label, and nothing beyond --
+    -- the same helper the tooltip page uses, so the two pages cannot drift
+    -- apart and the measurement is refreshed the same way on both.
+    applyCheckboxHitRect(check, label, labelWidth)
     attachHelp(check, id)
     equipmentControls[id] = check
+    equipmentCheckboxes[#equipmentCheckboxes + 1] = check
     return check
 end
 
@@ -810,7 +1176,9 @@ local function createEquipmentModeDropdown()
     UIDropDownMenu_Initialize(dropDown, function(frame)
         for _, choice in ipairs(EQUIPMENT_MODE_CHOICES) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = choice.text
+            -- The label comes from the locale, exactly as the tooltip-mode
+            -- dropdown's does.
+            info.text = choiceText(choice)
             info.value = choice.value
             info.checked = false
             info.func = function(item)
@@ -832,26 +1200,32 @@ local function createEquipmentModeDropdown()
 end
 
 local function resetEquipmentPositions()
-    local core = namespace.Core
-    if type(core) == "table"
-        and type(core.ResetEquipmentPositions) == "function" then
-        local result = core.ResetEquipmentPositions()
-        Options.Refresh()
-        return result ~= false
-    end
+    -- The button's result was discarded, so a raise here left the player with
+    -- a pressed button and no change and no message. The action is bounded and
+    -- counted now (runOptionsAction).
+    return runOptionsAction("reset the summary positions", function()
+        local core = namespace.Core
+        if type(core) == "table"
+            and type(core.ResetEquipmentPositions) == "function" then
+            local result = core.ResetEquipmentPositions()
+            Options.Refresh()
+            return result ~= false
+        end
 
-    local equipmentDisplay = equipmentDisplaySettings()
-    if not equipmentDisplay then
-        return false
-    end
-    equipmentDisplay.characterPosition = nil
-    equipmentDisplay.inspectPosition = nil
-    local frames = namespace.Frames
-    if type(frames) == "table" and type(frames.ResetPositions) == "function" then
-        frames.ResetPositions()
-    end
-    applyEquipmentSettings()
-    return true
+        local equipmentDisplay = equipmentDisplaySettings()
+        if not equipmentDisplay then
+            return false
+        end
+        equipmentDisplay.characterPosition = nil
+        equipmentDisplay.inspectPosition = nil
+        local frames = namespace.Frames
+        if type(frames) == "table"
+            and type(frames.ResetPositions) == "function" then
+            frames.ResetPositions()
+        end
+        applyEquipmentSettings()
+        return true
+    end)
 end
 
 local function createEquipmentPanel()
@@ -1009,7 +1383,7 @@ local function safeEnhancementStatus()
         and string.match(reason, "^[a-z0-9%-]+$") then
         reasonCode = reason
     end
-    local safeReason = type(reason) == "string" and ENHANCEMENT_REASONS[reason] or nil
+    local safeReason, diagnosticOnly = resolveEnhancementReason(reason)
     local blocker
     if safeStatus == "unavailable"
         and DIAGNOSTIC_SLOTS[slotID] == true
@@ -1022,7 +1396,7 @@ local function safeEnhancementStatus()
             blocker.itemID = itemID
         end
     end
-    return safeStatus, safeReason, blocker, reasonCode
+    return safeStatus, safeReason, blocker, reasonCode, diagnosticOnly
 end
 
 local function refreshStatus()
@@ -1034,7 +1408,8 @@ local function refreshStatus()
     end
 
     local compatible, integration = safeIntegrationStatus()
-    local remoteStatus, remoteReason, blocker, reasonCode = safeEnhancementStatus()
+    local remoteStatus, remoteReason, blocker, reasonCode, diagnosticOnly =
+        safeEnhancementStatus()
     integrationText:SetText("TacoTip integration: " .. integration)
     updateStatusHelpRegion(integrationText, controls.IntegrationStatusHelp)
     if compatible then
@@ -1046,7 +1421,10 @@ local function refreshStatus()
     local remote = "Remote enhancement analysis: " .. remoteStatus
     if remoteReason and not blocker then
         remote = remote .. " (" .. remoteReason
-        if reasonCode then
+        -- A diagnostic-only reason carries its index in the code, so the raw
+        -- code stays out of the player-facing line and remains where it
+        -- belongs: the diagnostic-slot blocker line below.
+        if reasonCode and not diagnosticOnly then
             remote = remote .. "; " .. reasonCode
         end
         remote = remote .. ")"
@@ -1088,34 +1466,48 @@ local function refreshStatus()
 end
 
 local function resetEnhancerSettings()
-    local core = namespace.Core
-    if type(core) ~= "table" or type(core.ResetSettings) ~= "function" then
-        return false
-    end
-    local result = core.ResetSettings()
-    if result == false then
+    -- Bounded and counted: the button's result used to be discarded, so a
+    -- raise left the player with a pressed button, no change and no message.
+    return runOptionsAction("reset the enhancer settings", function()
+        local core = namespace.Core
+        if type(core) ~= "table" or type(core.ResetSettings) ~= "function" then
+            noteActionFailure("reset the enhancer settings",
+                "Core.ResetSettings is missing",
+                "the enhancer settings could not be reset: Core.ResetSettings is missing.")
+            return false
+        end
+        local result = core.ResetSettings()
+        if result == false then
+            Options.Refresh()
+            return false
+        end
+        adoptReturnedSettings(result)
         Options.Refresh()
-        return false
-    end
-    adoptReturnedSettings(result)
-    Options.Refresh()
-    return true
+        return true
+    end)
 end
 
 local function restoreTacoTipSettings()
-    local core = namespace.Core
-    if type(core) ~= "table"
-        or type(core.RestoreTacoTipSettings) ~= "function" then
-        return false
-    end
-    local result = core.RestoreTacoTipSettings()
-    if result == false then
+    -- Bounded and counted, for the same reason as resetEnhancerSettings.
+    return runOptionsAction("restore the TacoTip settings", function()
+        local core = namespace.Core
+        if type(core) ~= "table"
+            or type(core.RestoreTacoTipSettings) ~= "function" then
+            noteActionFailure("restore the TacoTip settings",
+                "Core.RestoreTacoTipSettings is missing",
+                "the TacoTip settings could not be restored: "
+                    .. "Core.RestoreTacoTipSettings is missing.")
+            return false
+        end
+        local result = core.RestoreTacoTipSettings()
+        if result == false then
+            Options.Refresh()
+            return false
+        end
+        adoptReturnedSettings(result)
         Options.Refresh()
-        return false
-    end
-    adoptReturnedSettings(result)
-    Options.Refresh()
-    return true
+        return true
+    end)
 end
 
 local function createActionButton(name, text, x, callback, helpKey, y)
@@ -1128,6 +1520,29 @@ local function createActionButton(name, text, x, callback, helpKey, y)
     button:SetScript("OnClick", callback)
     attachHelp(button, helpKey)
     return button
+end
+
+-- Say one thing in the chat frame.
+--
+-- A button that does nothing is the worst kind of broken: the player clicks
+-- it, nothing happens, and there is nothing to tell them why. The two
+-- action buttons that call into another module used to guard their call and
+-- RETURN, in silence -- so this helper is what they use to name the surface
+-- that is missing.
+--
+-- The wording and the colour follow Core.lua's recordInitializeFailure, so
+-- every "this surface is unavailable" line in the add-on reads the same.
+--
+-- This is an ASSIGNMENT, not a `local function`, because the counted
+-- action-failure boundary further up needs to print through it and that
+-- boundary is declared BEFORE this point in the file. The forward
+-- declaration lives with the boundary.
+printOptionsLine = function(message)
+    if type(_G.DEFAULT_CHAT_FRAME) == "table"
+        and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
+        pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
+            "|cffff5555TacoTip Extras:|r " .. tostring(message))
+    end
 end
 
 local function createPanel()
@@ -1199,10 +1614,36 @@ local function createPanel()
             local tooltip = tooltipSettings()
             if tooltip then
                 tooltip.restrictEnhancementMetricsToLevel70 = value
+                -- The level-70 gate is baked into the SCORED result, so the
+                -- cached result still answers the OLD setting. Re-evaluate it
+                -- from the cached revision -- no rescan, no re-inspection --
+                -- so the three enhancement metrics really do appear (or stop
+                -- appearing) the moment the box is ticked.
+                local scanner = namespace.Scanner
+                if type(scanner) == "table"
+                    and type(scanner.Reevaluate) == "function" then
+                    -- The re-evaluation's OUTCOME is used, not discarded.
+                    --
+                    -- The bare pcall threw away even the boolean, so a
+                    -- scorer that raised left the cached verdict computed
+                    -- under the OLD policy in place, with the checkbox
+                    -- flipped and the setting written and NOTHING saying
+                    -- so. The re-evaluation now counts and reports its own
+                    -- failures, and the count is read here so a failed
+                    -- re-evaluation is never mistaken for a successful one.
+                    local ok, replaced, failed = pcall(scanner.Reevaluate)
+                    if not ok then
+                        printOptionsLine(
+                            "the score re-evaluation failed: " .. tostring(replaced))
+                    elseif type(failed) == "number" and failed > 0 then
+                        printOptionsLine("the score re-evaluation failed for "
+                            .. tostring(failed)
+                            .. " cached result(s); the metrics still show the previous result.")
+                    end
+                end
                 applyTooltipSettings()
             end
-        end,
-        500
+        end
     )
     createCheckbox(
         "WarningColors",
@@ -1215,8 +1656,7 @@ local function createPanel()
                 tooltip.warningColors = value
                 applyTooltipSettings()
             end
-        end,
-        500
+        end
     )
     createCheckbox("ShowMinimap", "Show minimap button", 16, -318, function(value)
         local minimap = minimapSettings()
@@ -1224,7 +1664,7 @@ local function createPanel()
             minimap.show = value
             applyMinimapSettings()
         end
-    end, 500)
+    end)
 
     createCheckbox(
         "ShowServerRank",
@@ -1238,8 +1678,41 @@ local function createPanel()
                 tooltip.showServerRank = value
                 applyTooltipSettings()
             end
-        end,
-        240
+        end
+    )
+
+    -- W11 density: comfortable rows for the leaderboard. One boolean in the
+    -- existing settings table (no new SavedVariables); the browser rebuilds
+    -- at the new row height when it flips.
+    createCheckbox(
+        "ComfortableRows",
+        "Comfortable rows",
+        290,
+        -292,
+        function(value)
+            if type(settings) == "table" then
+                settings.comfortableRows = value == true
+                rebuildLeaderboard("Comfortable rows")
+            end
+        end
+    )
+
+    -- Shaman Blue. The class colour is painted in three places -- the unit
+    -- tooltip, the character/inspect summary frame and the leaderboard row --
+    -- and all three read the SAME resolver in Core, so all three have to be
+    -- repainted when the setting changes.
+    createCheckbox(
+        "ShamanBlue",
+        "Shaman Blue",
+        290,
+        -318,
+        function(value)
+            if type(settings) == "table" then
+                settings.shamanBlue = value == true
+                applyAllSettings()
+                rebuildLeaderboard("Shaman Blue")
+            end
+        end
     )
 
     -- Top-right of the page, on the title row.
@@ -1255,9 +1728,15 @@ local function createPanel()
         "Open Server Leaderboard",
         376,
         function()
-            if namespace.RankBrowser and type(namespace.RankBrowser.Toggle) == "function" then
-                namespace.RankBrowser.Toggle()
+            local browser = namespace.RankBrowser
+            if type(browser) == "table" and type(browser.Toggle) == "function" then
+                runBrowserAction("Toggle", "open the server leaderboard")
+                return
             end
+            -- The button was pressed and NOTHING happened. Say which module
+            -- is missing, so the click is not a dead end.
+            printOptionsLine(
+                "the server leaderboard is unavailable: RankBrowser.Toggle is missing.")
         end,
         "openLeaderboard",
         -14
@@ -1292,8 +1771,13 @@ local function createPanel()
         function()
             local browser = namespace.RankBrowser
             if type(browser) == "table" and type(browser.StartScan) == "function" then
-                browser.StartScan()
+                runBrowserAction("StartScan", "start a scan")
+                return
             end
+            -- The button was pressed and NOTHING happened. Say which module
+            -- is missing, so the click is not a dead end.
+            printOptionsLine(
+                "the scan is unavailable: RankBrowser.StartScan is missing.")
         end,
         "scanNow",
         -384
@@ -1747,6 +2231,24 @@ function Options.Refresh()
     )
     setChecked(controls.WarningColors, tooltip and tooltip.warningColors)
     setChecked(controls.ShowMinimap, minimap and minimap.show)
+    -- Comfortable rows is a TOP-LEVEL setting (not under `tooltip`), and it
+    -- was the one checkbox Options.Refresh never synced: the box kept
+    -- whatever the player last clicked and never showed the saved value, so
+    -- a profile that had it on came up looking off.
+    local comfortableRows = false
+    if type(settings) == "table" and type(settings.comfortableRows) == "boolean" then
+        comfortableRows = settings.comfortableRows
+    end
+    setChecked(controls.ComfortableRows, comfortableRows)
+    -- The Extras' OWN Shaman Blue setting is what this box shows. The main
+    -- add-on's setting can veto it (Core.IsShamanBlueEnabled), and the help
+    -- text says so -- the box stays editable so the Extras' own preference is
+    -- always visible and always the user's to change.
+    local shamanBlue = true
+    if type(settings) == "table" and type(settings.shamanBlue) == "boolean" then
+        shamanBlue = settings.shamanBlue
+    end
+    setChecked(controls.ShamanBlue, shamanBlue)
     local showRank = true
     if tooltip then
         if tooltip.show_server_rank == false or tooltip.showServerRank == false then
@@ -1767,15 +2269,33 @@ function Options.Refresh()
         equipmentDisplay and not equipmentDisplay.locked
     )
 
+    -- The labels are re-set from the locale and their hit rects re-measured on
+    -- every refresh. The measurement used to be taken ONCE, at creation,
+    -- and it went stale twice over: a FontString measured before its font
+    -- is loaded measures ZERO (so the label stops being clickable), and a
+    -- locale change rewrites the label's text in place (so the measured
+    -- width no longer matches the words on screen).
+    for _, control in ipairs(checkboxes) do
+        refreshCheckboxLabel(control)
+    end
+    for _, control in ipairs(equipmentCheckboxes) do
+        refreshCheckboxLabel(control)
+    end
+
     local mode = tooltip and tooltip.mode or "Disabled"
     if controls.mode then
         UIDropDownMenu_SetSelectedValue(controls.mode, mode)
-        UIDropDownMenu_SetText(controls.mode, mode)
+        -- The label is the LOCALE's word for the mode, not the stored value:
+        -- the dropdown is the one control the player reads the mode from.
+        UIDropDownMenu_SetText(controls.mode, modeText(MODE_CHOICES, mode))
     end
     local equipmentMode = equipmentDisplay and equipmentDisplay.mode or "Disabled"
     if equipmentControls.mode then
         UIDropDownMenu_SetSelectedValue(equipmentControls.mode, equipmentMode)
-        UIDropDownMenu_SetText(equipmentControls.mode, equipmentMode)
+        UIDropDownMenu_SetText(
+            equipmentControls.mode,
+            modeText(EQUIPMENT_MODE_CHOICES, equipmentMode)
+        )
     end
     refreshStatus()
     return true

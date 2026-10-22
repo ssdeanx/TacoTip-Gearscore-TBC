@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T01:00:00Z",
+  "run_id": "fix1",
+  "agent_name": "fix-oracle-findings",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "existing harness patterns reused (send capture, isolationSweep, re-arm); tiebreak discrimination simulated before claiming",
+    "what_was_hard": "junk-key resurrection trap (GetRecord re-creates keys); moved pin before the resurrecting check",
+    "skill_gap": ""
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

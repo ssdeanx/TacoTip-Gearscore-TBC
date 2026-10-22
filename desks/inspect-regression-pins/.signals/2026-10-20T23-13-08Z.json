@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T23:13:08Z",
+  "run_id": "inspectpins",
+  "agent_name": "inspect-regression-pins",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "The guarantee to pin was an ABSENCE, so the mock had to become a witness: the ClearInspectPlayer mock now counts its calls in the two harnesses that actually drive an inspect (detect_test, tooltip_test) and stays a no-op to the client. Each pin carries a CONTROL (the inspected unit's data really landed in the cache) so a zero counter cannot pass because nothing happened. Both pins were proved red on a copy under /tmp/opencode, never in the tree.",
+    "what_was_hard": "Choosing the resolution path for P2: the inspected unit must be neither target nor mouseover, or the fallback is not the thing under test. detect_test gives the unit its own token; tooltip_test has a shared UNITS model, so the token is added and removed inside the pin.",
+    "skill_gap": "P3 was already covered by tooltip_test.lua, so a large part of the request was a report rather than an edit. The pre-existing state of the suite has to be READ before pins are written, not after."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T14:58:01Z",
+  "agent_name": "locale-tier-a-keys",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "gh_grep real-addon locale files sourced all 10 Evoker names; enUS-mirrored key placement kept parity/specifier checks green",
+    "what_was_hard": "frFR Evocateur vs Evoqueur conflict (resolved 2:1); zhTW 喚能師 vs assumed 喚魔師 (evidence won)",
+    "skill_gap": "CLASS_EVOKER blocked by enUS-first ordering invariant, not by sourcing"
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "enUS desk: add CLASS_EVOKER then apply staged per-locale values from this desk's journal"
+  }
+}

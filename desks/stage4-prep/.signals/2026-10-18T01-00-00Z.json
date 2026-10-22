@@ -1,0 +1,14 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "run_id": "stage4prep-01",
+  "agent_name": "stage4-prep",
+  "timestamp": "2026-10-18T01:00:00Z",
+  "summary": "Stage 4 gear-on-demand brief complete: G/D same-transport version-gated design on assumed Stage-3 v2 stride, sparse encoding with 240-byte math, extend-split sequencing, two-tier cache, shared-bucket throttle with per-sender fairness, 16 harness checks, panel rules, must-not-touch boundary, 8 open questions. All citations re-verified.",
+  "artifacts": [
+    "bench/audits/2026-10-18-stage4-gear-on-demand-brief.md",
+    "desks/stage4-prep/journal.md",
+    "desks/stage4-prep/.signals/2026-10-18T00-00-00Z.json",
+    "desks/stage4-prep/.signals/2026-10-18T01-00-00Z.json"
+  ]
+}

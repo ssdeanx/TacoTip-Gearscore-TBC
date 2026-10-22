@@ -150,7 +150,6 @@
         "TACOTIP_LOCALES",
         "TT_GS",
         "TT_PAWN",
-        "_TacoTipPawnReady",
         "PawnClassicLastUpdatedVersion",
         "PawnGetItemData",
         "PawnGetSingleValueFromItem",

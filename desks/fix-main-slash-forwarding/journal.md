@@ -1,0 +1,32 @@
+# fix-main-slash-forwarding — Journal
+
+## 2026-10-20 — Desk opened
+- **Purpose:** the main add-on's `/tt` handler swallowed the TacoTip Extras' leaderboard sub-commands. The operator's symptom: **"/tt lb" opened main TacoTip** (the options panel) instead of the Extras' server leaderboard.
+- **Scope:** the MAIN add-on only — `gearscore.lua`, `options.lua`, `CHANGELOG.md`, `Tests/harness/options_test.lua`, `Tests/harness/gearscore_test.lua`. **NOT** `TacoTip_Extras/**` (another lane was editing it concurrently; my work there was read-only, and **nothing under `TacoTip_Extras/` was modified** — verified by mtime: the only Extras files touched during my window carried the other lane's timestamps 09:40-09:54, mine were 09:48-09:50 on the five main-side files). No commit, no staging.
+- **Cause (VERIFIED from source):** WoW's slash dispatch takes the **first** matching prefix it finds, and the order of the global scan is not specified, so the main add-on's own `/tt` (`gearscore.lua:36`, `SLASH_TACOTIP4`) can win the race against the Extras' `/tt lb` (`TacoTip_Extras/RankBrowser.lua:2498`, `SLASH_TACOTIPRANKS4`). The main handler recognised only `custom`/`unlock`/`move`/`mover`, `save`, `default` — **everything else fell through to the options panel** (`gearscore.lua:65-66` bootstrap, `options.lua:660-661` final handler).
+- **Note on which handler is live (VERIFIED):** `options.lua` loads after `gearscore.lua` in `TacoTip.toc:28,31` and **replaces** the bootstrap handler (`options.lua:600` — "the options module owns the final slash handler and intentionally replaces the early bootstrap command registered by GearScore"). So the runtime handler is `options.lua`'s; the bootstrap in `gearscore.lua` only survives when `options.lua` failed to load. **Both** were fixed, from one implementation.
+
+## 2026-10-20 — [signal:done] One resolver, two handlers, two harnesses, revert-proven
+- **Implementation (one resolver, published on the namespace):**
+  - `gearscore.lua:23-74` — `EXTRAS_LEADERBOARD_COMMANDS` (`lb`, `rank`, `ranks`, `leaderboard`) + `forwardExtrasSlashCommand(cmd)`, published as `TT.ForwardExtrasSlashCommand` (`:74`). Defensive by construction: `rawget(_G, "SlashCmdList")` may be absent, the `TACOTIPRANKS` entry may be missing or not a function, and the call is `pcall`ed — a broken Extras can never break `/tt`.
+  - `gearscore.lua:118-121` — the bootstrap handler forwards **before** the options-panel fallback.
+  - `options.lua:659-666` — the FINAL handler (the one WoW calls) forwards **before** the options-panel fallback.
+- **The Extras' own unambiguous aliases are untouched:** `/ttrank`, `/ttranks`, `/ttleaderboard` are registered by the Extras itself (`TacoTip_Extras/RankBrowser.lua:2495-2497`) and nothing in this change reads or writes them.
+- **Pins (MAIN harness only):**
+  - `Tests/harness/options_test.lua` — drives `SlashCmdList.TACOTIP`, i.e. the **final** handler: the four words reach a stand-in `SlashCmdList.TACOTIPRANKS` and the options panel is **not** opened; `"/tt LB"` (mixed case, padded) likewise; with no Extras entry (or a non-function entry) `/tt lb` opens the options panel exactly as before; `/tt` alone still opens it; `/tt save` and `/tt custom` are neither forwarded nor do they open the panel. The panel-open counter wraps **both** client paths (`Settings.OpenToCategory` and `InterfaceOptionsFrame_OpenToCategory`) so the `nosettings` legacy variants cannot pass for the wrong reason.
+  - `Tests/harness/gearscore_test.lua` — the **bootstrap** handler, in a sandbox that loads `gearscore.lua` alone (so the bootstrap handler is the live one there): the same forwarding, with the options-panel fallback observed as the help block the bootstrap prints instead of opening a panel.
+- **Revert-to-fail (VERIFIED, lua5.1):**
+  - `options.lua` forwarding disabled → `options_test` **10 checks red** (8 invocations fail): the four words no longer reach the Extras and the options panel opens instead.
+  - `gearscore.lua` forwarding disabled → `gearscore_test` **9 checks red** (5 invocations fail).
+  - Full suite with the fix disabled: **70 invocations: 57 passed, 13 failed** on each of lua5.1 / lua5.4 / luajit. With the fix in place: **70/70** on all three.
+- **Validation on the restored tree (VERIFIED):**
+  - `bash Tests/harness/run_all.sh` → **70 invocations: 70 passed, 0 failed** on **lua5.1, lua5.4 and luajit**.
+  - `luacheck .` (repo root) → **0 warnings / 0 errors in 87 files**.
+  - `bash Tools/verify_release.sh` → **PASS**.
+  - `bash TacoTip_Extras/Tests/harness/run_all.sh` → **42 invocations: 42 passed, 0 failed** (unchanged by this desk; it was transiently **31/42** once during this session while the other lane had its Shaman-Blue pins in place before the implementation, and green again afterwards).
+- **CHANGELOG:** one new subsection in the existing `## [0.8.4]` section (`CHANGELOG.md:144-146`), no version bump, earlier sections untouched, one bullet in plain user language.
+- **Desk path:** `desks/fix-main-slash-forwarding/`. Signal: `.signals/2026-10-20T10-05-00Z-done.json`.
+
+## 2026-10-20 — Part 2 (the Extras browser) was dropped on operator instruction, with one observation kept
+- The task also asked for a read-only diagnosis of "the Extras rank browser does not appear". The operator then tested in-game and **confirmed the browser opens, in front of the Settings panel, from both the minimap icon and the options-page button** — the premise was false, so the diagnosis was abandoned rather than "fixed". **No Extras file was touched.**
+- **One observation kept (no change made, reported for the record only):** `RankBrowser.Toggle()` (`TacoTip_Extras/RankBrowser.lua:2448-2452`) branches on `f:IsShown()` while the frame it just created is **visible by default in the client** (frames are shown unless `hidden="true"` — 3147 such declarations in the classic_era FrameXML, plus explicit `hidden="false"` on frames that must start visible), whereas the Extras harness's mock creates every frame **hidden** (`TacoTip_Extras/Tests/harness/rankbrowser_test.lua:134`, `__shown = false`) — the MAIN harness's mock is client-faithful here (`Tests/harness/options_test.lua:85`, `__shown = true`). So the first Toggle on a never-shown frame takes the hide branch in the client and the show branch in the harness. **The operator's report says the browser opens, so this is a modelling note, not a defect claim — nothing was changed.**

@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T00:00:00Z",
+  "run_id": "fixextrassockets",
+  "agent_name": "fix-extras-sockets",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "The decision rule's test -- can the documented API be driven with the data available offline -- turned out to be answerable from the mirror alone, because Blizzard's OWN call site passes the raw item link: PaperDollFrame.lua:1728 feeds GetInventoryItemLink into SetItem and :2775 passes that link straight into C_Item.GetItemNumSockets. One call site settled what the generated docs (which only say 'itemInfo', an opaque handle) could not. The harness then modelled the socket count as a property of the ITEM in a per-item-id table, keyed the way a client's item database is, so the mock is a claim about the client rather than a second copy of the add-on's assumption -- and the mock's old fixed EMPTY_SOCKET1..3 triple went with the code that read it. Driving the pins end to end (re-scan with a one-socket item, then a sockless one) rather than only through a fixture is what made the old bug reproducible: the old code published three empty sockets for a sockless item, and the pin says exactly that.",
+    "what_was_hard": "Deciding what 'too large for the gem list' can mean. A link carries exactly three gem positions and does NOT say how many sockets the item has, so no link-only rule can detect an inflated count -- the bound is the list's own length, and that is what the cross-check now states explicitly. The first draft made the too-large branch look redundant, because the position-by-position gem loop caught a fourth socket first as 'socket-gem-mismatch-4'; comparing only the positions the link HAS gave each branch a distinct job and made the branch the only thing that catches an inflated count. Separately, the harness's own Harness Helm had to become a TWO-socket item: with three sockets the old fixed triple and the API's answer agreed, and the pin could not tell the two sources apart.",
+    "skill_gap": "Writing a revert probe that proves a PIN rather than a FUNCTION. Two of the five probes first showed only one red, because a second independent check already made the metric fail closed -- so the probe proved less than it looked like it did. The fix was to make each branch of the cross-check own exactly one shape, so removing a branch removes the only guard for that shape."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "In-game check on a Retail and a WoW Forever character before publish (pre-publish checklist item 22): the empty-socket count should equal the sockets the item's own tooltip shows as empty, and Potential GS / Delta / Completion should read numbers. The capacity now comes from the client's item data, so a client that answered wrongly would surface as a contradiction rather than as a wrong number -- but that is the one thing the offline harness cannot prove. TacoTip_Extras/Options.lua still carries the dead 'socket-order-unverified-above-three' label and no label for 'socket-capacity-exceeds-gem-list'; that file is outside this lane's scope and should be pruned by its owner."
+  }
+}

@@ -5,10 +5,12 @@
 local _hp = ((arg and arg[0]) or "Tests/harness/tooltip_test.lua"):gsub("\\", "/")
 local _hd = _hp:match("^(.*)/[^/]*$") or "."
 local ROOT = dofile(_hd .. "/root.lua") .. "/"
+local MOCKC = dofile(_hd .. "/mock_contract.lua")
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
 local usePipeline = (arg[4] == "pipeline")
 local DEBUG = (arg[5] == "debug")
+MOCKC.setFamily(MOCKC.normaliseFamily(label))
 
 local REALG = _G
 -- `unpack` is a global in Lua 5.1 -- what WoW ships, and what this addon targets
@@ -175,7 +177,10 @@ local function makeWidget(kind, name, parent, template, depth)
     w.GetHeight = function() return w.__h or 0 end
     w.GetSize = function() return w.__w or 0, w.__h or 0 end
     w.GetCenter = function() return 0, 0 end
-    w.GetLeft = function() return 0 end
+    -- Configurable, like __right: the portrait side is measured against the
+    -- anchor target's left edge when a saved position owns the tooltip.
+    w.__left = 0
+    w.GetLeft = function() return w.__left or 0 end
     -- Configurable. The portrait side decision reads the tooltip's GetRight()
     -- against UIParent's, so a mock that hardcodes 0 collapses every screen
     -- position onto the same side and the decision cannot be tested at all.
@@ -444,6 +449,12 @@ REALG.print = function() end
 REALG.geterrorhandler = function() return function(e)
     ERRORS[#ERRORS + 1] = tostring(e) end end
 ERRORS = {}
+-- Deferred bodies (C_Timer.NewTimer/NewTicker callbacks) are recorded, not
+-- run, so a block can drive them by hand exactly once and assert what they do.
+-- The mock stays honest: nothing fires unless the test fires it. The vararg
+-- shape matters: the addon calls NewTimer(duration, fn) with a dot, not a
+-- colon, so the callback is the LAST argument, not the third.
+TIMERS = {}
     -- Frame types CreateFrame actually accepts. "Texture" and "FontString" are
     -- WIDGET types created with frame:CreateTexture() / :CreateFontString(); they
     -- are rejected by the real CreateFrame with
@@ -466,6 +477,16 @@ REALG.GetLocale = function() return "enUS" end
 REALG.GetCVar = function() return "" end
 REALG.SetCVar = function() end
 REALG.InCombatLockdown = function() return false end
+-- `securecall` -- the engine's taint-containment global, present on every
+-- supported client (Blizzard captures it as a local the same way it captures
+-- `forceinsecure`: Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
+-- `local securecall = securecall;`). The mock counts the calls that went
+-- through it, so a taint pin can tell "addon code ran inside a Blizzard
+-- frame's script chain" from "it ran contained".
+REALG.securecall = function(fn, ...)
+    REALG.__secureCalls = (REALG.__secureCalls or 0) + 1
+    return fn(...)
+end
 REALG.LoadAddOn = function() return true end
 -- Real hooksecurefunc. It was a no-op here, which is the blind spot that let the
 -- tooltip anchor hook go untested: nothing installed it, so nothing could call
@@ -590,12 +611,27 @@ REALG.__testClock = 0
 REALG.GetTime = function() return REALG.__testClock end
 REALG.UnitLevel = function(u) return UNITS[u] and UNITS[u].level or 1 end
 REALG.UnitRace = function(u) return UNITS[u] and UNITS[u].race or "" end
-REALG.UnitClass = function(u)
+-- UnitClass publishes THREE values on the modern pair (localizedClassName,
+-- classToken, classID) and TWO on the Classic family. The mock used to
+-- publish two on every client -- one shape for five clients -- which made
+-- the per-family gap structurally invisible. The contract pins the arity.
+--   origin/live, origin/forever: UnitUtil.lua:81 `select(3, UnitClass("player"))`
+--   origin/classic_era etc.:      InspectPaperDollFrame.lua:10 `local classDisplayName, class = UnitClass(...)`
+REALG.UnitClass = MOCKC.unitClassMock(function(u)
     local c = UNITS[u]
     if (not c or not c.class) then return nil, nil end
-    return c.class, c.class end
+    return c.class, c.class
+end)
 REALG.UnitIsPlayer = function(u) return UNITS[u] and UNITS[u].isPlayer or false end
 REALG.UnitIsUnit = function(a, b) return a == b end
+-- C_PaperDollInfo.GetInspectGuildInfo publishes FOUR values: achievement
+-- points, member count, guild name, realm name (PaperDollInfoDocumentation.lua:95
+-- on origin/live and :104 on origin/forever). The FOURTH is nil for a player
+-- with no guild -- the fact the guild guard reads to tell Blizzard's own
+-- defect from any other error. The mock publishes four, as the client does.
+REALG.C_PaperDollInfo = {
+    GetInspectGuildInfo = function() return 0, 0, nil, nil end,
+}
 REALG.UnitIsPVP = function(u) return UNITS[u] and UNITS[u].pvp or false end
 REALG.UnitPVPName = function() return "Test" end
 REALG.UnitFactionGroup = function() return "Alliance" end
@@ -625,10 +661,31 @@ REALG.GetItemInfo = function(link)
     end
     return nil end
 REALG.C_Item.GetItemInfo = REALG.GetItemInfo
-REALG.GetItemInfoInstant = function() return 12345 end
+REALG.GetItemInfoInstant = function() return REALG.__itemInfoInstantID end
+-- Batch 7 item 4: the namespaced item-ID resolver.
+--
+-- main.lua resolves the item ID from C_Item.GetItemInfoInstant (the bare
+-- global exists only on the three Classic-family branches -- verified in the
+-- FrameXML mirror: Blizzard_DeprecatedItemScript/Deprecated_ItemScript.lua:10
+-- aliases it on origin/classic_era, origin/classic_anniversary and
+-- origin/classic_titan, and that file is ABSENT on origin/forever and
+-- origin/live). The value is read at CALL time through a harness variable, so
+-- a test can move the ID without reloading the addon.
+REALG.__itemInfoInstantID = 12345
+REALG.C_Item.GetItemInfoInstant = function() return REALG.__itemInfoInstantID end
 REALG.C_Item.IsEquippableItem = function() return true end
 REALG.IsEquippableItem = REALG.C_Item.IsEquippableItem
-REALG.C_Item.RequestLoadItemDataByID = function() end
+-- The item-data request counter.
+--
+-- Installed BEFORE the addon loads, because gearscore.lua captures
+-- C_Item.RequestLoadItemDataByID at file scope (gearscore.lua:101) -- a
+-- counter swapped in afterwards would never be seen by the shared throttle.
+REALG.__rawItemRequests = 0
+REALG.__rawItemRequestIDs = {}
+REALG.C_Item.RequestLoadItemDataByID = function(id)
+    REALG.__rawItemRequests = REALG.__rawItemRequests + 1
+    REALG.__rawItemRequestIDs[#REALG.__rawItemRequestIDs + 1] = id
+end
 REALG.C_Item.ContinueWithCancelOnItemLoad = function(_, fn) return function() end end
 REALG.C_Item.GetItemLinkByID = function() return ITEM[1].link end
 REALG.C_Item.GetItemLinkByGUID = function() return nil end
@@ -640,14 +697,33 @@ REALG.GetClassAtlas = function() return "classicon-warrior" end
 REALG.IsModifierKeyDown = function() return false end
 REALG.IsShiftKeyDown = function() return false end
 REALG.NotifyInspect = function() end
-REALG.ClearInspectPlayer = function() end
+-- THE 0.7.9 REGRESSION MOCK.
+--
+-- ClearInspectPlayer() purges the inspected unit from the client engine, so
+-- Blizzard's own InspectPaperDollItemSlotButton_Update then finds
+-- GetInventoryItemTexture returning nil for all 18 equipment slots and resets
+-- every button to its empty background texture -- "Right-click inspect stripped
+-- all gear from the paperdoll on Retail and WoW Forever" (0.7.9). Blizzard
+-- itself calls it only from InspectFrame_OnHide
+-- (origin/live: Blizzard_InspectUI/Mainline/Blizzard_InspectUI.lua:104;
+--  origin/classic_era: Blizzard_InspectUI/Vanilla/Blizzard_InspectUI.lua:85).
+--
+-- The mock stays a no-op to the client -- nothing else about it changes -- and
+-- COUNTS the call, because the guarantee to pin is the ABSENCE of the call,
+-- and nothing else can observe an absence.
+REALG.__clearInspectPlayerCalls = 0
+REALG.ClearInspectPlayer = function()
+    REALG.__clearInspectPlayerCalls = (REALG.__clearInspectPlayerCalls or 0) + 1
+end
 REALG.CanInspect = function() return true end
 REALG.GetComparisonAchievementPoints = function() return 0 end
 REALG.GetTotalAchievementPoints = function() return 0 end
 REALG.GetQuestDifficultyColor = function() return { r = 1, g = .5, b = 0 } end
 REALG.C_Timer = { After = function(_, _, fn) if fn then fn() end end,
-    NewTimer = function(_, _, fn) return { Cancel = function() end, func = fn } end,
-    NewTicker = function(_, _, fn) return { Cancel = function() end, func = fn } end }
+    NewTimer = function(...) local a = {...}; local fn = a[#a]
+        local h = { Cancel = function() end, func = fn }; TIMERS[#TIMERS + 1] = h; return h end,
+    NewTicker = function(...) local a = {...}; local fn = a[#a]
+        local h = { Cancel = function() end, func = fn }; TIMERS[#TIMERS + 1] = h; return h end }
 REALG.C_PlayerInfo = { GUIDIsPlayer = function(g)
     return type(g) == "string" and string.find(g, "Player%-", 1) == 1 end }
 REALG.C_Map = { GetBestMapForUnit = function() return nil end }
@@ -657,9 +733,9 @@ REALG.C_Map = { GetBestMapForUnit = function() return nil end }
 -- render grey.
 -- `icon` is a fileID on the modern clients, which is why it is a number here.
 local SPECS = {
-    [1] = { id = 71, name = "Arms", icon = 1100001 },
-    [2] = { id = 72, name = "Fury", icon = 1100002 },
-    [3] = { id = 73, name = "Protection", icon = 1100003 },
+    [1] = { id = 71, name = "Arms", icon = 1100001, role = "TANK", class = "WARRIOR", classDisplayName = "Warrior" },
+    [2] = { id = 72, name = "Fury", icon = 1100002, role = "DPS", class = "WARRIOR", classDisplayName = "Warrior" },
+    [3] = { id = 73, name = "Protection", icon = 1100003, role = "TANK", class = "WARRIOR", classDisplayName = "Warrior" },
 }
 
 -- C_SpecializationInfo.GetSpecializationInfo has the same 10-value return on
@@ -791,13 +867,17 @@ REALG.C_SpecializationInfo.GetClassIDFromSpecID = function(specID)
     return 0
 end
 REALG.C_SpecializationInfo.GetNumSpecializationsForClassID = function() return 3 end
+-- GetSpecializationInfoByID publishes SEVEN values:
+--   id, name, description, texture, role, class, classDisplayName
+-- The mock published four, so #5-#7 were latent gaps (the addon reads #2 and
+-- #4 only today). origin/live: ClubFinder.lua:599 destructures exactly seven.
 REALG.GetSpecializationInfoByID = function(specID)
     for _, s in pairs(SPECS) do
         if (s.id == specID) then
-            return s.id, s.name, "desc", s.icon
+            return s.id, s.name, "desc", s.icon, s.role, s.class, s.classDisplayName
         end
     end
-    return nil
+    return nil, nil, nil, nil, nil, nil, nil
 end
 REALG.UnitSex = function() return 2 end
 
@@ -817,7 +897,13 @@ REALG.InterfaceOptions_AddCategory = function() end
 REALG.InterfaceOptionsFrame_OpenToCategory = function() end
 REALG.InterfaceOptionsFrame_Show = function() end
 REALG.BackdropTemplateMixin = {}
-REALG.Item = nil
+-- Broken-by-design object API: CreateFromItemLink raises, so the no-object
+-- fallback arm (fire-and-forget request + bounded one-shot repaint) is
+-- reachable in-harness. A nil Item would take the earlier silent return
+-- instead, and a working factory would never take the arm at all. Cached
+-- fixtures never reach the arm (no refresh is scheduled for complete info),
+-- so normal item renders are unaffected.
+REALG.Item = { CreateFromItemLink = function() error("BATCH3_PIN_NO_ITEM_API") end }
 REALG.Settings = nil
 REALG.ColorPickerFrame = nil
 
@@ -896,6 +982,31 @@ else
     REALG.GameTooltip.GetItem = function() return "n", ITEM[1].link end
 end
 
+-- The client's GameTooltip:GetUnit returns NAME and UNIT -- two values, never a
+-- third.
+--
+-- Verified in the FrameXML mirror (wow-ui-source) on all five branches: every
+-- Blizzard call site destructures exactly two --
+-- `local name, unit = self:GetUnit()` at
+-- Interface/AddOns/Blizzard_PTRFeedback/Blizzard_PTRFeedback_Tooltips.lua:87
+-- on origin/classic_era, origin/classic_anniversary and origin/classic_titan,
+-- and :105 on origin/forever and origin/live -- and NO call site on any
+-- branch destructures three.
+--
+-- The GUID comes from the SIBLING resolver instead:
+-- Interface/AddOns/Blizzard_SharedXMLGame/Tooltip/TooltipUtil.lua:40
+-- (`return name, unit, guid;`) -- and that namespace does not exist on the
+-- Classic family at all.
+--
+-- A mock that returned a third value made main.lua's
+-- `pcall(tooltip.GetUnit, tooltip)` read a guid the engine never publishes,
+-- and the branch it feeds (resolveTooltipUnit's `elseif (ok and guid)`) cannot
+-- be taken by a real client on any of the five. Every mock below therefore
+-- returns exactly two values.
+local function mockGetUnit(unitToken)
+    return function() return "n", unitToken end
+end
+
 --------------------------------------------------------------------------
 local order = {
     "Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
@@ -952,10 +1063,29 @@ end
 
 local checks = {}
 -- The name-on-line-1 bump. Mirrors TOOLTIP_NAME_FONT_SIZE_DELTA in main.lua.
-local TOOLTIP_NAME_FONT_SIZE_DELTA = 2
+local TOOLTIP_NAME_FONT_SIZE_DELTA = 1
+-- The delta as a LITERAL, not as a copy of the constant above: a pin that
+-- mirrors the production value cannot fail when that value changes. The
+-- operator's value for the name line is 1 -- one point above the body text --
+-- and it does not move.
+local SHIPPED_NAME_FONT_SIZE_DELTA = 1
 local function check(name, cond, detail)
     checks[#checks + 1] = { name, cond and true or false, detail }
 end
+
+--------------------------------------------------------------------------
+-- The mock-fidelity contract (proctor HI-12).
+--
+-- Every mock is a claim about what the client does, and three of them were
+-- wrong while the suite stayed green. The table in mock_contract.lua records
+-- the client's arity per API with the mirror citation that established it;
+-- these assertions measure the mock that is actually installed and fail when
+-- the two disagree. The next drift fails the suite instead of waiting for a
+-- human to read FrameXML.
+--------------------------------------------------------------------------
+MOCKC.assertArity(check, "UnitClass", REALG.UnitClass)
+MOCKC.assertArity(check, "GetSpecializationInfoByID", REALG.GetSpecializationInfoByID)
+MOCKC.assertArity(check, "GetInspectGuildInfo", REALG.C_PaperDollInfo.GetInspectGuildInfo)
 
 -- Direct probe of the library so a wrong value is reported even if the tooltip
 -- line happens to render something plausible.
@@ -1267,8 +1397,24 @@ do
                 return "n", currentUnit, UNITS[currentUnit].guid
             end
         else
-            GT.GetUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end
+            GT.GetUnit = mockGetUnit(currentUnit)
         end
+    end
+
+    -- The client's GameTooltip:GetUnit publishes NAME and UNIT and nothing else
+    -- (the mirror evidence is on the mockGetUnit helper above). Pinned HERE,
+    -- next to the resolver the whole Classic suite runs on, because a third
+    -- value would let the addon read a guid the engine never publishes -- and
+    -- the arm that guid feeds is unreachable on every supported client.
+    --
+    -- The pipeline family resolves through TooltipUtil, whose third return
+    -- (name, unit AND guid) IS faithful, so the check applies to the Classic
+    -- resolver only.
+    if (not REALG.TooltipUtil) then
+        installUnitResolver()
+        check("the installed GetUnit resolver publishes exactly two values, like the engine",
+            select("#", GT.GetUnit(GT)) == 2,
+            "returns=" .. tostring(select("#", GT.GetUnit(GT))))
     end
 
     local function driveUnit(unitName)
@@ -1530,6 +1676,15 @@ do
             l2 ~= nil and l2.__fontSize == wantSize,
             "line2 size=" .. tostring(l2 and l2.__fontSize) .. " (wanted " .. tostring(wantSize) .. ")")
 
+        -- The name/body relationship, as a literal. The check above compares
+        -- against a copy of the constant in main.lua, so it cannot fail when
+        -- the constant itself is edited. The name sits one point above the
+        -- body text, and that is the shipped value.
+        check("the name line sits 1pt above the body text",
+            l1 ~= nil and l2 ~= nil and l1.__fontSize == l2.__fontSize + SHIPPED_NAME_FONT_SIZE_DELTA,
+            "line1 size=" .. tostring(l1 and l1.__fontSize) .. " line2 size=" .. tostring(l2 and l2.__fontSize)
+                .. " (wanted line1 = line2 + " .. tostring(SHIPPED_NAME_FONT_SIZE_DELTA) .. ")")
+
         -- The guard must not be a one-way latch: a changed setting has to write
         -- through on the next render.
         local probe, prevFont = mediaProbe("font")
@@ -1625,6 +1780,36 @@ do
                 "alpha=" .. tostring(bc and bc[4]))
             CFG.tooltip_border_alpha = prevAlpha
         end
+    end
+
+    -- ---- The border thickness must match the SHIPPED default -------------
+    --
+    -- The shipped default is 20 (options.lua DEFAULTS.tooltip_border_edge_size
+    -- = 20, and ApplyConfigDefaults copies it into a fresh profile). main.lua's
+    -- LAST-RESORT literal was 16, and it is the literal a player gets whose
+    -- SavedVariables carry no edge size at all -- while the description string
+    -- in the options panel promised a different number again.
+    --
+    -- The chain in main.lua is: the resolver (TT:GetResolvedTooltipBorderEdgeSize)
+    -- -> the player's own setting -> the literal. This exercises the LAST link,
+    -- so both earlier links are taken away for the duration, and the backdrop
+    -- signature is cleared so the frame re-tiles instead of skipping the call.
+    do
+        local CFG = REALG.TacoTipConfig
+        local backdrop = GT.TacoTipBackdropFrame
+        local savedResolver = TT.GetResolvedTooltipBorderEdgeSize
+        local savedSize = CFG.tooltip_border_edge_size
+        local savedSig = backdrop and backdrop._tacoTipBackdropSig
+        CFG.tooltip_border_edge_size = nil
+        TT.GetResolvedTooltipBorderEdgeSize = nil
+        if (backdrop) then backdrop._tacoTipBackdropSig = nil end
+        settlePair(PAIR)
+        local info = (backdrop and backdrop.__backdropInfo) or {}
+        check("the border edge size falls back to the shipped default (20)",
+            info.edgeSize == 20, "edgeSize=" .. tostring(info.edgeSize))
+        TT.GetResolvedTooltipBorderEdgeSize = savedResolver
+        CFG.tooltip_border_edge_size = savedSize
+        if (backdrop) then backdrop._tacoTipBackdropSig = savedSig end
     end
 
     -- ---- FIX 4: tooltip_max_width never reached item tooltips -----------
@@ -1929,6 +2114,284 @@ do
 
         CFG.tooltip_max_width = prevMax
         CFG.show_power_bar = prevPower
+    end
+
+    -- A SAVED CUSTOM POSITION MUST SURVIVE THE RENDER.
+    --
+    -- The SetDefaultAnchor post-hook cannot own this: the client calls it
+    -- immediately BEFORE GameTooltip:SetUnit (classic_era UnitFrame.lua,
+    -- live Mainline/UnitFrame.lua:390-391), so the tooltip still describes the
+    -- previous unit and the gate reads a world unit as "menu". The render runs
+    -- after SetUnit, so the anchor is applied there -- this pin is that path.
+    -- Revert map: delete the applyCustomTooltipAnchor call at the end of
+    -- TT:ApplyTooltipAppearance -> this pin goes red.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevPos, prevAnchor = CFG.custom_pos, CFG.custom_anchor
+        local prevMouse, prevPower = CFG.anchor_mouse, CFG.show_power_bar
+        CFG.anchor_mouse = false
+        CFG.show_power_bar = false
+        CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 300, 200 }
+        CFG.custom_anchor = "TOPLEFT"
+        if (type(REALG.TacoTip_CustomPosEnable) == "function") then
+            pcall(REALG.TacoTip_CustomPosEnable, false)
+        end
+        local handle = REALG.TacoTipDragButton
+        check("a saved custom position creates the handle", handle ~= nil)
+
+        local renderTip = REALG.GameTooltip
+        local savedSetPoint = renderTip.SetPoint
+        local captured = {}
+        renderTip.SetPoint = function(self, p, rel, rp, ox, oy)
+            captured[#captured + 1] = { p = p, rel = rel, rp = rp }
+            return savedSetPoint(self, p, rel, rp, ox, oy)
+        end
+        settlePair(PAIR)
+        renderTip.SetPoint = savedSetPoint
+
+        local anchoredToHandle, anchorName = false, nil
+        for _, c in ipairs(captured) do
+            if (handle and c.rel == handle) then
+                anchoredToHandle, anchorName = true, c.p
+            end
+        end
+        check("the tooltip is anchored to the saved position after the unit is known",
+            anchoredToHandle and anchorName == "TOPLEFT",
+            "handle=" .. tostring(handle ~= nil) .. " anchored=" .. tostring(anchoredToHandle)
+                .. " point=" .. tostring(anchorName))
+
+        CFG.custom_pos, CFG.custom_anchor = prevPos, prevAnchor
+        CFG.anchor_mouse, CFG.show_power_bar = prevMouse, prevPower
+    end
+
+    -- THE PORTRAIT FLIP MUST MEASURE THE SAVED POSITION, NOT THE CLIENT'S.
+    --
+    -- The side is decided inside the render, but the saved anchor is applied at
+    -- the END of it, so tooltip:GetRight() at decision time is still the rect the
+    -- CLIENT produced (classic_era GameTooltip_SetDefaultAnchor anchors
+    -- BOTTOMRIGHT of UIParent; live anchors to the owner). The decision therefore
+    -- said "right", the save then moved the tooltip to the edge, and the portrait
+    -- hung off the screen -- the operator's "it used to flip to the left when it
+    -- went off screen, now it just pulls it off screen". The edge now comes from
+    -- the anchor target, which is known here.
+    --
+    -- Revert map: getPortraitSideRightEdge -> tooltip:GetRight() -> the
+    -- right-edge case goes red (the portrait stays on TOPLEFT).
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevPos, prevAnchor = CFG.custom_pos, CFG.custom_anchor
+        local prevMouse = CFG.anchor_mouse
+        local prevPortrait, prev3D = CFG.tooltip_portrait, CFG.tooltip_portrait_3d
+        local uiPrev = REALG.UIParent.__right
+        CFG.anchor_mouse = false
+        CFG.tooltip_portrait = true
+        CFG.tooltip_portrait_3d = true
+        CFG.custom_anchor = "TOPLEFT"
+        CFG.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 1700, 400 }
+        if (type(REALG.TacoTip_CustomPosEnable) == "function") then
+            pcall(REALG.TacoTip_CustomPosEnable, false)
+        end
+        local handle = REALG.TacoTipDragButton
+        check("a saved position creates the handle for the side-flip test", handle ~= nil)
+
+        REALG.UIParent.__right = SCREEN_W
+        -- The client's own rect: the one the old code measured, safely inside the
+        -- screen. Only the anchor target puts the tooltip at the edge.
+        GT.__right = 0
+        GT.__w = 600
+        handle.__left = 1700
+
+        local function portraitPoint()
+            local p = GT.TacoTipPortrait3D
+            if (p and p.GetNumPoints and p:GetNumPoints() > 0) then
+                return select(1, p:GetPoint(1))
+            end
+            return nil
+        end
+
+        local function recycleTooltip()
+            if (GT.__hooks and GT.__hooks.OnTooltipCleared) then
+                pcall(GT.__hooks.OnTooltipCleared, GT)
+            end
+        end
+
+        recycleTooltip()
+        settlePair(2)
+        local edgePoint = portraitPoint()
+        check("a saved position at the screen edge flips the portrait to the left",
+            edgePoint == "TOPRIGHT",
+            "point=" .. tostring(edgePoint) .. " (handle left 1700 + width 600 vs screen "
+                .. tostring(SCREEN_W) .. ")")
+
+        -- The same mechanism, nowhere near the edge: the portrait must stay on the
+        -- right. Without this the check above would pass on a hardcoded "left".
+        recycleTooltip()
+        handle.__left = 100
+        settlePair(2)
+        local innerPoint = portraitPoint()
+        check("a saved position inside the screen keeps the portrait on the right",
+            innerPoint == "TOPLEFT",
+            "point=" .. tostring(innerPoint))
+
+        -- The stuck case: a SECOND hover on the same GameTooltip, wider than the
+        -- first, with no recycle in between. The side is cached, so it can only
+        -- move if the edge it is measured from is part of the cache key -- that
+        -- key is what this pins. Without it the first hover looked right and every
+        -- later one kept the first hover's side.
+        -- Widths stay within the hard ceiling (320): at handle 1600 a 200-wide
+        -- tooltip ends at 1800 (portrait fits right) while a 320-wide one ends
+        -- at 1920 (tooltip + portrait no longer fits, flips left).
+        handle.__left = 1600
+        GT.__w = 200
+        settleUnitRender("player")
+        GT.__w = 320
+        settleUnitRender("player")
+        local widenPoint = portraitPoint()
+        check("a wider tooltip re-decides the portrait side without a recycle",
+            widenPoint == "TOPRIGHT",
+            "point=" .. tostring(widenPoint) .. " (handle left 1600 + width 320 vs screen "
+                .. tostring(SCREEN_W) .. ")")
+
+        -- Rows appended AFTER the render (TacoTip Extras appends exactly this way)
+        -- grow the tooltip once the width has already been measured. OnShow is the
+        -- re-decision point: the frame is laid out and every line is in.
+        -- Same ceiling math: 1600 + 200 fits right, 1600 + 320 flips left.
+        recycleTooltip()
+        handle.__left = 1600
+        GT.__w = 200
+        settleUnitRender("player")
+        local beforeRows = portraitPoint()
+        GT.__w = 320                   -- the appended rows widen to the ceiling
+        if (GT.__hooks and GT.__hooks.OnShow) then
+            pcall(GT.__hooks.OnShow, GT)
+        end
+        local afterRows = portraitPoint()
+        check("rows appended after the render are measured again at Show",
+            beforeRows == "TOPLEFT" and afterRows == "TOPRIGHT",
+            "before=" .. tostring(beforeRows) .. " after=" .. tostring(afterRows))
+
+        -- Async widening AFTER Show with no re-render and no Show: GearScore
+        -- item loads and inspect results complete this way (TacoTip_GSCallback
+        -- re-drives UpdateTooltip/SetUnit for the same unit, the tooltip lays
+        -- out wider, and the side cache still says "right" because the
+        -- predicted edge never changed). The deferred guard measures the
+        -- portrait's real rect and flips only on a measured overflow -- the
+        -- "fine for a sec, then stretched off screen" report, and the reason a
+        -- fresh hover after an idle replays it (the clear resets the side
+        -- cache, so the same stale-width decision is made again).
+        recycleTooltip()
+        handle.__left = 1600
+        GT.__w = 200
+        local timersBeforeGuard = #TIMERS
+        settleUnitRender("player")
+        check("a shown portrait schedules the post-layout guard",
+            #TIMERS > timersBeforeGuard,
+            "no timer scheduled")
+        check("portrait starts on the right while everything fits",
+            portraitPoint() == "TOPLEFT",
+            "point=" .. tostring(portraitPoint()))
+        -- The async completion: the client lays out wider and the portrait
+        -- ends up past the screen edge, with no render and no Show to notice.
+        local guardPortrait = GT.TacoTipPortrait3D
+        if (guardPortrait) then
+            guardPortrait.__right = SCREEN_W + 10
+            guardPortrait.__left = SCREEN_W - 56
+        end
+        local guardFlipsBefore = (TT.ev and TT.ev.portraitGuardFlip) or 0
+        local timersAfterSettle = #TIMERS
+        for i = timersBeforeGuard + 1, timersAfterSettle do
+            local h = TIMERS[i]
+            if (h and type(h.func) == "function") then pcall(h.func) end
+        end
+        check("the guard flips a measured off-screen portrait left",
+            portraitPoint() == "TOPRIGHT",
+            "point=" .. tostring(portraitPoint()))
+        check("...and counts the flip",
+            ((TT.ev and TT.ev.portraitGuardFlip) or 0) == guardFlipsBefore + 1,
+            "portraitGuardFlip=" .. tostring((TT.ev and TT.ev.portraitGuardFlip) or 0))
+
+        -- Slow async appends landing after the first guard pass: the pass did
+        -- work (capped + flipped), so exactly one bounded follow-up is
+        -- scheduled -- never a chain.
+        local firstPassTimers = #TIMERS
+        check("a guard pass that did work schedules one bounded follow-up",
+            firstPassTimers == timersAfterSettle + 1,
+            "timers=" .. tostring(firstPassTimers - timersAfterSettle))
+        -- Another late line arrives after the first pass fired.
+        GT:AddLine("a second slow third-party line that must also be capped")
+        local lateLine = GT:GetLeftLine(GT:NumLines())
+        local followUp = TIMERS[#TIMERS]
+        if (followUp and type(followUp.func) == "function") then
+            pcall(followUp.func)
+        end
+        check("the follow-up caps the line that arrived after the first pass",
+            lateLine ~= nil and lateLine._tacoTipMaxWidth == 320,
+            "memo=" .. tostring(lateLine and lateLine._tacoTipMaxWidth))
+        check("...and the final pass does not chain a third timer",
+            #TIMERS == firstPassTimers,
+            "timers=" .. tostring(#TIMERS - firstPassTimers))
+
+        -- The follow-up is unconditional: a slow async append can land after a
+        -- clean first pass (nothing capped, nothing flipped), and with no
+        -- follow-up nothing would re-check until the next hover -- the "first
+        -- hover fine, second hover stretched" shape. Fresh hover, no late
+        -- lines: firing the idle first pass must still arm exactly one
+        -- follow-up, and the idle final pass must arm nothing.
+        recycleTooltip()
+        handle.__left = 100
+        GT.__w = 200
+        -- Park the portrait mock back on screen: the flip pin above left it
+        -- past the edge on purpose, and this pass must be genuinely idle --
+        -- nothing to cap (all memos set), nothing off screen.
+        local idlePortrait = GT.TacoTipPortrait3D
+        if (idlePortrait) then
+            idlePortrait.__right = 300
+            idlePortrait.__left = 230
+        end
+        local idleTimersBefore = #TIMERS
+        settleUnitRender("player")
+        local idleAfterSettle = #TIMERS
+        for i = idleTimersBefore + 1, idleAfterSettle do
+            local h = TIMERS[i]
+            if (h and type(h.func) == "function") then pcall(h.func) end
+        end
+        check("an idle first pass still arms the bounded follow-up",
+            #TIMERS == idleAfterSettle + 1,
+            "timers=" .. tostring(#TIMERS - idleAfterSettle))
+        local followTimers = #TIMERS
+        local followUpIdle = TIMERS[followTimers]
+        if (followUpIdle and type(followUpIdle.func) == "function") then
+            pcall(followUpIdle.func)
+        end
+        check("...and the idle final pass arms nothing further",
+            #TIMERS == followTimers,
+            "timers=" .. tostring(#TIMERS - followTimers))
+
+        -- Mouse-anchor mode must NOT key on the edge: the cursor follower moves the
+        -- tooltip every frame, so an edge key would re-anchor the portrait on every
+        -- render -- the per-render anchor 0.7.9 removed.
+        CFG.anchor_mouse = true
+        GT.__right = 200
+        local anchorsBeforeMouse = (TT.ev and TT.ev.portraitAnchor) or 0
+        for i = 1, 5 do
+            -- The cursor follower moves the tooltip every frame.
+            GT.__right = 200 + i * 7
+            settleUnitRender("player")
+        end
+        local mouseAnchors = ((TT.ev and TT.ev.portraitAnchor) or 0) - anchorsBeforeMouse
+        check("mouse-anchor mode does not re-anchor the portrait per render",
+            mouseAnchors <= 1,
+            "anchored " .. tostring(mouseAnchors) .. " time(s) across 5 renders")
+
+        GT.__right = 0
+        GT.__w = nil
+        handle.__left = 0
+        REALG.UIParent.__right = uiPrev
+        CFG.custom_pos, CFG.custom_anchor = prevPos, prevAnchor
+        CFG.anchor_mouse = prevMouse
+        CFG.tooltip_portrait, CFG.tooltip_portrait_3d = prevPortrait, prev3D
+        pcall(TT.clearTooltipVisuals, GT)
+        settlePair(2)
     end
 
     -- The unit Level label must resolve through TACOTIP_LOCALE rather than being
@@ -2367,7 +2830,7 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
     -- assertion inherits the broken state.
     REALG.TooltipUtil.GetDisplayedUnit = function()
         return "n", currentUnit, UNITS[currentUnit].guid end
-    GT.GetUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end
+    GT.GetUnit = mockGetUnit(currentUnit)
     GT.__unit = "player"
     GT.__shown = true
     GT:ClearLines()
@@ -2420,7 +2883,7 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         REALG.TooltipUtil.GetDisplayedUnit = function()
             return "n", currentUnit, UNITS[currentUnit].guid
         end
-        GT.GetUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end
+        GT.GetUnit = mockGetUnit(currentUnit)
         GT.__unit = "player"
         GT.__shown = true
         GT.__alpha = 0.25            -- a faded tooltip
@@ -2538,7 +3001,7 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         GT:AddLine("")
         GT:AddLine("HP: 50/50")
         REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
-        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = mockGetUnit("player")
         pcall(unitPost.fn, GT, { guid = UNITS.player.guid })   -- establish the portrait
 
         -- Now the frame re-renders while the unit cannot be resolved.
@@ -2576,7 +3039,7 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         local savedDisp, savedGetUnit = REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit
         GT.__unit = "player"
         REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
-        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = mockGetUnit("player")
         GT:ClearLines()
         GT:AddLine("Testplayer")
         GT:AddLine("Level 60 Human")
@@ -2644,7 +3107,7 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
 
         local function renderUnit(u, n)
             GT.__unit = u
-            GT.GetUnit = function() return "n", u, UNITS[u].guid end
+            GT.GetUnit = mockGetUnit(u)
             REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
             for _ = 1, n or 5 do
                 GT:ClearLines()
@@ -2776,7 +3239,7 @@ do
         if (REALG.TooltipUtil) then
             REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
         end
-        GT.GetUnit = function() return "n", u, UNITS[u].guid end
+        GT.GetUnit = mockGetUnit(u)
     end
     local function resolveToNothing()
         if (REALG.TooltipUtil) then
@@ -2951,6 +3414,57 @@ do
             hidesOrphan == 0, "Hide() calls=" .. tostring(hidesOrphan))
     end
 
+    -- 4. THE COUNTERS MUST COUNT CALLS THAT DID SOMETHING.
+    --
+    -- Live /tt diag read hides 1045 and destroys 310 against 99 unit renders,
+    -- and the trace showed why: Hide() fires on frames already hidden, and
+    -- ClearModel fires with tacoTipModelKey already nil. Both are engine
+    -- no-ops, so both inflated the counters past the number that should bound
+    -- them -- unit renders.
+    --
+    -- The guards these two checks pin:
+    --   * Hide() + portraitModelHidden only when the frame is shown;
+    --   * ClearModel + portraitHide/portraitDestroy/teardownBy only when the
+    --     loaded-unit cache still names a model -- keyed on the CACHE, not on
+    --     visibility, so a frame that OnTooltipCleared hid with its mesh still
+    --     resident is still unloaded by a later genuine teardown.
+    --
+    -- Each check is revert-to-fail: with its guard removed the delta below
+    -- doubles. Proved by running the suite against a mutated temp copy, never
+    -- against this tree.
+    resolveTo("player")
+    render(UNITS.player.guid)             -- reload the mesh and show the frame
+    local hiddenBefore = (TT.ev and TT.ev.portraitModelHidden) or 0
+    if (type(cleared) == "function") then pcall(cleared, GT) end
+    if (type(cleared) == "function") then pcall(cleared, GT) end
+    check("a second OnTooltipCleared with no interim show counts no second hide",
+        ((TT.ev and TT.ev.portraitModelHidden) or 0) - hiddenBefore == 1,
+        "portraitModelHidden went " .. tostring(hiddenBefore) .. " -> "
+            .. tostring((TT.ev and TT.ev.portraitModelHidden) or 0)
+            .. " across two OnTooltipCleared calls on one still-shown frame")
+
+    resolveTo("player")
+    render(UNITS.player.guid)             -- the mesh is loaded again after the clears
+    local destroysBefore = (TT.ev and TT.ev.portraitDestroy) or 0
+    -- Resolved with rawget, exactly like the hover block below: POSTCALLS is a
+    -- harness global, and a bare read would add luacheck warnings this tree's
+    -- harness-globals config section does not suppress.
+    local itemPost = rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[2] or nil
+    local function driveItem()
+        if (itemPost) then
+            itemPost.fn(GT, { hyperlink = ITEM[1].link })
+        elseif (GT.__hooks and GT.__hooks.OnTooltipSetItem) then
+            GT.__hooks.OnTooltipSetItem(GT, ITEM[1].link)
+        end
+    end
+    driveItem()
+    driveItem()
+    check("a second item recycle with no interim unit counts no second destroy",
+        ((TT.ev and TT.ev.portraitDestroy) or 0) - destroysBefore == 1,
+        "portraitDestroy went " .. tostring(destroysBefore) .. " -> "
+            .. tostring((TT.ev and TT.ev.portraitDestroy) or 0)
+            .. " across two item recycles after one unit render")
+
     REALG.TacoTipConfig.tooltip_portrait = savedPortrait
     REALG.TacoTipConfig.tooltip_portrait_3d = savedPortrait3D
     if (REALG.TooltipUtil) then
@@ -3021,7 +3535,7 @@ do
 
     local function renderHover(u)
         GT.__unit = u
-        GT.GetUnit = function() return "n", u, UNITS[u].guid end
+        GT.GetUnit = mockGetUnit(u)
         if (REALG.TooltipUtil) then
             REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
         end
@@ -3057,6 +3571,228 @@ do
     GT.GetUnit, GT.__unit = savedGetUnit, savedUnitToken
 end
 
+    -- ==================================================================
+    -- The guild guard: the install path, the swallow, and the two buckets.
+    --
+    -- The guard exists for a BLIZZARD defect: InspectGuildFrame_Update
+    -- formats the inspected player's guild data, and for a player with no
+    -- guild that data is nil, so Blizzard's own frame raises and the
+    -- right-click inspect dies half-rendered. The guard swallows that so the
+    -- player keeps their inspect.
+    --
+    -- THE SWALLOW IS THE FIX and must never be weakened: the error must not
+    -- reach the player, and it must not reach Blizzard's caller either. What
+    -- the final hunter changed (M-2) is the COUNTING: the swallow used to
+    -- file EVERY error under `inspectGuildGuardCaught`, a name that asserts
+    -- the error was the guild-nil case.
+    --
+    -- INSTALL PATH (mirror-verified on all five branches):
+    --   * Blizzard_InspectUI is LoadOnDemand ("## LoadOnDemand: 1" in
+    --     Blizzard_InspectUI.toc on origin/live and origin/forever), so the
+    --     global does NOT exist when this addon loads. The guard is installed
+    --     from the ADDON_LOADED handler, when Blizzard_InspectUI itself loads.
+    --   * The global `InspectGuildFrame_Update` exists on the modern pair
+    --     (origin/live: Mainline/InspectGuildFrame.lua:17; origin/forever:
+    --     Mainline/InspectGuildFrame.lua:17 AND Camelot/InspectGuildFrame.lua:17
+    --     -- both variants define it) and on NO Classic branch: the Classic
+    --     family has only `InspectGuildFrameMixin:Update()` (Cata/InspectGuildFrame.lua
+    --     on classic_era, classic_anniversary and classic_titan), so there is
+    --     no global to wrap and the guard is a NO-OP there.
+    -- ==================================================================
+    do
+        REALG.InspectGearScore = REALG.InspectGearScore or makeWidget("FontString", "InspectGearScore")
+        REALG.InspectGearScoreText = REALG.InspectGearScoreText or makeWidget("FontString", "InspectGearScoreText")
+        REALG.InspectAvgItemLvl = REALG.InspectAvgItemLvl or makeWidget("FontString", "InspectAvgItemLvl")
+        REALG.InspectAvgItemLvlText = REALG.InspectAvgItemLvlText or makeWidget("FontString", "InspectAvgItemLvlText")
+
+        -- The state BEFORE Blizzard_InspectUI has loaded: no global, no latch.
+        local savedUpdate = rawget(REALG, "InspectGuildFrame_Update")
+        local savedLatch = rawget(REALG, "_tacoTipInspectGuildGuarded")
+        local savedInitInspectFrame = TT.InitInspectFrame
+        local savedGuildInfo = REALG.C_PaperDollInfo and REALG.C_PaperDollInfo.GetInspectGuildInfo or nil
+        local savedInspectUnit = REALG.InspectFrame and REALG.InspectFrame.unit or nil
+
+        -- The mock Blizzard function the guard wraps. `guildErr` is what it
+        -- raises; nil means it succeeds.
+        local guildErr = nil
+        local function blizzardGuildUpdate() if (guildErr) then error(guildErr, 0) end end
+
+        rawset(REALG, "InspectGuildFrame_Update", nil)
+        rawset(REALG, "_tacoTipInspectGuildGuarded", nil)
+        if (usePipeline) then
+            -- The modern pair: Blizzard_InspectUI has loaded, so the global
+            -- exists. The Classic family has no such global at all.
+            rawset(REALG, "InspectGuildFrame_Update", blizzardGuildUpdate)
+        end
+        -- The inspected unit, so the guard's probe can ask for the guild data.
+        if (REALG.InspectFrame) then REALG.InspectFrame.unit = "target" end
+
+        -- The install path: the addon installs the guard from the ADDON_LOADED
+        -- handler, when Blizzard_InspectUI itself loads.
+        local frame = TT.frame
+        local handler = frame and frame.__scripts and frame.__scripts.OnEvent or nil
+        check("event handler present for the guild-guard install pin", type(handler) == "function")
+        if (type(handler) == "function") then
+            pcall(handler, frame, "ADDON_LOADED", "Blizzard_InspectUI")
+        end
+        if (usePipeline) then
+            check("the guild guard installs when Blizzard_InspectUI loads (modern pair)",
+                rawget(REALG, "_tacoTipInspectGuildGuarded") == true,
+                "latch=" .. tostring(rawget(REALG, "_tacoTipInspectGuildGuarded")))
+            check("...and the global is now the guard, not Blizzard's own function",
+                rawget(REALG, "InspectGuildFrame_Update") ~= blizzardGuildUpdate
+                    and type(rawget(REALG, "InspectGuildFrame_Update")) == "function",
+                "wrapped=" .. tostring(rawget(REALG, "InspectGuildFrame_Update") ~= blizzardGuildUpdate))
+        else
+            check("the guild guard is a NO-OP on the Classic family (no global to wrap)",
+                rawget(REALG, "_tacoTipInspectGuildGuarded") == nil
+                    and rawget(REALG, "InspectGuildFrame_Update") == nil,
+                "latch=" .. tostring(rawget(REALG, "_tacoTipInspectGuildGuarded")))
+        end
+
+        -- The SWALLOW and the two buckets. The guard exists only on the modern
+        -- pair, so there is nothing to prove on the Classic family.
+        if (usePipeline) then
+            -- The guildless inspect: Blizzard's own defect. The inspected
+            -- player has NO guild, so the realm name is nil -- the
+            -- precondition of the defect -- and the update raises.
+            REALG.C_PaperDollInfo.GetInspectGuildInfo = function() return 0, 0, nil, nil end
+            guildErr = "bad argument #2 to 'SetFormattedText' (string expected, got nil)"
+            local caughtBefore = (TT.ev and TT.ev.inspectGuildGuardCaught) or 0
+            local otherBefore = (TT.ev and TT.ev.inspectUpdateErrors) or 0
+            local ok, err = pcall(REALG.InspectGuildFrame_Update)
+            check("the guild guard swallows the guildless-inspect error: it does not escape",
+                ok, tostring(err))
+            check("...and the guildless case counts in the guild bucket",
+                ((TT.ev and TT.ev.inspectGuildGuardCaught) or 0) == caughtBefore + 1,
+                "caught=" .. tostring((TT.ev and TT.ev.inspectGuildGuardCaught) or 0))
+            check("...and NOT in the other bucket",
+                ((TT.ev and TT.ev.inspectUpdateErrors) or 0) == otherBefore,
+                "other=" .. tostring((TT.ev and TT.ev.inspectUpdateErrors) or 0))
+
+            -- A DIFFERENT error: the inspected player HAS a guild, so the
+            -- guild-nil defect cannot be the cause.
+            REALG.C_PaperDollInfo.GetInspectGuildInfo = function()
+                return 0, 12, "Testguild", "Testrealm" end
+            guildErr = "HUNTER_PIN_OTHER_INSPECT_ERROR"
+            local caughtBefore2 = (TT.ev and TT.ev.inspectGuildGuardCaught) or 0
+            local otherBefore2 = (TT.ev and TT.ev.inspectUpdateErrors) or 0
+            local ok2, err2 = pcall(REALG.InspectGuildFrame_Update)
+            check("an unrelated inspect error is still swallowed", ok2, tostring(err2))
+            check("...and counts in the honest bucket, NOT in the guild bucket",
+                ((TT.ev and TT.ev.inspectUpdateErrors) or 0) == otherBefore2 + 1
+                    and ((TT.ev and TT.ev.inspectGuildGuardCaught) or 0) == caughtBefore2,
+                "other=" .. tostring((TT.ev and TT.ev.inspectUpdateErrors) or 0)
+                    .. " caught=" .. tostring((TT.ev and TT.ev.inspectGuildGuardCaught) or 0))
+            check("...and the honest bucket keeps the message",
+                type(TT.ev and TT.ev.lastInspectUpdateError) == "string"
+                    and TT.ev.lastInspectUpdateError:find("HUNTER_PIN_OTHER_INSPECT_ERROR", 1, true) ~= nil,
+                "last=" .. tostring(TT.ev and TT.ev.lastInspectUpdateError))
+        end
+
+        -- Restore the fixture. The ADDON_LOADED path consumes TT.InitInspectFrame
+        -- (onEvent nils it after the one-shot init), and the guild frame's
+        -- global and the latch are the addon's own to install.
+        rawset(REALG, "InspectGuildFrame_Update", savedUpdate)
+        rawset(REALG, "_tacoTipInspectGuildGuarded", savedLatch)
+        TT.InitInspectFrame = savedInitInspectFrame
+        if (savedGuildInfo) then REALG.C_PaperDollInfo.GetInspectGuildInfo = savedGuildInfo end
+        if (REALG.InspectFrame) then REALG.InspectFrame.unit = savedInspectUnit end
+    end
+
+    -- ==================================================================
+    -- THE 0.7.9 RIGHT-CLICK INSPECT REGRESSION -- and the InspectFrame.unit
+    -- fallback that came with the fix.
+    --
+    -- 0.7.9 shipped a `ClearInspectPlayer()` call INSIDE the INSPECT_READY
+    -- handler, right after the inventory links were cached. It purges the
+    -- inspected unit from the client engine, so Blizzard's own
+    -- InspectPaperDollItemSlotButton_Update then read a nil
+    -- GetInventoryItemTexture for all 18 equipment slots and reset every
+    -- button to its empty background: "Right-click inspect stripped all gear
+    -- from the paperdoll on Retail and WoW Forever" (CHANGELOG.md, 0.7.9).
+    --
+    -- THE FIX IS THE ABSENCE OF THE CALL, so no check on what the call does
+    -- can prove it -- only a COUNT of the call can. The mock above stays a
+    -- no-op to the client and counts the call, so the guarantee is provable
+    -- offline: the operator cannot test this in game before publishing.
+    --
+    -- These two pins run on ALL FIVE clients, so the guarantee is proven on
+    -- Retail and WoW Forever too -- the two clients 0.7.9 broke. The same
+    -- pair of guarantees is pinned against the library's own environment in
+    -- detect_test.lua.
+    --
+    -- The second pin is the other half of the same fix: an inspect of a unit
+    -- that is NEITHER the target NOR the mouseover -- a right-click inspect of
+    -- a party/raid member out of the guild roster, or out of chat -- has to
+    -- resolve through InspectFrame.unit, or the answer is discarded and the
+    -- data is requested again later.
+    -- ==================================================================
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("the inspector is reachable for the 0.7.9 pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local handler = CI.frame and CI.frame.__scripts and CI.frame.__scripts.OnEvent
+            check("the INSPECT_READY handler is reachable for the 0.7.9 pin",
+                type(handler) == "function")
+            if (type(handler) == "function") then
+                -- The real inspect path: INSPECT_READY -> cacheUnitData.
+                local guid = UNITS.mouseover.guid
+                -- Hermetic: a cached record would make the cache check below
+                -- pass without the inspect having run at all.
+                if (CI.cache) then CI.cache[guid] = nil end
+                local callsBefore = REALG.__clearInspectPlayerCalls or 0
+                local ok, err = pcall(handler, CI.frame, "INSPECT_READY", guid)
+                check("the inspect completes", ok, tostring(err))
+                -- The control: the inspect really ran. Without it the counter
+                -- below would be zero because NOTHING happened, which is the
+                -- same number the regression produces.
+                check("...and the inspected unit's data is cached",
+                    type(CI.cache[guid]) == "table",
+                    "cached=" .. tostring(CI.cache[guid] ~= nil))
+                check("an inspect NEVER calls ClearInspectPlayer (the 0.7.9 regression)",
+                    (REALG.__clearInspectPlayerCalls or 0) == callsBefore,
+                    "ClearInspectPlayer calls="
+                        .. tostring((REALG.__clearInspectPlayerCalls or 0) - callsBefore))
+            end
+        end
+    end
+
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("the inspector is reachable for the InspectFrame.unit pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local handler = CI.frame and CI.frame.__scripts and CI.frame.__scripts.OnEvent
+            check("the INSPECT_READY handler is reachable for the InspectFrame.unit pin",
+                type(handler) == "function")
+            if (type(handler) == "function") then
+                -- A unit the client knows, and that is NEITHER "target" NOR
+                -- "mouseover" -- so the ONLY way its answer can resolve is
+                -- through InspectFrame.unit, which is what a right-click
+                -- inspect of a non-targeted party/raid member leaves behind.
+                local token = "roster"
+                local guid = "Player-7-00000007"
+                UNITS[token] = { guid = guid, name = "Rostermate", level = 60,
+                                 race = "Human", class = "WARRIOR", isPlayer = true,
+                                 pvp = false }
+                local savedInspectFrame = REALG.InspectFrame
+                REALG.InspectFrame = { IsShown = function() return true end, unit = token }
+                if (CI.cache) then CI.cache[guid] = nil end
+                local ok, err = pcall(handler, CI.frame, "INSPECT_READY", guid)
+                check("the inspect of a non-targeted unit completes", ok, tostring(err))
+                check("an inspect of a unit that is neither target nor mouseover resolves "
+                        .. "through InspectFrame.unit and caches its data",
+                    type(CI.cache[guid]) == "table",
+                    "cached=" .. tostring(CI.cache[guid] ~= nil))
+                -- Restore the fixture: the unit and the frame are the
+                -- harness's, and the cached record is not this test's to leave.
+                REALG.InspectFrame = savedInspectFrame
+                UNITS[token] = nil
+                if (CI.cache) then CI.cache[guid] = nil end
+            end
+        end
+    end
+
 -- ONE COMPLETED INSPECT REBUILDS THE TOOLTIP ONCE.
 --
 -- The library fires INVENTORY_READY and TALENTS_READY back to back from a single
@@ -3069,7 +3805,7 @@ do
     check("the library is reachable for the rebuild check", okCI and CI ~= nil)
     if (okCI and CI) then
         GT.__unit = "player"
-        GT.GetUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = mockGetUnit("player")
         if (REALG.TooltipUtil) then
             REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
         end
@@ -3081,6 +3817,1129 @@ do
         check("one completed inspect rebuilds the tooltip ONCE, not twice",
             calls == 1, "GameTooltip:SetUnit calls=" .. tostring(calls))
         GT.SetUnit = realSetUnit
+    end
+end
+
+-- Batch 2 cold-path diag counters (H3/H9 + M1/M2/M4 -- cold paths ONLY).
+-- Each drive below forces ONE failure through a public entry point and asserts
+-- the counter moves; reverting the production increment leaves the counter
+-- still and fails the check. No new mock patterns: the resolvers, error sink
+-- and print capture follow the file's own conventions.
+do
+    -- H3: a repeated pipeline error is suppressed AND counted beside the last
+    -- error, with a bounded ring of the messages.
+    do
+        local cb = _G.TacoTip_GSCallback
+        check("GSCallback present for the suppress pin", type(cb) == "function")
+        if (type(cb) == "function") then
+            GT.__unit = "player"
+            GT.GetUnit = mockGetUnit("player")
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function()
+                    return "n", "player", UNITS.player.guid end
+            end
+            GT.__shown = true
+            local errBefore = #ERRORS
+            local suppBefore = (TT.ev and TT.ev.pipelineErrorsSuppressed) or 0
+            local savedUpdate = GT.UpdateTooltip
+            GT.UpdateTooltip = function() error("BATCH2_PIN_PIPELINE") end
+            pcall(cb, UNITS.player.guid)
+            local errAfterFirst = #ERRORS
+            pcall(cb, UNITS.player.guid)
+            GT.UpdateTooltip = savedUpdate
+            check("first identical pipeline error is reported once",
+                errAfterFirst == errBefore + 1, "errors=" .. tostring(#ERRORS - errBefore))
+            check("...and the repeat is counted as suppressed, not re-reported",
+                ((TT.ev and TT.ev.pipelineErrorsSuppressed) or 0) == suppBefore + 1
+                    and #ERRORS == errAfterFirst,
+                "suppressed=" .. tostring((TT.ev and TT.ev.pipelineErrorsSuppressed) or 0)
+                    .. " errors=" .. tostring(#ERRORS - errBefore))
+            local ring = TT.ev and TT.ev.pipelineSuppressedRing or {}
+            local found = false
+            for _, m in ipairs(ring) do
+                if (type(m) == "string" and m:find("BATCH2_PIN_PIPELINE", 1, true)) then
+                    found = true
+                end
+            end
+            check("...and the bounded ring records the message", found,
+                "ring=" .. tostring(#ring))
+        end
+    end
+
+    -- M2: an unresolvable unit tooltip counts the resolve failure with a cause.
+    do
+        local savedGetUnit, savedDisp, savedUnit = GT.GetUnit,
+            REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil, GT.__unit
+        GT.__unit = nil
+        GT.GetUnit = function() return "n", nil end
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+        end
+        local failBefore = (TT.ev and TT.ev.resolveTooltipUnitFailed) or 0
+        pcall(_G.TacoTip_GSCallback, UNITS.player.guid)
+        GT.GetUnit, GT.__unit = savedGetUnit, savedUnit
+        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+        check("unresolvable unit counts a resolve failure",
+            ((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0) == failBefore + 1,
+            "failed=" .. tostring((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0))
+        check("...and names the cause",
+            type(TT.ev and TT.ev.resolveTooltipUnitLastCause) == "string",
+            "cause=" .. tostring(TT.ev and TT.ev.resolveTooltipUnitLastCause))
+    end
+
+    -- M1: a raising engine probe counts the mouseover guard hit.
+    do
+        local savedIsUnit = GT.IsUnit
+        local savedFade = REALG.TacoTipConfig.instant_fade
+        GT.IsUnit = function() error("BATCH2_PIN_MOUSEOVER") end
+        REALG.TacoTipConfig.instant_fade = true
+        GT.__shown = true
+        local guardBefore = (TT.ev and TT.ev.tooltipIsMouseoverGuarded) or 0
+        local frame = TT.frame
+        local handler = frame and frame.__scripts and frame.__scripts.OnEvent or nil
+        check("event handler present for the mouseover pin", type(handler) == "function")
+        if (type(handler) == "function") then
+            pcall(handler, frame, "UPDATE_MOUSEOVER_UNIT")
+        end
+        GT.IsUnit = savedIsUnit
+        REALG.TacoTipConfig.instant_fade = savedFade
+        check("raising engine probe counts a mouseover guard hit",
+            ((TT.ev and TT.ev.tooltipIsMouseoverGuarded) or 0) > guardBefore,
+            "guarded=" .. tostring((TT.ev and TT.ev.tooltipIsMouseoverGuarded) or 0))
+    end
+
+    -- Batch 7 item 4 (second addition): the REAL Classic unit-resolution chain.
+    --
+    -- The engine's GameTooltip:GetUnit publishes NAME and UNIT -- two values,
+    -- never a third (the mirror evidence is on the mockGetUnit helper above).
+    -- The addon's resolveTooltipUnit therefore cannot read a guid from it, and
+    -- the real chain on the Classic family is:
+    --
+    --   GetUnit token -> IsUnit disagreement -> GetOwner -> "mouseover"
+    --
+    -- The harness used to mock GetUnit with a third value -- a guid the engine
+    -- never publishes -- so the chain it exercised was not the real one. These
+    -- pins drive the real chain and assert each arm in turn.
+    --
+    -- The observable is TacoTip_GSCallback: it resolves the unit with NO unit
+    -- argument (main.lua:1463) and compares the resolved unit's guid against
+    -- the guid it was handed. A mismatch counts gsCallbackWrongUnit; a
+    -- resolution failure ALSO counts resolveTooltipUnitFailed and names the
+    -- cause. So "wrong unit count moved but the failure count did not" means
+    -- the chain resolved to a real unit that is not the one offered.
+    do
+        local savedGetUnit = GT.GetUnit
+        local savedIsUnit = GT.IsUnit
+        local savedGetOwner = GT.GetOwner
+        local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+
+        local function wrongUnits() return (TT.ev and TT.ev.gsCallbackWrongUnit) or 0 end
+        local function resolveFailures() return (TT.ev and TT.ev.resolveTooltipUnitFailed) or 0 end
+
+        -- The pipeline family resolves through TooltipUtil first, so that arm
+        -- is neutralised here: these pins are about the Classic chain, and the
+        -- sibling resolver's third return (name, unit AND guid) is faithful.
+        local function neutraliseTooltipUtil()
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+            end
+        end
+
+        -- 1. A token that EXISTS but that IsUnit disagrees about falls through
+        --    the GetUnit arm to the GetOwner arm.
+        do
+            GT.GetUnit = mockGetUnit("player")
+            GT.IsUnit = function() return false end
+            GT.GetOwner = function() return { unit = "target" } end
+            neutraliseTooltipUtil()
+            local wrongBefore = wrongUnits()
+            local failBefore = resolveFailures()
+            -- The owner IS the unit, so this must NOT be counted as a wrong unit.
+            pcall(_G.TacoTip_GSCallback, UNITS.target.guid)
+            check("the owner arm resolves the unit when IsUnit disagrees",
+                wrongUnits() == wrongBefore,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore))
+            -- ...and the mouseover fallback must NOT have been taken.
+            pcall(_G.TacoTip_GSCallback, UNITS.mouseover.guid)
+            check("...and the mouseover fallback was not taken instead",
+                wrongUnits() == wrongBefore + 1 and resolveFailures() == failBefore,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore)
+                    .. " failures=" .. tostring(resolveFailures() - failBefore))
+        end
+
+        -- 2. The last resort: no owner, and the tooltip really is the mouseover
+        --    tooltip, so "mouseover" is the unit.
+        do
+            GT.GetUnit = mockGetUnit("player")
+            GT.IsUnit = function(_, u) return u == "mouseover" end
+            GT.GetOwner = function() return nil end
+            neutraliseTooltipUtil()
+            local wrongBefore = wrongUnits()
+            local failBefore = resolveFailures()
+            pcall(_G.TacoTip_GSCallback, UNITS.mouseover.guid)
+            check("the mouseover last resort resolves when the tooltip is the mouseover tooltip",
+                wrongUnits() == wrongBefore and resolveFailures() == failBefore,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore)
+                    .. " failures=" .. tostring(resolveFailures() - failBefore))
+        end
+
+        -- 3. Nothing resolves: the failure is counted and the cause named.
+        do
+            GT.GetUnit = mockGetUnit("player")
+            GT.IsUnit = function() return false end
+            GT.GetOwner = function() return nil end
+            neutraliseTooltipUtil()
+            local wrongBefore = wrongUnits()
+            local failBefore = resolveFailures()
+            pcall(_G.TacoTip_GSCallback, UNITS.mouseover.guid)
+            check("an unresolvable unit counts the resolve failure",
+                resolveFailures() == failBefore + 1,
+                "failures=" .. tostring(resolveFailures() - failBefore))
+            check("...and names the cause",
+                TT.ev and TT.ev.resolveTooltipUnitLastCause == "unresolved",
+                "cause=" .. tostring(TT.ev and TT.ev.resolveTooltipUnitLastCause))
+            check("...and the callback counted the unit as wrong",
+                wrongUnits() == wrongBefore + 1,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore))
+        end
+
+        -- 4. GetUnit publishes NO token at all. This is the ONLY case in which
+        --    the guid arm could ever fire -- and with the engine's two-value
+        --    GetUnit there is no guid to read either, so the arm is
+        --    unreachable on every supported client. The chain still resolves
+        --    through the owner, which is the proof that the addon does not
+        --    depend on that arm.
+        do
+            GT.GetUnit = mockGetUnit(nil)
+            GT.IsUnit = function() return false end
+            GT.GetOwner = function() return { unit = "target" } end
+            neutraliseTooltipUtil()
+            local wrongBefore = wrongUnits()
+            local failBefore = resolveFailures()
+            pcall(_G.TacoTip_GSCallback, UNITS.target.guid)
+            check("a GetUnit that publishes no token still resolves through the owner",
+                wrongUnits() == wrongBefore and resolveFailures() == failBefore,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore)
+                    .. " failures=" .. tostring(resolveFailures() - failBefore))
+            pcall(_G.TacoTip_GSCallback, UNITS.mouseover.guid)
+            check("...and it resolved to the owner, not to the mouseover fallback",
+                wrongUnits() == wrongBefore + 1,
+                "wrong=" .. tostring(wrongUnits() - wrongBefore))
+        end
+
+        GT.GetUnit = savedGetUnit
+        GT.IsUnit = savedIsUnit
+        GT.GetOwner = savedGetOwner
+        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+    end
+
+    -- M4: a failing portrait SetUnit counts the set failure. Driven directly
+    -- through the public appearance entry (not the hook chain) so the pin is
+    -- independent of delivery-path state left by earlier blocks.
+    do
+        GT.__unit = "player"
+        GT.GetUnit = mockGetUnit("player")
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function()
+                return "n", "player", UNITS.player.guid end
+        end
+        REALG.TacoTipConfig.tooltip_portrait = true
+        REALG.TacoTipConfig.tooltip_portrait_3d = true
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        if (hookUnit) then pcall(hookUnit, GT) end
+        local portrait = GT.TacoTipPortrait3D or GT.TacoTipPortrait
+        check("portrait present for the set-failure pin", portrait ~= nil)
+        if (portrait) then
+            local savedSetUnit = portrait.SetUnit
+            portrait.SetUnit = function() error("BATCH2_PIN_PORTRAIT") end
+            portrait.tacoTipModelKey = nil
+            local failBefore = (TT.ev and TT.ev.portraitSetFailed) or 0
+            local okA, errA = pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+            portrait.SetUnit = savedSetUnit
+            check("appearance entry runs with the failing portrait",
+                okA, tostring(errA))
+            check("failing portrait SetUnit counts a set failure",
+                ((TT.ev and TT.ev.portraitSetFailed) or 0) > failBefore,
+                "portraitSetFailed=" .. tostring((TT.ev and TT.ev.portraitSetFailed) or 0))
+        end
+    end
+
+    -- Diag surfacing: every new counter renders a line.
+    do
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        local text = table.concat(captured, "\n")
+        for _, want in ipairs({
+            "pipeline errors suppressed", "resolve failures", "mouseover guard hits",
+            "portrait set failures", "inspect guild guard caught",
+        }) do
+            check("diag renders '" .. want .. "'",
+                text:find(want, 1, true) ~= nil, want)
+        end
+    end
+
+    -- Pawn late-load diag: Pawn appearing after load is reported as a problem
+    -- (scores unavailable until reload), distinct from "no scale".
+    do
+        REALG.PawnClassicLastUpdatedVersion = 2.0538
+        REALG.PawnGetItemData = function() return {} end
+        REALG.PawnGetSingleValueFromItem = function() return nil end
+        REALG.PawnGetScaleColor = function() return 1, 1, 1 end
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        local text = table.concat(captured, "\n")
+        check("diag reports Pawn detected after load",
+            text:find("Pawn detected after load", 1, true) ~= nil)
+    end
+end
+
+-- Batch 3 pins (H6/H8/M5/M6/M9/D1/D2 + M8 manual deferred drive).
+--
+-- Revert map (each proven red-then-green against a mutated temp copy):
+--   H6: drop TT_GS:CountPendingHidden() -> counter still.
+--   H8: drop the counter increment / the NewTimer one-shot -> still / no repaint.
+--   M5: drop the fallback+counter -> RegisterEvent never called on failure.
+--   M6: drop a resolver from the mediaChecks loop -> its entry missing.
+--   M9: restore the file-scope latch -> HUNTER-at-call-time renders no line.
+--   D1: remove the tooltipIsMouseover pcall guards -> handler raises.
+--   D2: drop the handlePipelineError arm -> lastTooltipError unset, guard latched.
+--   M8: the H8 one-shot below IS the manually-driven ticker (manual drive
+--       chosen over a deny-by-default strict run: strict would remodel every
+--       widget surface and risks false failures from legitimately nil-guarded
+--       probes, while __absent already models the known absences).
+do
+    local postUnit3 = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[1]) or nil
+    local function resolvePlayer()
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function()
+                return "n", "player", UNITS.player.guid end
+        end
+        GT.GetUnit = mockGetUnit("player")
+        GT.__unit = "player"
+        GT.__shown = true
+    end
+    local function renderPlayer()
+        GT:ClearLines()
+        GT:AddLine("Testplayer")
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        if (postUnit3) then
+            postUnit3.fn(GT, { guid = UNITS.player.guid })
+        elseif (hookUnit) then
+            hookUnit(GT)
+        end
+    end
+    local function driveItemLink(link)
+        -- The item resolvers are link-agnostic in the mock: the legacy GetItem
+        -- and the pipeline GetDisplayedItem both hardcode ITEM[1]. Override
+        -- both for the drive so the requested link is what resolves.
+        local savedGetItem = GT.GetItem
+        local savedDisp, hasDisp = nil, false
+        if (REALG.TooltipUtil) then
+            savedDisp, hasDisp = REALG.TooltipUtil.GetDisplayedItem, true
+            REALG.TooltipUtil.GetDisplayedItem = function() return "n", link end
+        end
+        GT.GetItem = function() return "n", link end
+        local itemPost = rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[2] or nil
+        local ok, err
+        if (itemPost) then
+            ok, err = pcall(itemPost.fn, GT, { hyperlink = link })
+        elseif (GT.__hooks and GT.__hooks.OnTooltipSetItem) then
+            ok, err = pcall(GT.__hooks.OnTooltipSetItem, GT, link)
+        else
+            ok, err = false, "no item delivery"
+        end
+        GT.GetItem = savedGetItem
+        if (hasDisp) then REALG.TooltipUtil.GetDisplayedItem = savedDisp end
+        return ok, err
+    end
+    local function captureDiag()
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        return table.concat(captured, "\n")
+    end
+
+    -- D2: GSCallback terminal-error surfacing: a throwing UpdateTooltip reaches
+    -- the pipeline error handler (diag lastTooltipError) and the guard unlatches
+    -- for the next callback.
+    do
+        resolvePlayer()
+        local cb = _G.TacoTip_GSCallback
+        check("GSCallback present for the terminal-error pin", type(cb) == "function")
+        if (type(cb) == "function") then
+            TT.lastTooltipError = nil
+            local savedUpdate = GT.UpdateTooltip
+            GT.UpdateTooltip = function() error("BATCH3_PIN_TERMINAL") end
+            pcall(cb, UNITS.player.guid)
+            GT.UpdateTooltip = savedUpdate
+            local lastErr = TT.lastTooltipError
+            check("terminal callback error surfaces in diag lastTooltipError",
+                type(lastErr) == "string" and lastErr:find("BATCH3_PIN_TERMINAL", 1, true) ~= nil,
+                "lastTooltipError=" .. tostring(lastErr))
+            local drivesAfter = 0
+            local realUpdate = GT.UpdateTooltip
+            GT.UpdateTooltip = function(...) drivesAfter = drivesAfter + 1
+                if (realUpdate) then return realUpdate(...) end end
+            local okAgain = pcall(cb, UNITS.player.guid)
+            GT.UpdateTooltip = realUpdate
+            check("...and the guard unlatches for the next callback",
+                okAgain and drivesAfter == 1,
+                "ok=" .. tostring(okAgain) .. " drives=" .. tostring(drivesAfter))
+        end
+    end
+
+    -- D1: instant-fade shim throw. With raising probes the fade branch must be
+    -- skipped through the guarded default (false).
+    --
+    -- NOTE on vacuity: the frame's OnEvent runs inside safeCall, so a raise
+    -- inside the branch is swallowed into the pipeline error handler and the
+    -- pcall around the handler still returns true -- asserting "no raise" can
+    -- never fail and proves nothing. What distinguishes guarded from unguarded
+    -- is the error sink: guarded probes record nothing (the mouseover-guard
+    -- counter moves instead, pinned by batch2's M1 block), while an unguarded
+    -- probe lands one error in the handler. The no-timer/still-shown half
+    -- documents that the branch is skipped, not half-run.
+    do
+        if (TT.clearTooltipVisuals) then TT.clearTooltipVisuals(GT) end
+        local savedFade = REALG.TacoTipConfig.instant_fade
+        local savedIsUnit = GT.IsUnit
+        local savedGetUnit = GT.GetUnit
+        local savedShown = GT.__shown
+        REALG.TacoTipConfig.instant_fade = true
+        GT.__shown = true
+        GT.IsUnit = function() error("BATCH3_PIN_FADE_ISUNIT") end
+        GT.GetUnit = function() error("BATCH3_PIN_FADE_GETUNIT") end
+        local frame = TT.frame
+        local handler = frame and frame.__scripts and frame.__scripts.OnEvent or nil
+        check("event handler present for the fade pin", type(handler) == "function")
+        local errBefore = #ERRORS
+        local okH, errH = true, nil
+        if (type(handler) == "function") then
+            okH, errH = pcall(handler, frame, "UPDATE_MOUSEOVER_UNIT")
+        end
+        check("raising shims do not escape the fade branch", okH, tostring(errH))
+        check("...and no pipeline error is recorded for the guarded probes",
+            #ERRORS == errBefore, "errors=" .. tostring(#ERRORS - errBefore))
+        local st = GT._tacoTipState
+        local fadeScheduled = st and st.fadeTimer ~= nil
+        check("...and the guarded default skips the fade (no timer, still shown)",
+            (not fadeScheduled) and GT:IsShown() == true,
+            "fadeTimer=" .. tostring(fadeScheduled) .. " shown=" .. tostring(GT:IsShown()))
+        GT.IsUnit, GT.GetUnit = savedIsUnit, savedGetUnit
+        REALG.TacoTipConfig.instant_fade = savedFade
+        GT.__shown = savedShown
+    end
+
+    -- H6: not-ready GearScore counts as pending-hidden, never as silent absent.
+    do
+        resolvePlayer()
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("inspector reachable for the pending pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local realMixin = CI.GetInventoryItemMixin
+            CI.GetInventoryItemMixin = function(self, u, slot)
+                local m = realMixin(self, u, slot)
+                if (m) then
+                    m.IsItemDataCached = function() return false end
+                end
+                return m
+            end
+            local pendingBefore = (TT.ev and TT.ev.gsPendingHidden) or 0
+            local s, il = REALG.TT_GS:GetScore(UNITS.player.guid, false)
+            CI.GetInventoryItemMixin = realMixin
+            check("not-ready GearScore reads 0,0", s == 0 and il == 0,
+                "got " .. tostring(s) .. "/" .. tostring(il))
+            check("...and counts a pending-hidden, not a silent absent",
+                ((TT.ev and TT.ev.gsPendingHidden) or 0) == pendingBefore + 1,
+                "gsPendingHidden=" .. tostring((TT.ev and TT.ev.gsPendingHidden) or 0))
+            local homeBefore = (TT.ev and TT.ev.gsPendingHidden) or 0
+            REALG.TT_GS:CountPendingHidden()
+            check("...and the shared counter home moves on direct call",
+                ((TT.ev and TT.ev.gsPendingHidden) or 0) == homeBefore + 1)
+        end
+    end
+
+    -- H8 + M8: fire-and-forget counts, and its bounded one-shot is driven here.
+    do
+        resolvePlayer()
+        local savedILVL, savedGS = REALG.TacoTipConfig.show_item_level, REALG.TacoTipConfig.show_gs_items
+        REALG.TacoTipConfig.show_item_level = true
+        REALG.TacoTipConfig.show_gs_items = false
+        local ffBefore = (TT.ev and TT.ev.itemRefreshFireAndForget) or 0
+        local timersBefore = #TIMERS
+        GT:ClearLines()
+        GT:AddLine("Mystery Item")
+        local okI, errI = driveItemLink("item:99999")
+        check("uncached item render runs", okI, tostring(errI))
+        check("fire-and-forget request is counted",
+            ((TT.ev and TT.ev.itemRefreshFireAndForget) or 0) == ffBefore + 1,
+            "itemRefreshFireAndForget=" .. tostring((TT.ev and TT.ev.itemRefreshFireAndForget) or 0))
+        check("...and exactly one bounded repaint is scheduled",
+            #TIMERS == timersBefore + 1, "timers=" .. tostring(#TIMERS - timersBefore))
+        local h = TIMERS[#TIMERS]
+        check("the scheduled handle carries the deferred body",
+            h ~= nil and type(h.func) == "function")
+        if (h and type(h.func) == "function") then
+            local repaints = 0
+            local savedUpdate = GT.UpdateTooltip
+            GT.UpdateTooltip = function(...) repaints = repaints + 1
+                if (savedUpdate) then return savedUpdate(...) end end
+            h.func()
+            check("driving the deferred body repaints once", repaints == 1,
+                "repaints=" .. tostring(repaints))
+            if (TT.clearTooltipVisuals) then TT.clearTooltipVisuals(GT) end
+            h.func()
+            GT.UpdateTooltip = savedUpdate
+            check("...and a recycled tooltip is not repainted", repaints == 1,
+                "repaints=" .. tostring(repaints))
+        end
+        REALG.TacoTipConfig.show_item_level, REALG.TacoTipConfig.show_gs_items = savedILVL, savedGS
+    end
+
+    -- Batch 7 item 4: the cold-path item-data request goes through the SHARED
+    -- 2s-per-item throttle, and takes the item ID from the namespaced
+    -- C_Item.GetItemInfoInstant when the bare global is absent.
+    --
+    -- Two independent defects meet in this one path:
+    --   * the request bypassed the shared throttle (main.lua called the raw
+    --     C_Item function), so every cold-path hover re-requested the same
+    --     uncached item;
+    --   * the item ID came from the BARE GetItemInfoInstant, which exists on
+    --     only the three Classic-family branches -- on Retail and WoW Forever
+    --     it does not exist at all, so the request never fired there.
+    --
+    -- Revert maps:
+    --   * restore the raw C_Item call in main.lua -> the rapid second drive
+    --     issues a second request (the throttle assertion goes red);
+    --   * restore the bare GetItemInfoInstant read -> with the bare global
+    --     removed the item ID is nil and NO request is issued at all (the
+    --     "exactly one request" assertion goes red).
+    do
+        local savedBare = REALG.GetItemInfoInstant
+        local savedID = REALG.__itemInfoInstantID
+        local savedClock = REALG.__testClock
+        local savedILVL2, savedGS2 =
+            REALG.TacoTipConfig.show_item_level, REALG.TacoTipConfig.show_gs_items
+        REALG.TacoTipConfig.show_item_level = true
+        REALG.TacoTipConfig.show_gs_items = false
+        REALG.__itemInfoInstantID = 98765
+        REALG.GetItemInfoInstant = nil          -- no bare global at all
+        REALG.__testClock = 1000                -- a fixed clock inside the window
+        REALG.__rawItemRequests = 0
+        REALG.__rawItemRequestIDs = {}
+
+        resolvePlayer()
+        local okCold, errCold = driveItemLink("item:99998")
+        check("cold-path refresh runs with no bare GetItemInfoInstant",
+            okCold, tostring(errCold))
+        check("...and issues exactly one item-data request",
+            REALG.__rawItemRequests == 1,
+            "requests=" .. tostring(REALG.__rawItemRequests))
+        check("...carrying the numeric item ID from C_Item.GetItemInfoInstant",
+            REALG.__rawItemRequestIDs[1] == 98765,
+            "id=" .. tostring(REALG.__rawItemRequestIDs[1]))
+
+        -- A second rapid request for the SAME item inside the 2s window is
+        -- throttled: one raw call, not two.
+        driveItemLink("item:99998")
+        check("a rapid second request for the same item is throttled (1 per 2s)",
+            REALG.__rawItemRequests == 1,
+            "requests=" .. tostring(REALG.__rawItemRequests))
+
+        -- Past the window the same item requests again -- the throttle is a
+        -- window, not a one-shot.
+        REALG.__testClock = 1003
+        driveItemLink("item:99998")
+        check("...and the window expiring re-requests",
+            REALG.__rawItemRequests == 2,
+            "requests=" .. tostring(REALG.__rawItemRequests))
+
+        REALG.GetItemInfoInstant = savedBare
+        REALG.__itemInfoInstantID = savedID
+        REALG.__testClock = savedClock
+        REALG.TacoTipConfig.show_item_level, REALG.TacoTipConfig.show_gs_items = savedILVL2, savedGS2
+    end
+
+    -- M5: failed unit-event registration falls back to plain events + counter.
+    do
+        resolvePlayer()
+        local prevPower = REALG.TacoTipConfig.show_power_bar
+        REALG.TacoTipConfig.show_power_bar = true
+        local bar = REALG.TacoTipPowerBar
+        check("power bar present for the reg-fallback pin", bar ~= nil)
+        if (bar) then
+            local savedRegUnit = bar.RegisterUnitEvent
+            local savedReg = bar.RegisterEvent
+            local fallbackCalls = 0
+            bar.RegisterUnitEvent = function() error("BATCH3_PIN_REGUNIT") end
+            bar.RegisterEvent = function(self, e)
+                fallbackCalls = fallbackCalls + 1
+                if (savedReg) then return savedReg(self, e) end
+            end
+            local regBefore = (TT.ev and TT.ev.powerBarRegFailed) or 0
+            renderPlayer()
+            bar.RegisterUnitEvent = savedRegUnit
+            bar.RegisterEvent = savedReg
+            check("failed unit registration falls back to plain events",
+                fallbackCalls >= 3, "fallback RegisterEvent calls=" .. tostring(fallbackCalls))
+            check("...and counts the fallback",
+                ((TT.ev and TT.ev.powerBarRegFailed) or 0) == regBefore + 1,
+                "powerBarRegFailed=" .. tostring((TT.ev and TT.ev.powerBarRegFailed) or 0))
+        end
+        REALG.TacoTipConfig.show_power_bar = prevPower
+    end
+
+    -- M6: font/bar/background resolvers report exactly like the border one.
+    do
+        local cfg = REALG.TacoTipConfig
+        local saved = { font = cfg.tooltip_font, bar = cfg.tooltip_bar_texture,
+            bg = cfg.tooltip_background_texture, border = cfg.tooltip_border_texture }
+        cfg.tooltip_font = "bogus-font-xyz"
+        cfg.tooltip_bar_texture = "bogus-bar-xyz"
+        cfg.tooltip_background_texture = "bogus-bg-xyz"
+        cfg.tooltip_border_texture = "bogus-border-xyz"
+        local text = captureDiag()
+        for _, key in ipairs({ "tooltip_font", "tooltip_bar_texture",
+                "tooltip_background_texture", "tooltip_border_texture" }) do
+            check("diag reports unmatched " .. key,
+                text:find(key .. " setting", 1, true) ~= nil, key)
+        end
+        cfg.tooltip_font, cfg.tooltip_bar_texture = saved.font, saved.bar
+        cfg.tooltip_background_texture, cfg.tooltip_border_texture = saved.bg, saved.border
+        local clean = captureDiag()
+        local leaked = false
+        for _, key in ipairs({ "tooltip_font", "tooltip_bar_texture",
+                "tooltip_background_texture", "tooltip_border_texture" }) do
+            if (clean:find(key .. " setting", 1, true)) then leaked = true end
+        end
+        check("...and valid defaults report no media mismatch", not leaked)
+    end
+
+    -- M9: player class resolves per call -- a late HUNTER still gates HunterScore.
+    -- NOTE: main.lua captures UnitClass as a file-scope local at load (like
+    -- GetQuestDifficultyColor's callers capture their globals), so swapping the
+    -- mock mid-run cannot reach it. The honest probe is the data it reads:
+    -- the unit table's class field, flipped from nil to HUNTER and back.
+    do
+        ITEM[2] = { link = "item:67890", name = "Test Crossbow", quality = 4,
+            ilvl = 88, equipLoc = "INVTYPE_RANGED" }
+        local savedClass = UNITS.player.class
+        local savedHS = REALG.TacoTipConfig.show_gs_items_hs
+        local savedGS = REALG.TacoTipConfig.show_gs_items
+        REALG.TacoTipConfig.show_gs_items = true
+        REALG.TacoTipConfig.show_gs_items_hs = false
+        local function hasHunterScore()
+            GT:ClearLines()
+            GT:AddLine("Test Crossbow")
+            driveItemLink("item:67890")
+            local txt = allText()
+            -- Locale-independent: the hand-derived hunter score for this
+            -- fixture is floor(31 * 5.3224) = floor(164.99) = 164 (ilvl 88
+            -- rarity-4 ranged scores 31, the same number the GearScore line
+            -- prints). The line LABEL is localised (zhCN renders it, not
+            -- "HunterScore"), so the number -- which no locale rewrites --
+            -- is what is asserted.
+            return txt:find("164", 1, true) ~= nil
+        end
+        UNITS.player.class = nil
+        local withoutClass = hasHunterScore()
+        UNITS.player.class = "HUNTER"
+        local withHunter = hasHunterScore()
+        UNITS.player.class = savedClass
+        REALG.TacoTipConfig.show_gs_items_hs = savedHS
+        REALG.TacoTipConfig.show_gs_items = savedGS
+        check("no class at call time means no HunterScore line", not withoutClass)
+        check("...while HUNTER at call time renders it (no load latch)",
+            withHunter, "hunter=" .. tostring(withHunter))
+    end
+
+    -- D3 (hover half): the scan toggle gates ScanNearby only -- a hover
+    -- inspects through DoInspect directly, so it must keep issuing while the
+    -- scan is off. Wiring/default/persistence live in settings_test; this is
+    -- the hover-unaffected proof.
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("inspector reachable for the scan-toggle hover pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local savedNI, savedCU = REALG.NotifyInspect, REALG.CanInspect
+            local savedInspectFrame = REALG.InspectFrame
+            local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+            local savedGetUnit, savedUnitToken = GT.GetUnit, GT.__unit
+            local calls = 0
+            REALG.CanInspect = function() return true end
+            REALG.NotifyInspect = function(u) calls = calls + 1 end
+            REALG.InspectFrame = { IsShown = function() return false end, unit = nil }
+            GT.__shown = true
+            -- Hermetic: earlier blocks may have left an outstanding request
+            -- (which suppresses every later one) or a cached/cooled guid for
+            -- the probe unit. Answer the outstanding request first, then clear
+            -- the traces so the hover below genuinely re-requests -- the same
+            -- shape as the main HOVER block above.
+            do
+                local okCI2, CI2 = pcall(REALG.LibStub, "LibForeverInspector", true)
+                if (okCI2 and CI2) then
+                    local h = CI2.frame and CI2.frame.__scripts and CI2.frame.__scripts.OnEvent
+                    if (h) then
+                        pcall(h, CI2.frame, "INSPECT_READY", UNITS.mouseover.guid)
+                        pcall(h, CI2.frame, "INSPECT_READY", UNITS.target.guid)
+                    end
+                end
+            end
+            for _, g in ipairs({ UNITS.mouseover.guid, UNITS.target.guid }) do
+                if (CI.cache) then CI.cache[g] = nil end
+                if (CI.inspectRejected) then CI.inspectRejected[g] = nil end
+                if (CI.inspectOutOfRange) then CI.inspectOutOfRange[g] = nil end
+            end
+            REALG.__testClock = (REALG.__testClock or 0) + 10
+            local function renderHover(u)
+                GT.__unit = u
+                GT.GetUnit = mockGetUnit(u)
+                if (REALG.TooltipUtil) then
+                    REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, UNITS[u].guid end
+                end
+                GT:ClearLines()
+                GT:AddLine(UNITS[u].name)
+                GT:AddLine("Level 60")
+                if (postUnit3) then
+                    postUnit3.fn(GT, { guid = UNITS[u].guid })
+                elseif (hookUnit) then
+                    hookUnit(GT)
+                end
+            end
+            CI:SetScanEnabled(false)
+            for _ = 1, 3 do renderHover("mouseover") end
+            check("hover still inspects while the scan is off",
+                calls >= 1, "NotifyInspect calls=" .. tostring(calls))
+            CI:SetScanEnabled(true)
+            check("scan toggle restored after the hover pin", CI.scanEnabled == true)
+            REALG.NotifyInspect, REALG.CanInspect = savedNI, savedCU
+            REALG.InspectFrame = savedInspectFrame
+            if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+            GT.GetUnit, GT.__unit = savedGetUnit, savedUnitToken
+        end
+    end
+end
+
+-- ==========================================================================
+-- Final hunter pins: M-1 (the discarded IsUnit), L-1 (the discarded width
+-- cap), L-3 (the discarded inspect trigger).
+--
+-- All three are the same shape of defect: a pcall whose RESULT was thrown
+-- away, so a raise was invisible. Each one is driven through a public entry
+-- point with the failure forced, and the counter is the observable.
+--
+-- Revert map (each proven red-then-green against a mutated copy):
+--   M-1: restore the unguarded tooltip:IsUnit(unit) in resolveTooltipUnit
+--        -> the render aborts and the error sink records the raise.
+--   L-1: restore the discarded pcall(leftLine.SetWidth, ...) result
+--        -> the width-cap counter stays still.
+--   L-3: restore the discarded pcall(CI.DoInspect, CI, tooltipUnit) result
+--        -> the inspect-trigger counter stays still.
+-- ==========================================================================
+do
+    local hunterPost = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[1]) or nil
+
+    local function hunterResolve(unitName)
+        local u = unitName or "player"
+        GT.__unit = u
+        GT.__shown = true
+        -- The engine's own GetUnit: onTooltipSetUnit reads the tooltip unit
+        -- from it (pcall-guarded) before resolving. It must agree with the
+        -- TooltipUtil arm, or the render resolves a different unit.
+        GT.GetUnit = mockGetUnit(u)
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function()
+                return "n", u, UNITS[u].guid end
+        end
+    end
+
+    -- A render with stock-looking content, so the pipeline reaches its end.
+    local function hunterRender(unitName)
+        local u = unitName or "player"
+        GT:ClearLines()
+        GT:AddLine(UNITS[u].name)
+        GT:AddLine("Level 60 Human")
+        GT:AddLine("WARRIOR")
+        GT:AddLine("Testguild")
+        GT:AddLine("")
+        GT:AddLine("HP: 50/50")
+        if (hunterPost) then
+            hunterPost.fn(GT, { guid = UNITS[u].guid })
+        elseif (hookUnit) then
+            hookUnit(GT)
+        end
+    end
+
+    -- M-1: a tooltip whose IsUnit RAISES must not abort the unit render.
+    --
+    -- resolveTooltipUnit used to probe the tooltip with an UNGUARDED
+    -- tooltip:IsUnit(unit) and then THREW THE ANSWER AWAY -- both branches
+    -- returned `unit` -- so the call could only ever cost something and never
+    -- buy anything. On a client whose IsUnit is a shim over a not-yet-loaded
+    -- namespace it raises, and the raise killed the render.
+    --
+    -- The observables are the ERROR SINK (an escaped raise is recorded by the
+    -- pipeline error handler) and the render's OUTPUT (the class colour is
+    -- stored a few steps PAST the resolution, so it is only set when the
+    -- render got that far).
+    do
+        hunterResolve("player")
+        local savedIsUnit = GT.IsUnit
+        local savedClassColour = GT.TacoTipPlayerClassColor
+        GT.IsUnit = function() error("HUNTER_PIN_M1_ISUNIT") end
+        GT.TacoTipPlayerClassColor = nil
+        local errBefore = #ERRORS
+        hunterRender("player")
+        GT.IsUnit = savedIsUnit
+        check("a raising IsUnit does not abort the unit render",
+            #ERRORS == errBefore, "errors=" .. tostring(#ERRORS - errBefore))
+        check("...and the render ran on past the unit resolution",
+            GT.TacoTipPlayerClassColor ~= nil,
+            "classColour=" .. tostring(GT.TacoTipPlayerClassColor))
+        GT.TacoTipPlayerClassColor = savedClassColour
+    end
+
+    -- L-1: a raising SetWidth on a tooltip line is counted.
+    --
+    -- The width cap used to throw the pcall's result away, so a raising
+    -- SetWidth left the line uncapped with no trace at all.
+    do
+        hunterResolve("player")
+        hunterRender("player")
+        local line = (TT.GetTooltipLeftLine and TT.GetTooltipLeftLine(GT, 1)) or GT:GetLeftLine(1)
+        check("a left line exists for the width-cap pin", line ~= nil)
+        if (line) then
+            local savedSetWidth = line.SetWidth
+            -- Force the cap to be re-applied: the memo says "already capped".
+            line._tacoTipMaxWidth = nil
+            line.SetWidth = function() error("HUNTER_PIN_L1_SETWIDTH") end
+            local failBefore = (TT.ev and TT.ev.tooltipMaxWidthFailed) or 0
+            hunterRender("player")
+            line.SetWidth = savedSetWidth
+            check("a raising SetWidth counts a width-cap failure",
+                ((TT.ev and TT.ev.tooltipMaxWidthFailed) or 0) > failBefore,
+                "tooltipMaxWidthFailed=" .. tostring((TT.ev and TT.ev.tooltipMaxWidthFailed) or 0))
+        end
+    end
+
+    -- L-3: a raise in the inspect trigger is counted.
+    --
+    -- The trigger's pcall result used to be thrown away: the library counts
+    -- its own notifies and refusals, but a raise in the CALLER's copy of the
+    -- trigger was lost entirely.
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("the inspector is reachable for the inspect-trigger pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local savedDoInspect = CI.DoInspect
+            CI.DoInspect = function() error("HUNTER_PIN_L3_DOINSPECT") end
+            local failBefore = (TT.ev and TT.ev.inspectTriggerFailed) or 0
+            -- Another player: the trigger only runs for units that are not
+            -- the player.
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            CI.DoInspect = savedDoInspect
+            check("a raising inspect trigger counts a trigger failure",
+                ((TT.ev and TT.ev.inspectTriggerFailed) or 0) > failBefore,
+                "inspectTriggerFailed=" .. tostring((TT.ev and TT.ev.inspectTriggerFailed) or 0))
+        end
+    end
+
+    -- The inspect trigger's THREE-STATE answer, and the caller's handling of
+    -- it.
+    --
+    -- lib:DoInspect used to answer with a plain boolean whose `true` covered
+    -- BOTH "queued" (the unit was accepted and is still waiting) and "ready"
+    -- (the unit's data is already here), and the caller threw the answer away
+    -- -- so the two could not be told apart at all. The library now answers
+    -- with three states:
+    --
+    --   false    not inspected (refused / unavailable)
+    --   "queued" accepted, PENDING
+    --   true     data ready
+    --
+    -- The pins below drive the render once per state, with the library's
+    -- answer stubbed in, and assert two things: the caller RECORDS the state
+    -- it was given -- a queued unit is never recorded as ready, which is the
+    -- conflation this change exists to remove -- and the tooltip's OUTPUT is
+    -- byte-identical for all three, because the states are information about
+    -- the inspect, not a display change.
+    do
+        local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("the inspector is reachable for the tri-state pin", okCI and CI ~= nil)
+        if (okCI and CI) then
+            local savedDoInspect = CI.DoInspect
+
+            -- The rendered lines, as text. Both halves of a double line, so a
+            -- changed right-hand value cannot hide behind an equal left.
+            local function snapshot()
+                local parts = {}
+                for i = 1, #GT.__lines do
+                    local e = GT.__lines[i]
+                    parts[#parts + 1] = tostring(e.left) .. "\t" .. tostring(e.right)
+                end
+                return table.concat(parts, "\n")
+            end
+
+            local function recordedState()
+                local st = GT._tacoTipState
+                return st and st.inspectState or nil
+            end
+
+            -- The baseline: the REAL library answers, and the render is what
+            -- the player sees. Two renders, and the second is the snapshot --
+            -- the first render builds the portrait and the line pool, and the
+            -- settled output is what every later render must match.
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            local baseline = snapshot()
+            local baselineLines = #GT.__lines
+
+            local states = {
+                { answer = false, want = "refused" },
+                { answer = "queued", want = "queued" },
+                { answer = true, want = "ready" },
+            }
+            for _, s in ipairs(states) do
+                CI.DoInspect = function() return s.answer end
+                hunterResolve("mouseover")
+                hunterRender("mouseover")
+                check("the caller records the '" .. s.want .. "' state",
+                    recordedState() == s.want,
+                    "recorded=" .. tostring(recordedState()))
+                check("...and the tooltip's output is unchanged for it",
+                    snapshot() == baseline and #GT.__lines == baselineLines,
+                    "lines=" .. tostring(#GT.__lines) .. " baseline=" .. tostring(baselineLines))
+            end
+
+            -- The conflation itself: a queued unit is PENDING, never ready.
+            CI.DoInspect = function() return "queued" end
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            check("a queued unit is never recorded as ready",
+                recordedState() ~= "ready" and recordedState() == "queued",
+                "recorded=" .. tostring(recordedState()))
+
+            -- ...and a ready unit is not recorded as pending.
+            CI.DoInspect = function() return true end
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            check("a unit whose data is ready is never recorded as pending",
+                recordedState() == "ready",
+                "recorded=" .. tostring(recordedState()))
+
+            -- The raise path is unchanged: nothing is recorded, and the
+            -- failure counter still moves (the L-3 pin above).
+            CI.DoInspect = function() error("TRISTATE_PIN_DOINSPECT") end
+            hunterResolve("mouseover")
+            hunterRender("mouseover")
+            check("a raising inspect trigger records no state",
+                recordedState() == nil,
+                "recorded=" .. tostring(recordedState()))
+
+            CI.DoInspect = savedDoInspect
+        end
+    end
+
+    -- Diag surfacing: every new counter renders a line.
+    do
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        local text = table.concat(captured, "\n")
+        for _, want in ipairs({
+            "inspect guild guard caught", "inspect update errors (other)",
+            "tooltip width cap failures", "inspect trigger failures",
+            "character pane refresh failures",
+        }) do
+            check("diag renders '" .. want .. "'",
+                text:find(want, 1, true) ~= nil, want)
+        end
+    end
+end
+
+-- ============================================================================
+-- The portrait zoom: the slider and the portrait must AGREE.
+--
+-- The slider's displayed value and the value handed to SetPortraitZoom used to
+-- come from two DIFFERENT literals (0.7 and 0.75), so with no saved zoom the
+-- player read "70" on the slider while the portrait was rendered at 75 -- the
+-- number the player saw was not the number they got. Both now resolve to the
+-- ONE published default, TT.TooltipPortraitZoomDefault.
+--
+-- The options UI is built HERE (this harness never built it) so the zoom
+-- slider exists and can be read, and the portrait is driven through the real
+-- appearance entry. The two readings are then compared directly, for the
+-- default, for a saved value and for an out-of-range saved value.
+-- ============================================================================
+do
+    -- The options page needs the dropdown surface, which this harness never
+    -- installed (it never built the options UI). It is installed for the
+    -- duration of this block and taken away again afterwards.
+    local savedDrop = {}
+    for _, name in ipairs({ "UIDropDownMenu_Initialize", "UIDropDownMenu_AddButton",
+        "UIDropDownMenu_SetSelectedValue", "UIDropDownMenu_GetSelectedValue",
+        "UIDropDownMenu_SetWidth", "UIDropDownMenu_SetText",
+        "UIDropDownMenu_EnableDropDown", "UIDropDownMenu_DisableDropDown",
+        "UIDropDownMenu_CreateInfo" }) do
+        savedDrop[name] = REALG[name]
+        REALG[name] = function() return {} end
+    end
+
+    -- Build the options UI, capturing the sliders as they are created.
+    local realCreateFrame = REALG.CreateFrame
+    local sliders = {}
+    REALG.CreateFrame = function(kind, name, parent, template)
+        local frame = realCreateFrame(kind, name, parent, template)
+        if (kind == "Slider") then sliders[#sliders + 1] = frame end
+        return frame
+    end
+    local uiOK, uiErr = pcall(TT.RefreshOptionsUI, TT)
+    REALG.CreateFrame = realCreateFrame
+    for name, fn in pairs(savedDrop) do REALG[name] = fn end
+    check("the options UI builds in this harness", uiOK, tostring(uiErr))
+
+    local zoomSlider
+    for _, s in ipairs(sliders) do
+        local lo, hi = s:GetMinMaxValues()
+        if (lo == 30 and hi == 100) then zoomSlider = s break end
+    end
+    check("the zoom slider is reachable for inspection", zoomSlider ~= nil)
+    check("the zoom's ONE default is published (0.75)",
+        TT.TooltipPortraitZoomDefault == 0.75,
+        "default=" .. tostring(TT.TooltipPortraitZoomDefault))
+    check("the zoom range is 0.3-1.0, the bounds the slider and the sanitiser share",
+        type(TT.TooltipPortraitZoomRange) == "table"
+            and TT.TooltipPortraitZoomRange.min == 0.3
+            and TT.TooltipPortraitZoomRange.max == 1.0,
+        "range=" .. tostring(TT.TooltipPortraitZoomRange and TT.TooltipPortraitZoomRange.min)
+            .. ".." .. tostring(TT.TooltipPortraitZoomRange and TT.TooltipPortraitZoomRange.max))
+
+    -- What the player reads on the slider.
+    local function sliderShown()
+        if (not (zoomSlider and zoomSlider.valueText and zoomSlider.valueText.GetText)) then
+            return nil
+        end
+        return tonumber(zoomSlider.valueText:GetText())
+    end
+
+    -- The unit the tooltip is about, so the portrait path is reached.
+    GT.__unit = "player"
+    GT.GetUnit = mockGetUnit("player")
+    if (REALG.TooltipUtil) then
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", "player", UNITS.player.guid
+        end
+    end
+    REALG.TacoTipConfig.tooltip_portrait = true
+    REALG.TacoTipConfig.tooltip_portrait_3d = true
+
+    -- What the portrait is actually rendered with, read off the real client
+    -- call (the frame's own SetPortraitZoom, instrumented for one drive).
+    local function portraitZoom()
+        local zoomSeen
+        local portrait = GT.TacoTipPortrait3D or GT.TacoTipPortrait
+        if (not portrait) then return nil end
+        local real = portrait.SetPortraitZoom
+        portrait.SetPortraitZoom = function(_, v) zoomSeen = v; return real and real(_, v) end
+        pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+        portrait.SetPortraitZoom = real
+        return zoomSeen
+    end
+
+    local cases = {
+        { name = "no saved zoom", saved = nil, sanitise = false, expected = 0.75 },
+        { name = "a saved zoom", saved = 0.5, sanitise = false, expected = 0.5 },
+        { name = "an out-of-range saved zoom", saved = 1.5, sanitise = true, expected = 0.75 },
+    }
+    for _, case in ipairs(cases) do
+        REALG.TacoTipConfig.tooltip_portrait_zoom = case.saved
+        if (case.sanitise) then
+            -- What the load-time sanitiser does with an out-of-range value.
+            TT:ApplyConfigDefaults(REALG.TacoTipConfig)
+            check("an out-of-range saved zoom is replaced by the default, NOT clamped",
+                REALG.TacoTipConfig.tooltip_portrait_zoom == TT.TooltipPortraitZoomDefault,
+                "zoom=" .. tostring(REALG.TacoTipConfig.tooltip_portrait_zoom))
+        end
+        TT:RefreshOptionsUI()
+        local shown = sliderShown()
+        local rendered = portraitZoom()
+        check("the zoom slider shows the zoom the portrait is rendered with ("
+                .. case.name .. ")",
+            shown ~= nil and rendered ~= nil and shown == math.floor(rendered * 100 + 0.5),
+            "slider=" .. tostring(shown) .. " portrait=" .. tostring(rendered))
+        check("...and that zoom is the expected one (" .. case.name .. ")",
+            rendered == case.expected,
+            "portrait=" .. tostring(rendered) .. " expected=" .. tostring(case.expected))
+    end
+    REALG.TacoTipConfig.tooltip_portrait_zoom = nil
+
+    -- A RAISING SetPortraitZoom is COUNTED, and the count is shown by
+    -- /tacotip diag. The pcall's result used to be discarded, so a client
+    -- without the method -- or a raising one -- was invisible.
+    local portrait = GT.TacoTipPortrait3D or GT.TacoTipPortrait
+    if (portrait) then
+        local savedZoom = portrait.SetPortraitZoom
+        local before = (TT.ev and TT.ev.portraitZoomFailed) or 0
+        portrait.SetPortraitZoom = function() error("PIN_ZOOM_RAISE") end
+        local okZ, errZ = pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+        portrait.SetPortraitZoom = savedZoom
+        check("the appearance entry runs with the failing zoom", okZ, tostring(errZ))
+        check("a raising SetPortraitZoom counts a zoom failure",
+            ((TT.ev and TT.ev.portraitZoomFailed) or 0) == before + 1,
+            "portraitZoomFailed=" .. tostring((TT.ev and TT.ev.portraitZoomFailed) or 0))
+
+        -- ...and the counter is in the report.
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        local text = table.concat(captured, "\n")
+        check("diag renders 'portrait zoom failures'",
+            text:find("portrait zoom failures", 1, true) ~= nil)
+        check("diag renders the zoom-failure count",
+            text:find("portrait zoom failures: " .. tostring(before + 1), 1, true) ~= nil,
+            "count=" .. tostring(before + 1))
+    else
+        check("portrait present for the zoom-failure pin", false)
     end
 end
 

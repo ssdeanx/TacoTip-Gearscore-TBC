@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-19T23:30:00Z",
+  "run_id": "fix-docs-packaging-2026-10-19",
+  "agent_name": "fix-docs-packaging",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Treating the notices as the single source of truth and the README as a reproduction of them made item 1 a table swap rather than a licence argument. Deriving the Extras runtime file list from the shipped TOC rather than hardcoding it means the verifier cannot drift from the package. Revert-to-fail on both verifiers (remove TacoTip_Extras/.gitattributes; remove the root's /TacoTip_Extras/** rule; drop the per-path Extras rules) proved each one fails loudly with the offending path named.",
+    "what_was_hard": "git's export-ignore is not scoped per archive: a nested .gitattributes that re-opens a path overrides the parent for that path in EVERY archive, so the first design leaked the Extras runtime files into the TacoTip package (56-file archive, second .toc). The resolution was to read the two rule sets in different scopes -- the TacoTip archive from the repository root, the Extras archive from the subtree (git archive HEAD:TacoTip_Extras), where the paths are subtree-relative and the root rule does not match. In the subtree scope --worktree-attributes reads the ROOT file, not the nested one, so the verifier prefers the committed tree and falls back to the working tree, and additionally asserts the nested file still declares every rule. Verified end to end in a simulated committed clone: 27 files for TacoTip, 29 for Extras, both PASS.",
+    "skill_gap": "I did not have git's attribute-resolution precedence in mind before starting and lost a cycle to it. The rule worth keeping: a directory-form pattern (path, not path/**) is decided by the attributes file in that directory's PARENT and is not overridden by a nested file, whereas a path-form pattern under the directory IS overridden. Also: I could not verify the CurseForge listing with curl (403 on every scripted GET) and only reached it through the webfetch proxy -- the verification method had to change mid-task."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

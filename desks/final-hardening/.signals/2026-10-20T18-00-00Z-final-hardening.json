@@ -1,0 +1,81 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-20T18:00:00Z",
+  "run_id": "hardening",
+  "agent_name": "final-hardening",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the six bench audits and the five desk journals as LEADS and then re-verifying every finding from source was the right order: several findings the audits raised were already fixed by later lanes (the Extras' three HIGHs, the /tt lb forwarding, the dead locale keys), and one audit line the fix-main-hunter journal had explicitly left out of scope -- the CharacterFrame OnShow adapter -- turned out to be the single highest-value unguarded hook left in the main add-on. Every change was proved by reverting it to RED on an isolated copy under /tmp/opencode and restoring the tree to green afterwards; nine reverts, nine reds, quoted in the desk journal.",
+    "what_was_hard": "The edit tool refused several multi-line oldStrings whose content it had itself just written, which cost time and forced a switch to script-driven edits for the larger blocks. The coordination with the fix-main-restore lane worked but needed discipline: the Extras side was done first, the main side waited for the desk's done signal, and every main file was re-read immediately before its edit.",
+    "skill_gap": "I should have checked the shape of the edit tool's multi-line matching earlier instead of discovering it one failure at a time. A one-line-per-edit discipline, or a small python helper for structural moves, is the reliable path for this codebase."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  },
+  "summary": "Final defensive hardening pass over TacoTip 0.8.4 and TacoTip Extras 1.2.3: every Blizzard-frame and hooksecurefunc callback the Extras registers is now bounded and counted; the Extras' Options page has no silent no-ops; the main add-on's '/tacotip save' and '/tacotip default' commands now say what they did; the options panel's protected calls no longer discard their results; a hand-edited TacoTipConfig now reports what it repaired; and the two pane OnShow hooks are bounded so a raise can no longer unwind through the client's own frame script. Nine revert-to-fail proofs; all five validation commands green.",
+  "files_changed": [
+    "main.lua",
+    "options.lua",
+    "CHANGELOG.md",
+    "Tests/harness/options_test.lua",
+    "Tests/harness/batch8_pane_test.lua",
+    "TacoTip_Extras/Core.lua",
+    "TacoTip_Extras/Frames.lua",
+    "TacoTip_Extras/Options.lua",
+    "TacoTip_Extras/CHANGELOG.md",
+    "TacoTip_Extras/Tests/harness/load_test.lua",
+    "desks/final-hardening/journal.md",
+    "desks/final-hardening/.signals/2026-10-20T18-00-00Z-final-hardening.json"
+  ],
+  "hardened": [
+    "EXTRAS TacoTip_Extras/Frames.lua:69-88, 1335, 1336, 1339, 1384, 1385, 1388, 1393, 1398, 1401, 1404, 1407 -- the eleven callbacks registered on Blizzard frames / hooksecurefunc post-hooks are wrapped; a raise is caught at the boundary, counted (hookCallbackErrors) and named (lastHookCallbackError). Risk removed: a raise in a HookScript handler or a hooksecurefunc post-hook unwound through the CLIENT's own frame script, so the rest of Blizzard's handler never ran and the character/inspect pane was left half drawn with nothing in the add-on's diagnostics.",
+    "EXTRAS TacoTip_Extras/Options.lua:63-137, 1675, 1693, 1713, 1754 -- the counted action-failure boundary. 'Comfortable rows' and 'Shaman Blue' discarded the result of RankBrowser.RebuildUI; 'Open Server Leaderboard', 'Scan now', 'Reset enhancer settings', 'Restore TacoTip settings' and 'Reset summary positions' could do nothing at all. Risk removed: a ticked box with an unchanged window and no message and no count.",
+    "EXTRAS TacoTip_Extras/Core.lua:1128-1137 -- the /ttgsdebug surfaces block prints frame-hook-errors / last-frame-hook-error and options-action-failures / last-options-action-failure. Risk removed: a counter no user can see is a counter that cannot be acted on.",
+    "MAIN options.lua:700-715 -- '/tacotip save' with the mover closed was a total silent no-op; it now prints the same line the gearscore.lua bootstrap handler has always used and counts the refusal (TT.ev.moverSaveSkipped). A raising _Save is caught, counted (TT.ev.moverSaveFailed) and named. Risk removed: a documented command that did nothing and said nothing.",
+    "MAIN options.lua:673-699 -- '/tacotip default' printed its confirmation only when there was nothing to disable and stayed silent when a custom position really was cleared (inverted relative to the effect); it now confirms once after the reset, and the mover's _Disable call is bounded and counted (TT.ev.moverDisableFailed). Risk removed: the player never learned that their custom position had been cleared.",
+    "MAIN options.lua:1044-1094 -- openOptionsPanel no longer discards the results of Settings.OpenToCategory (twice) and InterfaceOptionsFrame_OpenToCategory; the failures are counted (TT.ev.optionsPanelOpenFailed / optionsPanelShowFailed), the last error is kept, and one plain chat line names the problem. Risk removed: a typed command that opened no panel, with no message and no count.",
+    "MAIN options.lua:316-470 -- the corrupt-saved-data ledger: the sanitiser already failed closed and recovered to the shipped defaults but did it in silence; the number of repaired settings is now counted (TT.ev.configRepairs), the first is named (TT.ev.lastConfigRepair) and /tacotip diag reports both. Risk removed: a player whose option had been silently reset had no way to learn it.",
+    "MAIN main.lua:3778-3791 and main.lua:4027-4038 -- the character pane's and the inspect pane's OnShow refreshes are now bounded and counted (TT.ev.characterPaneOnShowFailed / inspectPaneOnShowFailed, with the last error kept). Risk removed: a raise in either hook unwound through the CLIENT's own frame script, so the rest of Blizzard's handler never ran and the pane was left half drawn.",
+    "MAIN main.lua:4216-4232, 4466-4506 -- /tacotip diag prints all the new counters and names them in the PROBLEMS section."
+  ],
+  "validation": {
+    "Tests/harness/run_all.sh lua5.1": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "Tests/harness/run_all.sh lua5.4": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "Tests/harness/run_all.sh luajit": "TOTAL 71 invocations: 71 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh lua5.1": "TOTAL 42 invocations: 42 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh lua5.4": "TOTAL 42 invocations: 42 passed, 0 failed",
+    "TacoTip_Extras/Tests/harness/run_all.sh luajit": "TOTAL 42 invocations: 42 passed, 0 failed",
+    "luacheck .": "Total: 0 warnings / 0 errors in 88 files",
+    "Tools/verify_release.sh --worktree": "verify_release: PASS (27 files from the working tree)",
+    "Tools/verify_release_extras.sh --worktree": "verify_release_extras: PASS (29 files from the working tree)"
+  },
+  "revert_red_proofs": [
+    "EXTRAS Frames.lua hooks unwrapped -> 3 red",
+    "EXTRAS Options.lua discards the RebuildUI result again -> 3 red",
+    "EXTRAS Core.lua stops printing the two new counters -> 2 red",
+    "MAIN /tacotip save silent again -> 7 red",
+    "MAIN /tacotip default prints only when nothing was cleared -> 1 red",
+    "MAIN openOptionsPanel discards the protected-call results again -> 3 red",
+    "MAIN main.lua stops surfacing the new counters in /tacotip diag -> 1 red",
+    "MAIN the corrupt-saved-data ledger is dropped -> 4 red",
+    "MAIN the two pane OnShow hooks are unguarded again -> 6 red"
+  ],
+  "not_hardened": [
+    "The Extras' own OnEvent handlers (Core.lua:1382, Frames.lua:1463) sit on the add-on's own frames, so a raise aborts the add-on's handler, not a Blizzard one.",
+    "TacoTip_Extras/RankSync.lua handlePayload is not wrapped; the inbound parsing is already bounded and every refusal is counted, so the reachable raise is small, and wrapping the whole dispatch would blur the counters the release depends on.",
+    "gearscore.lua's TT_GS._itemRequestTime grows one entry per distinct item hovered and is never pruned; gearscore.lua is outside this pass's edit scope except for a guard around an existing call, and pruning is a behaviour change.",
+    "main.lua:369 pcall(cancel) discards its result; it is a timer-cleanup path with no user-visible artefact.",
+    "main.lua:3133 pcall(RequestLoadItemDataByID) discards its result; the shared throttle swallows the raw call's own error internally, so a counter at that level would almost never move. Counting the raw failure properly means a counter inside gearscore.lua.",
+    "The InspectFrame OnHide handler reads InspectGearScore / InspectAvgItemLvl without a nil check; they cannot be nil because the hook is registered inside TT:InitInspectFrame right after they are created, so a guard would be dead code.",
+    "The Extras' TacoTipExtrasDB corruption path and the sync wire were re-verified, not changed: both already fail closed, recover, and count every refusal."
+  ],
+  "notes": "Nothing staged, nothing committed. The tree is publishable: both package verifiers PASS, the harness matrix is green on all three interpreters, and the lint is 0/0. The only new files are this desk. gearscore.lua, pawn.lua, textures.lua, Locale/**, the TOCs, the versions, the SavedVariables shapes, the wire format, the raw GearScore formula, the Retail bracket and the Era inspect range gate are all untouched. README.md was not touched."
+}

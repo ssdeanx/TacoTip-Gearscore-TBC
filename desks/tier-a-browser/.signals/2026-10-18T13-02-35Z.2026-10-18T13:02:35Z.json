@@ -1,0 +1,14 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T13:02:35Z",
+  "run_id": "tier-a-browser",
+  "agent_name": "tier-a-browser",
+  "self_assessment": { "intent": 5, "confidence": 4, "accuracy": 4, "completeness": 4 },
+  "patterns": {
+    "what_worked": "The UX report's file:line Tier A spec drove implementation; every new check is named and green on all three interpreters.",
+    "what_was_hard": "Wrong arrow codepoints hid behind byte-agnostic assertions until cross-review.",
+    "skill_gap": "none"
+  },
+  "escalation": { "reason": null, "blocked_on": null, "recommendation": null }
+}

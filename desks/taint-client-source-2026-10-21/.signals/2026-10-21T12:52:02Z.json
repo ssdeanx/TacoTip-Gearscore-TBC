@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-21T12:52:02Z",
+  "run_id": "taintclientsrc",
+  "agent_name": "taint-client-source-2026-10-21",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Read-only sweeps of the FrameXML mirror over five origin/-qualified branches, then re-derived every prior-audit claim from source instead of trusting it. That is what surfaced the two corrections the prior audit most needed: the classic family has a SECOND global GetAppropriateTooltip definition (Blizzard_SharedXML/Classic/SharedUIPanelTemplates.lua:759 era), and Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua is tagged [ExcludeLoadGameType vanilla] in the TOC, so on classic_era the secure-dispatch machinery is not loaded at all rather than merely unwired. The whole-tree HookScript census (18 sites classic_era, 40 forever, 29 live) made the Blizzard_PTRFeedback finding conclusive rather than suggestive: its .toc carries OnlyBetaAndPTR: 1 on all five branches, so a release build has no Blizzard code in the shared tooltip's script chain.",
+    "what_was_hard": "The brief's Q5 premise is false for the classic family - GameTooltipMixin:SetUnit does not exist on any classic branch, and GameTooltip:SetUnit is an engine method with no Lua definition anywhere in the tree. Answering the question as asked required saying so and re-deriving what actually runs. The three same-named duplicate definitions on the classic tree (GetAppropriateTooltip, GameTooltip_AddErrorLine, GameTooltip_SetDefaultAnchor) also mean no grep for 'the' definition is safe. The mirror's HEAD had to be distinguished from the TacoTip repo's HEAD when validating that nothing was changed.",
+    "skill_gap": "Verifying an absence claim rigorously needs two independent sweeps (whole tree AND generated API docs) per branch, and the two duplicate-definition cases show that a single-file grep is not enough to establish 'where is X defined'."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

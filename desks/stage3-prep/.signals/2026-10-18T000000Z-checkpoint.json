@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-10-18T14:52:21Z",
+  "run_id": "stage3prep-01",
+  "agent_name": "stage3-prep",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 3
+  },
+  "patterns": {
+    "what_worked": "bench-read of expansion \u00a76.2/\u00a74/\u00a76.3/\u00a76.4 + oracle in-game checklist + 5 desk journals",
+    "what_was_hard": "wire-diet stride not yet landed; brief must assume target shape",
+    "skill_gap": ""
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

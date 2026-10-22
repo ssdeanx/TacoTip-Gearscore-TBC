@@ -11,13 +11,13 @@ local L = {
     ["LB_COL_SPECCLASS"] = "전문화 / 직업",
     ["LB_MY_RANK_ARROW"] = "▼ 내 순위",
     ["GEAR_SCANNING"] = "장비 확인 중...",
-    ["LB_SORTED_BY"] = "s s 기준 정렬",
-    ["LB_FOOTER_NO_RANK"] = "d명 기록됨 - 아직 순위가 없습니다",
+    ["LB_SORTED_BY"] = "%s %s 기준 정렬",
+    ["LB_FOOTER_NO_RANK"] = "%d명 기록됨 - 아직 순위가 없습니다",
     ["EQUIPMENT_CATEGORY_NAME"] = "장비 창",
     ["MINIMAP_HINT_RIGHT"] = "우클릭: 설정",
     ["COMPLETE"] = "완료",
     ["GEAR_UNAVAILABLE"] = "장비 데이터를 사용할 수 없음",
-    ["LB_FOOTER_STANDING"] = "내 순위: 전체 #d | 진영 #d | 직업 #d  -  d명 기록됨",
+    ["LB_FOOTER_STANDING"] = "내 순위: 전체 #%d | 진영 #%d | 직업 #%d  -  %d명 기록됨",
     ["CATEGORY_NAME"] = "TacoTip Extras",
 
     ["INTRO"] =
@@ -43,42 +43,7 @@ local L = {
 
     ["TOOLTIP_LABEL_ENHANCEMENT"] = "보정 분석:",
     ["TOOLTIP_LABEL_COMPLETION"] = "완성도:",
-    ["TOOLTIP_LABEL_RANK"] = "GearScore 순위:",
-
-    ["REMOTE_COMPLETE"] = "완료",
-    ["REMOTE_UNAVAILABLE"] = "확인 불가",
-    ["REMOTE_PENDING"] = "대기 중",
-    ["REMOTE_SUPPRESSED"] = "억제됨",
-    ["REMOTE_NOT_OBSERVED"] = "관측되지 않음",
-
-    ["INTEGRATION_COMPATIBLE"] = "호환됨",
-    ["INTEGRATION_INCOMPATIBLE"] = "호환되지 않음",
-    ["INTEGRATION_MISSING"] = "불러오지 않음",
-
-    ["OPTIONS_PAGE"] = "TacoTip Extras",
-    ["OPTIONS_TAB_TOOLTIP"] = "툴팁",
-    ["OPTIONS_TAB_EQUIPMENT"] = "캐릭터 및 조사",
-    ["SECTION_TOOLTIP"] = "툴팁",
-    ["SECTION_EQUIPMENT"] = "캐릭터 및 조사",
-    ["SECTION_HELP"] = "점수 계산 방식",
-    ["SECTION_ADVANCED"] = "고급",
-
-    ["OPT_ENABLED"] = "애드온 사용",
-    ["OPT_TOOLTIP_MODE"] = "툴팁 모드",
-    ["OPT_SHIFT_DETAILED"] = "Shift로 상세 보기",
-    ["OPT_FIELDS"] = "툴팁 항목",
-    ["OPT_MINIMAP"] = "미니맵 버튼 표시",
-    ["OPT_SERVER_RANK"] = "서버 순위표 순위 표시",
-    ["OPT_HOW_SCORES_WORK"] = "점수 계산 방식",
-    ["OPT_RESTORE"] = "TacoTip 설정 복원",
-    ["OPT_RESET"] = "애드온 설정 초기화",
-    ["OPT_EQUIPMENT_MODE"] = "캐릭터 및 조사 요약",
-    ["OPT_EQUIPMENT_UNENHANCED"] = "상세 모드에서 미보정 GS 표시",
-    ["OPT_EQUIPMENT_UNLOCK"] = "요약 위치 잠금 해제",
-    ["OPT_EQUIPMENT_RESET"] = "요약 위치 초기화",
-    ["OPT_SCAN_NOW"] = "지금 검사",
-    ["OPT_SCAN_NOW_DESC"] =
-    "지금 접근할 수 있는 플레이어들을 검사하고 아직 모르는 GearScore를 채웁니다.",
+    ["TOOLTIP_LABEL_RANK"] = "GS 순위:",
 
     ["HELP_ENABLED_HEADING"] = "애드온 사용",
     ["HELP_ENABLED_1"] =
@@ -138,6 +103,16 @@ local L = {
     ["HELP_SHOWSERVERRANK_1"] =
     "백그라운드 동기화 엔진이 제공할 때 툴팁에 플레이어의 서버 GearScore 순위와 직업 내 순위를 표시합니다.",
 
+    ["HELP_COMFORTABLEROWS_HEADING"] = "넓은 행",
+    ["HELP_COMFORTABLEROWS_1"] =
+    "순위표의 행을 늘려 글자를 더 크게 표시합니다. 목록에는 같은 플레이어들이 같은 순서로 나타나지만 행이 더 높습니다.",
+
+    ["HELP_SHAMANBLUE_HEADING"] = "주술사 파란색",
+    ["HELP_SHAMANBLUE_1"] =
+    "주술사 직업 이름을 분홍색 대신 파란색으로 표시합니다. Classic Era는 주술사 직업 색상을 분홍색으로 칠하므로, TacoTip이 사용하는 색과 같아집니다.",
+    ["HELP_SHAMANBLUE_2"] =
+    "TacoTip이 설치되어 있으면 TacoTip의 주술사 파란색 설정도 함께 적용됩니다. 그쪽에서 끄면 이쪽의 파란색도 꺼져 두 애드온의 직업 색상이 같아집니다.",
+
     ["HELP_OPENLEADERBOARD_HEADING"] = "서버 순위표 열기",
     ["HELP_OPENLEADERBOARD_1"] =
     "TacoTip GearScore 서버 순위표 창(/tt ranks)을 열어 영역 전체 순위를 확인합니다.",
@@ -189,28 +164,27 @@ local L = {
     ["MINIMAP_HINT"] = "TacoTip Extras",
     ["MINIMAP_HINT_LEFT"] = "좌클릭: 순위표",
     ["MINIMAP_HINT_DRAG"] = "끌어서 이동",
-    ["BLANK_DESC"] = "끌기",
-    ["BLANK"] = "없음",
 
     ["LB_TITLE"] = "TacoTip GearScore 순위표",
     ["LB_REALM"] = "영역 전체",
     ["LB_SEARCH"] = "검색:",
+    ["LB_GUILD"] = "길드:",
     ["LB_YOU"] = "나",
     ["LB_LOADING"] = "순위표를 불러오는 중...",
     ["LB_EMPTY"] = "아직 기록이 없습니다. 플레이하는 동안 점수가 동기화됩니다.",
     ["LB_EMPTY_FILTERS"] = "현재 필터와 일치하는 플레이어가 없습니다.",
+    ["LB_DB_UNAVAILABLE"] = "순위 데이터베이스를 사용할 수 없어 순위를 표시할 수 없습니다.",
     ["LB_NOT_ESTABLISHED"] = "아직 순위 없음",
     ["LB_ONLY_YOU"] = "지금은 이 영역에 내 캐릭터만 기록되어 있습니다.",
     ["LB_FILTER_ALL"] = "전체",
-    ["LB_MY_RANK"] = "\226\152\148 내 순위",
-    ["LB_TOP"] = "\226\152\160 1위",
+    ["LB_TOP"] = "\226\150\178 1위",
     ["LB_SCAN"] = "지금 검사",
     ["LB_SCAN_BUSY"] = "검사 중...",
-    ["LB_SCAN_IDLE"] = "대기 중",
 
     ["LB_COL_RANK"] = "순위",
     ["LB_COL_GS"] = "GEARSCORE",
     ["LB_COL_ILVL"] = "iLVL",
+    ["LB_COL_LEVEL"] = "레벨",
     ["LB_COL_PLAYER"] = "플레이어",
     ["LB_COL_LASTSEEN"] = "최근 접속",
 
@@ -218,14 +192,20 @@ local L = {
     ["LB_TIP_UNKNOWNSPEC"] = "알 수 없는 전문화",
     ["LB_TIP_GS"] = "GearScore: %d",
     ["LB_TIP_ILVL"] = "평균 아이템 레벨: %.1f",
+    ["LB_TIP_PVP_RANK"] = "PvP 순위: %s",
+    ["LB_TIP_ARENA"] = "아레나 최고: %d",
     ["LB_TIP_RANK"] = "GearScore 순위: #%d",
-    ["LB_TIP_CLASSRANK"] = "직업 내 순위: #%d",
     ["LB_TIP_LASTSEEN"] = "최근 확인: %s",
+    ["LB_TIP_RANK_SYNCED"] = "순위 동기화됨: %s",
+    ["LB_TIP_CLICK_GEAR"] = "클릭하여 장비 보기",
+    ["LB_SCAN_COMPLETE"] = "검사 완료 - %d명 기록됨",
 
     ["SORT_GS_DESC"] = "GEARSCORE",
     ["SORT_ILVL_DESC"] = "아이템 레벨",
+    ["SORT_LEVEL_DESC"] = "레벨",
     ["SORT_SEEN_DESC"] = "최근 확인",
 
+    ["LB_STAT_STRIP"] = "%d 플레이어 | 최고 %d | 평균 %d",
 
     ["TIME_JUST_NOW"] = "방금",
     ["TIME_MIN_AGO"] = "%d분 전",
@@ -234,14 +214,14 @@ local L = {
 
     ["GEAR_TITLE"] = "%s의 장비",
     ["GEAR_NOT_SCANNED"] = "이 플레이어는 아직 검사되지 않아 장비 정보가 없습니다.",
-    ["GEAR_NO_ITEMS"] = "기록된 장비가 없습니다.",
-    ["GEAR_CLOSE"] = "닫기",
+    ["GEAR_DATA_UNAVAILABLE"] = "현재 이 플레이어의 장비 데이터를 사용할 수 없습니다. 순위표에서 지금 검사를 누른 후 다시 시도하세요.",
 
     ["SCAN_PROGRESS"] = "%d / %d",
 
     ["CLASS_DEATHKNIGHT"] = "죽음의 기사",
     ["CLASS_DEMONHUNTER"] = "악마 사냥꾼",
     ["CLASS_DRUID"] = "드루이드",
+    ["CLASS_EVOKER"] = "기원사",
     ["CLASS_HUNTER"] = "사냥꾼",
     ["CLASS_MAGE"] = "마법사",
     ["CLASS_MONK"] = "수도승",

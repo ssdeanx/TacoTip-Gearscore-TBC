@@ -13,8 +13,10 @@
 local _hp = ((arg and arg[0]) or "Tests/harness/settings_test.lua"):gsub("\\", "/")
 local _hd = _hp:match("^(.*)/[^/]*$") or "."
 local ROOT = dofile(_hd .. "/root.lua") .. "/"
+local MOCKC = dofile(_hd .. "/mock_contract.lua")
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
+MOCKC.setFamily(MOCKC.normaliseFamily(label))
 local usePipeline  = (arg[4] == "pipeline")
 local noSettings   = (arg[5] == "nosettings")
 local WITH_PAWN   = (arg[6] == "pawn")
@@ -325,6 +327,16 @@ REALG.GetCVar = function() return "" end
 REALG.SetCVar = function() end
 REALG.GetCVarBool = function() return false end
 REALG.InCombatLockdown = function() return false end
+-- `securecall` -- the engine's taint-containment global, present on every
+-- supported client (Blizzard captures it as a local the same way it captures
+-- `forceinsecure`: Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
+-- `local securecall = securecall;`). The mock counts the calls that went
+-- through it, so a taint pin can tell "addon code ran inside a Blizzard
+-- frame's script chain" from "it ran contained".
+REALG.securecall = function(fn, ...)
+    REALG.__secureCalls = (REALG.__secureCalls or 0) + 1
+    return fn(...)
+end
 REALG.LoadAddOn = function() return true end
 REALG.hooksecurefunc = function() end
 REALG.tinsert = table.insert
@@ -415,7 +427,10 @@ end
 REALG.UnitName = function() return "Tester" end
 REALG.UnitLevel = function() return 60 end
 REALG.UnitRace = function() return "Human" end
-REALG.UnitClass = function() return "WARRIOR", "WARRIOR" end
+-- UnitClass publishes THREE values on the modern pair (localizedClassName,
+-- classToken, classID) and TWO on the Classic family; the mock published two
+-- on every client. See Tests/harness/mock_contract.lua for the citations.
+REALG.UnitClass = MOCKC.unitClassMock(function() return "WARRIOR", "WARRIOR" end)
 REALG.UnitIsPlayer = function(u) return u ~= "target" end
 REALG.UnitIsUnit = function(a, b) return a == b end
 REALG.UnitIsPVP = function() return false end
@@ -978,6 +993,31 @@ check("the Pawn score toggle is gated in the default state exactly when Pawn is 
     "enabled=" .. tostring(defaultWriter.show_pawn_player and defaultWriter.show_pawn_player.enabled)
         .. " pawn=" .. tostring(WITH_PAWN))
 
+-- Batch 2 late-load re-eval (options): establishing Pawn AFTER load and
+-- refreshing must enable the toggle without a reload. Only meaningful where
+-- Pawn was absent at load; where present the live probe already agreed.
+-- Found by display name (generated control names are opaque), following the
+-- file's own behavioural-identity convention; no control is driven.
+if (not WITH_PAWN and defaultWriter.show_pawn_player) then
+    local wantName = defaultWriter.show_pawn_player.name
+    local pawnCtl = nil
+    for _, w in ipairs(widgets) do
+        if (displayName(w) == wantName) then pawnCtl = w break end
+    end
+    check("pawn toggle control found for the late-load pin", pawnCtl ~= nil)
+    if (pawnCtl) then
+        check("pawn toggle is disabled with Pawn absent at load",
+            isControlEnabled(pawnCtl) == false)
+        REALG.PawnClassicLastUpdatedVersion = 2.0538
+        REALG.PawnGetItemData = function() return {} end
+        REALG.PawnGetSingleValueFromItem = function() return nil end
+        REALG.PawnGetScaleColor = function() return 1, 1, 1 end
+        pcall(function() TT:RefreshOptionsUI() end)
+        check("pawn toggle is enabled after Pawn appears + Refresh (no reload)",
+            isControlEnabled(pawnCtl) == true)
+    end
+end
+
 -- Identify the reset button by what it DOES, not by its label: labels are
 -- localised (Titanforge runs in Chinese, so matching an English string finds
 -- nothing), and doing it behaviourally also proves no second control silently
@@ -1154,6 +1194,26 @@ do
     check("no locale describes the border thickness default as 14px",
         #offenders == 0, #offenders > 0 and table.concat(offenders, " ") or nil)
 
+    -- The same sweep for the number that was wrong until this release. Only
+    -- enUS states a number at all -- the other ten carry none -- and it must
+    -- state the SHIPPED one.
+    local stale = {}
+    for _, code in ipairs({ "deDE", "enUS", "esES", "esMX", "frFR", "itIT",
+                            "koKR", "ptBR", "ruRU", "zhCN", "zhTW" }) do
+        local f = assert(io.open(ROOT .. "Locale/" .. code .. ".lua", "r"))
+        local body = f:read("*a")
+        f:close()
+        local at = body:find("OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC", 1, true)
+        if (at) then
+            local entry = body:sub(at, body:find("\n%s*%[", at + 1, true) or #body)
+            if (entry:find("16px", 1, true)) then
+                stale[#stale + 1] = code
+            end
+        end
+    end
+    check("no locale describes the border thickness default as 16px",
+        #stale == 0, #stale > 0 and table.concat(stale, " ") or nil)
+
     -- The same string, hardcoded as the fallback in options.lua. Read the source
     -- because the fallback only shows when the locale key is absent, which the
     -- enUS load never exercises.
@@ -1162,14 +1222,22 @@ do
     fh:close()
     check("the options.lua border-thickness fallback does not say 14px",
         not src:find("Default is 14px", 1, true))
-    check("the options.lua border-thickness fallback states the current 16px default",
-        src:find("Default is 16px", 1, true) ~= nil)
+    -- The SHIPPED default is 20 (options.lua DEFAULTS.tooltip_border_edge_size
+    -- = 20, and ApplyConfigDefaults copies it into a fresh profile), so the
+    -- description has to say 20. It said 16, and 16 was a number no profile
+    -- ever resolved to: the default was 20 and the fallback was 16.
+    check("the options.lua border-thickness fallback states the current 20px default",
+        src:find("Default is 20px", 1, true) ~= nil)
+    check("the options.lua border-thickness fallback no longer claims 16px",
+        not src:find("Default is 16px", 1, true))
 
     local ef = assert(io.open(ROOT .. "Locale/enUS.lua", "r"))
     local ebody = ef:read("*a")
     ef:close()
-    check("the shipped enUS border-thickness help states the 16px default",
-        ebody:find("Default is 16px", 1, true) ~= nil)
+    check("the shipped enUS border-thickness help states the 20px default",
+        ebody:find("Default is 20px", 1, true) ~= nil)
+    check("the shipped enUS border-thickness help no longer claims 16px",
+        not ebody:find("Default is 16px", 1, true))
 end
 
 check("saved values survive a save/load round-trip",
@@ -1208,6 +1276,53 @@ TT:ApplyConfigDefaults(CFG)
 check("an out-of-range saved value is clamped to the default",
     CFG.tooltip_font_size == DEFAULTS.tooltip_font_size,
     tostring(CFG.tooltip_font_size))
+
+-- Corrupt fixed-string settings sanitize to defaults on load. The slash path
+-- only ever writes the five cycled literals for custom_anchor, so anything
+-- else (hand-edited garbage) must reset -- otherwise it reaches
+-- tooltip:SetPoint and raises from a hooksecurefunc post-hook. Media keys
+-- must name a value the UI could have offered (builtin table or SharedMedia
+-- registry); the render-time resolver already falls back silently for those,
+-- so sanitizing to the default matches it instead of diverging from it.
+do
+    CFG.custom_anchor = "BOGUS-ANCHOR"
+    CFG.tooltip_font = "Interface\\AddOns\\Nope\\bogus.ttf"
+    CFG.tooltip_bar_texture = "bogus-bar"
+    CFG.tooltip_background_texture = "bogus-bg"
+    CFG.tooltip_border_texture = "bogus-border"
+    TT:ApplyConfigDefaults(CFG)
+    check("a corrupt custom_anchor sanitizes to the TOPLEFT default",
+        CFG.custom_anchor == DEFAULTS.custom_anchor,
+        tostring(CFG.custom_anchor))
+    check("a corrupt tooltip_font sanitizes to the default",
+        CFG.tooltip_font == DEFAULTS.tooltip_font,
+        tostring(CFG.tooltip_font))
+    check("a corrupt tooltip_bar_texture sanitizes to the default",
+        CFG.tooltip_bar_texture == DEFAULTS.tooltip_bar_texture,
+        tostring(CFG.tooltip_bar_texture))
+    check("a corrupt tooltip_background_texture sanitizes to the default",
+        CFG.tooltip_background_texture == DEFAULTS.tooltip_background_texture,
+        tostring(CFG.tooltip_background_texture))
+    check("a corrupt tooltip_border_texture sanitizes to the default",
+        CFG.tooltip_border_texture == DEFAULTS.tooltip_border_texture,
+        tostring(CFG.tooltip_border_texture))
+    -- Positive controls: a valid non-default literal and real builtin media
+    -- choices survive, so the sanitizer cannot wipe a legitimate config.
+    local fontChoices = TT:GetTooltipFontChoices()
+    local otherFont = (fontChoices[2] and fontChoices[2].value) or DEFAULTS.tooltip_font
+    local barChoices = TT:GetTooltipStatusBarTextureChoices()
+    local otherBar = (barChoices[2] and barChoices[2].value) or DEFAULTS.tooltip_bar_texture
+    CFG.custom_anchor = "CENTER"
+    CFG.tooltip_font = otherFont
+    CFG.tooltip_bar_texture = otherBar
+    TT:ApplyConfigDefaults(CFG)
+    check("...while a valid anchor literal survives sanitizing",
+        CFG.custom_anchor == "CENTER",
+        tostring(CFG.custom_anchor))
+    check("...and valid builtin media choices survive sanitizing",
+        CFG.tooltip_font == otherFont and CFG.tooltip_bar_texture == otherBar,
+        "font=" .. tostring(CFG.tooltip_font) .. " bar=" .. tostring(CFG.tooltip_bar_texture))
+end
 
 --------------------------------------------------------------------------
 -- Pawn must not be asked for a score when Pawn has no scale for the
@@ -1280,6 +1395,277 @@ do
         REALG.PawnGetSingleValueFromItem = realGetSingle
         REALG.PawnCommon = nil
         REALG.PawnScaleProviders = nil
+    end
+end
+
+--------------------------------------------------------------------------
+-- H7 + D3: scan-toggle wiring, default, persistence, failure diag.
+--
+-- Revert map (each proven red-then-green against a mutated temp copy):
+--   wiring: drop the SetScanEnabled call in the scan handler -> lib disagrees.
+--   default: DEFAULTS.scan = false -> first check red (and the library, whose
+--     own default is enabled, disagrees with the checkbox).
+--   Refresh: read config instead of lib.scanEnabled -> checked disagrees.
+--   failure: swallow the apply error again -> no entry, lib silently stale.
+--------------------------------------------------------------------------
+do
+    check("scan defaults to on", DEFAULTS.scan == true,
+        "DEFAULTS.scan=" .. tostring(DEFAULTS.scan))
+    local wname = writer.scan and writer.scan.name or nil
+    check("scan toggle control found", wname ~= nil)
+    local ctl = nil
+    if (wname) then
+        for _, w in ipairs(widgets) do
+            if (displayName(w) == wname) then ctl = w break end
+        end
+    end
+    check("scan control resolved to a widget", ctl ~= nil)
+    if (ctl) then
+        local okLib, lib = pcall(REALG.LibStub, "LibForeverInspector", true)
+        check("inspector reachable for the scan pins", okLib and lib ~= nil)
+        if (okLib and lib) then
+            local function flip(v)
+                ctl:SetChecked(v)
+                fire(ctl.GetScript and ctl:GetScript("OnClick"), ctl, v,
+                    "scan->" .. tostring(v))
+                CFG = REALG.TacoTipConfig
+            end
+            -- Wiring: the control moves the config AND the library together.
+            flip(false)
+            check("scan off writes the config", CFG.scan == false,
+                "scan=" .. tostring(CFG.scan))
+            check("...and stops the library scan", lib.scanEnabled == false,
+                "scanEnabled=" .. tostring(lib.scanEnabled))
+            -- The checkbox follows the library, not the request: Refresh must
+            -- show the actual state.
+            pcall(function() TT:RefreshOptionsUI() end)
+            check("...and Refresh shows the actual library state",
+                ctl:GetChecked() == false,
+                "checked=" .. tostring(ctl:GetChecked()))
+            flip(true)
+            check("scan on writes the config", CFG.scan == true,
+                "scan=" .. tostring(CFG.scan))
+            check("...and restarts the library scan", lib.scanEnabled == true,
+                "scanEnabled=" .. tostring(lib.scanEnabled))
+            -- Persistence: a saved false is kept by the reload backfill (which
+            -- fills only MISSING keys), so "off" survives a /reload.
+            CFG.scan = false
+            TT:ApplyConfigDefaults(CFG)
+            check("a saved scan=false is not backfilled to true", CFG.scan == false,
+                "scan=" .. tostring(CFG.scan))
+            -- Reset restores the default through the REAL reset button (the
+            -- sweep only drives it sandboxed). The button replaces the config
+            -- table, so re-read the global afterwards.
+            local resetCtl = nil
+            for _, dn in ipairs(destructive) do
+                for _, w in ipairs(widgets) do
+                    if (displayName(w) == dn) then resetCtl = w break end
+                end
+                if (resetCtl) then break end
+            end
+            check("reset button found for the scan-reset pin", resetCtl ~= nil)
+            if (resetCtl) then
+                fire(resetCtl.GetScript and resetCtl:GetScript("OnClick"), resetCtl, nil,
+                    "reset-for-scan")
+                CFG = REALG.TacoTipConfig
+                check("reset restores scan to the default", CFG.scan == true,
+                    "scan=" .. tostring(CFG.scan))
+                check("...and the library follows the reset", lib.scanEnabled == true,
+                    "scanEnabled=" .. tostring(lib.scanEnabled))
+                pcall(function() TT:RefreshOptionsUI() end)
+            end
+            -- H7 failure: a raising library apply records ONE diag entry and
+            -- prints ONE line, and the checkbox keeps showing the actual state.
+            local realSetScan = lib.SetScanEnabled
+            lib.SetScanEnabled = function() error("BATCH3_PIN_SCAN_APPLY") end
+            local prints = 0
+            local savedPrint = REALG.print
+            REALG.print = function(...) prints = prints + 1 end
+            flip(false)
+            flip(false)
+            REALG.print = savedPrint
+            check("a failed apply still records the config intent", CFG.scan == false,
+                "scan=" .. tostring(CFG.scan))
+            check("...but the library did not move", lib.scanEnabled == true,
+                "scanEnabled=" .. tostring(lib.scanEnabled))
+            local foundScanApply = false
+            if (TT.optionsRegErrors) then
+                for _, e in ipairs(TT.optionsRegErrors) do
+                    if (type(e) == "string" and e:find("scan apply", 1, true)) then
+                        foundScanApply = true
+                    end
+                end
+            end
+            check("...and the failure is recorded for diag", foundScanApply,
+                "optionsRegErrors=" .. tostring(TT.optionsRegErrors and #TT.optionsRegErrors or 0))
+            check("...with exactly one chat line for the repeated failure",
+                prints == 1, "prints=" .. tostring(prints))
+            -- Diag surfacing: main.lua reports the recorded failure.
+            local captured = {}
+            REALG.print = function(...)
+                local parts = {}
+                for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+                captured[#captured + 1] = table.concat(parts, " ")
+            end
+            pcall(TT.PrintDiagnostics, TT)
+            REALG.print = savedPrint
+            local diagText = table.concat(captured, "\n")
+            check("...and /tacotip diag surfaces it",
+                diagText:find("scan apply", 1, true) ~= nil)
+            lib.SetScanEnabled = realSetScan
+            -- Leave the world as found: intent on, library on.
+            flip(true)
+        end
+    end
+end
+
+
+--------------------------------------------------------------------------
+-- The mock-fidelity contract (proctor HI-12).
+--
+-- Every mock is a claim about what the client does, and three of them were
+-- wrong while the suite stayed green. mock_contract.lua records the client's
+-- arity per API with the mirror citation that established it; these
+-- assertions measure the mock that is actually installed and fail when the
+-- two disagree, so the NEXT drift fails the suite instead of waiting for a
+-- human to read FrameXML.
+--------------------------------------------------------------------------
+MOCKC.assertArity(check, "UnitClass", REALG.UnitClass)
+
+--------------------------------------------------------------------------
+-- Hunter H-NEW2: the options LoadAddOn leg is counted with the last error,
+-- and surfaced in /tacotip diag problems[]. Only the noSettings runs drive
+-- the load leg (with Settings present ensureSettingsUI early-returns and no
+-- probe runs). Revert map: restore the bare pcall(LoadAddOn, ...) probes in
+-- options.lua -> the counter below never moves and diag never names the
+-- addon (red).
+--------------------------------------------------------------------------
+if (noSettings) then
+    do
+        -- Drive the load leg through the public panel entry point, the same
+        -- way the client does on login and on /tacotip custom.
+        local evBefore = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        local savedLoad = REALG.LoadAddOn
+        local savedLegacy = REALG.InterfaceOptions_AddCategory
+        REALG.LoadAddOn = function(name) error("HNEW2_PIN_LOAD_FAIL:" .. tostring(name)) end
+        -- Also cover the Blizzard_OptionsUI pair: with the legacy namespace
+        -- present those two probes never run (same helper, untested leg).
+        REALG.InterfaceOptions_AddCategory = nil
+        local openOk2, openErr2 = pcall(function() TT:OpenOptionsPanel() end)
+        REALG.LoadAddOn = savedLoad
+        REALG.InterfaceOptions_AddCategory = savedLegacy
+        check("options open survives a raising LoadAddOn", openOk2 == true, tostring(openErr2))
+        local evAfter = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        check("forced LoadAddOn failure moves the load-leg counter", evAfter > evBefore,
+            "before=" .. tostring(evBefore) .. " after=" .. tostring(evAfter))
+        check("...and records which addon failed",
+            type(TT.ev) == "table" and type(TT.ev.lastOptionsLoadError) == "string"
+                and TT.ev.lastOptionsLoadError:find("Blizzard_", 1, true) ~= nil,
+            tostring(TT.ev and TT.ev.lastOptionsLoadError))
+        -- Diag surfacing: problems[] names the failed addon.
+        local captured = {}
+        local savedPrint = REALG.print
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            captured[#captured + 1] = table.concat(parts, " ")
+        end
+        pcall(TT.PrintDiagnostics, TT)
+        REALG.print = savedPrint
+        local diagText = table.concat(captured, "\n")
+        check("...and /tacotip diag problems[] names it",
+            diagText:find("options load failures", 1, true) ~= nil
+                and diagText:find("Blizzard_", 1, true) ~= nil)
+        -- Leave the world as found: the forced failures stay counted (they
+        -- happened); loader and legacy namespace restored above.
+    end
+end
+
+--------------------------------------------------------------------------
+-- N4: a target that does not exist on the detected client is NOT
+-- APPLICABLE -- it is not even attempted, and it is not counted as a
+-- failure. A client-appropriate target that fails to load IS a real
+-- failure: it counts and it surfaces.
+--
+-- Mirror evidence (branch-qualified; the Interface/AddOns directory listing
+-- of each branch):
+--   origin/classic_era, origin/classic_anniversary, origin/classic_titan:
+--     Blizzard_Settings                    ABSENT
+--     Blizzard_Settings_Shared             PRESENT
+--     Blizzard_SettingsDefinitions         ABSENT
+--     Blizzard_SettingsDefinitions_Shared  PRESENT
+--     Blizzard_OptionsUI                   ABSENT
+--     Blizzard_InterfaceOptions            ABSENT
+--   origin/forever, origin/live:
+--     Blizzard_Settings                    PRESENT
+--     (the other three absent ones are still ABSENT)
+--------------------------------------------------------------------------
+if (noSettings) then
+    do
+        -- (a) A NON-APPLICABLE target: its failure must not be counted, and
+        --     it must not even be attempted.
+        local savedLoad = REALG.LoadAddOn
+        local savedLegacy = REALG.InterfaceOptions_AddCategory
+        local attempted = {}
+        local evBefore = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        REALG.LoadAddOn = function(name)
+            attempted[#attempted + 1] = tostring(name)
+            if (name == "Blizzard_OptionsUI") then
+                error("N4_PIN_LOAD_FAIL:" .. tostring(name))
+            end
+            return true
+        end
+        -- With the legacy namespace gone, the Blizzard_OptionsUI leg is
+        -- REACHED -- so what is being measured is the applicability rule, not
+        -- a leg that never runs.
+        REALG.InterfaceOptions_AddCategory = nil
+        pcall(function() TT:OpenOptionsPanel() end)
+        REALG.LoadAddOn = savedLoad
+        REALG.InterfaceOptions_AddCategory = savedLegacy
+        local evAfter = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        check("a non-applicable target's failure is NOT counted as an options load failure",
+            evAfter == evBefore,
+            "before=" .. tostring(evBefore) .. " after=" .. tostring(evAfter))
+        local sawOptionsUI = false
+        local sawSettings = false
+        for _, n in ipairs(attempted) do
+            if (n == "Blizzard_OptionsUI") then sawOptionsUI = true end
+            if (n == "Blizzard_Settings") then sawSettings = true end
+        end
+        check("...and the non-applicable target is not even attempted",
+            sawOptionsUI == false, "attempted=" .. table.concat(attempted, ","))
+        -- On the Classic family Blizzard_Settings does not exist either.
+        local classicFamily = (label == "CLASSIC_ERA" or label == "TBC_ANNIV"
+            or label == "TITANFORGE")
+        if (classicFamily) then
+            check("...and 'Blizzard_Settings' is not attempted on the Classic family (it does not exist there)",
+                sawSettings == false, "attempted=" .. table.concat(attempted, ","))
+        end
+    end
+    do
+        -- (b) A CLIENT-APPLICABLE target that fails to load IS a real
+        --     failure: it counts and it is named.
+        local savedLoad = REALG.LoadAddOn
+        local savedLegacy = REALG.InterfaceOptions_AddCategory
+        local evBefore = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        REALG.LoadAddOn = function(name)
+            if (name == "Blizzard_Settings_Shared") then
+                error("N4_PIN_LOAD_FAIL:" .. tostring(name))
+            end
+            return true
+        end
+        REALG.InterfaceOptions_AddCategory = nil
+        pcall(function() TT:OpenOptionsPanel() end)
+        REALG.LoadAddOn = savedLoad
+        REALG.InterfaceOptions_AddCategory = savedLegacy
+        local evAfter = (TT.ev and TT.ev.optionsLoadFailures) or 0
+        check("a client-appropriate target's failure IS counted",
+            evAfter > evBefore,
+            "before=" .. tostring(evBefore) .. " after=" .. tostring(evAfter))
+        check("...and the failed addon is named",
+            type(TT.ev and TT.ev.lastOptionsLoadError) == "string"
+                and TT.ev.lastOptionsLoadError:find("Blizzard_Settings_Shared", 1, true) ~= nil,
+            tostring(TT.ev and TT.ev.lastOptionsLoadError))
     end
 end
 

@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-18T01:00:00Z",
+  "run_id": "batch1",
+  "agent_name": "fix-main-batch1",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "mirror-existing-pin-styles; per-item revert-to-fail with backup copies; fileguard as new file reusing detect_test idioms",
+    "what_was_hard": "sanitizer load-order constraint (choice getters undefined at first-load sanitize) forced builtin+LSM direct validation",
+    "skill_gap": null
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}
