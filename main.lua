@@ -4131,12 +4131,30 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     -- Hunter M-NEW2: count the passthrough by kind (menu-by-design vs
     -- unit-like-but-unresolved). Neutral tallies, not failure events.
     local managedAnchor, anchorSkipKind = isManagedAnchorTarget(tooltip, parent)
-    -- Caller identity, decided ONCE. The residue verdict above is diagnostic
-    -- only (counters); it must never decide the pin, because it describes the
-    -- previous hover, not this call.
+    -- CALLER IDENTITY, decided once: unit frames (.unit), action/spell
+    -- buttons (.action/.spellId), and the world-mouseover shape. Those are the
+    -- tooltip sources this addon owns the position of. Everything else --
+    -- bag buttons, character-pane slots, menus, other addons' frames -- keeps
+    -- its own anchor untouched. Deciding by the caller (not by the tooltip's
+    -- content) is what makes it immune to the stale residue that SetOwner
+    -- leaves behind.
     local unitParent = isUnitParent(parent)
-    local worldMouseoverUnit = (not unitParent) and isWorldMouseoverUnitHover()
-    local isUnitHover = unitParent or worldMouseoverUnit
+    local spellParent = false
+    if (parent) then
+        local parentparent = nil
+        if (type(parent.GetParent) == "function") then
+            local okPP, pp = pcall(parent.GetParent, parent)
+            if (okPP) then
+                parentparent = pp
+            end
+        end
+        if (parent.action or parent.spellId
+                or (parentparent and (parentparent.action or parentparent.spellId))) then
+            spellParent = true
+        end
+    end
+    local worldMouseoverUnit = (not unitParent and not spellParent) and isWorldMouseoverUnitHover()
+    local isOwnedHover = unitParent or spellParent or worldMouseoverUnit
     local mouseoverRepin = false
     local decision = "none"
     if (not managedAnchor) then
@@ -4155,18 +4173,15 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             return
         end
     elseif (TacoTipConfig.custom_pos) then
-        -- THE RULE: with a saved position, re-pin ONLY a unit hover. Every
-        -- other caller -- bag buttons, character-pane slots, menus, panels,
-        -- other addons' frames -- keeps the anchor it was given, untouched:
-        -- no ClearAllPoints, no SetPoint, no EnableMouse change. This is what
-        -- makes the addon composable with anything else that touches the
-        -- shared GameTooltip.
-        if (not isUnitHover) then
+        -- THE RULE: with a saved position, re-pin only a tooltip this addon
+        -- owns -- a unit frame, an action/spell button, or a world-mouseover
+        -- unit. Every other caller keeps the anchor it was given, untouched.
+        if (not isOwnedHover) then
             TT.ev = TT.ev or {}
             TT.ev.lastAnchorDecision = "passthrough"
             return
         end
-        mouseoverRepin = (not unitParent)
+        mouseoverRepin = worldMouseoverUnit
     elseif (not managedAnchor) then
         TT.ev = TT.ev or {}
         TT.ev.lastAnchorDecision = "passthrough"
@@ -4201,7 +4216,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
                 else
                     tooltip:ClearAllPoints()
                     tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
-                    decision = mouseoverRepin and "repin-mouseover" or "repin-managed"
+                    decision = mouseoverRepin and "repin-mouseover"
+                        or (spellParent and "repin-spell" or "repin-managed")
                 end
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
@@ -5441,8 +5457,9 @@ function TT:PrintDiagnostics()
     local dragButton = _G.TacoTipDragButton
     line("drag handle", dragButton and (dragButton:IsShown() and "shown" or "exists (hidden)") or "NOT CREATED")
     line("last anchor decision", (TT.ev and TT.ev.lastAnchorDecision) or "none yet")
-    line("passthrough (non-unit callers)", ((TT.ev and TT.ev.anchorSkippedMenu) or 0)
+    line("passthrough (not our tooltip)", ((TT.ev and TT.ev.anchorSkippedMenu) or 0)
         + ((TT.ev and TT.ev.anchorSkippedUnresolved) or 0))
+    line("  (a count of hovers left to their own anchor -- not errors)")
     line("pins skipped (bad anchor)", (TT.ev and TT.ev.anchorInvalidSkipped) or 0)
     -- Which widget surface this client actually presents. These three facts
     -- select the tooltip code paths, so reporting them makes a "looks wrong on

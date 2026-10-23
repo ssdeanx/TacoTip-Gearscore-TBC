@@ -5437,6 +5437,29 @@ do
                     .. " decision=" .. tostring(decUnit))
         end
 
+        -- Pin H: ACTION/SPELL BUTTONS RE-PIN TOO (operator: "spells are going
+        -- back to corner... its not just units"). Blizzard's action buttons
+        -- pass the button itself with .action set, and that tooltip belongs on
+        -- the saved position exactly like a unit hover. A unit-only gate sent
+        -- it to the client's bottom-right park -- the reported regression.
+        if (handle) then
+            local spellButton = makeWidget("Button", "TestSpellButton")
+            spellButton.action = 1
+            resetRehoverResidue()
+            seedFocus(spellButton)
+            TT.ev.lastAnchorDecision = nil
+            local relSpell = runHookCapturingRel(GT, spellButton)
+            local nSpell = pointCount()
+            local pSpell, _, rpSpell = point1()
+            local decSpell = TT.ev.lastAnchorDecision
+            check("an action/spell button re-pins on the saved position",
+                nSpell == 1 and relSpell == handle and pSpell == "TOPLEFT"
+                    and rpSpell == "TOPLEFT" and decSpell == "repin-spell",
+                "points=" .. tostring(nSpell) .. " relIsHandle=" .. tostring(relSpell == handle)
+                    .. " point=" .. tostring(pSpell) .. "/" .. tostring(rpSpell)
+                    .. " decision=" .. tostring(decSpell))
+        end
+
         -- Restore.
         GT.__unit, GT.GetUnit, GT.GetOwner = prevUnit, prevGetUnit, prevGetOwner
         GT.__lines, GT.__points = prevLines, prevPoints
