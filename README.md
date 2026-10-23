@@ -1,26 +1,38 @@
----
+```
+   _____              _____ _____
+  |_   _|            |_   _|__  / __|
+    | | |__   __ _  __  | |  / /|  _\
+    | | '_ \ / _` |/ _` | | / / | |  \ 
+    | | | | | (_| | (_| | |/ /__| |_) |
+    |_|_| |_|\__, |\__,_|_/_____|____/
+             __/ |
+            |___/
+```
+
+```yaml
 name: TacoTip
-version: 0.8.4
+version: 0.8.3
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE; bundled Libs/ keep their own terms
 curseforge_id: 1555962
 project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
-interfaces: ["11509", "20506", "38002", "16001", "120105"]
+interfaces: ["11509", "20506", "38002", "16001", "120100"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
-optional_dependencies: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
+requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 optional: [WoWUnit]
-status: released
-updated: 2026-10-20
----
+status: unreleased
+updated: 2026-10-14
+```
 
-# TacoTip | Gearscore & iLvL
 
-TacoTip is a character, item and guild tooltip enhancement that runs on **every** World of Warcraft engine family from one build — no per-client downloads, no "which version do I install" question:
+TacoTip is a character, item and guild tooltip enhancement that runs on **every**
+World of Warcraft engine family from one build — no per-client downloads, no
+"which version do I install" question:
 
-*   **CurseForge** — [https://www.curseforge.com/wow/addons/tacotip-gearscore](https://www.curseforge.com/wow/addons/tacotip-gearscore) (this add-on)
-*   **<span style="color:#e67e23"><span style="text-decoration:underline">Companion Add-on</span></span>** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras) ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png) — a separate add-on with its own CurseForge listing, published alongside this one
+- **CurseForge** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
+- **Companion** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview), optional, separately installed
 
 | Client | Interface |
 | :--- | :--- |
@@ -28,44 +40,14 @@ TacoTip is a character, item and guild tooltip enhancement that runs on **every*
 | **The Burning Crusade Classic Anniversary** | `20506` |
 | **WotLK Titanforge** | `38002` |
 | **WoW Forever** | `16001` |
-| **Retail / Live (Midnight)** | `120105` |
+| **Retail / Live (Midnight)** | `120100` |
 
 > **This release replaces the previous Classic-only TacoTip.** It is the same
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
 
-**Dependencies.** `TacoTip.toc:9` declares `## OptionalDependencies: LibStub,
-CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia`, and
-the front matter above lists the same six under `optional_dependencies:` to
-match. Three of them — `LibStub`, `CallbackHandler-1.0` and `LibDetours-1.0` —
-are **bundled** under `Libs/` and are therefore always present; the add-on
-stops loading with a named stage if one of them is somehow missing
-(`main.lua:21-30`). The other three — `Pawn`, `LibSharedMedia-3.0` and
-`SharedMedia` — are genuinely optional, and every feature that uses them
-degrades when they are absent.
-
 ---
-
-## What's New in 0.8.4
-
-Background scanning you can switch off, specs you can trust, and failures that speak up instead of going quiet — the scoring numbers themselves are untouched.
-
-- **"Scan nearby players" checkbox** on the Tooltips options page. Leave it on to keep collecting GearScore for players around you; turn it off to stop background requests. Hovering and targeting keep working either way, and the box always shows what is really scanning.
-- **No more wrong spec on players you haven't inspected yet.** An uninspected player used to show the first spec for their class until real data arrived. Now the spec line stays off until the inspect completes.
-- **Pawn keeps working when you install or turn it on mid-session.** The Pawn option becomes available right away with no reload needed to see it. Scores start showing after the next reload, and /tacotip diag tells you if you are in between.
-- **Hunter scoring no longer stays off for a whole session.** If your class wasn't readable at the moment the addon loaded, HunterScore used to stay disabled until you reloaded. Now it checks your class each time it is needed.
-- **The power bar keeps updating.** If its preferred setup fails it uses a simpler one instead, so mana, rage, energy and the rest keep moving.
-- **Broken panels and options speak up instead of going blank.** If a settings page can't open or a toggle doesn't take, you get a one-line chat message naming it, and it is listed under problems in /tacotip diag.
-- **A saved tooltip position now applies to every unit, not just unit frames.** Hovering a player out in the world could leave the tooltip at the bottom-right corner, because the client positions the tooltip *before* it tells it which unit it is showing; your saved position is now applied once the unit is known. If a drag can't be read the previous position is kept instead of being silently replaced, and **"Anchor Spells to Mouse" is now off by default** so spell tooltips respect the saved position too.
-- **Tooltips survive rough edges instead of dropping.** Fast mouse-outs no longer lose the tooltip on slow-to-load setups, a background score refresh that hits an error is reported instead of leaving a stale card, and stopping very early while loading names where it stopped in diag.
-- **/tacotip diag tells more of the truth you actually meet.** Dropped background requests when the queue overflows, scores held back while item details are still loading, why a unit couldn't be resolved, and how long ago the last inspect problem happened.
-- **Small polish: the player-name line is 1px smaller,** and the supported interface band is exactly 11509, 20506, 38002, 16001, 120105.
-- **The score on your character and inspect panes is correct the moment you open them.** Both panes could keep showing "0" instead of your real GearScore and item level, because the refresh they relied on never fired. They refresh now, and they refresh again as soon as your own gear finishes loading.
-- **The instant-fade option says so when your client can't do it.** On a client without the instant-fade API the option is greyed out and says why, instead of accepting a setting that does nothing, and /tacotip diag now tells you which fade path is in use.
-- **You can log out again.** On Classic Era the game's own **Exit Game** and **Log Out** buttons could be refused by the client: the click did nothing and the screen filled with `ADDON_ACTION_FORBIDDEN`. The add-on no longer takes over the sound function the client itself uses, and every add-on callback that runs inside the client's own frames is now contained, so the menu's buttons behave like the client's own.
-
-Full detail is in [CHANGELOG.md](CHANGELOG.md).
 
 ## What's New in 0.8.3
 
@@ -171,7 +153,7 @@ Supported clients:
 - **The Burning Crusade (TBC) Classic Anniversary**: Interface `20506`
 - **WotLK Titanforge**: Interface `38002`
 - **WoW Forever**: Interface `16001`
-- **Retail / Live (Midnight)**: Interface `120105`
+- **Retail / Live (The War Within & Midnight)**: Interfaces `110002`, `110100`, `110200`, `120000`, `120100`
 
 ## Key Features & Architecture
 
@@ -184,7 +166,7 @@ Supported clients:
    - Backward-compatible alias `LibStub("LibClassicInspector")` provided for existing modules, registered with a minor version.
 
 2. **Adaptive GearScore & Item Level Engine:**
-   - Client-aware quality bracket sizing: **200 for Classic Era and WoW Forever, 400 for TBC, 1000 for Titanforge and Retail (Retail: operator hold pending live data)**.
+   - Client-aware quality bracket sizing: **200 for Classic Era and WoW Forever, 400 for TBC, 1000 for Titanforge and Retail**.
    - WoW Forever is a Classic-like client (level cap 60, no level scaling) and previously inherited the 1000 default, which inflated every score 5x and collapsed the colour ramp into a single band.
    - The bracket is a pure mapping: `GS_Quality` is keyed off `BRACKET_SIZE` at load and item level passes through raw, so each client gets the correct colour ramp with no formula change.
    - Dynamic `C_Item.GetItemInfo` and `GetItemInfo` resolution with instant caching.
@@ -231,7 +213,7 @@ Supported clients:
 ## Directory Structure
 
 ```text
-TacoTip/
+TacoTip_Forever/
 ├── Libs/
 │   ├── LibStub/
 │   ├── CallbackHandler-1.0/
@@ -251,28 +233,10 @@ TacoTip/
     ├── TacoTip_Forever_Tests.lua
     ├── TacoTipTests.toc
     └── harness/               plain-Lua verification, no game client needed
-        ├── run_all.sh              the whole matrix — 70 invocations
-        ├── root.lua                shared harness helpers
-        ├── mock_contract.lua       the mock-fidelity contract table
-        ├── textures.txt            the reviewed texture-path allow-list
         ├── detect_test.lua, locale_test.lua, font_test.lua,
-        ├── textures_test.lua, load_test.lua, options_test.lua,
-        ├── settings_test.lua, fileguard_test.lua, batch2_pawn_test.lua,
-        ├── batch4_clock_test.lua, batch8_pane_test.lua, gearscore_test.lua,
-        ├── tooltip_test.lua, taint_test.lua, talent_check.lua
+        ├── load_test.lua, options_test.lua, tooltip_test.lua,
+        └── talent_check.lua
 ```
-
-The `Libs/` list above is the four libraries the add-on actually loads
-(`TacoTip.toc:11-14`). Two further directories are vendored in the working
-tree — `Libs/LibDataBroker-1.1/` and `Libs/LibDBIcon-1.0/` — but **neither is
-loaded and neither ships**; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for why, and do not add them
-to the TOC without settling their licence first.
-
-The `harness/` list is the **fifteen harness files** the suite runs, plus two
-support modules (`root.lua`, `mock_contract.lua`), the runner and the texture
-allow-list. `bash Tests/harness/run_all.sh` runs them 70 times across all five
-clients.
 
 **The `.toc` filename must match the addon folder name** — that is a hard
 requirement of the loader, not a convention. This addon is shipped as
@@ -308,17 +272,9 @@ and the overlays are all silently missing. The reported stage names the region t
 look at. **A reload does not fix this** — install a Lua error handler (BugSack or
 Swatter) and read the error it captures.
 
-Other slash commands:
-
-- `/tacotip` opens the options.
-- `/tacotip custom` shows the tooltip mover.
-- `/tacotip save` saves the current mover position.
-- `/tacotip default` clears the custom position.
-- `/tacotip anchor <corner>` sets the anchor.
-- **`/tt lb` opens the TacoTip Extras leaderboard.** The companion
-  [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras) add-on
-  owns the leaderboard sub-commands, and `/tt` forwards the word to it. With the
-  Extras not installed, `/tt lb` falls back to opening the options page.
+Other slash commands: `/tacotip` opens the options, `/tacotip custom` shows the
+tooltip mover, `/tacotip save` saves the current mover position, `/tacotip default`
+clears the custom position, `/tacotip anchor <corner>` sets the anchor.
 
 ---
 
@@ -327,7 +283,7 @@ Other slash commands:
 - **Luacheck Static Analysis:**
 
   ```bash
-  luacheck .
+  luacheck TacoTip_Forever/
   # Result: 0 warnings / 0 errors
   ```
 
@@ -347,7 +303,7 @@ Other slash commands:
   lua5.1 Tests/harness/options_test.lua 2 11509 ERA
   lua5.1 Tests/harness/settings_test.lua 2 11509 CLASSIC_ERA legacy settings pawn
   lua5.1 Tests/harness/tooltip_test.lua 2 11509 CLASSIC_ERA
-  lua5.1 Tests/harness/tooltip_test.lua 1 120105 RETAIL pipeline
+  lua5.1 Tests/harness/tooltip_test.lua 1 120100 RETAIL pipeline
   lua5.1 Tests/harness/talent_check.lua 11 38002 TITANFORGE
   ```
 
@@ -355,11 +311,11 @@ Other slash commands:
   return layouts, so nothing depends on which slot carries the interface number
   on the Classic clients — a question the Blizzard source does not settle.
 
-  To run the whole matrix (70 invocations across all five clients, both
+  To run the whole matrix (54 invocations across all five clients, both
   registration paths and both Pawn states):
 
   ```bash
-  bash Tests/harness/run_all.sh
+  bash TacoTip_Forever/Tests/harness/run_all.sh
   ```
 
   `options_test` builds all four options pages on every client and under every
@@ -398,27 +354,6 @@ Other slash commands:
     Titanforge `zhCN` pin, font filter, and cross-engine talent point / spec
     index / active-group invariants)
 
-- **Release packaging (build-time).** Two read-only scripts build the package
-  each add-on would ship and check it is runtime files only. Both print the
-  archive's file listing, print `PASS`/`FAIL` per check, and exit non-zero on
-  failure:
-
-  ```bash
-  Tools/verify_release.sh          # the TacoTip package  — 27 files
-  Tools/verify_release_extras.sh   # the TacoTip Extras package — 29 files
-  ```
-
-  `Tools/verify_release.sh` builds the TacoTip archive with
-  `git archive --worktree-attributes HEAD`, filtered by the export-ignore rules
-  in `.gitattributes`, and checks there is exactly one `.toc`, that no workshop
-  directory or document shipped, and that every remaining file is on the
-  runtime allowlist. `Tools/verify_release_extras.sh` builds the companion
-  archive from the `TacoTip_Extras/` subtree, where
-  `TacoTip_Extras/.gitattributes` says what is not runtime, and checks the
-  package holds the runtime `.lua` files the TOC lists, all 11 `Locale/*.lua`,
-  the `tt-2.tga` the TOC's `## IconTexture` points at, the four documents, and
-  nothing else. Neither script writes to the repository.
-
 ---
 
 ## License and credits
@@ -429,29 +364,18 @@ TacoTip is licensed under the **MIT License**. The full text ships in
 Bundled libraries under `Libs/` keep their **own** licenses and are **not**
 covered by TacoTip's MIT terms — MIT permission does not extend to them:
 
-| Library | License | Author / credits | Bundled header |
-| :--- | :--- | :--- | :--- |
-| `LibStub` | Public Domain | Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel, joshborke | `Libs/LibStub/LibStub.lua` |
-| `CallbackHandler-1.0` | UNKNOWN | UNKNOWN | `Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua` |
-| `LibDetours-1.0` | UNKNOWN | kebabstorm | `Libs/LibDetours-1.0/LibDetours-1.0.lua` |
-| `LibForeverInspector` | UNKNOWN | UNKNOWN | `Libs/LibForeverInspector/LibForeverInspector.lua` |
+| Library | License | Author |
+| :--- | :--- | :--- |
+| `LibStub` | Public Domain | Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel, joshborke |
+| `CallbackHandler-1.0` | MIT | Icedragon and contributors |
+| `LibDetours-1.0` | MIT | kebabstorm |
+| `LibForeverInspector` | MIT | AcidBomb (part of this project) |
 
-`UNKNOWN` means the bundled file itself states no licence and no author — it
-is not a claim that the work is unlicensed, and it is not a claim that TacoTip
-holds any right in it. Nothing here is asserted from memory or from an
-upstream listing.
+Every one of them is permissive and MIT-compatible. Full attribution is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-This table is reproduced from
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which is the **single source
-of truth** for every licence and author claim in this package: it records the
-file and line each row was read from, and it explains what each `UNKNOWN`
-entry would take to resolve.
-
-GearScore scoring behavior derives from GearScoreTBCClassic. The retained
-attribution, the original and fork copyright lines, and the full required MIT
-notice are reproduced in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — this package ships that
-notice itself, so the attribution does not depend on a document it does not
-contain.
+GearScore scoring behavior derives from GearScoreTBCClassic; see the notices in
+[TacoTip Extras' THIRD_PARTY_NOTICES.md](TacoTip_Extras/THIRD_PARTY_NOTICES.md)
+for the retained attribution and required license text.
 
 Author and maintainer: **AcidBomb (Pilsung)**.

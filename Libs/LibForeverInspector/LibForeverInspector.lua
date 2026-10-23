@@ -16,33 +16,18 @@ local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if (not lib) then return end
 
 -- Alias registration so legacy and modern callers can resolve the inspector.
---
--- The alias CLAIMS a shared namespace: "LibClassicInspector" is the name the
--- original library published, and a real LibClassicInspector in the same
--- client registers that name at ITS OWN minor. Writing the alias
--- unconditionally therefore DISPLACES a real library another add-on already
--- published and relabels the minor recorded for it -- a silent downgrade of a
--- namespace this file does not own. A caller that then asks LibStub for
--- "LibClassicInspector" gets this port at minor 2 instead of the library it
--- expected, with nothing to say so.
---
--- So the alias is claimed only when the name is FREE, or when the entry
--- already there IS this library -- the re-registration case the old
--- unconditional write existed to serve, where a version bump in the same Lua
--- state has to move the alias onto the new table. A pre-existing
--- LibClassicInspector keeps its own table and its own minor.
+-- Registered unconditionally and with a minor version: the previous
+-- `if not stubLibs[...]` guard meant that after a version bump in the same Lua
+-- state the alias kept pointing at the OLD table while `lib` was the new one,
+-- and minors["LibClassicInspector"] stayed nil for any caller that reads it.
 if (type(LibStub) == "table") then
     local stubLibs = rawget(LibStub, "libs")
     local stubMinors = rawget(LibStub, "minors")
-    local existing = (type(stubLibs) == "table")
-        and stubLibs["LibClassicInspector"] or nil
-    if (existing == nil or existing == lib) then
-        if (type(stubLibs) == "table") then
-            stubLibs["LibClassicInspector"] = lib
-        end
-        if (type(stubMinors) == "table") then
-            stubMinors["LibClassicInspector"] = MINOR
-        end
+    if (type(stubLibs) == "table") then
+        stubLibs["LibClassicInspector"] = lib
+    end
+    if (type(stubMinors) == "table") then
+        stubMinors["LibClassicInspector"] = MINOR
     end
 end
 
@@ -81,18 +66,8 @@ lib.cache = lib.cache or {}
 -- ever unavailable then cacheUnitData would have stamped entries with 0 too, so
 -- freshness compares 0-0 and the cache simply never expires instead of
 -- re-inspecting every player on every tick.
---
--- C2 clock probe (load-time): GetTime and C_Timer.After must BOTH be present
--- for any timestamp or pacing decision. When absent, uptimeSeconds() returns
--- nil (never 0) and every time-gated site below fails OPEN -- throttle,
--- cooldown, guard window, queue pacing and miss gates are skipped -- instead
--- of wedging on a memoised 0. No timestamp is ever memoised as 0.
-lib.clockAvailable = (type(GetTime) == "function")
-    and (type(C_Timer) == "table" and type(C_Timer.After) == "function")
 local function uptimeSeconds()
-    if (not lib.clockAvailable) then return nil end
-    if (type(GetTime) ~= "function") then return nil end
-    return GetTime()
+    return (type(GetTime) == "function") and GetTime() or 0
 end
 
 local frame = lib.frame or CreateFrame("Frame")
@@ -125,15 +100,7 @@ lib.frame = frame
 --    own Classic code reads select(7, GetBuildInfo()) for its build number, so
 --    slot 4's type there is not established. Reading both slots and taking
 --    whichever is numeric removes the dependency on that unverified layout.
--- GetBuildInfo may not exist at all (stripped client, harness without the
--- mock). A bare call would abort the whole library, so guard it and default
--- to family-unknown instead -- which diag already reports (main.lua flags
--- IsUnknown in problems[]).
-local ret4, ret7
-if (type(GetBuildInfo) == "function") then
-    local _, _, _, r4, _, _, r7 = GetBuildInfo()
-    ret4, ret7 = r4, r7
-end
+local _, _, _, ret4, _, _, ret7 = GetBuildInfo()
 local interfaceVersion = 0
 if (type(ret4) == "number") then
     interfaceVersion = ret4
@@ -357,64 +324,9 @@ elseif (currentLocale == "ruRU") then
         ["MAGE"] = { "\208\162\208\176\208\185\208\189\208\176\209\143 \208\188\208\176\208\179\208\184\209\143", "\208\158\208\179\208\190\208\189\209\140", "\208\155\208\181\208\180" },
         ["WARLOCK"] = { "\208\154\208\190\208\187\208\180\208\190\208\178\209\129\209\130\208\178\208\190", "\208\148\208\181\208\188\208\190\208\187\208\190\208\179\208\184\209\143", "\208\160\208\176\208\183\209\128\209\131\209\136\208\181\208\189\208\184\208\181" },
         ["DRUID"] = { "\208\145\208\176\208\187\208\176\208\189\209\129", "\208\161\208\184\208\187\208\176 \208\183\208\178\208\181\209\128\209\143", "\208\146\208\190\209\129\209\129\209\130\208\176\208\189\208\190\208\178\208\187\208\181\208\189\208\184\208\181" },
-        -- Monk / Demon Hunter / Evoker spec names are Blizzard's own Russian
-        -- client strings, not translations of the English or the German ones.
-        -- Source: worldofwarcraft.blizzard.com/ru-ru/game/classes/monk,
-        -- worldofwarcraft.blizzard.com/ru-ru/game/classes/demon-hunter and
-        -- worldofwarcraft.blizzard.com/ru-ru/game/classes/evoker.
-        --
-        -- VERIFIED 2026-10-20 -- every name against THREE independent Russian
-        -- sources, all fetched:
-        --
-        -- 1. Blizzard's own Russian class pages (the three URLs above).
-        --
-        -- 2. Wowhead's Russian locale, one page per spec, whose heading
-        --    carries the client's own class+spec name:
-        --      www.wowhead.com/ru/talent-calc/monk/brewmaster
-        --          -> "Калькулятор талантов Монах «Хмелевар» Midnight"
-        --      www.wowhead.com/ru/talent-calc/monk/mistweaver
-        --          -> "Калькулятор талантов Монах «Ткач туманов» Midnight"
-        --      www.wowhead.com/ru/talent-calc/monk/windwalker
-        --          -> "Калькулятор талантов Монах «Танцующий с ветром» Midnight"
-        --      www.wowhead.com/ru/talent-calc/demon-hunter/havoc
-        --          -> "Калькулятор талантов Охотник на демонов «Истребление» Midnight"
-        --      www.wowhead.com/ru/talent-calc/demon-hunter/vengeance
-        --          -> "Калькулятор талантов Охотник на демонов «Месть» Midnight"
-        --      www.wowhead.com/ru/talent-calc/evoker/devastation
-        --          -> "Калькулятор талантов Пробудитель «Опустошитель» Midnight"
-        --      www.wowhead.com/ru/talent-calc/evoker/preservation
-        --          -> "Калькулятор талантов Пробудитель «Хранитель» Midnight"
-        --      www.wowhead.com/ru/talent-calc/evoker/augmentation
-        --          -> "Калькулятор талантов Пробудитель «Насыщатель» Midnight"
-        --
-        -- 3. The CLIENT's own strings: wago.tools' DB2 table
-        --    ChrSpecialization, build 12.1.7.70424, locale ruRU. Its
-        --    Name_lang column holds, at OrderIndex 0 / 1 / 2:
-        --      ClassID 10 MONK         Хмелевар / Ткач туманов / Танцующий с ветром
-        --      ClassID 12 DEMONHUNTER  Истребление / Месть / Пожиратель
-        --      ClassID 13 EVOKER       Опустошитель / Хранитель / Насыщатель
-        --    (ClassID 8 MAGE reads Тайная магия / Огонь / Лед -- the same
-        --    names this file's ruRU MAGE row has carried all along.)
-        --    The same build's ChrClasses table gives the class names:
-        --    Монах, Охотник на демонов, Пробудитель.
-        --
-        -- The ORDER is the client's own OrderIndex, and it is the English
-        -- table's order too: Brewmaster/Хмелевар, Mistweaver/Ткач туманов,
-        -- Windwalker/Танцующий с ветром; Havoc/Истребление, Vengeance/Месть;
-        -- Devastation/Опустошитель, Preservation/Хранитель,
-        -- Augmentation/Насыщатель. GetSpecializationName reads this table BY
-        -- INDEX, so the order is part of the contract and the two tables are
-        -- kept the same shape on purpose.
-        --
-        -- The Demon Hunter's THIRD spec, "Пожиратель" (Devourer), is
-        -- deliberately absent: it is the Midnight (retail 11.2) addition --
-        -- OrderIndex 2 in the client's own table above -- it does not exist on
-        -- the classic clients this library serves, and lib.spec_table has no
-        -- third ENGLISH entry for it. A Russian row with no English
-        -- counterpart would name a spec the rest of the table cannot name.
-        ["MONK"] = { "\208\165\208\188\208\181\208\187\208\181\208\178\208\176\209\128", "\208\162\208\186\208\176\209\135 \209\130\209\131\208\188\208\176\208\189\208\190\208\178", "\208\162\208\176\208\189\209\134\209\131\209\142\209\137\208\184\208\185 \209\129 \208\178\208\181\209\130\209\128\208\190\208\188" },
-        ["DEMONHUNTER"] = { "\208\152\209\129\209\130\209\128\208\181\208\177\208\187\208\181\208\189\208\184\208\181", "\208\156\208\181\209\129\209\130\209\140" },
-        ["EVOKER"] = { "\208\158\208\191\209\131\209\129\209\130\208\190\209\136\208\184\209\130\208\181\208\187\209\140", "\208\165\209\128\208\176\208\189\208\184\209\130\208\181\208\187\209\140", "\208\157\208\176\209\129\209\139\209\137\208\176\209\130\208\181\208\187\209\140" },
+        ["MONK"] = { "Braumeister", "Nebelwirker", "Windl\195\164ufer" },
+        ["DEMONHUNTER"] = { "Havoc", "Vengeance" },
+        ["EVOKER"] = { "Devastation", "Preservation", "Augmentation" },
     }
 elseif (currentLocale == "zhCN") then
     lib.spec_table_localized = lib.spec_table_localized or {
@@ -495,16 +407,9 @@ lib.inspectStats = lib.inspectStats or {
     timeouts = 0,
     scanEnqueued = 0,
     scanSkippedDistance = 0,
-    queueDropped = 0,
     suppressed = 0,
     suppressedVoice = 0,
     suppressedSound = 0,
-    -- A raise inside the INSPECT_READY handler's cache step (a consumer
-    -- callback, or one of the library's own client reads in the same block).
-    -- Counted with the message and the timestamp kept -- see
-    -- noteInspectReadyError. The count is the only trace of an event that is
-    -- swallowed by design, so it has to exist.
-    inspectReadyErrors = 0,
 }
 
 function lib:GetInspectStats()
@@ -514,9 +419,6 @@ function lib:GetInspectStats()
     local stats = lib.inspectStats
     if (type(stats) == "table") then
         stats.learnedRange = lib.inspectRangeLimit and lib.inspectRangeLimit[lib.family] or nil
-        -- Hunter H5: the ticker install state rides the same report so
-        -- /tacotip diag can name an inert engine without a second probe.
-        stats.tickersInstalled = lib.tickersInstalled
     end
     return stats
 end
@@ -3571,14 +3473,11 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
     -- pass for them. Re-query at most every 5s instead. A real icon that
     -- streams in later is picked up at the next interval.
     if (isInspect and not cached) then
-        -- C2 fail-open: without a clock there is no 5s gate to enforce, so
-        -- always re-query (never wedge on now=0 < missUntil).
-        if (lib.clockAvailable) then
-            local now = uptimeSeconds()
-            local missUntil = specializationIconMissUntil[key]
-            if (now ~= nil and type(missUntil) == "number" and now < missUntil) then
-                return nil
-            end
+        local getNow = _G.GetTime
+        local now = type(getNow) == "function" and getNow() or 0
+        local missUntil = specializationIconMissUntil[key]
+        if (type(missUntil) == "number" and now < missUntil) then
+            return nil
         end
     end
 
@@ -3612,13 +3511,9 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
         -- so the icon would never appear even after their talents stream in and
         -- the answer becomes knowable. Skip the write and arm the 5s re-query
         -- gate above so hover stops re-running the talent grid every frame.
-        -- C2 fail-open: without a clock the gate is not armed at all.
-        if (lib.clockAvailable) then
-            local now = uptimeSeconds()
-            if (now ~= nil) then
-                specializationIconMissUntil[key] = now + 5
-            end
-        end
+        local getNow = _G.GetTime
+        local now = type(getNow) == "function" and getNow() or 0
+        specializationIconMissUntil[key] = now + 5
         return nil
     end
 
@@ -3743,38 +3638,6 @@ local function inventoryItemLink(unit, slot)
     return nil
 end
 
--- A raise inside the INSPECT_READY handler's cache step.
---
--- WHY THIS EXISTS: the handler below releases the pending inspect slot AFTER
--- cacheUnitData runs, and cacheUnitData ends by firing the consumer callbacks
--- ("INVENTORY_READY", "TALENTS_READY"). So a raise anywhere in that block --
--- a consumer callback that raises, or one of the library's own unguarded
--- client reads in the same block -- used to abort the handler BEFORE the
--- release, leaving the pending slot set for the rest of the session: the queue
--- never issued another inspect, and no unit scored again until the client was
--- reloaded. One addon's error cost every other addon's tooltip its scores.
---
--- The boundary is the whole cache step, not only the consumer callbacks: both
--- kinds of raise have the same consequence, so they are counted together.
---
--- "Never silent" (the repository rule): the raise is COUNTED, the MESSAGE is
--- kept, and the timestamp rides beside it so a stale error is decidable. The
--- counters ride lib.inspectStats, which is what /tacotip diag reads through
--- lib:GetInspectStats().
-local function noteInspectReadyError(err, guid)
-    if (lib.inspectStats) then
-        lib.inspectStats.inspectReadyErrors = (lib.inspectStats.inspectReadyErrors or 0) + 1
-        lib.inspectStats.lastInspectReadyError = tostring(err)
-        -- The clock read is guarded: this function runs BECAUSE something
-        -- raised, and a raise here would abandon the very release the guard
-        -- exists to protect. A missing clock reads as "no timestamp", never
-        -- as a second failure.
-        local ok, at = pcall(uptimeSeconds)
-        lib.inspectStats.lastInspectReadyErrorAt = (ok and at) or nil
-        lib.inspectStats.lastInspectReadyErrorGuid = guid
-    end
-end
-
 local function cacheUnitData(unit, guid)
     if (not unit or not guid) then return end
     local now = uptimeSeconds()
@@ -3844,26 +3707,6 @@ end
 local nextInspectTime = 0
 local inspectPendingSince = 0
 
--- Set while the proximity scan is asking for a unit. The scan is a BACKGROUND
--- collector: it exists so GearScore coverage does not depend on the player
--- hovering each unit. It must not take the single pending inspect slot away
--- from the unit the player is actually looking at, so while that unit is
--- waiting for its own data the scan's candidate is QUEUED -- dispatched by the
--- queue tick, where the hovered unit comes first -- instead of being
--- dispatched on the spot.
---
--- The flag cannot leak: it is set and cleared around ONE call inside a pcall
--- boundary (see scanInspect below), so a raise inside DoInspect cannot leave
--- the library in the queue-only state.
-local scanQueueOnly = nil
-
--- Watchdog grace identity (hunter H10). When the 3s watchdog gives up on a
--- pending inspect it stashes the unit here for exactly one more window, so a
--- late INSPECT_READY can still be attributed instead of discarded. Single
--- use, time-bounded, no timing value changes.
-local watchdogGraceUnit = nil
-local watchdogGraceUntil = 0
-
 local inspectQueueTick
 
 -- Forward declaration. The OnEvent handler below runs the distance pre-filter on
@@ -3913,37 +3756,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 unit = nil
             end
         end
-        -- Watchdog grace (hunter H10): the pending slot was already released by
-        -- the watchdog, so the normal paths above found nothing -- but the unit
-        -- is still identifiable for one window. A late answer for a DIFFERENT
-        -- guid must never steal it: the grace unit's own guid has to match.
-        if (unit == nil and watchdogGraceUnit ~= nil and guid ~= nil) then
-            local graceNow = uptimeSeconds()
-            if (graceNow == nil) then
-                watchdogGraceUnit = nil
-            elseif (graceNow > (watchdogGraceUntil or 0)) then
-                watchdogGraceUnit = nil
-            else
-                local graceGUID = (type(UnitGUID) == "function") and UnitGUID(watchdogGraceUnit) or nil
-                if (graceGUID ~= nil and graceGUID == guid) then
-                    unit = watchdogGraceUnit
-                    watchdogGraceUnit = nil
-                end
-            end
-        end
         if (unit and guid) then
-            -- The pending slot is released BELOW, and this block is the only
-            -- thing between the answer arriving and that release. A raise here
-            -- used to abort the handler and leave the slot set for good (see
-            -- noteInspectReadyError above): the queue never issued another
-            -- inspect and no unit scored again until the client was reloaded.
-            --
-            -- The block is guarded so the release ALWAYS runs, and the failure
-            -- is counted with its message kept rather than swallowed.
-            local cachedOk, cachedErr = pcall(cacheUnitData, unit, guid)
-            if (not cachedOk) then
-                noteInspectReadyError(cachedErr, guid)
-            end
+            cacheUnitData(unit, guid)
         end
         -- Release the pending slot only when THIS event is its answer.
         --
@@ -3969,24 +3783,15 @@ frame:SetScript("OnEvent", function(_, event, ...)
             end
         end
 
+        local now = type(GetTime) == "function" and GetTime() or 0
         if (inspectQueueTick) then
-            if (not lib.clockAvailable) then
+            if (now >= nextInspectTime) then
                 inspectQueueTick()
-            else
-                local now = uptimeSeconds()
-                if (now ~= nil and now >= nextInspectTime) then
-                    inspectQueueTick()
-                elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
-                    C_Timer.After(math.max(0.05, nextInspectTime - (now or nextInspectTime)), inspectQueueTick)
-                end
+            elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
+                C_Timer.After(math.max(0.05, nextInspectTime - now), inspectQueueTick)
             end
         end
     elseif (event == "PLAYER_TARGET_CHANGED") then
-        -- The three-state answer (see lib:DoInspect) is deliberately NOT read
-        -- here: these event triggers ask the library to CONSIDER the unit, and
-        -- the library's own queue, counters and refusal memory are the record
-        -- of what happened. Nothing downstream of this handler branches on the
-        -- answer, so reading it here would change nothing.
         if (type(UnitExists) == "function" and UnitExists("target")
             and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
             and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))
@@ -4019,13 +3824,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 lib:DoInspect(unit)
             end
         end
-    elseif (event == "ADDON_LOADED") then
-        -- Deferred install (hunter H5): a client that gains C_Timer late gets
-        -- its tickers on the first addon load event after the API appears.
-        -- Idempotent: installed tickers are never recreated.
-        if (lib.ensureTickersInstalled) then
-            lib.ensureTickersInstalled()
-        end
     end
 end)
 ---@diagnostic enable: redundant-parameter
@@ -4034,7 +3832,6 @@ frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
-frame:RegisterEvent("ADDON_LOADED")
 
 local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
 
@@ -4056,11 +3853,8 @@ local queue = {}
 -- Fresh = has data, has not been flagged stale by UNIT_INVENTORY_CHANGED, and is
 -- younger than the refresh window. Stale data is still served to readers.
 local function isCacheFresh(cached)
-    if (not lib.clockAvailable) then return false end
-    local now = uptimeSeconds()
-    if (now == nil) then return false end
     return (cached and cached.time and not cached.stale
-        and (now - cached.time < CACHE_REFRESH_DELAY)) and true or false
+        and (uptimeSeconds() - cached.time < CACHE_REFRESH_DELAY)) and true or false
 end
 
 -- Forward declarations. Two reasons, both load-order, both fatal if wrong:
@@ -4157,34 +3951,12 @@ function lib:CanInspect(unit)
     -- order the pre-port library used on this family
     -- (OLD/Libs/LibClassicInspector/LibClassicInspector.lua:3422-3423).
     --
-    -- CanInspect IS documented with a single argument on every branch:
-    -- Interface/AddOns/Blizzard_APIDocumentationGenerated/PlayerScriptDocumentation.lua:54
-    -- on origin/classic_era, origin/classic_anniversary and origin/classic_titan,
-    -- and :55 on origin/forever and origin/live -- one argument, `targetGUID`
-    -- (Type "UnitToken"), returning `result` (Type "bool").
-    --
-    -- (An audit recorded this entry as ABSENT from the generated API docs on all
-    -- five branches. It is not: it lives in PlayerScriptDocumentation.lua, and
-    -- the entry was re-read on every branch. The citation is recorded here so
-    -- the next reader does not have to re-derive it.)
-    --
-    -- A SECOND argument is not in the documented signature. Blizzard's own
-    -- two-argument call is InspectFrame_Show's `CanInspect(unit, true)` -- the
-    -- explicit /inspect and unit-menu path, on every branch -- and what that
-    -- second argument carries is NOT IN MIRROR. The earlier release passed it,
-    -- which is at best a no-op and at worst the call that asks for the very
-    -- message this fix exists to stop. This file never passes it.
-    --
-    -- Whether CanInspect carries range at all is NOT IN MIRROR. The distance
-    -- signal used here is CheckInteractDistance(unit, 1) -- whose index
-    -- semantics are also not in the mirror, see the constant above -- kept
-    -- because it is conservative on this client. Where this client's real limit
-    -- is tighter than either signal claims, the probe guard measures it from
-    -- the refusal.
-    --
-    -- The probe returns nil when the API is absent, and every call site is
-    -- guarded on `type(_G.CanInspect) == "function"`, so a client without it
-    -- takes the distance signal alone rather than raising.
+    -- CanInspect is documented with a single argument on every branch; whether it
+    -- carries range is NOT IN MIRROR. The distance signal used here is
+    -- CheckInteractDistance(unit, 1) -- whose index semantics are also not in the
+    -- mirror, see the constant above -- kept because it is conservative on this
+    -- client. Where this client's real limit is tighter than either signal
+    -- claims, the probe guard measures it from the refusal.
     --
     -- There is deliberately NO hysteresis here. An earlier version let a
     -- recently-inspected unit through a failed distance check, which
@@ -4382,12 +4154,8 @@ local function noteInspectRejectedImpl(unit, yards, err)
     end
     local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
     if (guid) then
-        -- C2 fail-open: without a clock there is no timestamp to memoise, so
-        -- no per-guid cooldown entry is stored (never memoise 0).
-        if (lib.clockAvailable and type(GetTime) == "function") then
-            lib.inspectRejected = lib.inspectRejected or {}
-            lib.inspectRejected[guid] = GetTime()
-        end
+        lib.inspectRejected = lib.inspectRejected or {}
+        lib.inspectRejected[guid] = (type(GetTime) == "function") and GetTime() or 0
     end
     if (yards and lib.family) then
         lib.inspectRangeLimit = lib.inspectRangeLimit or {}
@@ -4409,10 +4177,8 @@ local function noteInspectRejectedImpl(unit, yards, err)
         -- The previous code lifted as soon as dist <= 20yd, which for a refused
         -- unit sitting at 15yd lifted immediately and re-triggered NotifyInspect
         -- every cooldown -- the spam the user reported on Classic Era.
-        -- C2 fail-open: the out-of-range mark is STATE (distance-lifted), but
-        -- its `time` field is a timestamp -- never memoise 0 for it.
         lib.inspectOutOfRange[guid] = {
-            time = (lib.clockAvailable and type(GetTime) == "function") and GetTime() or nil,
+            time = (type(GetTime) == "function") and GetTime() or 0,
             dist = inspectDistance(unit),
         }
     end
@@ -4439,6 +4205,7 @@ end
 local function isInspectCoolingDownImpl(unit)
     local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
     if (not guid) then return false end
+    local now = (type(GetTime) == "function") and GetTime() or 0
 
     -- Out-of-range memory. Released the moment the unit is measurable AND the
     -- interact-distance signal agrees it is reachable, so recovery is instant.
@@ -4479,10 +4246,6 @@ local function isInspectCoolingDownImpl(unit)
     if (not lib.inspectRejected) then return false end
     local at = lib.inspectRejected[guid]
     if (not at) then return false end
-    -- C2 fail-open: without a clock there is no cooldown to enforce.
-    if (not lib.clockAvailable) then return false end
-    local now = uptimeSeconds()
-    if (now == nil) then return false end
     if (now - at >= INSPECT_REJECT_COOLDOWN) then
         lib.inspectRejected[guid] = nil
         return false
@@ -4522,16 +4285,13 @@ local function requestInspectImpl(unit)
     -- ONE ARGUMENT, ALWAYS, and the call goes through the probe guard.
     --
     -- What the mirror shows: `CanInspect` is documented with a single argument
-    -- (`targetGUID`, Type "UnitToken") on every branch --
-    -- Interface/AddOns/Blizzard_APIDocumentationGenerated/PlayerScriptDocumentation.lua:54
-    -- on origin/classic_era, origin/classic_anniversary and origin/classic_titan,
-    -- :55 on origin/forever and origin/live -- and Blizzard's own two-argument
-    -- call is `InspectFrame_Show`'s `CanInspect(unit, true)` -- the explicit
-    -- /inspect and unit-menu path, on every branch. The meaning of that second
-    -- argument is NOT IN MIRROR; the earlier release read it as a range flag and
-    -- shipped `CanInspect(unit, true)` here, which is at best a no-op and at
-    -- worst the call that asks for the very message this fix exists to stop.
-    -- This file never passes it.
+    -- (`targetGUID`) on every branch, and Blizzard's own two-argument call is
+    -- `InspectFrame_Show`'s `CanInspect(unit, true)` -- the explicit /inspect and
+    -- unit-menu path, on every branch. The meaning of that second argument is NOT
+    -- IN MIRROR; the earlier release read it as a range flag and shipped
+    -- `CanInspect(unit, true)` here, which is at best a no-op and at worst the
+    -- call that asks for the very message this fix exists to stop. This file never
+    -- passes it.
     --
     -- What is NOT known, and why the call is wrapped regardless: whether a refused
     -- `CanInspect` -- or a refused `NotifyInspect` -- is what puts the UI error up
@@ -4594,35 +4354,19 @@ local function requestInspectImpl(unit)
     if (not ok) then
         noteInspectRejected(unit, yards, err)
         if (lib.inspectStats) then
-            -- Hunter H11: the raise timestamp travels with the message so diag
-            -- can tell a stale error from a fresh one. No counters are merged:
-            -- refusals (noteInspectRejected) and raises (here) stay separate.
             lib.inspectStats.lastError = tostring(err)
-            lib.inspectStats.lastErrorAt = uptimeSeconds()
         end
         return false
     end
     inspectPendingUnit = unit
-    -- C2 fail-open: without a clock there is no pacing timestamp to memoise
-    -- (never memoise 0). Pacing is skipped; attribution still works.
-    if (lib.clockAvailable) then
-        local now = uptimeSeconds()
-        if (now ~= nil) then
-            inspectPendingSince = now
-            nextInspectTime = now + INSPECT_DELAY
-        else
-            inspectPendingSince = 0
-            nextInspectTime = 0
-        end
-    else
-        inspectPendingSince = 0
-        nextInspectTime = 0
-    end
+    local now = (type(GetTime) == "function") and GetTime() or 0
     -- Optimistic arming. If this request is refused, the refusal arrives through
     -- the probe guard's sink, which charges it to this unit (pendingRefusal),
     -- records it, and releases the pending slot immediately; until then the
     -- pending/INSPECT_DELAY gating stops an immediate re-request on the same
     -- render pass.
+    inspectPendingSince = now
+    nextInspectTime = now + INSPECT_DELAY
     if (lib.inspectStats) then lib.inspectStats.notifies = (lib.inspectStats.notifies or 0) + 1 end
     return true
 end
@@ -4718,7 +4462,7 @@ local guardUnit = nil          -- the unit the open attribution window belongs t
 local guardUntil = 0           -- GetTime() after which the window has expired
 local swallowedVoiceID = nil
 local swallowedSoundKitID = nil
-local inspectErrorAddMessage, inspectPlayVocal, inspectPlayVocalID, inspectGameMessageInfo
+local inspectErrorAddMessage, inspectPlayVocal, inspectPlayVocalID, inspectPlaySound
 
 -- How long a probe's refusal may arrive after the call returned. Short on
 -- purpose: it only has to cover this client's own dispatch for the call we just
@@ -4747,14 +4491,10 @@ local SUPPRESSIBLE_INSPECT_ERROR_NAMES = {
 -- message path. `MayReturnNothing = true` is documented, so a nil name is a real
 -- outcome and is handled by the caller rather than papered over here.
 local function gameMessageInfo(messageType)
-    -- The ORIGINAL, never the replacement: this helper resolves the name and the
-    -- sound ids of a message for the library's own bookkeeping, and it must not
-    -- consume a latch the replacement is holding for the client.
-    local getter = inspectGameMessageInfo or _G.GetGameMessageInfo
-    if (type(messageType) ~= "number" or type(getter) ~= "function") then
+    if (type(messageType) ~= "number" or type(_G.GetGameMessageInfo) ~= "function") then
         return nil
     end
-    local ok, name, soundKitID, voiceID = pcall(getter, messageType)
+    local ok, name, soundKitID, voiceID = pcall(_G.GetGameMessageInfo, messageType)
     if (not ok) then
         return nil
     end
@@ -4781,12 +4521,7 @@ end
 -- inside its window.
 local function guardWindowOpen()
     if (pendingRefusal ~= nil) then return true end
-    -- C2 fail-open: without a clock the window cannot be measured, so it is
-    -- treated as closed rather than wedged open on a memoised 0.
-    if (not lib.clockAvailable) then return false end
-    local now = uptimeSeconds()
-    if (now == nil) then return false end
-    return (guardUnit ~= nil and now <= guardUntil) and true or false
+    return (guardUnit ~= nil and uptimeSeconds() <= guardUntil) and true or false
 end
 
 -- Closes the probe window. Called when the window has done its job, so one
@@ -4804,13 +4539,8 @@ local function blamedProbe()
     if (probeUnit) then
         return probeUnit, nil, false, false
     end
-    -- C2 fail-open: without a clock the window cannot be measured, so it
-    -- never blames (same closed-window rule as guardWindowOpen).
-    if (lib.clockAvailable and guardUnit ~= nil) then
-        local now = uptimeSeconds()
-        if (now ~= nil and now <= guardUntil) then
-            return guardUnit, nil, false, true
-        end
+    if (guardUnit ~= nil and uptimeSeconds() <= guardUntil) then
+        return guardUnit, nil, false, true
     end
     if (pendingRefusal) then
         return pendingRefusal.unit, pendingRefusal.yards, true, false
@@ -4822,11 +4552,7 @@ end
 -- returned; the window is what catches a refusal delivered by event dispatch just
 -- after that call.
 local function armGuardWindow(unit)
-    -- C2 fail-open: without a clock there is no window to arm.
-    if (not lib.clockAvailable) then return end
-    local now = uptimeSeconds()
-    if (now == nil) then return end
-    guardUnit, guardUntil = unit, now + INSPECT_GUARD_WINDOW
+    guardUnit, guardUntil = unit, uptimeSeconds() + INSPECT_GUARD_WINDOW
 end
 
 -- Charges a swallowed refusal to its unit and lets the existing memories do the
@@ -4843,25 +4569,14 @@ local function noteSuppressedRefusal(messageType, name)
     if (name == nil) then
         name = resolvedName
     end
-    -- OPERATOR RULE (2026-10-21): only the OUT-OF-RANGE refusal has its sound
-    -- muted. On Classic Era the client kept SPAMMING "out of range", and that
-    -- is the one refusal whose noise this add-on owes the player nothing about
-    -- -- it is this add-on's own request being refused, over and over. A refusal
-    -- that is NOT about distance stays audible: the text is still swallowed, but
-    -- the player is told that something happened.
-    --
     -- Arm only the sound the client will actually play: TryDisplayMessage plays
     -- the voice when it has one and the sound kit otherwise
     -- (Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:142-147). Arming both
     -- would leave an unconsumed latch that could swallow an unrelated sound later.
-    if (name == INSPECT_RANGE_ERROR_NAME) then
-        if (voiceID ~= nil) then
-            swallowedVoiceID, swallowedSoundKitID = voiceID, nil
-        else
-            swallowedSoundKitID, swallowedVoiceID = soundKitID, nil
-        end
+    if (voiceID ~= nil) then
+        swallowedVoiceID, swallowedSoundKitID = voiceID, nil
     else
-        swallowedVoiceID, swallowedSoundKitID = nil, nil
+        swallowedSoundKitID, swallowedVoiceID = soundKitID, nil
     end
     -- The sound is played from the same TryDisplayMessage that displayed the
     -- message, so a latch still set a frame later belongs to nothing. Clear it on
@@ -4884,13 +4599,7 @@ local function noteSuppressedRefusal(messageType, name)
             -- Known-refused: release the pending slot now rather than letting the
             -- 3s watchdog do it, and keep the pacing throttle so the tick cannot
             -- immediately spend another probe on a different far unit.
-            -- C2 fail-open: without a clock there is no pacing to keep.
-            if (lib.clockAvailable) then
-                local paceNow = uptimeSeconds()
-                if (paceNow ~= nil) then
-                    nextInspectTime = paceNow + INSPECT_DELAY
-                end
-            end
+            nextInspectTime = uptimeSeconds() + INSPECT_DELAY
         else
             -- A general refusal, or a message this client did not resolve a name
             -- for. Apply the per-unit cooldown, but teach NOTHING: passing `yards`
@@ -4964,45 +4673,23 @@ local function inspectVoiceSink(voiceID, ...)
     return nil
 end
 
--- The SOUND of a swallowed refusal, muted where the client ASKS for it.
---
--- WHY NOT AT `PlaySound`. The client plays the refusal's sound kit from
--- `UIErrorsMixin:TryDisplayMessage`
--- (origin/classic_era:Interface/AddOns/Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:140-149):
---     self:AddMessage(message, r, g, b, 1.0, messageType);
---     local errorStringId, soundKitID, voiceID = GetGameMessageInfo(messageType);
---     if voiceID then
---         C_Sound.PlayVocalErrorSound(voiceID);
---     elseif soundKitID then
---         PlaySound(soundKitID);
---     end
--- The sound kit therefore travels through the client's global `PlaySound` --
--- and so does EVERY other sound the client plays. Replacing that global is
--- a taint bomb: the game menu's Logout/Quit callback calls `PlaySound(...)`
--- and the protected `Logout()` two lines later
--- (origin/classic_era:Interface/AddOns/Blizzard_GameMenu/Shared/GameMenuFrame.lua:66-70),
--- so a replaced `PlaySound` runs addon code inside that closure and the
--- engine refuses the protected call:
---     [ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip' tried to call the protected
---     function 'UNKNOWN()'.
---
--- `GetGameMessageInfo` is called by exactly two places in the client
--- (UIErrorsFrame.lua:142 and Blizzard_Channels/VoiceUtils.lua:82) and by
--- NOTHING in the game menu, so muting the sound kit there leaves every other
--- sound -- the game's own menu sounds included -- on the client's own
--- function.
-local function inspectGameMessageInfoSink(messageType, ...)
-    local errorName, soundKitID, voiceID = inspectGameMessageInfo(messageType, ...)
-    if (swallowedSoundKitID == nil or soundKitID == nil
-            or soundKitID ~= swallowedSoundKitID) then
-        return errorName, soundKitID, voiceID
+local function inspectSoundSink(soundKitID, ...)
+    if (swallowedSoundKitID ~= nil and soundKitID == swallowedSoundKitID) then
+        swallowedSoundKitID = nil
+        -- Counted separately from the voice: a refusal carries EITHER a voice or a
+        -- sound kit (TryDisplayMessage plays the voice when there is one), and
+        -- without this counter a client whose refusals are sound-only showed
+        -- `probe errors suppressed` climbing with `error speech suppressed` at 0
+        -- and nothing in the diag to explain the difference.
+        if (lib.inspectStats) then
+            lib.inspectStats.suppressedSound = (lib.inspectStats.suppressedSound or 0) + 1
+        end
+        return nil
     end
-    swallowedSoundKitID = nil
-    if (lib.inspectStats) then
-        lib.inspectStats.suppressedSound = (lib.inspectStats.suppressedSound or 0) + 1
+    if (inspectPlaySound) then
+        return inspectPlaySound(soundKitID, ...)
     end
-    -- No sound kit: the client plays nothing for this message.
-    return errorName, nil, voiceID
+    return nil
 end
 
 local function installInspectErrorSuppressor()
@@ -5034,12 +4721,8 @@ local function installInspectErrorSuppressor()
         if (type(_G.PlayVocalErrorSoundID) == "function") then
             inspectPlayVocalID = Detours:DetourHook(lib, "PlayVocalErrorSoundID", inspectVoiceSink)
         end
-        -- The SOUND KIT is muted at `GetGameMessageInfo`, NOT at `PlaySound`.
-        -- See inspectGameMessageInfoSink for why replacing the client's global
-        -- PlaySound was a taint bomb: the game menu's own Logout/Quit callback
-        -- calls it, and the protected Logout()/Quit() that follows was refused.
-        if (type(_G.GetGameMessageInfo) == "function") then
-            inspectGameMessageInfo = Detours:DetourHook(lib, "GetGameMessageInfo", inspectGameMessageInfoSink)
+        if (type(_G.PlaySound) == "function") then
+            inspectPlaySound = Detours:DetourHook(lib, "PlaySound", inspectSoundSink)
         end
     end)
     if (not installedOk or type(inspectErrorAddMessage) ~= "function") then
@@ -5137,54 +4820,16 @@ isCloseEnoughToAsk = function(unit)
     return distSq <= (NEARBY_ASK_YARDS * NEARBY_ASK_YARDS)
 end
 
--- lib:DoInspect's THREE-STATE answer.
---
---   false     NOT INSPECTED -- refused, unavailable, or out of reach
---   "queued"  ACCEPTED, PENDING -- the request went out, or the unit is in the
---             queue. The unit's data is NOT here yet.
---   true      DATA READY -- the cache holds fresh data for the unit
---
--- The contract used to be a plain boolean, and `true` covered BOTH "queued"
--- and "ready": a caller could not tell a unit that was merely waiting in the
--- queue from a unit whose data was already here, and the two answers meant
--- the same thing to every consumer. The names are PUBLISHED on the library so
--- a caller compares against this contract instead of keeping its own copy of
--- it, and so a caller can tell this library from an older build that answers
--- with the plain boolean.
-lib.inspectStates = {
-    REFUSED = false,
-    QUEUED = "queued",
-    READY = true,
-}
-local INSPECT_REFUSED = lib.inspectStates.REFUSED
-local INSPECT_QUEUED = lib.inspectStates.QUEUED
-local INSPECT_READY = lib.inspectStates.READY
-
--- requestInspect answers a BOOLEAN: true = the request went out (the unit's
--- data is on its way), false = the request was refused. Neither of those is
--- "the data is here", so both map onto the three-state contract above: a
--- request that went out is ACCEPTED AND PENDING.
-local function inspectDispatchState(requested)
-    if (requested) then return INSPECT_QUEUED end
-    return INSPECT_REFUSED
-end
-
--- Ask the client to inspect a unit, or accept the unit into the queue.
---
--- Returns the three-state answer documented above. What gets inspected, when
--- and how often is decided here and has not changed: the guards, the pacing,
--- the queue, the refusal memory and the learned-range ceiling are all below,
--- untouched.
 function lib:DoInspect(unitorguid)
-    if (not unitorguid) then return INSPECT_REFUSED end
+    if (not unitorguid) then return false end
     local unit = unitorguid
     if (type(unitorguid) == "string" and unitorguid:find("^Player%-")) then
         unit = lib:PlayerGUIDToUnitToken(unitorguid)
     end
-    if (not unit) then return INSPECT_REFUSED end
+    if (not unit) then return false end
     local guid = type(UnitGUID) == "function" and UnitGUID(unit)
     if (not guid or guid == UnitGUID("player")) then
-        return INSPECT_REFUSED
+        return false
     end
 
     -- Freshness BEFORE the gates. This is the addon's hottest path -- the tooltip
@@ -5196,7 +4841,7 @@ function lib:DoInspect(unitorguid)
     -- UNIT_INVENTORY_CHANGED) still runs the whole chain.
     local cached = lib.cache[guid]
     if (isCacheFresh(cached)) then
-        return INSPECT_READY
+        return true
     end
 
     -- Distance pre-filter, so callers that invoke DoInspect directly (e.g. the
@@ -5206,103 +4851,32 @@ function lib:DoInspect(unitorguid)
     -- the gate reached NotifyInspect and produced the message this release exists
     -- to stop.
     if (not isCloseEnoughToAsk(unit)) then
-        return INSPECT_REFUSED
+        return false
     end
     if (not lib:CanInspect(unit)) then
-        return INSPECT_REFUSED
+        return false
     end
 
-    -- C2 fail-open: without a clock there is no pacing timestamp to memoise
-    -- (never memoise 0). Dispatch immediately instead of queueing on now=0.
-    local now = nil
-    if (lib.clockAvailable) then
-        now = uptimeSeconds()
-    end
-    -- THE DISPATCH DECISION.
-    --
-    -- The pending slot is the pipeline's single resource, and TWO callers can
-    -- reach this line: the unit the player is looking at, and the proximity
-    -- scan. The scan is a background collector, so it is QUEUED (see
-    -- scanQueueOnly above) and never takes the slot on the spot.
-    --
-    -- The unit under the cursor is dispatched as soon as the slot is free.
-    -- It is NOT held back by a pacing window another unit opened: the pacing
-    -- window exists so a re-request on the same render pass cannot fire
-    -- (see requestInspectImpl), and a fresh hover of a unit the player has
-    -- just moved onto is not a re-request. Measured on the harness, holding
-    -- the hovered unit back for that window is what made the hover latency
-    -- depend on whatever the scan happened to be doing: the scan's request
-    -- opened the window, the hover landed inside it, and the hover's data
-    -- arrived a full round trip late.
-    --
-    -- The scan's own requests still go through the window (they are queued
-    -- and dispatched by the tick, which respects it), and every other caller
-    -- -- the target, the roster, the item-change path -- is unchanged.
-    if (now == nil) then
-        -- No clock: no pacing at all. Dispatch immediately (the fail-open
-        -- behaviour) -- but the scan still queues, because the scan must
-        -- never take the pending slot away from the unit in front of the
-        -- player.
-        if (not scanQueueOnly) then
-            return inspectDispatchState(requestInspect(unit))
-        end
+    local now = type(GetTime) == "function" and GetTime() or 0
+    if (now >= nextInspectTime and not inspectPendingUnit) then
+        return requestInspect(unit)
     else
-        local dispatchNow = (now >= nextInspectTime) or (unit == "mouseover")
-        if (dispatchNow and not inspectPendingUnit and not scanQueueOnly) then
-            return inspectDispatchState(requestInspect(unit))
-        end
-    end
-    for i = 1, #queue do
-        local item = queue[i]
-        local g = type(item) == "table" and item.guid or item
-        if (g == guid) then
-            if (type(item) == "table" and unit) then
-                item.unit = unit
-            end
-            return INSPECT_QUEUED
-        end
-    end
-    if (#queue >= 25) then
-        local evicted = table.remove(queue, 1)
-        -- Count the drop instead of silently discarding it: in a 40-raid +
-        -- target + mouseover burst the queue is permanently full and the
-        -- oldest (often the looked-at target) is discarded every insert
-        -- with no loading indicator. The count plus the last evicted guid
-        -- and its queue age are what /tacotip diag reports.
-        if (lib.inspectStats) then
-            lib.inspectStats.queueDropped = (lib.inspectStats.queueDropped or 0) + 1
-            if (type(evicted) == "table") then
-                lib.inspectStats.lastQueueDropGuid = evicted.guid
-                if (type(evicted.enqueuedAt) == "number") then
-                    lib.inspectStats.lastQueueDropAge = now - evicted.enqueuedAt
+        for i = 1, #queue do
+            local item = queue[i]
+            local g = type(item) == "table" and item.guid or item
+            if (g == guid) then
+                if (type(item) == "table" and unit) then
+                    item.unit = unit
                 end
-            else
-                lib.inspectStats.lastQueueDropGuid = evicted
+                return true
             end
         end
+        if (#queue >= 25) then
+            table.remove(queue, 1)
+        end
+        table.insert(queue, { guid = guid, unit = unit })
+        return true
     end
-    table.insert(queue, { guid = guid, unit = unit, enqueuedAt = now })
-    return INSPECT_QUEUED
-end
-
--- True when the unit under the cursor is a player whose data is not here yet
--- AND it is close enough to be worth the single pending inspect slot.
---
--- The distance half matters: a player standing far away cannot be inspected
--- at all, so the slot is not being held up on its account and the proximity
--- scan must keep working (and keep learning that client's real range).
---
--- CHEAP on purpose: it is read on every tick (twice, in fact -- see the
--- pacing gate and the hovered-unit arm below), so it costs one UnitExists,
--- one UnitGUID, one cache lookup and one distance query, and nothing else.
--- The rest of the gate chain (interact probe, CanInspect) runs in the arm
--- itself, and only when the arm is going to act.
-local function hoveredUnitNeedsInspect()
-    if (type(UnitExists) ~= "function" or not UnitExists("mouseover")) then return false end
-    local guid = (type(UnitGUID) == "function") and UnitGUID("mouseover") or nil
-    if (not guid) then return false end
-    if (isCacheFresh(lib.cache[guid])) then return false end
-    return isCloseEnoughToAsk("mouseover")
 end
 
 inspectQueueTick = function()
@@ -5314,33 +4888,9 @@ inspectQueueTick = function()
     if (insFrame and insFrame.IsShown and insFrame:IsShown()) then
         return
     end
-    -- C2 fail-open: without a clock there is no pacing or watchdog to enforce.
-    -- Pacing is skipped, the watchdog is skipped (pending is released so the
-    -- queue keeps moving instead of stalling on a timestamp that never advances).
-    local now
-    if (lib.clockAvailable) then
-        now = uptimeSeconds()
-        if (now == nil) then return end
-        if (now < nextInspectTime) then
-            -- The pacing window (INSPECT_DELAY) is the anti-re-request
-            -- throttle: it stops the SAME unit being asked for again on the
-            -- next render pass (see requestInspectImpl). The unit under the
-            -- cursor is NOT held back by it -- a fresh hover of a unit the
-            -- player has just moved onto is not a re-request -- so the tick
-            -- lets that one request through. Everything else still waits for
-            -- the window.
-            if (not hoveredUnitNeedsInspect()) then
-                return
-            end
-        end
-    else
-        if (inspectPendingUnit) then
-            inspectPendingUnit = nil
-            inspectPendingSince = 0
-            pendingRefusal = nil
-        end
-        nextInspectTime = 0
-        now = 0
+    local now = type(GetTime) == "function" and GetTime() or 0
+    if (now < nextInspectTime) then
+        return
     end
     -- Watchdog: if an inspect was requested but INSPECT_READY never arrives
     -- (throttled server, disconnected unit, a silent refusal, etc.), release the
@@ -5350,16 +4900,6 @@ inspectQueueTick = function()
     -- stalled.
     if (inspectPendingUnit) then
         if (inspectPendingSince > 0 and now - inspectPendingSince > INSPECT_PENDING_TIMEOUT) then
-            -- Hunter H10: preserve the dropped unit's identity through the
-            -- expiry for one grace window (see the INSPECT_READY handler) and
-            -- record it for diag. The window value itself is untouched.
-            local expiredUnit = inspectPendingUnit
-            if (lib.inspectStats) then
-                lib.inspectStats.lastWatchdogUnit = expiredUnit
-                lib.inspectStats.lastWatchdogAge = now - inspectPendingSince
-            end
-            watchdogGraceUnit = expiredUnit
-            watchdogGraceUntil = now + INSPECT_PENDING_TIMEOUT
             inspectPendingUnit = nil
             inspectPendingSince = 0
             pendingRefusal = nil
@@ -5371,37 +4911,7 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 1: The unit under the cursor. The hovered unit is what the
-    -- tooltip is showing right now, so it is dispatched at the first free
-    -- slot, BEFORE the target and BEFORE anything the proximity scan has
-    -- queued.
-    --
-    -- Without this the hovered unit was just another queue entry, and the
-    -- queue is drained NEWEST FIRST (see Priority 3 below), so a scan
-    -- candidate queued after the hover was served first and the hovered unit
-    -- waited behind it. That is the ordering half of the hover-latency
-    -- regression; the slot half is in DoInspect (the scan never takes the
-    -- slot) and in the dispatch decision (the hovered unit is not held back
-    -- by a pacing window another unit opened).
-    --
-    -- Freshness FIRST, exactly as for the target: a hovered unit whose data is
-    -- already cached costs the tick nothing.
-    if (hoveredUnitNeedsInspect()) then
-        if (lib:CanInspect("mouseover")) then
-            if (requestInspect("mouseover")) then
-                return
-            end
-        end
-        -- The hovered unit could not be inspected (out of reach, not a player,
-        -- refused). Everything else goes back behind the pacing window, so
-        -- bypassing the window for the hovered unit does not loosen the
-        -- throttle for the rest of the pipeline.
-        if (lib.clockAvailable and now < nextInspectTime) then
-            return
-        end
-    end
-
-    -- Priority 2: Current player target. Freshness FIRST: for a target whose data
+    -- Priority 1: Current player target. Freshness FIRST: for a target whose data
     -- is already fresh there is nothing to do, and the gate chain (a distance
     -- query, plus the classic-family interact probe and CanInspect query) is the
     -- expensive part of this tick. The tick runs every 0.5s, so skipping that for
@@ -5417,26 +4927,11 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 3: Queued inspects
+    -- Priority 2: Queued inspects
     if (#queue > 0) then
         for i = #queue, 1, -1 do
             local item = queue[i]
             table.remove(queue, i)
-            -- Hunter H10: how long this unit waited before dispatch, so diag
-            -- can tell a slow queue from a stalled one. Recorded for every
-            -- dispatched queue entry, whether or not the dispatch succeeds.
-            -- C2 fail-open: without a clock there is no wait to measure.
-            if (lib.clockAvailable and type(item) == "table" and type(item.enqueuedAt) == "number" and lib.inspectStats) then
-                local wait = now - item.enqueuedAt
-                if (wait < 0) then wait = 0 end
-                local st = lib.inspectStats
-                if (st.maxQueueWait == nil or wait > st.maxQueueWait) then
-                    st.maxQueueWait = wait
-                end
-                st.queueWaitTotal = (st.queueWaitTotal or 0) + wait
-                st.queueWaitCount = (st.queueWaitCount or 0) + 1
-                st.avgQueueWait = st.queueWaitTotal / st.queueWaitCount
-            end
             local guid = type(item) == "table" and item.guid or item
             local unitHint = type(item) == "table" and item.unit or nil
             local unit
@@ -5454,7 +4949,7 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 4: Party / Raid members in range
+    -- Priority 3: Party / Raid members in range
     if (type(IsInGroup) == "function" and IsInGroup()) then
         if (type(IsInRaid) == "function" and IsInRaid()) then
             for i = 1, 40 do
@@ -5498,38 +4993,6 @@ end
 -- the exact case where the nameplate pass alone would silently do nothing.
 local SCAN_FALLBACK_UNITS = { "mouseover", "target", "focus" }
 
--- The scan's single entry point into the inspect pipeline.
---
--- The proximity scan is a BACKGROUND collector: it exists so GearScore
--- coverage does not depend on the player hovering every player. It must
--- therefore not take the single pending inspect slot away from the unit the
--- player is actually looking at -- that is exactly what made the tooltip's
--- scores arrive late and sometimes not at all: the scan's request took the
--- slot, the hovered unit's request was queued behind it, and the hover's
--- data arrived a round trip late (or, with the pacing window open, two
--- round trips late).
---
--- So while the unit under the cursor is waiting for its own data, the scan's
--- candidate is QUEUED instead of dispatched on the spot: the queue tick
--- dispatches it once the player is no longer waiting, and the target and the
--- hovered unit come first there. The scan keeps its coverage -- one candidate
--- per scan tick -- and stops competing with the hover for the slot.
---
--- When NO unit is waiting (the cursor is over the ground, or over a player
--- whose data is already here), the scan dispatches exactly as it always did:
--- the scan's own request is what teaches this client its real inspect range,
--- and it must keep asking.
---
--- The flag is set and cleared around ONE call, inside a pcall boundary, so a
--- raise inside DoInspect cannot leave the library in the queue-only state.
-local function scanInspect(unit)
-    scanQueueOnly = hoveredUnitNeedsInspect()
-    local ok, taken = pcall(lib.DoInspect, lib, unit)
-    scanQueueOnly = nil
-    if (not ok) then return false end
-    return taken
-end
-
 local function scanCandidate(unit)
     if (type(unit) ~= "string" or type(UnitExists) ~= "function" or not UnitExists(unit)) then return false end
     if (type(UnitIsPlayer) ~= "function" or not UnitIsPlayer(unit)) then return false end
@@ -5547,11 +5010,7 @@ local function scanCandidate(unit)
     local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
     if (not guid or guid == UnitGUID("player")) then return false end
     if (isCacheFresh(lib.cache and lib.cache[guid])) then return false end
-    -- DoInspect answers with the three-state contract: only the REFUSED state
-    -- (false) means the unit was not taken, so only that ends the scan. The
-    -- QUEUED state means the unit was accepted and is pending -- it counts as
-    -- enqueued, exactly as the old boolean's `true` did.
-    if (not scanInspect(unit)) then return false end
+    if (not lib:DoInspect(unit)) then return false end
     if (lib.inspectStats) then
         lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
     end
@@ -5568,66 +5027,6 @@ local function scanFallbackUnits()
         end
     end
     return false
-end
-
--- The per-plate body of scanNearby, hoisted to file scope so the scan loop no
--- longer allocates a fresh closure for every plate on every tick. The pcall
--- boundary stays per plate, split at the one state change the rest of the tick
--- cares about:
---
---   * resolvePlateUnit raises -> nothing was counted; the caller counts the
---     skip, and platesWithUnit is untouched.
---   * scanResolvedUnit raises -> the plate has ALREADY been counted in
---     platesWithUnit, because the caller applies that count before its second
---     pcall; the fault then adds one scanSkippedDistance, which is what the old
---     single pcall did with its upvalue. This matters beyond the counters:
---     platesWithUnit is what suppresses the fallback pass, so a plate that
---     resolved must keep counting as "a working nameplate system" even when one
---     of the gates then raises.
---
--- Neither helper touches a counter; the caller applies all of them, in the same
--- order the old closure did.
-local function resolvePlateUnit(plate)
-    local unit
-    if (type(plate) == "table") then
-        if (type(plate.GetUnit) == "function") then
-            local gok, res = pcall(plate.GetUnit, plate)
-            if (gok) then unit = res end
-        elseif (type(plate.unit) == "string") then
-            unit = plate.unit
-        elseif (type(plate.unitToken) == "string") then
-            unit = plate.unitToken
-        end
-    end
-    if (type(unit) == "string" and type(UnitExists) == "function" and UnitExists(unit)) then
-        if (type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
-            local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
-            if (guid and guid ~= UnitGUID("player")) then
-                return unit, guid
-            end
-        end
-    end
-    return nil, nil
-end
-
--- Post-resolution half. "enqueued" = counted as scanned + scanEnqueued,
--- "skipped" = counted as scanSkippedDistance, nil = nothing counted (the cache
--- was fresh, or DoInspect refused the unit -- the old closure counted
--- neither). DoInspect's three-state answer is read for TRUTHINESS only here:
--- the QUEUED state (accepted, pending) counts as enqueued, and only the
--- REFUSED state (false) ends the scan.
-local function scanResolvedUnit(unit, guid)
-    local cached = lib.cache and lib.cache[guid]
-    local fresh = isCacheFresh(cached)
-    if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
-        if (scanInspect(unit)) then
-            return "enqueued"
-        end
-    elseif (not fresh) then
-        return "skipped"
-    end
-    return nil
 end
 
 local function scanNearby()
@@ -5657,33 +5056,46 @@ local function scanNearby()
         if (scanned >= budget) then break end
         local plate = plates[i]
         -- Per-plate fault isolation: a single bad nameplate (secret unit, nil
-        -- methods, etc.) must not abort the whole scan tick. Two pcall call
-        -- sites over the hoisted helpers instead of one per-plate closure:
-        -- resolve first (nothing counted yet), then the scan gates for a plate
-        -- that resolved. The resolved count is applied between them, matching
-        -- where the old closure incremented it, so a fault in either stage
-        -- lands on exactly the same counters as before.
-        local resolveOk, unit, guid = pcall(resolvePlateUnit, plate)
-        if (not resolveOk) then
+        -- methods, etc.) must not abort the whole scan tick.
+        local plateOk = pcall(function()
+            local unit
+            if (type(plate) == "table") then
+                if (type(plate.GetUnit) == "function") then
+                    local gok, res = pcall(plate.GetUnit, plate)
+                    if (gok) then unit = res end
+                elseif (type(plate.unit) == "string") then
+                    unit = plate.unit
+                elseif (type(plate.unitToken) == "string") then
+                    unit = plate.unitToken
+                end
+            end
+            if (type(unit) == "string" and type(UnitExists) == "function" and UnitExists(unit)) then
+                if (type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
+                    and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
+                    local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
+                    if (guid and guid ~= UnitGUID("player")) then
+                        platesWithUnit = platesWithUnit + 1
+                        local cached = lib.cache and lib.cache[guid]
+                        local fresh = isCacheFresh(cached)
+                        if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
+                            if (lib:DoInspect(unit)) then
+                                scanned = scanned + 1
+                                if (lib.inspectStats) then
+                                    lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
+                                end
+                            end
+                        elseif (not fresh) then
+                            if (lib.inspectStats) then
+                                lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        if (not plateOk) then
             if (lib.inspectStats) then
                 lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
-            end
-        elseif (guid) then
-            platesWithUnit = platesWithUnit + 1
-            local scanOk, outcome = pcall(scanResolvedUnit, unit, guid)
-            if (not scanOk) then
-                if (lib.inspectStats) then
-                    lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
-                end
-            elseif (outcome == "enqueued") then
-                scanned = scanned + 1
-                if (lib.inspectStats) then
-                    lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
-                end
-            elseif (outcome == "skipped") then
-                if (lib.inspectStats) then
-                    lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
-                end
             end
         end
     end
@@ -5708,19 +5120,7 @@ function lib:SetScanEnabled(enabled)
     lib.scanEnabled = (enabled and true) or false
 end
 
--- Hunter H5: the ticker install state is recorded (diag surfaces it) instead
--- of silently leaving the engine inert, and a client that gains C_Timer late
--- gets its tickers on ADDON_LOADED. Never reinstalls over live tickers.
--- Stored on lib (not just as a local) so the file-scope OnEvent handler --
--- which is defined before this point -- can reach it.
-local function ensureTickersInstalled()
-    if (type(C_Timer) ~= "table" or type(C_Timer.NewTicker) ~= "function") then
-        lib.tickersInstalled = false
-        return false
-    end
-    if (lib.tickersInstalled and lib.queueTicker and lib.scanTicker) then
-        return true
-    end
+if (type(C_Timer) == "table" and type(C_Timer.NewTicker) == "function") then
     if (lib.queueTicker) then
         pcall(lib.queueTicker.Cancel, lib.queueTicker)
     end
@@ -5730,12 +5130,7 @@ local function ensureTickersInstalled()
         pcall(lib.scanTicker.Cancel, lib.scanTicker)
     end
     lib.scanTicker = C_Timer.NewTicker(lib.scanInterval, scanNearby)
-    lib.tickersInstalled = true
-    return true
 end
-
-lib.ensureTickersInstalled = ensureTickersInstalled
-ensureTickersInstalled()
 
 function lib:GetLastCacheTime(unitorguid)
     local guid = getPlayerGUID(unitorguid)
@@ -5820,19 +5215,17 @@ function lib:GetSpecialization(unitorguid, groupIndex)
         -- whole talents block on `if (spec1)`, and only then reads the points), and
         -- GetLocalizedSpecName beside this function returns nil for the same case.
         --
-        -- The fallback BELOW is equally nil-able: a cached record that exists
-        -- yet carries no spec data (modern client where GetInspectSpecialization
-        -- was restricted/absent) is an unknown unit, not group 1. Callers gate
-        -- on nil (main.lua renders the whole talents block under `if (spec1)`),
-        -- so returning nil hides the line instead of printing a confidently
-        -- wrong spec with 0/0/0.
+        -- The fallbacks BELOW are unchanged: a cached record that is missing a
+        -- group index is a different situation -- the client answered, this unit
+        -- just has nothing in that group -- and the existing defaults are right
+        -- there.
         return nil
     end
     local byGroup = cached.specIndexByGroup
     if (byGroup and byGroup[groupIndex]) then
         return byGroup[groupIndex]
     end
-    return cached.specIndex
+    return cached.specIndex or 1
 end
 
 -- Engine-provided, already-localized specialization name for a unit.
@@ -5981,7 +5374,7 @@ end
 -- group 1 as active even when the inspected player was on group 2.
 function lib:GetActiveTalentGroup(unitorguid)
     local guid = getPlayerGUID(unitorguid)
-    if (not guid) then return nil end
+    if (not guid) then return 1 end
     if (guid == UnitGUID("player")) then
         return GetActiveSpecGroupFor(false)
     end
@@ -5990,26 +5383,7 @@ function lib:GetActiveTalentGroup(unitorguid)
     if (type(g) == "number" and g > 0) then
         return g
     end
-    -- No active-group marker on the record. Claim group 1 only when the record
-    -- shows at least one resolved group; otherwise this is an unknown unit and
-    -- claiming group 1 would grey the wrong line. Callers fall back via `or 1`
-    -- (main.lua:2060), so nil degrades to the old display without asserting
-    -- knowledge the client never provided.
-    if (cached) then
-        local byGroup = cached.specIndexByGroup
-        if (type(byGroup) == "table" and (byGroup[1] ~= nil or byGroup[2] ~= nil)) then
-            return 1
-        end
-        local pts = cached.talentPoints
-        if (type(pts) == "table") then
-            local g1, g2 = pts[1], pts[2]
-            if (type(g1) == "table" or type(g2) == "table"
-                    or type(g1) == "number" or type(g2) == "number") then
-                return 1
-            end
-        end
-    end
-    return nil
+    return 1
 end
 
 function lib:GetTotalAchievementPoints(unitorguid)

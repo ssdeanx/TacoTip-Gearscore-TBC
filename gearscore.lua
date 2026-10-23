@@ -20,205 +20,6 @@ if (not TT) then
     rawset(_G, addOnName, TT)
 end
 
--- ---------------------------------------------------------------------------
--- Companion add-on slash forwarding
--- ---------------------------------------------------------------------------
--- TacoTip Extras registers its own slash commands, and six of them live
--- under this add-on's "/tt" alias: "/tt lb", "/tt rank", "/tt ranks",
--- "/tt leaderboard", "/tt gs" and "/tt gsdebug" (plus the unambiguous
--- "/ttrank", "/ttranks", "/ttleaderboard", "/ttgs" and "/ttgsdebug", which
--- the Extras registers itself and which nothing here touches).
---
--- HOW THE CLIENT DISPATCHES (the reason this forwarding exists at all).
--- The client is deterministic, NOT a race over prefixes. It splits the typed
--- text at the FIRST whitespace and looks up ONLY that token:
---
---   origin/classic_era, origin/classic_anniversary, origin/classic_titan,
---   origin/forever, origin/live --
---   Interface/AddOns/Blizzard_ChatFrameBase/Shared/ChatFrameEditBox.lua:222
---       local command = strmatch(text, "^(/[^%s]+)") or "";
---   ... :230  command = strupper(command);
---   ... :257  if ( hash_SlashCmdList[command] ) then
---   ... :259      hash_SlashCmdList[command](strtrim(msg), self);
---
--- so "/tt lb" is dispatched as the command "/TT" with the ARGUMENT "lb", and
--- the owner of "/TT" -- this add-on -- must forward that argument itself. The
--- Extras' own "/tt lb" alias can never fire, because the client never looks
--- up a two-word alias. (Its single-token aliases "/ttrank" and friends are
--- separate commands and are untouched.)
---
--- WHY THE RAWGET IN THE OLD RESOLVER NEVER FIRED. The client's SlashCmdList
--- is a PROXY table and the client empties it immediately before dispatching:
---
---   Interface/AddOns/Blizzard_ChatFrameBase/Shared/ChatFrameSetup.lua:3-11
---       setmetatable(list, { __index = {} })   -- applied to _G.SlashCmdList
---   Interface/AddOns/Blizzard_ChatFrameBase/Shared/ChatFrameUtil.lua:717-736
---       ImportListToHash: every registered handler is moved into
---       getmetatable(list).__index (line 732) and the REAL table is then
---       WIPED (line 735, securecallfunction(tWipe, list))
---   ChatFrameEditBox.lua:245 imports, :257/:259 dispatches
---
--- so at dispatch time the real table is EMPTY and rawget(SlashCmdList,
--- "TACOTIPRANKS") is nil on every client -- the old resolver looked there
--- and therefore never forwarded, and "/tt lb" opened the OPTIONS panel.
---
--- THE PROXY'S OWN KEY. The client's ImportListToHash copies a handler into
--- the proxy table under the LIST KEY it is iterating (ChatFrameUtil.lua:732,
---   proxyTable[k] = v
--- where k is the SlashCmdList key, e.g. "TACOTIPRANKS"), while the DISPATCH
--- hash is keyed by the uppercased alias (ChatFrameUtil.lua:720-725,
---   local tag = strupper(_G["SLASH_"..k..i]); hash[tag] = v
--- -- "/TT"). So a proxy read must use the LIST KEY NAME, never the
--- uppercased alias. The reads below use the key names.
---
--- Defensive by construction, because the Extras may be absent, half-loaded or
--- broken: SlashCmdList may not exist, the entry may be missing or may not be
--- a function, and the Extras handler itself may raise. The call is pcall'd,
--- so a broken Extras can never break "/tt" -- it only means the leaderboard
--- does not open. A raise is COUNTED and reported (see below), because a
--- silently swallowed raise is how a broken Extras looks like a missing one.
---
--- ONE implementation, published on the namespace so the final slash handler
--- (options.lua, which replaces the bootstrap handler below) shares it instead
--- of repeating the lookup.
---
--- The words this add-on forwards, and which Extras surface each one means:
---   lb / rank / ranks / leaderboard -> the server leaderboard toggle ("/ttrank")
---   gs                          -> the Extras' options category ("/ttgs")
---   gsdebug                      -> the Extras' diagnostic snapshot ("/ttgsdebug")
---
--- Neither "gs" nor "gsdebug" is a command of this add-on's own set
--- (custom|unlock|move|mover|save|default|reset|help|anchor|diag|diagnostics),
--- so forwarding them cannot steal any behaviour of this add-on.
---
--- The RESOLUTION ORDER for each word, and why:
---
---   1. The Extras' published plain global. A plain global survives the client's
---      wipe of the slash registry, and it is the SAME function object the
---      Extras' own slash entry invokes (identity, not a copy), so the two
---      cannot drift apart.
---        _G.TacoTipExtrasToggleLeaderboard  (TacoTip_Extras/RankBrowser.lua:3017)
---        _G.TacoTipExtrasPrintDebugSnapshot (TacoTip_Extras/Core.lua:1163-1165)
---   2. A PROXY-AWARE read of the Extras' slash entry, for an Extras build
---      that does not publish the global yet.
---   3. The other Extras slash entry, so a word still reaches the Extras when
---      only one of the two entries was registered.
-local EXTRAS_COMMAND_TARGETS = {
-    lb = "leaderboard",
-    rank = "leaderboard",
-    ranks = "leaderboard",
-    leaderboard = "leaderboard",
-    gs = "options",
-    gsdebug = "debug",
-}
-
--- A PROXY-AWARE read of one slash entry.
---
--- The client's SlashCmdList is a proxy table whose __index holds the handlers
--- the client imported out of the real table, so NORMAL indexing finds them
--- and a rawget does not. Both reads are tried, because the client's __index is
--- a plain table on all five supported branches but the explicit read is what
--- documents the mechanism.
-local function proxySlashEntry(key)
-    local slashCmdList = rawget(_G, "SlashCmdList")
-    if (type(slashCmdList) ~= "table") then
-        return nil
-    end
-    local handler = slashCmdList[key]
-    if (type(handler) == "function") then
-        return handler
-    end
-    local meta = getmetatable(slashCmdList)
-    local index = meta and rawget(meta, "__index")
-    if (type(index) == "table") then
-        handler = rawget(index, key)
-        if (type(handler) == "function") then
-            return handler
-        end
-    end
-    return nil
-end
-
--- The Extras' handler for one forwarded word, or nil when the Extras cannot
--- serve it.
-local function resolveExtrasHandler(cmd)
-    local target = EXTRAS_COMMAND_TARGETS[cmd]
-    if (not target) then
-        return nil
-    end
-    if (target == "leaderboard") then
-        local published = rawget(_G, "TacoTipExtrasToggleLeaderboard")
-        if (type(published) == "function") then
-            return published
-        end
-        return proxySlashEntry("TACOTIPRANKS")
-    end
-    if (target == "debug") then
-        -- The Extras' diagnostic surface: its published global first, then its
-        -- own slash entry.
-        local published = rawget(_G, "TacoTipExtrasPrintDebugSnapshot")
-        if (type(published) == "function") then
-            return published
-        end
-        return proxySlashEntry("TTEXTRASDEBUG")
-    end
-    -- The Extras' options category: ITS OWN SLASH ENTRY, and nothing else.
-    --
-    -- M2: this used to fall back to the published debug-snapshot function (and
-    -- then to the debug slash entry), so a MISSING options entry answered
-    -- "/tt gs" with a telemetry dump instead of the options the player asked
-    -- for -- the wrong surface, silently, with no way to tell it apart from
-    -- the real thing. The fallback is gone: with no options entry there is
-    -- nothing to forward to, so the word falls through to TacoTip's own
-    -- options panel, which is what the player gets when the Extras is not
-    -- installed at all.
-    return proxySlashEntry("TTEXTRAS")
-end
-
--- Report a raise inside the Extras' handler.
---
--- The house rule for a discarded pcall result (see main.lua's
--- handlePipelineError): COUNT it and SAY so. A raise here used to be
--- swallowed entirely, which made a broken Extras indistinguishable from an
--- absent one. One actionable line, once per distinct message, so a repeated
--- failure cannot flood the chat frame; the counter counts every failure.
-local function reportExtrasForwardFailure(cmd, message)
-    TT.ev = TT.ev or {}
-    TT.ev.extrasForwardFailed = (TT.ev.extrasForwardFailed or 0) + 1
-    TT.ev.extrasForwardLastCommand = cmd
-    TT.ev.extrasForwardLastError = message
-    TT.ev.extrasForwardReported = TT.ev.extrasForwardReported or {}
-    if (TT.ev.extrasForwardReported[message]) then
-        return
-    end
-    TT.ev.extrasForwardReported[message] = true
-    print("|cff59f0dcTacoTip:|r TacoTip Extras could not run \"" .. tostring(cmd) .. "\": "
-        .. tostring(message) .. " -- run /tacotip diag for the full report.")
-end
-
--- Returns true when the word was handed to the Extras, so the caller does
--- NOT fall through to the options panel.
---
--- A raise inside the Extras' handler is still "handled": the player asked
--- for the Extras, so the options panel is not opened as well. The failure is
--- counted and reported instead.
-local function forwardExtrasSlashCommand(cmd)
-    if (type(cmd) ~= "string" or cmd == "") then
-        return false
-    end
-    local handler = resolveExtrasHandler(cmd)
-    if (type(handler) ~= "function") then
-        return false
-    end
-    local ok, err = pcall(handler)
-    if (not ok) then
-        reportExtrasForwardFailure(cmd, tostring(err))
-    end
-    return true
-end
-
-TT.ForwardExtrasSlashCommand = forwardExtrasSlashCommand
-
 local function registerBootstrapSlash()
     local slashCmdList = rawget(_G, "SlashCmdList")
     if (not slashCmdList) then
@@ -261,10 +62,6 @@ local function registerBootstrapSlash()
             end
             print("|cff59f0dcTacoTip:|r " ..
                 ((L and L["Custom tooltip position disabled."]) or "Custom tooltip position disabled."))
-        elseif (forwardExtrasSlashCommand(cmd)) then
-            -- Handed to TacoTip Extras (the server leaderboard). Nothing else
-            -- to do here, and the options panel is deliberately NOT opened.
-            return
         elseif (TT and TT.OpenOptionsPanel) then
             TT.OpenOptionsPanel()
         else
@@ -303,23 +100,15 @@ end
 local GUIDIsPlayer = (_G.C_PlayerInfo and _G.C_PlayerInfo.GUIDIsPlayer) or fallbackGUIDIsPlayer
 local rawRequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local ITEM_REQUEST_COOLDOWN = 2.0
--- C2 clock probe (load-time): without GetTime there is no monotonic timestamp,
--- so the 2s per-item throttle below is bypassed (fail-OPEN) instead of wedged
--- on a memoised 0. Never memoise 0 as a timestamp.
-local clockAvailable = (type(GetTime) == "function")
 local function RequestLoadItemDataByID(itemID)
     if (not rawRequestLoadItemDataByID or not itemID) then
-        return
-    end
-    if (not clockAvailable) then
-        pcall(rawRequestLoadItemDataByID, itemID)
         return
     end
     local TT_GS = rawget(_G, "TT_GS")
     if (TT_GS) then
         TT_GS._itemRequestTime = TT_GS._itemRequestTime or {}
         local last = TT_GS._itemRequestTime[itemID]
-        local now = GetTime()
+        local now = (type(GetTime) == "function") and GetTime() or 0
         if (last and now >= last and (now - last) < ITEM_REQUEST_COOLDOWN) then
             return
         end
@@ -339,21 +128,6 @@ local floor = math.floor
 _G.TT_GS = {}
 local TT_GS = _G.TT_GS
 TT_GS._itemRequestTime = TT_GS._itemRequestTime or {}
-TT_GS.ClockAvailable = clockAvailable
-
--- Shared homes for the helpers pawn.lua also needs (arbiter #4/#5). Gearscore
--- loads before pawn (toc order), so pawn routes to these at call time via
--- rawget(_G, "TT_GS") -- one implementation, two call sites, no new throttle.
-TT_GS.RequestLoadItemDataByID = RequestLoadItemDataByID
-TT_GS.IsPlayerGUID = GUIDIsPlayer
-
--- Cold-path counter home (hunter H6): not-ready GearScore/Pawn reads as
--- absent. Both modules count here; diag surfaces the one number. No
--- loading-row UI change by design (operator-approved minimal option).
-function TT_GS:CountPendingHidden()
-    TT.ev = TT.ev or {}
-    TT.ev.gsPendingHidden = (TT.ev.gsPendingHidden or 0) + 1
-end
 
 -- Quality bracket per client family.
 --
@@ -364,16 +138,7 @@ end
 --
 --   Classic Era / WoW Forever  200   level cap 60, Classic-like item levels
 --   TBC Anniversary            400
---   Titanforge / Retail       1000   (Retail: operator hold, see below)
---
--- HOLD (Batch 5, operator decision -- live max ~345): Retail shares the 1000
--- default again. Batches 3/4 calibrated a Retail-only bracket (3000, then
--- 2000) against harness-derived totals, but live Retail totals are
--- unmeasured, and at the live band the reference set totals ~8.7k -- above
--- the 7000 ceiling, so the whole tier reads constant Artifact until a live
--- screenshot justifies a new value. The Retail special-case is removed; raw
--- scores and the iLvl average pass through untouched, so this hold changes
--- no number -- only the colour band a score falls into moves.
+--   Titanforge / Retail       1000
 --
 -- WoW Forever used to fall through to the 1000 default, which inflated every
 -- score 5x and collapsed the whole ramp into the "Common" white band. It is
@@ -387,13 +152,6 @@ elseif (CI.IsTBC and CI:IsTBC()) then
     BRACKET_SIZE = 400
 elseif (CI.IsForever and CI:IsForever()) then
     BRACKET_SIZE = 200
-elseif (CI.IsUnknown and CI:IsUnknown()) then
-    -- Unknown family keeps the 1000 default (Titanforge-era behaviour); the
-    -- unknown state is already flagged in /tacotip diag, and the harness pins
-    -- the default explicitly so a future family fails loudly there instead of
-    -- silently inheriting this value. This branch changes nothing: it names
-    -- the default that used to be implicit.
-    BRACKET_SIZE = 1000
 end
 
 local MAX_SCORE = BRACKET_SIZE * 7
@@ -465,8 +223,6 @@ local function getPlayerGUID(arg)
     end
     return nil
 end
-
-TT_GS.ResolvePlayerGUID = getPlayerGUID
 
 function TT_GS:GetQuality(ItemScore)
     ItemScore = tonumber(ItemScore)
@@ -645,8 +401,6 @@ local function itemcacheCB(tbl, id)
     end
 end
 
-TT_GS.DrainItemCache = itemcacheCB
-
 
 function TT_GS:GetScore(unitorguid, useCallback)
     local guid = getPlayerGUID(unitorguid)
@@ -815,12 +569,6 @@ function TT_GS:GetScore(unitorguid, useCallback)
         end
         if (IsReady and GearScore > 0 and ItemCount > 0) then
             return floor(GearScore), floor(LevelTotal / ItemCount)
-        end
-        -- Cold path only (hunter H6): the score is not ready -- items are still
-        -- streaming or throttled -- so the tooltip reads this as absent. Count
-        -- it (diag-surfaced) rather than adding a loading-row UI change.
-        if (not IsReady) then
-            TT_GS:CountPendingHidden()
         end
     end
     return 0, 0

@@ -1,55 +1,24 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.3"
 
 
 
--- TT and LOAD_STAGE are established BEFORE any assert or extern call, so a
--- load failure still leaves a stage for /tacotip diag and the mover message.
--- The library asserts below used to run first and abort the whole file with no
--- trace; they are soft aborts instead: stop this file, keep the stage.
-local TT = _G[addOnName]
-
-if (not TT) then
-    TT = {}
-    rawset(_G, addOnName, TT)
-end
-
-TT.LOAD_STAGE = "begin"
-TT.LOAD_OK = false
-
-if (not LibStub) then
-    return
-end
-TT.LOAD_STAGE = "libs"
-if (not LibStub:GetLibrary("LibForeverInspector", true)) then
-    return
-end
-if (not LibStub:GetLibrary("LibDetours-1.0", true)) then
-    return
-end
+assert(LibStub, "TacoTip requires LibStub")
+assert(LibStub:GetLibrary("LibForeverInspector", true), "TacoTip requires LibForeverInspector")
+assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-1.0")
 
 local CI = LibStub("LibForeverInspector")
 local Detours = LibStub("LibDetours-1.0")
 local GearScore = _G.TT_GS
 local L = _G.TACOTIP_LOCALE
 
--- The library's THREE-STATE contract for lib:DoInspect, published by the
--- library (CI.inspectStates) so this file compares against the library's own
--- names instead of keeping a copy of the contract:
---
---   REFUSED (false)  not inspected -- refused, unavailable, or out of reach
---   QUEUED ("queued") accepted, PENDING -- the request went out, or the unit
---                    is in the queue. The unit's data is NOT here yet.
---   READY (true)     data ready -- the cache holds fresh data for the unit
---
--- The contract used to be a plain boolean whose `true` covered BOTH "queued"
--- and "ready", so the two could not be told apart. A library that publishes
--- no names is an older build that answers with that plain boolean, where
--- `true` meant "accepted" -- the request went out, or the unit was queued --
--- and NOT "the data is here"; such an answer is pending here, exactly as it
--- was before the three-state contract existed.
-local CI_INSPECT_STATES = (type(CI.inspectStates) == "table") and CI.inspectStates or nil
+local TT = _G[addOnName]
+
+if (not TT) then
+    TT = {}
+    rawset(_G, addOnName, TT)
+end
 
 -- Load-progress marker.
 --
@@ -63,6 +32,8 @@ local CI_INSPECT_STATES = (type(CI.inspectStates) == "table") and CI.inspectStat
 -- Recording the last stage reached turns that silence into a fact: `/tacotip
 -- diag` names the region where loading stopped. Stages are plain table fields,
 -- so whatever was set before the error survives it.
+TT.LOAD_STAGE = "begin"
+TT.LOAD_OK = false
 local function stage(name)
     TT.LOAD_STAGE = name
 end
@@ -109,34 +80,16 @@ local getTooltipRightLine = TT.GetTooltipRightLine
 -- wraps, one wider than its text renders exactly as before and contributes
 -- nothing to the tooltip's width. Capping is therefore non-destructive for short
 -- lines and only kicks in once content actually exceeds the limit.
---
--- Hard ceiling: a 0 setting used to mean "no cap at all", so one long guild /
--- talent / Extras row could stretch the tooltip past the screen edge and take
--- the portrait with it. The user cap still wins when set; when it is 0 this
--- ceiling applies so the tooltip always has a maximum.
-local TOOLTIP_HARD_MAX_WIDTH = 320
-local function getEffectiveTooltipMaxWidth()
-    local configured = TacoTipConfig and TacoTipConfig.tooltip_max_width or 0
-    if (type(configured) == "number" and configured > 0) then
-        return configured
-    end
-    return TOOLTIP_HARD_MAX_WIDTH
-end
 local function applyTooltipMaxWidth(tooltip)
     if (not tooltip or type(tooltip.NumLines) ~= "function") then
-        return 0
+        return
     end
 
-    local maxWidth = getEffectiveTooltipMaxWidth()
+    local maxWidth = TacoTipConfig.tooltip_max_width or 0
     local ok, numLines = pcall(tooltip.NumLines, tooltip)
     if (not ok or type(numLines) ~= "number") then
-        return 0
+        return
     end
-
-    -- Returns how many lines were (re)capped, so a deferred pass can tell
-    -- whether there is anything left that could still be arriving late. The
-    -- memo means a settled tooltip costs one scan and zero writes.
-    local writes = 0
 
     local leftCap, rightCap = 0, 0
     if (maxWidth > 0) then
@@ -152,111 +105,18 @@ local function applyTooltipMaxWidth(tooltip)
         local leftLine = getTooltipLeftLine(tooltip, i)
         if (leftLine and type(leftLine.SetWidth) == "function") then
             if (leftLine._tacoTipMaxWidth ~= leftCap) then
-                -- L-1 (final hunter): the pcall's RESULT was thrown away, so a
-                -- raising SetWidth left the line uncapped with no trace at all.
-                -- The failure is now counted.
-                --
-                -- Why a counter and not callLabeled: callLabeled RE-RAISES with
-                -- the call site named, which would abort the whole enhancement
-                -- (the tooltip render runs inside safeCall, so the raise would
-                -- be caught at the top and the tooltip would lose every line it
-                -- had built). A cosmetic width cap that fails must not cost the
-                -- player the GearScore line. The counter is the file's own idiom
-                -- for exactly this -- see portraitSetFailed, the discarded
-                -- portrait SetUnit at the same kind of call site.
-                --
-                -- The memo is written only when the width cap actually applied:
-                -- a raising SetWidth leaves the line uncapped, so the memo must
-                -- stay clear and the next render must retry instead of latching
-                -- the line uncapped for the session. The counter still records
-                -- how often it raises.
-                local leftWidthOk = pcall(leftLine.SetWidth, leftLine, leftCap)
-                if (not leftWidthOk) then
-                    TT.ev = TT.ev or {}
-                    TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                end
-                -- A narrower FontString only narrows the tooltip if the text
-                -- wraps instead of overflowing: without word wrap the line's
-                -- required width is still the full text and the tooltip still
-                -- stretches past the cap. Enabled once per cap change, beside
-                -- the width itself; short lines never reach the wrap point and
-                -- render exactly as before.
-                if (leftLine.SetWordWrap and type(leftLine.SetWordWrap) == "function") then
-                    if (not pcall(leftLine.SetWordWrap, leftLine, true)) then
-                        TT.ev = TT.ev or {}
-                        TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                    end
-                end
-                if (leftLine.SetNonSpaceWrap and type(leftLine.SetNonSpaceWrap) == "function") then
-                    if (not pcall(leftLine.SetNonSpaceWrap, leftLine, false)) then
-                        TT.ev = TT.ev or {}
-                        TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                    end
-                end
-                if (leftWidthOk) then
-                    leftLine._tacoTipMaxWidth = leftCap
-                    writes = writes + 1
-                end
+                pcall(leftLine.SetWidth, leftLine, leftCap)
+                leftLine._tacoTipMaxWidth = leftCap
             end
         end
         local rightLine = getTooltipRightLine(tooltip, i)
         if (rightLine and type(rightLine.SetWidth) == "function") then
             if (rightLine._tacoTipMaxWidth ~= rightCap) then
-                local rightWidthOk = pcall(rightLine.SetWidth, rightLine, rightCap)
-                if (not rightWidthOk) then
-                    TT.ev = TT.ev or {}
-                    TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                end
-                -- Same wrap reasoning as the left lines above: the right column
-                -- must wrap, not overflow, or it stretches the tooltip past the
-                -- cap on its own.
-                if (rightLine.SetWordWrap and type(rightLine.SetWordWrap) == "function") then
-                    if (not pcall(rightLine.SetWordWrap, rightLine, true)) then
-                        TT.ev = TT.ev or {}
-                        TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                    end
-                end
-                if (rightLine.SetNonSpaceWrap and type(rightLine.SetNonSpaceWrap) == "function") then
-                    if (not pcall(rightLine.SetNonSpaceWrap, rightLine, false)) then
-                        TT.ev = TT.ev or {}
-                        TT.ev.tooltipMaxWidthFailed = (TT.ev.tooltipMaxWidthFailed or 0) + 1
-                    end
-                end
-                if (rightWidthOk) then
-                    rightLine._tacoTipMaxWidth = rightCap
-                    writes = writes + 1
-                end
+                pcall(rightLine.SetWidth, rightLine, rightCap)
+                rightLine._tacoTipMaxWidth = rightCap
             end
         end
     end
-    return writes
-end
-
--- Pawn version thresholds. Single home for this file's two probes (the
--- file-scope snapshot below and the live re-probe beside it).
---
--- Batch 7: the comparison used to be a RAW `pawnClassicVer >= 2.0538`. Pawn's
--- version globals are not guaranteed to be numbers -- a string-typed value
--- raises "attempt to compare string with number", and because the snapshot
--- probe runs at FILE SCOPE that raise aborts the whole add-on load, not just
--- the probe. pawn.lua already routes its own probe through a `tonumber`-
--- guarded helper (`pawn.lua:27-30`, `pawnVersionAtLeast`) with exactly these
--- two thresholds; the semantics are copied verbatim: a non-numeric version is
--- treated as ABSENT, so the probe falls through to the API-present fallback
--- instead of raising.
---
--- Why a local helper rather than the pawn module's one: `pawnVersionAtLeast`
--- is file-local in pawn.lua and is NOT exposed on `TT_PAWN` (only
--- `WasAvailableAtLoad` / `IsAvailable` are), and pawn.lua is outside this
--- batch's scope. main.lua also loads last (TacoTip.toc: gearscore -> pawn ->
--- textures -> options -> main) but pawn.lua can fail to load on its own
--- (`assert(LibStub)`, `pawn.lua:47-49`), so depending on TT_PAWN here would
--- be less safe, not more. A local helper keeps this file self-contained.
-local PAWN_CLASSIC_MIN_VERSION = 2.0538
-local PAWN_RETAIL_MIN_VERSION = 2.0
-local function pawnVersionAtLeast(raw, threshold)
-    local v = tonumber(raw)
-    return v ~= nil and v >= threshold
 end
 
 -- Pawn detection: check PawnClassicLastUpdatedVersion, PawnLastUpdatedVersion, or public API functions.
@@ -264,24 +124,8 @@ local pawnClassicVer = rawget(_G, "PawnClassicLastUpdatedVersion")
 local pawnRetailVer = rawget(_G, "PawnLastUpdatedVersion")
 local pawnApiPresent = type(_G.PawnGetItemData) == "function" and type(_G.PawnGetSingleValueFromItem) == "function" and
     type(_G.PawnGetScaleColor) == "function"
-local isPawnLoaded = pawnVersionAtLeast(pawnClassicVer, PAWN_CLASSIC_MIN_VERSION)
-    or pawnVersionAtLeast(pawnRetailVer, PAWN_RETAIL_MIN_VERSION)
-    or pawnApiPresent
-
--- Live re-probe for diagnostics ONLY (hunter C3). The render gate at
--- `isPawnLoaded and TT_PAWN ...` above stays on the file-scope snapshot, so a
--- Pawn that appears after load is reported as "until reload" rather than
--- silently changing render behaviour mid-session.
-local function isPawnAvailableNow()
-    local classicVer = rawget(_G, "PawnClassicLastUpdatedVersion")
-    local retailVer = rawget(_G, "PawnLastUpdatedVersion")
-    local apiPresent = type(_G.PawnGetItemData) == "function" and
-        type(_G.PawnGetSingleValueFromItem) == "function" and
-        type(_G.PawnGetScaleColor) == "function"
-    return pawnVersionAtLeast(classicVer, PAWN_CLASSIC_MIN_VERSION)
-        or pawnVersionAtLeast(retailVer, PAWN_RETAIL_MIN_VERSION)
-        or apiPresent
-end
+local isPawnLoaded = (pawnClassicVer and pawnClassicVer >= 2.0538) or (pawnRetailVer and pawnRetailVer >= 2.0) or
+    pawnApiPresent
 
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
 local ALLIANCE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-ALLIANCE:16:16:-2:0:64:64:0:38:0:38|t"
@@ -302,66 +146,12 @@ local INSPECT_RENDER_COALESCE = 0.1
 local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local NewTimer = _G.C_Timer and _G.C_Timer.NewTimer
 local CAfter = _G.C_Timer and _G.C_Timer.After
--- C2 clock probe (load-time): GetTime and C_Timer.After must BOTH be present
--- for any timestamp or pacing decision. When absent, time-gated paths below
--- fail OPEN (coalesce skipped) instead of wedging on a memoised 0, and
--- reportSilentFailures names the fact. Never memoise 0 as a timestamp.
-local clockAvailable = (type(GetTime) == "function")
-    and (type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function")
-TT.ClockAvailable = clockAvailable
 local GetBestMapForUnit = _G.C_Map and _G.C_Map.GetBestMapForUnit
 -- C_Item namespace and Blizzard ObjectAPI
 local Item = _G.Item
 -- Namespaced on purpose: there is no bare global RequestLoadItemDataByID on any
 -- of the five supported clients, only C_Item.RequestLoadItemDataByID.
---
--- Batch 7: the raw C_Item function is kept as the FALLBACK only. The request
--- itself now goes through the shared 2s-per-item throttle in gearscore.lua
--- (TT_GS.RequestLoadItemDataByID, gearscore.lua:102-144), which this file
--- bypassed: it called C_Item.RequestLoadItemDataByID directly, so every
--- cold-path hover re-requested the same uncached item. TT_GS is resolved at
--- CALL time (not captured at file scope) so the shared home is honoured
--- whenever it is present; the raw call runs only when TT_GS is absent, which
--- means gearscore.lua failed to load -- not a valid state.
-local rawRequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
-local function RequestLoadItemDataByID(itemID)
-    local gs = rawget(_G, "TT_GS")
-    local shared = gs and gs.RequestLoadItemDataByID
-    if (type(shared) == "function") then
-        return shared(itemID)
-    end
-    if (rawRequestLoadItemDataByID) then
-        return rawRequestLoadItemDataByID(itemID)
-    end
-end
--- Item-ID resolver for the cold-path item-data request. Namespaced form
--- preferred, for the same reason the request above is.
---
--- The bare global GetItemInfoInstant exists ONLY on the three Classic-family
--- branches, where Blizzard_DeprecatedItemScript aliases it
--- (Interface/AddOns/Blizzard_DeprecatedItemScript/Deprecated_ItemScript.lua:10
--- -- "GetItemInfoInstant = C_Item.GetItemInfoInstant;"). That file is ABSENT on
--- origin/forever and origin/live, so on Retail and WoW Forever the bare global
--- does not exist at all: the old read produced a nil itemID and the cold-path
--- request NEVER fired there. Blizzard itself never calls the bare global on any
--- branch -- all call sites are namespaced (0 bare vs 11-21 namespaced per
--- branch), e.g. Blizzard_AuctionHouseSharedTemplates.lua:366
--- ("local itemID = C_Item.GetItemInfoInstant(itemLink);") and ItemMixin:GetItemID
--- (Blizzard_ObjectAPI/Classic/Item.lua:98-100). The FIRST return is the item
--- ID. The bare global is kept as a fallback for a client that has no C_Item
--- namespace at all.
-local CItemGetItemInfoInstant = _G.C_Item and _G.C_Item.GetItemInfoInstant
-local function getItemInfoInstantID(itemLink)
-    local fn = CItemGetItemInfoInstant or _G.GetItemInfoInstant
-    if (type(fn) ~= "function") then
-        return nil
-    end
-    local ok, id = pcall(fn, itemLink)
-    if (ok and type(id) == "number") then
-        return id
-    end
-    return nil
-end
+local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
@@ -384,14 +174,6 @@ local UnitCanAttack = _G.UnitCanAttack
 ---@field borderDeferTimer table|nil    -- cancellable NewTimer handle (defensive border re-apply)
 ---@field classBorderDeferTimer table|nil -- cancellable NewTimer handle (OnShow class-border re-apply)
 ---@field fadeTimer table|nil           -- cancellable NewTimer handle (instant fade)
----@field inspectState string|nil       -- last inspect answer for this tooltip's unit:
----                                       "ready" (data here), "queued" (accepted,
----                                       PENDING), "refused" (not inspected), or nil
----                                       (nothing known yet). The library's
----                                       three-state answer, kept rather than
----                                       discarded; it describes the unit
----                                       currently rendered and is cleared when
----                                       a different unit is rendered.
 
 -- Inert fallback state for getTooltipState(nil): keeps the documented
 -- "state is always a table" contract so no call site needs a nil check.
@@ -443,13 +225,7 @@ local UnitRace = _G.UnitRace
 -- so caching it at file scope can latch nil for the whole session and silently
 -- disable hostile level colouring. It is resolved per call instead.
 
--- Player class is resolved per call for the same reason (hunter M9): a
--- file-scope latch reads nil when UnitClass is not yet populated at load and
--- then disables the HunterScore gate for the whole session.
-local function getPlayerClass()
-    local _, class = UnitClass("player")
-    return class
-end
+local playerClass = select(2, UnitClass("player"))
 
 -- Safe-call wrapper. Routes errors through Blizzard's geterrorhandler()
 -- global so they are captured by error display addons (BugSack, !Swatter,
@@ -477,113 +253,16 @@ local function handlePipelineError(message)
     end
     local text = tostring(message)
     TT.lastTooltipError = text
-    TT.ev = TT.ev or {}
     if (not reportedErrors[text]) then
         reportedErrors[text] = true
-        -- Per-message first-seen count for the bounded top-5 ring below.
-        -- Bounded: at most 25 distinct messages tracked; beyond that the total
-        -- still reports via the handler but no new per-message key is added.
-        TT.ev.pipelineErrorSeen = TT.ev.pipelineErrorSeen or {}
-        local seenCount = 0
-        for _ in pairs(TT.ev.pipelineErrorSeen) do seenCount = seenCount + 1 end
-        if (TT.ev.pipelineErrorSeen[text] or seenCount < 25) then
-            TT.ev.pipelineErrorSeen[text] = 1
-        end
         if (defaultErrorHandler) then
             defaultErrorHandler(text)
-        end
-    else
-        -- Cold path only: a repeat of an already-reported message. Counts the
-        -- dedup blindness (hunter H3) without allocating on the hot path --
-        -- numbers and at most five strings per session.
-        TT.ev.pipelineErrorsSuppressed = (TT.ev.pipelineErrorsSuppressed or 0) + 1
-        TT.ev.pipelineErrorSeen = TT.ev.pipelineErrorSeen or {}
-        TT.ev.pipelineErrorSeen[text] = (TT.ev.pipelineErrorSeen[text] or 1) + 1
-        TT.ev.pipelineSuppressedRing = TT.ev.pipelineSuppressedRing or {}
-        if (#TT.ev.pipelineSuppressedRing < 5) then
-            TT.ev.pipelineSuppressedRing[#TT.ev.pipelineSuppressedRing + 1] = text
         end
     end
 end
 
 local function safeCall(fn, ...)
     return xpcall(fn, handlePipelineError, ...)
-end
-
---- Runs a function so that it cannot taint the frame whose script chain it
---- executes in.
----
---- WHY THIS EXISTS. `securecall` is the engine's own containment primitive and
---- Blizzard uses it for exactly this shape:
----   - `Interface/AddOns/Blizzard_BuffFrame/BuffFrame.lua:991`
----     `securecall(self.UpdateDuration, self, self.timeLeft); -- Taint issue
----      with SecondsToTimeAbbrev`
----     -- an addon-overridable function called from a Blizzard frame's own
----     script chain, contained so the frame is not tainted.
----   - `Interface/AddOns/Blizzard_CommunitiesSecure/CommunitiesAddDialogOutbound.lua:9`
----     `securecall("GameTooltip_SetBasicTooltip", GameTooltip, text, x, y, wrap);`
----   - `Interface/AddOns/Blizzard_CatalogShop/Blizzard_CatalogShop_Outbound.lua:17`
----     `securecall("GameTooltip_Hide");`
----   - `Interface/AddOns/Blizzard_Menu/Menu.lua:1129`
----     "the factoryArgs table can be passed to securecallfunction without
----      tainting execution."
----
---- `securecall` is an engine global on every supported client -- Blizzard
---- captures it as a local the same way it captures `forceinsecure`
---- (`Interface/AddOns/Blizzard_FrameXML/SharedPetBattleTemplates.lua:5`
---- `local securecall = securecall;`).
----
---- WHAT IT IS FOR HERE. Every callback this add-on installs into a BLIZZARD
---- frame's script chain runs as addon code inside that chain, and the client
---- taints the frame when that happens. On the Classic family the unit tooltip
---- has no secure dispatch at all -- the modern pair routes the unit callback
---- through the client's own attribute delegate
---- (`Interface/AddOns/Blizzard_SharedXMLGame/Tooltip/TooltipDataHandler.lua:181-201`,
---- `InsecureCallback` -> `forceinsecure()`), so the raw `HookScript` handler
---- runs inside the UNIT FRAME's script chain instead and taints that frame.
---- The taint reaches the game menu, and the Logout/Quit button -- whose
---- callback is the engine function `Logout`/`Quit`, so the reporter can only
---- name it `'UNKNOWN()'` -- is refused with `ADDON_ACTION_FORBIDDEN`.
----
---- The hook itself is the problem, not what it does: a `hooksecurefunc`
---- post-hook does not replace the hooked function, but its BODY still runs as
---- addon code inside the caller's script chain. That is why replacing the
---- `GameTooltip.FadeOut` detour with a secure post-hook did NOT close the
---- exit-game block (0.8.4): the body still ran inside
---- `Interface/AddOns/Blizzard_UnitFrame/Classic/UnitFrame.lua:447`
---- (`GameTooltip:FadeOut();` inside `UnitFrame_OnLeave`).
----
---- `securecall` swallows an error raised by the callee and returns nil for
---- it, so every call site below keeps its own error handling: the tooltip
---- pipeline reports through `safeCall`, the pane hooks through their own
---- `pcall`, and the anchor post-hook has an explicit `pcall` with a counter.
-local secureCallFn = nil
-if (type(securecall) == "function") then
-    -- Probe it ONCE, at load. `securecall` is an engine global on every
-    -- supported client (Blizzard captures it as a local the same way it
-    -- captures `forceinsecure`:
-    -- Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
-    -- `local securecall = securecall;`), and Blizzard calls it from
-    -- addon-facing code paths. The probe proves the engine actually RUNS a
-    -- function through it FROM THIS ADD-ON'S CONTEXT: if a build ever refused
-    -- addon code to call it, every tooltip event would raise, and one probe
-    -- at load turns that into a documented fallback instead of a broken
-    -- tooltip on every client.
-    local probeRan = false
-    local probeOk = pcall(securecall, function() probeRan = true end)
-    if (probeOk and probeRan) then
-        secureCallFn = securecall
-    end
-end
-
-local function runUntainted(fn, ...)
-    if (secureCallFn) then
-        return secureCallFn(fn, ...)
-    end
-    -- No securecall on this client: run the callback directly. Every call
-    -- site still has its own error containment, so the fallback degrades to
-    -- "the taint guard is missing", never to "the add-on raises".
-    return fn(...)
 end
 
 -- Calls a widget method and, if it raises, re-raises with the call site named.
@@ -721,16 +400,6 @@ local function getClassColor(class, optClass)
     if (not class) then
         return nil
     end
-    -- THE CROSS-ADD-ON MAPPING, because the ONE setting has TWO spellings and
-    -- a reader looking for either has to find the other:
-    --
-    --   main add-on (TacoTip)   TacoTipConfig["shaman_blue"]           snake_case
-    --   Extras add-on           TacoTipExtrasDB.settings["shamanBlue"]  camelCase
-    --
-    -- The Extras reads the same rule and the same value (TacoTip_Extras/
-    -- Core.lua, IsShamanBlueEnabled). Only an explicit boolean `false` in
-    -- EITHER turns it off, so a player who turns Shaman Blue off in one
-    -- add-on does not get pink in one and blue in the other.
     if (class == "SHAMAN" and (not TacoTipConfig or TacoTipConfig.shaman_blue ~= false)) then
         return SHAMAN_BLUE_COLOR
     end
@@ -1078,7 +747,7 @@ end
 -- Line 1 is the NAME (player on a unit tooltip, item on an item tooltip); the
 -- rest is body. This used to apply one size to every line, flattening the name
 -- to body size.
-local TOOLTIP_NAME_FONT_SIZE_DELTA = 1
+local TOOLTIP_NAME_FONT_SIZE_DELTA = 2
 
 local function applyTooltipFonts(tooltip)
     if (not tooltip) then
@@ -1203,13 +872,9 @@ local function applyTooltipBackdrop(tooltip)
     -- tostring() rather than concatenation, because edgeFile is nil when
     -- hasBorder is false and "nil" has to be distinguishable from a real path.
     local edgeFile = hasBorder and borderTexture or nil
-    -- The last-resort edge size is the SHIPPED default (options.lua
-    -- DEFAULTS.tooltip_border_edge_size = 20). It was a literal 16 here, which
-    -- disagreed with the default a fresh profile resolves to. The config value
-    -- still wins above it, so an existing profile's border does not change.
     local edgeSize = hasBorder and ((TT.GetResolvedTooltipBorderEdgeSize
             and TT:GetResolvedTooltipBorderEdgeSize())
-        or TacoTipConfig.tooltip_border_edge_size or 20) or 0
+        or TacoTipConfig.tooltip_border_edge_size or 16) or 0
     local signature = tostring(edgeFile) .. "|" .. tostring(edgeSize)
     if (not backdrop.isBorderOnly) then
         signature = signature .. "|" .. tostring(backgroundTexture) .. "|tile16"
@@ -1315,31 +980,9 @@ end
 
 local function resolveTooltipUnit(tooltip, unit)
     if (unit and UnitExists and UnitExists(unit)) then
-        -- M-1 (final hunter): this arm used to probe the tooltip with an
-        -- UNGUARDED `tooltip:IsUnit(unit)` and then THROW THE ANSWER AWAY --
-        -- both branches returned `unit` -- so the call could only ever cost
-        -- something and never buy anything.
-        --
-        -- What it cost: on a client whose IsUnit is a shim over a not-yet-loaded
-        -- namespace it RAISES, and the raise escaped every caller. Five of the
-        -- six call sites are inside the tooltip pipeline, but
-        -- TacoTip_GSCallback is a GLOBAL callback reached from the engine's
-        -- item-load handler and is NOT inside a safeCall, so there the raise
-        -- killed the whole callback. The file's own invariant ("tooltip:GetUnit()
-        -- (and equally IsUnit) must never be called unguarded", below) says
-        -- exactly this.
-        --
-        -- Why the call is GONE rather than guarded: the answer was discarded,
-        -- so no caller can be relying on it. The rejection it looked like it
-        -- wanted -- "refuse a unit the tooltip is not about" -- is deliberately
-        -- NOT implemented here: every caller passes a unit the tooltip is
-        -- already about (onTooltipSetUnit passes the token it just read from
-        -- tooltip:GetUnit(); ApplyTooltipAppearance passes an already-resolved
-        -- unit), so refusing a "mismatching" unit would CHANGE THE RESULT for
-        -- a valid state, which this fix must not do. The disagreement chain the
-        -- GetUnit arm below describes (GetUnit token -> IsUnit disagreement ->
-        -- GetOwner -> "mouseover") is handled there, with a pcall-guarded
-        -- IsUnit -- the same idiom as tooltipIsMouseover.
+        if (tooltip and tooltip.IsUnit and tooltip:IsUnit(unit)) then
+            return unit
+        end
         return unit
     end
     if (TooltipUtil and TooltipUtil.GetDisplayedUnit and tooltip) then
@@ -1352,27 +995,6 @@ local function resolveTooltipUnit(tooltip, unit)
         end
     end
     if (tooltip and tooltip.GetUnit) then
-        -- The third return is read for symmetry with the TooltipUtil arm above,
-        -- but it is ALWAYS nil on a real client: GameTooltip:GetUnit publishes
-        -- NAME and UNIT and nothing else. Verified in the FrameXML mirror on
-        -- all five branches -- every Blizzard call site destructures exactly
-        -- two (`local name, unit = self:GetUnit()`,
-        -- Blizzard_PTRFeedback_Tooltips.lua:87 on origin/classic_era,
-        -- origin/classic_anniversary and origin/classic_titan, :105 on
-        -- origin/forever and origin/live), and no call site anywhere
-        -- destructures three. The GUID comes from the SIBLING resolver,
-        -- TooltipUtil.GetDisplayedUnit (`return name, unit, guid;`,
-        -- Blizzard_SharedXMLGame/Tooltip/TooltipUtil.lua:40), and that
-        -- namespace does not exist on the Classic family at all.
-        --
-        -- So the `elseif (ok and guid)` arm below is UNREACHABLE on every
-        -- supported client: it can only run when GetUnit published no token,
-        -- and in that case there is no guid to read either. The real Classic
-        -- chain is GetUnit token -> IsUnit disagreement -> GetOwner ->
-        -- "mouseover", and that is the chain the offline harness drives.
-        -- The arm is left in place because it is harmless and because a
-        -- future client that DID publish a third value would want it -- but
-        -- it is not something any current client can reach.
         local ok, _, tooltipUnit, guid = pcall(tooltip.GetUnit, tooltip)
         if (ok and tooltipUnit and UnitExists and UnitExists(tooltipUnit)) then
             if (tooltip.IsUnit) then
@@ -1407,419 +1029,9 @@ local function resolveTooltipUnit(tooltip, unit)
             return "mouseover"
         end
     end
-    -- Cold path only: every success above returned without touching TT.ev.
-    -- Per-cause counters (M2) so /tacotip diag can name WHY the unit was lost
-    -- instead of collapsing all failures to one nil.
-    TT.ev = TT.ev or {}
-    local cause = "unresolved"
-    if (not tooltip) then
-        cause = "no-tooltip"
-        TT.ev.resolveFailNoTooltip = (TT.ev.resolveFailNoTooltip or 0) + 1
-    elseif ((TooltipUtil == nil or TooltipUtil.GetDisplayedUnit == nil) and
-        (tooltip.GetUnit == nil) and (tooltip.GetOwner == nil)) then
-        cause = "no-source"
-        TT.ev.resolveFailNoSource = (TT.ev.resolveFailNoSource or 0) + 1
-    else
-        TT.ev.resolveFailUnresolved = (TT.ev.resolveFailUnresolved or 0) + 1
-    end
-    TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
-    TT.ev.resolveTooltipUnitLastCause = cause
     return nil
 end
 
--- Guarded counterpart of the mouseover-tooltip check used by the instant-fade
--- path. `tooltip:GetUnit()` (and equally `IsUnit`) must never be called
--- unguarded (AGENTS.md invariant): on clients where it is a shim over a
--- not-yet-loaded namespace it raises and silently kills the branch. Every read
--- here goes through pcall.
-local function tooltipIsMouseover(tooltip)
-    if (not tooltip) then
-        return false
-    end
-    if (type(tooltip.IsUnit) == "function") then
-        local ok, isU = pcall(tooltip.IsUnit, tooltip, "mouseover")
-        if (ok and isU == true) then
-            return true
-        end
-        if (ok and isU == false) then
-            return false
-        end
-        -- Cold path only: the engine probe raised (shim over a not-yet-loaded
-        -- namespace). Count the guarded failure (M1); the false below is the
-        -- documented safe default, not a silent success.
-        if (not ok) then
-            TT.ev = TT.ev or {}
-            TT.ev.tooltipIsMouseoverGuarded = (TT.ev.tooltipIsMouseoverGuarded or 0) + 1
-        end
-    end
-    if (type(tooltip.GetUnit) == "function") then
-        local ok, _, tooltipUnit = pcall(tooltip.GetUnit, tooltip)
-        if (ok and tooltipUnit == "mouseover") then
-            return true
-        end
-        if (not ok) then
-            TT.ev = TT.ev or {}
-            TT.ev.tooltipIsMouseoverGuarded = (TT.ev.tooltipIsMouseoverGuarded or 0) + 1
-        end
-    end
-    return false
-end
-
-
--- THE SAVED TOOLTIP POSITION, applied when the unit is actually known.
---
--- The SetDefaultAnchor post-hook cannot own this on every client: the client
--- calls GameTooltip_SetDefaultAnchor(GameTooltip, self) IMMEDIATELY BEFORE
--- GameTooltip:SetUnit(...) (origin/classic_era:
--- Blizzard_UnitFrame/Classic/UnitFrame.lua; origin/live:
--- Mainline/UnitFrame.lua:390-391), so at hook time the tooltip still describes
--- the PREVIOUS unit and IsUnit answers about that one. A world/mouseover unit
--- therefore reads as "menu", the hook returns untouched, and the tooltip stays
--- where the client put it -- the bottom-right corner. That is the "it resets my
--- position" report.
---
--- The unit render runs after SetUnit, so the answer here is meaningful. The
--- post-hook keeps its own paths (mouse anchor, two-bar layout, frames); this is
--- the one that makes a saved position stick.
-local function applyCustomTooltipAnchor(tooltip, unit)
-    if (not tooltip or type(unit) ~= "string" or unit == "") then
-        return false
-    end
-    if (not TacoTipConfig or TacoTipConfig.anchor_mouse) then
-        return false
-    end
-    local saved = TacoTipConfig.custom_pos
-    -- Same shape the load-time sanitizer accepts; anything else is not a
-    -- position and must not reach SetPoint.
-    if (type(saved) ~= "table" or type(saved[1]) ~= "string") then
-        return false
-    end
-    if (not TacoTipDragButton and type(TacoTip_CustomPosEnable) == "function") then
-        TacoTip_CustomPosEnable(false)
-    end
-    if (not TacoTipDragButton) then
-        return false
-    end
-    -- Same rule as the hook pin: never ClearAllPoints on an unvalidated
-    -- anchor. A non-string custom_anchor (hand-edited mid-session; the
-    -- sanitizer only runs at load) with cleared points leaves the tooltip
-    -- anchorless. False keeps the client's anchor.
-    local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
-    if (type(anchorPoint) ~= "string") then
-        return false
-    end
-    tooltip:ClearAllPoints()
-    tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
-    return true
-end
-
--- THE RIGHT EDGE THE PORTRAIT SIDE DECISION MUST BELIEVE.
---
--- Reading tooltip:GetRight() for that decision is wrong the moment this addon
--- owns the position: while the decision is made the tooltip is still where the
--- CLIENT put it (classic_era GameTooltip_SetDefaultAnchor, GameTooltip.lua:
--- 109-114, anchors BOTTOMRIGHT of UIParent), and the saved anchor is only
--- applied at the END of ApplyTooltipAppearance. So the side was chosen from the
--- DEFAULT position -- almost always "right" -- and the save then moved the
--- tooltip to the edge, leaving the portrait hanging outside the screen. That is
--- the "it used to flip to the left when it went off screen, now it just pulls it
--- off screen" report.
---
--- The anchor target is known, so the edge it will produce is known too: the
--- tooltip is pinned at custom_anchor on that same point of the handle.
---
--- Second return: whether the edge came from the anchor target. Only that edge may
--- be a cache key. The cursor follower moves the tooltip every frame, so keying on
--- its GetRight() would re-anchor the portrait on every render -- exactly the
--- per-render anchor that 0.7.9 removed.
-local function getPortraitSideRightEdge(tooltip)
-    -- No width clamp here: the edge key must be built from the frame's REAL
-    -- width, so a tooltip wider than the cap is a different key and the side
-    -- re-decides instead of keeping a stale cache hit. The cap is applied to
-    -- lines by applyTooltipMaxWidth; clamping this prediction only hid the
-    -- width the decision needs to see.
-    local custom = TacoTipConfig and TacoTipConfig.custom_pos
-    if (type(custom) == "table" and not TacoTipConfig.anchor_mouse and TacoTipDragButton
-            and type(TacoTipDragButton.GetLeft) == "function"
-            and type(TacoTipDragButton.GetWidth) == "function") then
-        local handleLeft = TacoTipDragButton:GetLeft()
-        if (handleLeft) then
-            local handleWidth = TacoTipDragButton:GetWidth() or 0
-            local tipWidth = (type(tooltip.GetWidth) == "function" and tooltip:GetWidth()) or 0
-            local anchorPoint = TacoTipConfig.custom_anchor
-            if (type(anchorPoint) ~= "string") then
-                anchorPoint = "TOPLEFT"
-            end
-            if (string.find(anchorPoint, "RIGHT", 1, true)) then
-                local rightEdge = handleLeft + handleWidth
-                return rightEdge, true, rightEdge - tipWidth
-            end
-            if (string.find(anchorPoint, "LEFT", 1, true)) then
-                return handleLeft + tipWidth, true, handleLeft
-            end
-            -- CENTER, and any TOP/BOTTOM point: the two centres coincide.
-            local centerRight = handleLeft + handleWidth / 2 + tipWidth / 2
-            return centerRight, true, centerRight - tipWidth
-        end
-    end
-    local unmanagedRight = ((type(tooltip.GetRight) == "function" and tooltip:GetRight()) or 0)
-    local unmanagedW = (type(tooltip.GetWidth) == "function" and tooltip:GetWidth()) or 0
-    local unmanagedLeft = (unmanagedRight > 0 and unmanagedW > 0) and (unmanagedRight - unmanagedW) or nil
-    return unmanagedRight, false, unmanagedLeft
-end
-
--- Decide and apply the portrait's side.
---
--- Called from the unit render AND from the tooltip's OnShow. The render can run
--- before the client has laid the tooltip out (on Retail and WoW Forever the whole
--- unit handler runs from the TooltipDataProcessor post-call, and TooltipDataHandler
--- fires that BEFORE its own self:Show(): ProcessLines(), postcalls, then Show()),
--- and it can run before add-ons that append rows have appended them -- so a side
--- chosen only there is chosen from a narrower tooltip than the one that ends up on
--- screen. OnShow is the last moment at which every line is in and the frame has a
--- rect.
---
--- Anchor once per side, not once per render: the side is cached on the tooltip
--- and only recomputed when something that can genuinely change it happens -- a
--- scale change, the invert option, the first shown frame, or a change in the
--- right edge the decision is made from.
-local function applyTooltipPortraitSide(tooltip, portrait)
-    if (not tooltip or not portrait) then
-        return
-    end
-    local state = getTooltipState(tooltip)
-    local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
-    -- 66 x 88 (was 72 x 96). Still exact 3:4, still exact integers at every
-    -- slider stop: 33x44, 66x88, 99x132, 132x176.
-    local portraitW = math.floor(66 * portraitScale)
-    local portraitH = math.floor(88 * portraitScale)
-    local cachedSide = state.portraitSide
-    local shown = (not tooltip.IsShown) or tooltip:IsShown()
-    local invertSide = TacoTipConfig.tooltip_portrait_invert_side and true or false
-    -- Invert is in the cache key for the same reason scale is: without it,
-    -- ticking the option does nothing until the next scale change.
-    --
-    -- The right edge is in the key too. It is what the decision reads, so a change
-    -- in it -- a wider tooltip from an extra row, a longer name, a different
-    -- anchor point -- is exactly a reason to decide again. A re-render that
-    -- changes nothing keeps the key and does not touch the portrait.
-    local tooltipRight, edgeIsManaged, tooltipLeft = getPortraitSideRightEdge(tooltip)
-    local edgeKey = edgeIsManaged and (math.floor(tooltipRight + 0.5) .. "x" .. math.floor((tooltipLeft or 0) + 0.5)) or nil
-    if (not edgeIsManaged) then
-        -- Leaving the saved position (mouse anchor) must not leave a stale edge
-        -- behind: the next managed render then decides again instead of matching
-        -- the value an earlier mode left there.
-        state.portraitRightEdge = nil
-    end
-    if (cachedSide == nil or portrait._tacoTipScale ~= portraitScale
-            or portrait._tacoTipInvert ~= invertSide
-            or (edgeKey ~= nil and state.portraitRightEdge ~= edgeKey)
-            or (shown and not state.portraitAnchored)) then
-        local screenWidth = (UIParent and UIParent:GetRight())
-            or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
-        -- Guard: the portrait itself must stay on screen, not just the tooltip.
-        -- The old test (tooltip edge past the screen) misses the common case:
-        -- the tooltip fits but tooltip + 8 + portrait does not. The extents below
-        -- are where the portrait's outer edge would land on each side.
-        local gap = 8
-        local rightExtent = tooltipRight + gap + portraitW
-        local leftExtent = (tooltipLeft ~= nil) and (tooltipLeft - gap - portraitW) or nil
-        local rightFits = rightExtent <= screenWidth
-        local leftFits = (leftExtent ~= nil) and (leftExtent >= 0) or false
-        if (tooltipRight > 0 and tooltipRight >= screenWidth) then
-            cachedSide = "left"
-        elseif (not rightFits and leftFits) then
-            cachedSide = "left"
-        elseif (leftExtent ~= nil and not leftFits and rightFits) then
-            cachedSide = "right"
-        elseif (leftExtent ~= nil and not rightFits and not leftFits) then
-            local spaceRight = screenWidth - tooltipRight
-            cachedSide = (tooltipLeft > spaceRight) and "left" or "right"
-        else
-            cachedSide = "right"
-        end
-        -- Inverted before the side-to-anchor mapping below, so that mapping stays
-        -- in one place. Off by default, so nobody who never touches the option
-        -- sees any change.
-        if invertSide then
-            cachedSide = (cachedSide == "left") and "right" or "left"
-        end
-        ---@diagnostic disable-next-line: inject-field
-        state.portraitSide = cachedSide
-        ---@diagnostic disable-next-line: inject-field
-        state.portraitAnchored = shown
-        ---@diagnostic disable-next-line: inject-field
-        state.portraitRightEdge = edgeKey
-        portrait._tacoTipScale = portraitScale
-        ---@diagnostic disable-next-line: inject-field
-        portrait._tacoTipInvert = invertSide
-        portrait:ClearAllPoints()
-        portrait:SetSize(portraitW, portraitH)
-        TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1
-        if (cachedSide == "left") then
-            portrait:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -8, 0)
-        else
-            portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
-        end
-    end
-end
-
--- Post-layout guard: the ACTUAL portrait rect, measured after layout, wins over
--- every prediction.
---
--- Why this exists: the side above is decided during the render, when the width
--- is stale (the modern post-call runs before Show; the saved anchor is applied
--- at the end of the render; Extras rows land after our hook), and the side cache
--- (portraitSide/portraitRightEdge) treats "same predicted edge" as "nothing
--- changed". Then GearScore item loads and inspect results complete
--- ASYNCHRONOUSLY after Show -- TacoTip_GSCallback re-drives UpdateTooltip/SetUnit
--- for the same unit, the tooltip widens past what was measured, and nothing
--- re-checks: the first second looks right, then the portrait is pushed off the
--- screen. A fresh hover after an idle clears the side cache
--- (OnTooltipCleared/OnHide reset it), so the same sequence replays -- the
--- "didn't hover for a bit and it was back" half.
---
--- This closes all of those at once by measuring reality instead of predicting
--- it: 0.05s after the render/show, when every line is in and the client has laid
--- the frame out, the portrait's own outer edge is read against the screen. Off
--- the right edge it goes left; off the left edge it goes right; off both (a
--- tooltip wider than the screen) it takes the roomier side. Anything that
--- widens the tooltip -- our async lines, Extras rows, a third-party addon
--- appending after Show -- is corrected the same way, because the trigger is the
--- measured overflow, not the source. When nothing overflows it is a silent
--- no-op: no SetPoint, no counter, no churn -- the 0.7.9 per-render anchor stays
--- dead.
---
--- Throttled to one outstanding timer per tooltip: renders arrive in bursts
--- during item-load completion, and each would otherwise schedule its own check.
--- The timer carries the generation and unit guid; a recycle or a unit change
--- before it fires makes it a no-op, and clear/hide cancels it outright, so it
--- can never flip a later tooltip.
---
--- Forward-declared: the guard below schedules its own bounded follow-up, but
--- the scheduler is defined after it. A file-local call would resolve to a
--- global (nil) here -- the exact crash the harness caught.
-local schedulePortraitGuard
-local function guardTooltipPortraitOnScreen(tooltip, isFinal)
-    if (not tooltip or not TacoTipConfig.tooltip_portrait) then
-        return false
-    end
-    local portrait = tooltip.TacoTipPortrait3D or tooltip.TacoTipPortrait
-    if (not portrait or not portrait.IsShown or not portrait:IsShown()) then
-        return false
-    end
-    if (not tooltip.IsShown or not tooltip:IsShown()) then
-        return false
-    end
-    -- Late lines escape the render-time and Show-time caps: any addon hooked
-    -- after us (Questie-style NPC lines, id addons -- "NpcID"/"Alive"/"Target"
-    -- in the operator's screenshot are not ours, verified by whole-tree grep)
-    -- appends after applyTooltipMaxWidth already ran, and when the tooltip is
-    -- already shown there is no second OnShow to catch them. This deferred pass
-    -- runs after every same-frame hook regardless of registration order, so it
-    -- caps whatever is actually there -- including third-party lines -- before
-    -- the rect below is measured. Idempotent (memoized per line), so a tooltip
-    -- with nothing new costs one scan and no writes.
-    --
-    -- Returns whether this pass changed anything (capped a late line, or flipped
-    -- the side): the scheduler uses it to decide if one bounded follow-up is
-    -- worth it for content that arrives even later (slow async appends). It
-    -- returns rather than looping so there is no path that re-arms forever.
-    local capped = applyTooltipMaxWidth(tooltip) or 0
-    if (type(portrait.GetRight) ~= "function" or type(portrait.GetLeft) ~= "function") then
-        return capped > 0
-    end
-    local okR, pRight = pcall(portrait.GetRight, portrait)
-    local okL, pLeft = pcall(portrait.GetLeft, portrait)
-    if (not okR or not okL or type(pRight) ~= "number" or type(pLeft) ~= "number") then
-        return capped > 0
-    end
-    local screenWidth = (UIParent and UIParent:GetRight())
-        or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
-    local offRight = pRight > screenWidth
-    local offLeft = pLeft < 0
-    -- The follow-up below is UNCONDITIONAL (not only when this pass did work):
-    -- a slow async append can land after a clean first pass -- render cap too
-    -- early, OnShow cap too early, first guard pass too early -- and with no
-    -- follow-up nothing would ever re-check until the next hover. That is the
-    -- "first hover fine, second hover stretched" shape: the second unit's
-    -- third-party data simply arrives later than 0.05s. Two passes max per
-    -- show, the second final, so there is still no chain.
-    if (not offRight and not offLeft) then
-        if (not isFinal) then
-            schedulePortraitGuard(tooltip, 0.5, true)
-        end
-        return capped > 0
-    end
-    local state = getTooltipState(tooltip)
-    local newSide
-    if (offRight and not offLeft) then
-        newSide = "left"
-    elseif (offLeft and not offRight) then
-        newSide = "right"
-    else
-        -- Wider than the screen: take the roomier side rather than churning.
-        local tooltipRight = (type(tooltip.GetRight) == "function" and tooltip:GetRight()) or pRight
-        local spaceRight = screenWidth - tooltipRight
-        local tooltipLeft = (type(tooltip.GetLeft) == "function" and tooltip:GetLeft()) or pLeft
-        newSide = (tooltipLeft > spaceRight) and "left" or "right"
-    end
-    if (newSide == state.portraitSide) then
-        if (not isFinal) then
-            schedulePortraitGuard(tooltip, 0.5, true)
-        end
-        return capped > 0
-    end
-    state.portraitSide = newSide
-    state.portraitAnchored = true
-    portrait:ClearAllPoints()
-    if (newSide == "left") then
-        portrait:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -8, 0)
-    else
-        portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
-    end
-    TT.ev = TT.ev or {}
-    TT.ev.portraitGuardFlip = (TT.ev.portraitGuardFlip or 0) + 1
-    if (not isFinal) then
-        schedulePortraitGuard(tooltip, 0.5, true)
-    end
-    return true
-end
-
-schedulePortraitGuard = function(tooltip, delaySec, isFinal)
-    if (type(NewTimer) ~= "function") then
-        return
-    end
-    if (not tooltip) then
-        return
-    end
-    local state = getTooltipState(tooltip)
-    if (state.portraitGuardTimer) then
-        return
-    end
-    local gen = state.generation
-    local guid = state.currentUnitGUID
-    local delay = (type(delaySec) == "number" and delaySec > 0) and delaySec or 0.05
-    local timer
-    timer = NewTimer(delay, function()
-        if (state.portraitGuardTimer == timer) then
-            state.portraitGuardTimer = nil
-        end
-        safeCall(function()
-            if (state.generation ~= gen) then
-                return
-            end
-            if (not tooltip or not tooltip.IsShown or not tooltip:IsShown()) then
-                return
-            end
-            if (state.currentUnitGUID ~= guid) then
-                return
-            end
-            guardTooltipPortraitOnScreen(tooltip, isFinal)
-        end)
-    end)
-    state.portraitGuardTimer = timer
-end
 
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
@@ -1893,14 +1105,66 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     applyTooltipFonts(tooltip)
 
     local portrait = ensureTooltipPortrait(tooltip)
+    local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
+    -- 66 x 88 (was 72 x 96). Still exact 3:4, still exact integers at every
+    -- slider stop: 33x44, 66x88, 99x132, 132x176.
+    local portraitW = math.floor(66 * portraitScale)
+    local portraitH = math.floor(88 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
-            applyTooltipPortraitSide(tooltip, portrait)
-            -- Post-layout backstop for async widening (item loads, inspect):
-            -- the deferred guard measures the real rect and flips only if the
-            -- portrait is actually off screen. One outstanding timer per
-            -- tooltip, cancelled on recycle, so bursts converge on one check.
-            schedulePortraitGuard(tooltip)
+            -- Anchor once per side, not once per render.
+            --
+            -- The side is read from tooltip:GetRight() against the screen width.
+            -- On Retail and WoW Forever our whole unit handler runs from the
+            -- TooltipDataProcessor post-call, and TooltipDataHandler fires that
+            -- BEFORE its own self:Show() -- the order is ProcessLines(), postcalls,
+            -- then Show(). So the tooltip has never been laid out when we get
+            -- here, and GetRight() is 0 on an unshown frame. That made the
+            -- side-flip decide from garbage, re-evaluated on every render, and
+            -- unanchor and re-anchor the portrait each time.
+            --
+            -- The side is therefore cached on the tooltip and only recomputed
+            -- when something that can genuinely change it happens: a scale
+            -- change, or the tooltip actually being shown. Cached first, then
+            -- recomputed once from a laid-out frame, so the first anchor of a
+            -- tooltip is still correct.
+            local cachedSide = getTooltipState(tooltip).portraitSide
+            local shown = (not tooltip.IsShown) or tooltip:IsShown()
+            local invertSide = TacoTipConfig.tooltip_portrait_invert_side and true or false
+            -- Invert is in the cache key for the same reason scale is: without
+            -- it, ticking the option does nothing until the next scale change.
+            if (cachedSide == nil or portrait._tacoTipScale ~= portraitScale
+                    or portrait._tacoTipInvert ~= invertSide
+                    or (shown and not getTooltipState(tooltip).portraitAnchored)) then
+                local tooltipRight = tooltip:GetRight() or 0
+                local screenWidth = (UIParent and UIParent:GetRight())
+                    or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
+                -- An unshown frame reports 0. 0 < screenWidth, so it resolves to
+                -- the left-hand side, which is the correct default for a tooltip
+                -- anchored on the right of the screen.
+                cachedSide = (tooltipRight > 0 and tooltipRight >= screenWidth) and "left" or "right"
+                -- Inverted before the side-to-anchor mapping below, so that
+                -- mapping stays in one place. Off by default, so nobody who
+                -- never touches the option sees any change.
+                if invertSide then
+                    cachedSide = (cachedSide == "left") and "right" or "left"
+                end
+                ---@diagnostic disable-next-line: inject-field
+                getTooltipState(tooltip).portraitSide = cachedSide
+                ---@diagnostic disable-next-line: inject-field
+                getTooltipState(tooltip).portraitAnchored = shown
+                portrait._tacoTipScale = portraitScale
+                ---@diagnostic disable-next-line: inject-field
+                portrait._tacoTipInvert = invertSide
+                portrait:ClearAllPoints()
+                portrait:SetSize(portraitW, portraitH)
+                TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1
+                if (cachedSide == "left") then
+                    portrait:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -8, 0)
+                else
+                    portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
+                end
+            end
             local is3D = TacoTipConfig.tooltip_portrait_3d
             -- 3D PlayerModel renders BOTH players and NPCs/enemies via SetUnit.
             -- The old UnitIsPlayer gate sent NPCs to SetPortraitTexture, which is
@@ -1925,65 +1189,19 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                     -- Clear first so the previous character's mesh cannot persist
                     -- while the new one streams in (pcall: ClearModel may be absent
                     -- on some clients).
-                    --
-                    -- L1: the pcall's result used to be discarded, so a raising
-                    -- ClearModel left no trace at all. Counted, like every other
-                    -- discarded cold-path pcall.
-                    if (not pcall(portrait.ClearModel, portrait)) then
-                        TT.ev.portraitClearModelFailed = (TT.ev.portraitClearModelFailed or 0) + 1
-                    end
+                    pcall(portrait.ClearModel, portrait)
                     if (pcall(portrait.SetUnit, portrait, unit)) then
                         portrait.tacoTipModelKey = modelKey
                     else
                         -- SetUnit failed: leave the cache empty so the next render
                         -- retries rather than believing a model is loaded.
-                        -- Cold path only (M4): count the discarded failure.
-                        TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
                         portrait.tacoTipModelKey = nil
                     end
                 end
-                -- THE ZOOM.
-                --
-                -- SetPortraitZoom is a REAL client API on the CharacterModelBase
-                -- template (mirror: Blizzard_APIDocumentationGenerated/
-                -- FrameAPICharacterModelBaseDocumentation.lua:206 on
-                -- classic_era and :219 on live; Blizzard calls it itself in
-                -- Blizzard_SharedXML/Classic/ModelFrames.lua:125 and
-                -- Blizzard_FrameXML/QuestNPCModelFrameMixin.lua:8 with 0.6),
-                -- and the operator has verified in game that the tooltip
-                -- portrait honours it.
-                --
-                -- The VALUE comes from the ONE default (options.lua's DEFAULTS,
-                -- published as TT.TooltipPortraitZoomDefault). It used to
-                -- repeat a different literal here (0.7) while the shipped
-                -- default was 0.75, so a config with no saved zoom rendered a
-                -- DIFFERENT portrait from the number the options slider
-                -- showed: the number the player saw was not the number they
-                -- got. The zoom is applied exactly as it is set -- no cap, no
-                -- clamp, no range change.
-                local zoom = TacoTipConfig.tooltip_portrait_zoom
-                if (type(zoom) ~= "number") then
-                    zoom = TT.TooltipPortraitZoomDefault
-                end
-                -- H1/L1: the pcall's result used to be thrown away, so a
-                -- raising SetPortraitZoom (or a client without the method) was
-                -- invisible: no counter, no diag line, nothing. Counted in the
-                -- same idiom as its sibling portraitSetFailed.
-                if (type(zoom) == "number") then
-                    if (not pcall(portrait.SetPortraitZoom, portrait, zoom)) then
-                        TT.ev.portraitZoomFailed = (TT.ev.portraitZoomFailed or 0) + 1
-                    end
-                else
-                    -- No published default: the zoom cannot be applied at all.
-                    -- Said, not swallowed.
-                    TT.ev.portraitZoomUnsupported = (TT.ev.portraitZoomUnsupported or 0) + 1
-                end
+                pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
             else
                 -- 2D fallback only when 3D model creation failed (portrait is a Texture).
-                -- Cold path only (M4): a raising SetPortraitTexture was a silent discard.
-                if (not pcall(_G.SetPortraitTexture, portrait, unit)) then
-                    TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
-                end
+                pcall(_G.SetPortraitTexture, portrait, unit)
             end
             -- The portrait keeps its own alpha. It used to be slaved to
             -- tooltip:GetAlpha() every render, plus a permanent 0.05s OnUpdate
@@ -2010,10 +1228,6 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     if (TacoTipPowerBar and TacoTipPowerBar.SetStatusBarTexture) then
         callLabeled("tooltipPowerBar", TacoTipPowerBar, "SetStatusBarTexture", barTexture)
     end
-
-    -- Last, so nothing above can re-anchor the tooltip afterwards. See
-    -- applyCustomTooltipAnchor for why this cannot be the SetDefaultAnchor hook.
-    applyCustomTooltipAnchor(tooltip, unit)
 end
 
 local function startPowerBarTicker()
@@ -2043,84 +1257,8 @@ end
 local gsCallbackActive = false
 local gsCallbackPending = nil
 
--- The character pane's overlay repaint budget.
---
--- The overlay lives INSIDE CharacterFrame (PaperDollFrame is its child on every
--- branch, and the Classic family nests the model frame inside that), so a
--- repaint while the pane is closed is invisible work: one full inventory walk
--- of 18 slots for a number nobody can see.
---
--- The 0.8.2 bug was a refresh that ran EIGHT inventory walks -- about 144
--- GetItemInfo calls -- for ONE pane open. The budget is how that is prevented
--- from coming back through the pending->ready path: the pane open spends one
--- refresh, and the pending->ready repaint may take ONE more. Past that the
--- panel is repainted by PLAYER_EQUIPMENT_CHANGED, which is the player's own
--- action and cannot storm.
---
--- Set to 1 by the character pane's OnShow hook; spent by the pending->ready
--- repaint below.
-local characterPaneReadyBudget = 0
-
--- Repaint the character pane's overlay, but only while the pane is OPEN.
---
--- Returns true when a repaint actually ran. The pane is opened by the player
--- (CharacterFrame:Show()), so the open state is the player's own signal that
--- the number is wanted on screen.
-local function refreshCharacterPaneIfOpen()
-    local pane = _G.CharacterFrame
-    if (not pane or not pane.IsShown or not pane:IsShown()) then
-        return false
-    end
-    if (not TT.RefreshCharacterFrame) then
-        return false
-    end
-    if (characterPaneReadyBudget <= 0) then
-        return false
-    end
-    characterPaneReadyBudget = characterPaneReadyBudget - 1
-    -- L-4 (final hunter): this call was UNGUARDED, and this function is reached
-    -- from TacoTip_GSCallback -> itemcacheCB -> the engine's item-load
-    -- callback, which is NOT inside a safeCall. A raise here therefore escaped
-    -- into the engine's load handler: an error the player sees attributed to
-    -- an item load, and a repaint that silently never happened.
-    --
-    -- The guard keeps the raise off the engine's callback and COUNTS it, so a
-    -- broken repaint is visible in /tacotip diag instead of being invisible.
-    -- The budget is spent either way: a failed repaint must not be retried on
-    -- every item-load callback that follows.
-    local ok = pcall(TT.RefreshCharacterFrame, TT)
-    if (not ok) then
-        TT.ev = TT.ev or {}
-        TT.ev.characterPaneRefreshFailed = (TT.ev.characterPaneRefreshFailed or 0) + 1
-        return false
-    end
-    return true
-end
-
 function TacoTip_GSCallback(guid)
     TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
-    -- The player's OWN score becoming ready must repaint the OPEN character
-    -- pane (arbiter H1). The overlay is initialised with "0" and is only
-    -- repainted when the pane opens, so a pane opened before the player's
-    -- items were cached kept reading 0 for the rest of the session.
-    --
-    -- This callback is the pending->ready signal for the player's own set:
-    -- the tooltip pipeline calls GearScore:GetScore(guid, true) for the unit it
-    -- renders, and the completed item load calls back with that unit's guid.
-    --
-    -- It is placed BEFORE the re-entrancy guard on purpose. The guard drops a
-    -- nested call for the guid already being serviced, and the pending value
-    -- is only replayed when it names a DIFFERENT guid -- so a nested player
-    -- callback would be dropped and the pane would keep its stale 0. The
-    -- repaint cannot re-enter the tooltip pipeline (GetScore registers
-    -- callbacks, it does not fire them), so it does not deepen the nesting
-    -- the guard exists to stop.
-    --
-    -- Nothing here touches the tooltip pipeline: the unit check below still
-    -- drops every guid that is not the tooltip's unit, unchanged.
-    if (guid and guid == UnitGUID("player")) then
-        refreshCharacterPaneIfOpen()
-    end
     if (gsCallbackActive) then
         gsCallbackPending = guid
         TT.ev.gsCallbackReentrant = (TT.ev.gsCallbackReentrant or 0) + 1
@@ -2136,14 +1274,10 @@ function TacoTip_GSCallback(guid)
     -- callback reached from the item-load path, and a throw here would either
     -- leave the guard latched (silently killing every later callback) or
     -- surface as an unrelated error from deep inside a load handler.
-    local ok, err
     if (GameTooltip.UpdateTooltip) then
-        ok, err = pcall(GameTooltip.UpdateTooltip, GameTooltip)
+        pcall(GameTooltip.UpdateTooltip, GameTooltip)
     else
-        ok, err = pcall(GameTooltip.SetUnit, GameTooltip, ttUnit)
-    end
-    if (not ok) then
-        handlePipelineError(err)
+        pcall(GameTooltip.SetUnit, GameTooltip, ttUnit)
     end
     gsCallbackActive = false
     local pending = gsCallbackPending
@@ -2168,7 +1302,6 @@ end
 local function cancelDeferredAppearance(tooltip)
     cancelTooltipTimer(tooltip, "borderDeferTimer")
     cancelTooltipTimer(tooltip, "classBorderDeferTimer")
-    cancelTooltipTimer(tooltip, "portraitGuardTimer")
 end
 
 local function cancelFadeTimer(tooltip)
@@ -2234,7 +1367,6 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     if (not keepModel) then
         state.portraitSide = nil
         state.portraitAnchored = false
-        state.portraitRightEdge = nil
         clearTooltipPlayerClassColor(tooltip)
         resetTooltipBorderToDefault(tooltip)
         if (tooltip.TacoTipPortrait) then
@@ -2287,9 +1419,9 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     -- and only when the model is genuinely being let go.
     if (tooltip.TacoTipPortrait3D) then
         -- THREE separate decisions, previously collapsed into keepModel:
-        --   hide    -- must happen whenever the unit is not being re-rendered
-        --              and the frame is still shown, or a previous character's
-        --              portrait bleeds onto an item or spell tooltip;
+        --   hide    -- must happen whenever the unit is not being re-rendered,
+        --              or a previous character's portrait bleeds onto an item or
+        --              spell tooltip;
         --   destroy -- only when the character demonstrably changed;
         --   anchor  -- must recompute whenever the tooltip may have moved,
         --              which includes every clear and hide.
@@ -2304,74 +1436,30 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
         -- suppressed state.portraitAnchored, freezing the portrait side, and
         -- three Classic assertions caught it.
         if (not keepModel) then
-            -- Hide() and its counter are gated on the frame actually being
-            -- shown. Hide() on an already-hidden frame is an engine no-op, and
-            -- those no-ops dominated the counter against unitRender: live
-            -- /tt diag read hides 1045 against renders 99, which was Hide()
-            -- firing on frames no render had ever brought back (repeated
-            -- OnTooltipCleared/OnHide on a frame already taken away).
+            tooltip.TacoTipPortrait3D:Hide()
+            -- Hide() gets a counter of its own, here, on EVERY hide.
             --
-            -- The gate reads the frame; a widget without IsShown is treated as
-            -- shown, so a trimmed environment or a mock cannot silently stop
-            -- the hide from happening.
-            local portraitShown = (not tooltip.TacoTipPortrait3D.IsShown)
-                or tooltip.TacoTipPortrait3D:IsShown()
-            if (portraitShown) then
-                tooltip.TacoTipPortrait3D:Hide()
-                -- Hide() gets a counter of its own, here, on every hide that
-                -- actually happened.
-                --
-                -- TT.ev.portraitHide sits inside the retainModel guard below,
-                -- so it counts teardowns and cannot see this call at all --
-                -- and the two assertions named for the portrait blink read
-                -- portraitHide, so moving this Hide() out of its guard left the
-                -- whole suite green. A counter that cannot observe the call it
-                -- is named after is worse than none: it reads as evidence and
-                -- is not. This one observes the call, and now observes it only
-                -- when the call does something.
-                TT.ev.portraitModelHidden = (TT.ev.portraitModelHidden or 0) + 1
-            end
+            -- TT.ev.portraitHide sits inside the retainModel guard two lines
+            -- below, so it counts teardowns and cannot see this call at all --
+            -- and the two assertions named for the portrait blink read
+            -- portraitHide, so moving this Hide() out of its guard left the whole
+            -- suite green. A counter that cannot observe the call it is named
+            -- after is worse than none: it reads as evidence and is not.
+            TT.ev.portraitModelHidden = (TT.ev.portraitModelHidden or 0) + 1
             if (not retainModel) then
-                -- The destroy half is gated on the loaded-unit cache, NOT on
-                -- visibility: tacoTipModelKey names the mesh currently loaded,
-                -- and retainModel callers (OnTooltipCleared/OnHide) leave a
-                -- frame hidden with its mesh still resident. Keying this gate
-                -- on visibility would leak that mesh; keying it on the cache is
-                -- what lets a later genuine teardown release it.
-                --
-                -- ClearModel on a frame with no model loaded is an engine
-                -- no-op too, and counting those inflated destroys against real
-                -- teardowns: live /tt diag read destroys 310 against renders 99,
-                -- most of them item-to-item recycles where the first item had
-                -- already released the mesh.
-                if (tooltip.TacoTipPortrait3D.tacoTipModelKey ~= nil) then
-                    TT.ev.portraitHide = (TT.ev.portraitHide or 0) + 1
-                    TT.ev.portraitDestroy = (TT.ev.portraitDestroy or 0) + 1
-                    -- WHICH path let go of the model. portraitHide alone could
-                    -- not distinguish them, and a wrong fix shipped on top of
-                    -- that: the unresolved-unit path was patched and the blink
-                    -- stayed, because a different call site was the one
-                    -- actually firing.
-                    if (reason) then
-                        TT.ev.teardownBy = TT.ev.teardownBy or {}
-                        TT.ev.teardownBy[reason] = (TT.ev.teardownBy[reason] or 0) + 1
-                    end
-                    if (tooltip.TacoTipPortrait3D.ClearModel) then
-                        -- L1: the second discarded ClearModel pcall. Counted on
-                        -- its own so the diag can tell the render path's failure
-                        -- from the teardown path's.
-                        if (not pcall(tooltip.TacoTipPortrait3D.ClearModel, tooltip.TacoTipPortrait3D)) then
-                            TT.ev.portraitTeardownClearModelFailed =
-                                (TT.ev.portraitTeardownClearModelFailed or 0) + 1
-                        end
-                    end
+                TT.ev.portraitHide = (TT.ev.portraitHide or 0) + 1
+                TT.ev.portraitDestroy = (TT.ev.portraitDestroy or 0) + 1
+                -- WHICH path let go of the model. portraitHide alone could not
+                -- distinguish them, and a wrong fix shipped on top of that: the
+                -- unresolved-unit path was patched and the blink stayed, because
+                -- a different call site was the one actually firing.
+                if (reason) then
+                    TT.ev.teardownBy = TT.ev.teardownBy or {}
+                    TT.ev.teardownBy[reason] = (TT.ev.teardownBy[reason] or 0) + 1
                 end
-                -- SetAlpha and the cache drop stay OUTSIDE the loaded-model
-                -- gate: they reset frame state, they are not evidence a mesh
-                -- existed, and neither is counted. The cache drop is the
-                -- invariant the next render relies on -- an empty key makes
-                -- ApplyTooltipAppearance reload rather than trust a mesh that
-                -- was just let go -- so it runs on every teardown decision.
+                if (tooltip.TacoTipPortrait3D.ClearModel) then
+                    pcall(tooltip.TacoTipPortrait3D.ClearModel, tooltip.TacoTipPortrait3D)
+                end
                 if (tooltip.TacoTipPortrait3D.SetAlpha) then
                     tooltip.TacoTipPortrait3D:SetAlpha(1)
                 end
@@ -2540,12 +1628,6 @@ local function onTooltipSetUnit(tooltip, data)
     -- what a genuinely different unit needs so the previous mesh cannot persist.
     clearTooltipVisuals(tooltip, nil, (previousGUID ~= nil and previousGUID == guid), "guid-change")
     getTooltipState(tooltip).currentUnitGUID = guid
-    if (previousGUID ~= guid) then
-        -- The inspect state describes the unit this tooltip renders, so a
-        -- DIFFERENT unit starts with no state: a state left over from the
-        -- previous character would describe a unit that is no longer on screen.
-        getTooltipState(tooltip).inspectState = nil
-    end
     storeTooltipPlayerClassColor(tooltip, tooltipUnit)
 
     if (TacoTipDragButton and TacoTipDragButton:IsShown()) then
@@ -2563,54 +1645,7 @@ local function onTooltipSetUnit(tooltip, data)
 
     if (CI and guid and UnitIsPlayer(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
         if (CI.DoInspect) then
-            -- L-3 (final hunter): the pcall's RESULT was thrown away, so a
-            -- raise in the inspect trigger was invisible: the library counts its
-            -- own notifies and refusals, but a raise HERE -- in the caller's
-            -- copy of the trigger -- was lost entirely. Cold path only: count
-            -- the failure beside the other cold-path counters.
-            --
-            -- The result is NOT thrown away any more. lib:DoInspect answers
-            -- with the three states documented at the top of this file (the
-            -- library's own names are CI.inspectStates):
-            --
-            --   false    not inspected -- refused, unavailable, out of reach
-            --   "queued" accepted, PENDING -- the request went out, or the unit
-            --            is in the queue. The unit's data is NOT here yet.
-            --   true     data ready -- the cache holds fresh data
-            --
-            -- The old boolean said `true` for BOTH "queued" and "ready", so the
-            -- two could not be told apart. They can now, and they are treated
-            -- apart: a queued unit is PENDING, never ready. What the player
-            -- sees does not change -- a queued unit and a ready unit lead to
-            -- the same outcome they always had (the library's own queue and
-            -- the GearScore callback own the rest), and a refused unit was
-            -- never inspected either way -- but the state is KNOWN here now
-            -- instead of lost, and it is recorded on the tooltip.
-            local inspectOk, inspectState = pcall(CI.DoInspect, CI, tooltipUnit)
-            local outcome
-            if (not inspectOk) then
-                -- A raise in the trigger: counted (L-3), and nothing is known
-                -- about the unit.
-                TT.ev = TT.ev or {}
-                TT.ev.inspectTriggerFailed = (TT.ev.inspectTriggerFailed or 0) + 1
-                outcome = nil
-            elseif (CI_INSPECT_STATES) then
-                if (inspectState == CI_INSPECT_STATES.READY) then
-                    outcome = "ready"
-                elseif (inspectState == CI_INSPECT_STATES.QUEUED) then
-                    outcome = "queued"
-                else
-                    outcome = "refused"
-                end
-            elseif (inspectState == true) then
-                -- An older library that answers with the plain boolean, whose
-                -- `true` meant "accepted" -- request out, or unit queued -- and
-                -- NOT "the data is here". Pending, exactly as before.
-                outcome = "queued"
-            else
-                outcome = "refused"
-            end
-            getTooltipState(tooltip).inspectState = outcome
+            pcall(CI.DoInspect, CI, tooltipUnit)
         end
     end
 
@@ -2710,23 +1745,6 @@ local function onTooltipSetUnit(tooltip, data)
             local inSameMap = true
             local inGroup = (type(IsInGroup) == "function" and IsInGroup())
             if (inGroup and (((type(IsInRaid) == "function" and IsInRaid() and UnitInRaid and UnitInRaid(tooltipUnit))) or (UnitInParty and UnitInParty(tooltipUnit)))) then
-                -- C_Map.GetBestMapForUnit is NOT modern-only: it is documented
-                -- and used by Blizzard on every branch
-                -- (origin/classic_era, origin/classic_anniversary,
-                -- origin/classic_titan, origin/forever, origin/live all carry
-                -- it in Interface/AddOns/Blizzard_APIDocumentationGenerated/
-                -- MapDocumentation.lua, and
-                -- Interface/AddOns/Blizzard_FrameXMLUtil/Classic/MapUtil.lua:57
-                -- calls it on the Classic branches).
-                --
-                -- What IS true on every branch is its DOCUMENTED contract:
-                -- "Only works for the player and party members." So the
-                -- "the target is on another map" suppression below can only
-                -- ever fire for a group or raid member -- for any other target
-                -- the call returns nil and the suppression stays inert. A
-                -- maintainer must not read the nil guard below as a
-                -- Classic-family workaround: it is the documented behaviour of
-                -- the API on all five clients.
                 if (GetBestMapForUnit) then
                     local unitMap = GetBestMapForUnit(tooltipUnit)
                     local playerMap = GetBestMapForUnit("player")
@@ -3254,24 +2272,11 @@ local function onTooltipSetUnit(tooltip, data)
             TacoTipPowerBar:Update(tooltipUnit)
             TacoTipPowerBar:Show()
             startPowerBarTicker()
-            -- Guard with fallback (hunter M5): a failed unit-event registration
-            -- used to be discarded by bare pcalls, freezing the bar with no
-            -- trace. Fall back to the plain events so the bar still updates
-            -- (the OnEvent handler filters by unit), and count the failure for
-            -- diag. Fallback chosen over diag-only because diag cannot unfreeze
-            -- the bar.
-            local unitRegsOk = false
             if (TacoTipPowerBar.RegisterUnitEvent) then
-                local ok1 = pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_POWER_UPDATE", tooltipUnit)
-                local ok2 = pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_MAXPOWER", tooltipUnit)
-                local ok3 = pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_DISPLAYPOWER", tooltipUnit)
-                unitRegsOk = ok1 and ok2 and ok3
-                if (not unitRegsOk) then
-                    TT.ev = TT.ev or {}
-                    TT.ev.powerBarRegFailed = (TT.ev.powerBarRegFailed or 0) + 1
-                end
-            end
-            if (not unitRegsOk) then
+                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_POWER_UPDATE", tooltipUnit)
+                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_MAXPOWER", tooltipUnit)
+                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_DISPLAYPOWER", tooltipUnit)
+            else
                 TacoTipPowerBar:RegisterEvent("UNIT_POWER_UPDATE")
                 TacoTipPowerBar:RegisterEvent("UNIT_MAXPOWER")
                 TacoTipPowerBar:RegisterEvent("UNIT_DISPLAYPOWER")
@@ -3390,14 +2395,7 @@ local function hookTooltipScripts(scriptName, handler, frames)
         local frame, label = frames[i][1], frames[i][2]
         if (frame and type(frame) == "table" and frame.HasScript
                 and frame:HasScript(scriptName)) then
-            -- runUntainted: this handler is addon code inside a Blizzard
-            -- frame's script chain. On the Classic family the unit tooltip
-            -- has no secure dispatch, so this runs inside the UNIT FRAME's
-            -- chain and taints it; the taint reaches the game menu and the
-            -- Logout/Quit button is refused. See runUntainted.
-            frame:HookScript(scriptName, function(...)
-                return runUntainted(handler, ...)
-            end)
+            frame:HookScript(scriptName, handler)
             hooked[#hooked + 1] = label
         end
     end
@@ -3432,13 +2430,8 @@ local function resolveTooltipItem(tooltip, data)
         -- `hyperlink` is what the post-call actually supplies for an item, so
         -- this is the branch that fires in practice on Retail / WoW Forever.
         if (data.hyperlink) then return data.hyperlink end
-        -- GetItemLinkByGUID is DOCUMENTED only on Forever and Retail -- the
-        -- classic branches' generated API docs are an incomplete set, so
-        -- "not in the docs" is not "not in the client" (Blizzard calls the
-        -- API unguarded on Classic Era, at
-        -- origin/classic_era:Interface/AddOns/Blizzard_SharedXMLGame/Tooltip/TooltipUtil.lua:14).
-        -- The arm is still skipped wherever the API is absent, and the guard
-        -- is the RUNTIME probe, not the documentation.
+        -- GetItemLinkByGUID is documented only on Forever and Retail; on the
+        -- Classic branches this whole arm is skipped.
         if (data.guid and C_Item and C_Item.GetItemLinkByGUID) then
             local ok, link = pcall(C_Item.GetItemLinkByGUID, data.guid)
             if (ok and link) then return link end
@@ -3496,24 +2489,10 @@ local function itemToolTipHook(self, data)
             local gs, _, r, g, b = GearScore:GetItemScoreFromInfo(itemInfo)
             if (gs and gs > 1) then
                 self:AddLine("GearScore: " .. gs, r, g, b)
-                if (TacoTipConfig.show_gs_items_hs or IsModifierKeyDown() or getPlayerClass() == "HUNTER" or
+                if (TacoTipConfig.show_gs_items_hs or IsModifierKeyDown() or playerClass == "HUNTER" or
                         (InspectFrame and InspectFrame:IsShown() and InspectFrame.unit and select(2, UnitClass(InspectFrame.unit)) == "HUNTER")) then
                     local hs, _, hsR, hsG, hsB = GearScore:GetItemHunterScore(itemLink, itemInfo)
                     if (gs ~= hs) then
-                        -- OPERATOR DECISION (arbiter H2): the HunterScore line
-                        -- intentionally uses the GEARSCORE BAND COLOUR. It is
-                        -- not a defect and must not be "fixed".
-                        --
-                        -- GetItemHunterScore returns the hunter-adjusted NUMBER
-                        -- but the colour of the item's GearScore band
-                        -- (gearscore.lua:406-420 -- Red/Green/Blue are the
-                        -- values GetItemScoreFromInfo produced, and only the
-                        -- score itself is rescaled for a hunter). The line
-                        -- therefore reads as the hunter's counterpart to the
-                        -- iLvl line: the same band, the hunter's own number.
-                        --
-                        -- Recorded here so the next audit does not re-raise it
-                        -- as a colour-mismatch bug.
                         self:AddLine((L["HunterScore"] or "HunterScore") .. ": " .. hs, hsR, hsG, hsB)
                     end
                 end
@@ -3569,47 +2548,9 @@ scheduleItemTooltipRefresh = function(tooltip, itemLink)
         -- Blizzard_ObjectAPI on classic_era/anniversary/titanforge/forever/live).
         -- The file-scope local at the top of this file already resolves the
         -- namespaced form; reading a bare global here made this branch no-op.
-        --
-        -- Cold path only (hunter H8): count the fire-and-forget, then schedule
-        -- ONE bounded repaint when the platform has a timer. The repaint is
-        -- generation-bounded (a clear/hide in between invalidates it) and
-        -- single-shot (no ticker, no retry loop). 0.5s matches the inspect
-        -- queue tick cadence -- long enough for the data to land, short enough
-        -- to read as a refresh. Without a timer the path stays known-degraded:
-        -- the request is sent and the next natural refresh paints it.
-        TT.ev = TT.ev or {}
-        TT.ev.itemRefreshFireAndForget = (TT.ev.itemRefreshFireAndForget or 0) + 1
-        -- Batch 7: the item ID comes from the namespaced C_Item resolver
-        -- (first return is the ID). The bare global is only a fallback for a
-        -- client with no C_Item namespace -- see getItemInfoInstantID at the
-        -- top of this file, which carries the mirror evidence.
-        local itemID = getItemInfoInstantID(itemLink)
-        if (itemID) then
-            -- Batch 7: routed through the shared 2s-per-item throttle
-            -- (TT_GS.RequestLoadItemDataByID) so this path cannot re-request
-            -- the same uncached item on every hover. The raw C_Item call is
-            -- the fallback for the gearscore-missing invalid state only.
+        local itemID = GetItemInfoInstant and GetItemInfoInstant(itemLink)
+        if (RequestLoadItemDataByID and itemID) then
             pcall(RequestLoadItemDataByID, itemID)
-        end
-        if (type(NewTimer) == "function") then
-            local fireState = getTooltipState(tooltip)
-            local fireGeneration = fireState.generation
-            local fireLink = itemLink
-            NewTimer(0.5, function()
-                safeCall(function()
-                    if (fireState.generation ~= fireGeneration
-                            or fireState.currentItemLink ~= fireLink
-                            or not tooltip:IsShown()) then
-                        return
-                    end
-                    if (tooltip.UpdateTooltip) then
-                        -- L1: a raising repaint used to be discarded silently.
-                        if (not pcall(tooltip.UpdateTooltip, tooltip)) then
-                            TT.ev.tooltipRepaintFailed = (TT.ev.tooltipRepaintFailed or 0) + 1
-                        end
-                    end
-                end)
-            end)
         end
         return
     end
@@ -3633,12 +2574,7 @@ scheduleItemTooltipRefresh = function(tooltip, itemLink)
             return
         end
         if (tooltip.UpdateTooltip) then
-            -- L1: the second discarded repaint pcall (the item-load callback
-            -- path). Counted apart from the timer path's.
-            if (not pcall(tooltip.UpdateTooltip, tooltip)) then
-                TT.ev.tooltipRepaintCallbackFailed =
-                    (TT.ev.tooltipRepaintCallbackFailed or 0) + 1
-            end
+            pcall(tooltip.UpdateTooltip, tooltip)
         end
     end
     -- Prefer the cancelable form. ItemMixin provides it on all five clients
@@ -3652,11 +2588,7 @@ scheduleItemTooltipRefresh = function(tooltip, itemLink)
             state.itemLoadCancel = cancel
         end
     elseif (item.ContinueOnItemLoad) then
-        -- L1: the third discarded cold-path pcall. A raising registration
-        -- meant the repaint never happened, and nothing said so.
-        if (not pcall(item.ContinueOnItemLoad, item, callback)) then
-            TT.ev.itemLoadCallbackFailed = (TT.ev.itemLoadCallbackFailed or 0) + 1
-        end
+        pcall(item.ContinueOnItemLoad, item, callback)
     end
 end
 
@@ -3713,25 +2645,6 @@ local function onTooltipShow(tooltip)
         -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
         clearTooltipVisuals(tooltip, preservePendingItem, nil, "show-no-class-cache", true)
         return
-    end
-
-    -- The portrait's side, re-decided at the one moment the layout is final.
-    --
-    -- The render can run against a tooltip the client has not laid out yet (the
-    -- modern post-call runs before Show) and before add-ons that append rows --
-    -- TacoTip Extras among them -- have appended them, so the width it measured
-    -- is the narrow one. The cap is re-applied first so those late rows wrap
-    -- instead of stretching the tooltip, then the side is re-decided after every
-    -- line is in and the frame has a rect. The side function only mutates the
-    -- add-on's own portrait frame, and is a cache hit unless something it
-    -- depends on changed.
-    applyTooltipMaxWidth(tooltip)
-    if (TacoTipConfig.tooltip_portrait) then
-        local showPortrait = ensureTooltipPortrait(tooltip)
-        if (showPortrait) then
-            applyTooltipPortraitSide(tooltip, showPortrait)
-            schedulePortraitGuard(tooltip)
-        end
     end
 
     if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
@@ -3808,39 +2721,27 @@ local function registerTooltipVisualClearing(tooltipFrame)
     end
     if (tooltipFrame:HasScript("OnTooltipCleared")) then
         tooltipFrame:HookScript("OnTooltipCleared", function(tFrame)
-            -- The whole body is inside runUntainted: even the read-only early
-            -- return is addon code running in the tooltip's script chain.
-            --
-            -- It is inside safeCall as well, so the containment path and the
-            -- no-securecall fallback behave the SAME: a raise is caught and
-            -- REPORTED in both, instead of being swallowed silently by the
-            -- containment and propagating out of the client's own script
-            -- chain in the fallback.
-            return runUntainted(safeCall, function()
-                if (isUnitFramePeriodicUpdate(tFrame)) then
-                    return
-                end
-                cancelDelayedTooltip(tFrame)
-                return clearTooltipVisuals(tFrame, nil, nil, "cleared", true)
-            end)
+            if (isUnitFramePeriodicUpdate(tFrame)) then
+                return
+            end
+            cancelDelayedTooltip(tFrame)
+            return safeCall(clearTooltipVisuals, tFrame, nil, nil, "cleared", true)
         end)
     end
     if (tooltipFrame:HasScript("OnShow")) then
         tooltipFrame:HookScript("OnShow", function(tFrame, ...)
-            return runUntainted(safeCall, onTooltipShow, tFrame, ...)
+            return safeCall(onTooltipShow, tFrame, ...)
         end)
     end
     if (tooltipFrame:HasScript("OnHide")) then
         tooltipFrame:HookScript("OnHide", function(tFrame)
-            return runUntainted(safeCall, function()
-                if (isUnitFramePeriodicUpdate(tFrame)) then
-                    return
-                end
-                cancelDelayedTooltip(tFrame)
-                -- Same reasoning as OnTooltipCleared: a hide is not proof the
-                -- character changed, and the model is already hidden.
-                return clearTooltipVisuals(tFrame, nil, nil, "hide", true)
-            end)
+            if (isUnitFramePeriodicUpdate(tFrame)) then
+                return
+            end
+            cancelDelayedTooltip(tFrame)
+            -- Same reasoning as OnTooltipCleared: a hide is not proof the
+            -- character changed, and the model is already hidden.
+            return safeCall(clearTooltipVisuals, tFrame, nil, nil, "hide", true)
         end)
     end
 end
@@ -3877,15 +2778,9 @@ end
 -- Guarded for the same reason as the unit and item hooks: Retail's tooltip
 -- template no longer declares OnTooltipSetSpell, so an unguarded hook here
 -- aborts the rest of main.lua at file scope.
---
--- Recorded the same way as the unit and item hooks so /tacotip diag reports
--- spell coverage. nil is the expected value on Retail and WoW Forever, whose
--- template does not declare the script; spell clearing there runs through the
--- OnTooltipCleared hooks registered above.
-TT.HookedTooltipScripts.Spell = TT.HookedTooltipScripts.Spell
-    or hookTooltipScripts("OnTooltipSetSpell", function(tooltip)
-        return safeCall(clearTooltipVisuals, tooltip)
-    end, { { GameTooltip, "GameTooltip" } })
+hookTooltipScripts("OnTooltipSetSpell", function(tooltip)
+    return safeCall(clearTooltipVisuals, tooltip)
+end, { { GameTooltip, "GameTooltip" } })
 
 
 local function CreateMouseAnchor()
@@ -3913,203 +2808,9 @@ end
 
 stage("anchor-hook")
 
--- GameMenu-quit taint guard for the SetDefaultAnchor post-hook.
--- This hook runs for EVERY tooltip (units, items, spells, menus, popups).
--- Mutating GameTooltip here while secure menu code is on the stack taints the
--- quit path (ADDON_ACTION_FORBIDDEN via tainted GameTooltip), so unmanaged
--- owners must pass through without a single SetOwner/SetPoint/ClearAllPoints
--- or EnableMouse call. Addon frames are never managed here; the mover's
--- ShowExample owns that path.
-local function isAddonAnchorFrame(frame)
-    return frame ~= nil and (frame == TacoTipDragButton or frame == TacoTipMouseAnchor)
-end
-
--- Lightweight managed-owner probe. Deliberately NOT resolveTooltipUnit: that
--- helper records TT.ev failure counters, and this hook fires for every menu
--- and item hover where "unresolved" is the correct answer, not an event.
---
--- Hunter M-NEW2: the two silent unmanaged shapes are now told apart for diag.
--- Returns managed (boolean) plus a skip kind: "addon" (our own frames,
--- managed elsewhere -- uncounted), "menu" (no unit signal anywhere: menus,
--- popups, item/spell surfaces passing through by design) or "unresolved"
--- (something unit-like was present -- battle pets, mouseover-less or exotic
--- owners -- but UnitExists failed everywhere). The counts are neutral
--- passthrough tallies, not failure events: a menu hover is supposed to skip.
-local function isManagedAnchorTarget(tooltip, parent)
-    if (isAddonAnchorFrame(parent)) then
-        return false, "addon"
-    end
-    if (TacoTipConfig and TacoTipConfig.anchor_mouse_spells) then
-        -- Hunter H-NEW4: parent:GetParent() is a raw call inside a
-        -- hooksecurefunc post-hook that runs for EVERY tooltip. A parent
-        -- without GetParent (or whose GetParent raises) aborts the hook and
-        -- the unit gate below never runs. Type-check + pcall, mirroring the
-        -- unit probe idiom below; a failure reads as "no grandparent".
-        local parentparent = nil
-        if (parent and type(parent.GetParent) == "function") then
-            local okPP, pp = pcall(parent.GetParent, parent)
-            if (okPP) then
-                parentparent = pp
-            end
-        end
-        if (parent and (parent.action or parent.spellId or (parentparent and (parentparent.action or parentparent.spellId)))) then
-            return true
-        end
-    end
-    -- Hunter M-NEW2: sawUnitSignal tracks whether anything unit-like was
-    -- present. A signal that never resolves (battle pet, exotic owner) reads
-    -- "unresolved"; no signal at all (menu/popup/item surface) reads "menu".
-    local sawUnitSignal = false
-    if (type(UnitExists) == "function") then
-        if (TooltipUtil and type(TooltipUtil.GetDisplayedUnit) == "function" and tooltip) then
-            local ok, _, dispUnit = pcall(TooltipUtil.GetDisplayedUnit, tooltip)
-            if (ok and dispUnit) then
-                sawUnitSignal = true
-                local okExists, exists = pcall(UnitExists, dispUnit)
-                if (okExists and exists) then
-                    return true
-                end
-            end
-        end
-        if (tooltip and type(tooltip.GetUnit) == "function") then
-            local ok, _, tooltipUnit = pcall(tooltip.GetUnit, tooltip)
-            if (ok and tooltipUnit) then
-                sawUnitSignal = true
-                local okExists, exists = pcall(UnitExists, tooltipUnit)
-                if (okExists and exists) then
-                    return true
-                end
-            end
-        end
-        if (tooltip and type(tooltip.GetOwner) == "function") then
-            local ok, owner = pcall(tooltip.GetOwner, tooltip)
-            if (ok and owner and owner.unit) then
-                sawUnitSignal = true
-                local okExists, exists = pcall(UnitExists, owner.unit)
-                if (okExists and exists) then
-                    return true
-                end
-            end
-        end
-        if (parent and parent.unit) then
-            sawUnitSignal = true
-            local okExists, exists = pcall(UnitExists, parent.unit)
-            if (okExists and exists) then
-                return true
-            end
-        end
-    end
-    -- The classic-era shape. On the classic family the unit tooltip is the
-    -- OLD one: no GetUnit, no TooltipDataProcessor, no owner.unit -- but it
-    -- does answer IsUnit, which is how Blizzard's own
-    -- GameTooltip_OnTooltipSetUnit identifies it
-    -- (origin/classic_era:Interface/AddOns/Blizzard_GameTooltip/Classic/GameTooltip.lua:498-503).
-    -- Without this the gate reads a classic unit tooltip as "menu", the
-    -- post-hook returns early, and the tooltip is never re-anchored to the
-    -- saved custom position -- it stays where the client put it, which is
-    -- the bottom-right corner.
-    if (tooltip and type(tooltip.IsUnit) == "function") then
-        local okMouseover, isMouseover = pcall(tooltip.IsUnit, tooltip, "mouseover")
-        if (okMouseover and isMouseover) then
-            return true
-        end
-        local okTarget, isTarget = pcall(tooltip.IsUnit, tooltip, "target")
-        if (okTarget and isTarget) then
-            return true
-        end
-        local okPlayer, isPlayer = pcall(tooltip.IsUnit, tooltip, "player")
-        if (okPlayer and isPlayer) then
-            return true
-        end
-        local okFocus, isFocus = pcall(tooltip.IsUnit, tooltip, "focus")
-        if (okFocus and isFocus) then
-            return true
-        end
-    end
-    if (sawUnitSignal) then
-        return false, "unresolved"
-    end
-    return false, "menu"
-end
-
--- THE ONE MENU-CLASSIFIED CALL THAT MUST KEEP THE RE-PIN: a world-mouseover
--- unit hover. It cannot be told apart by parent or residue: GameTooltipMixin
--- fires GameTooltip_SetDefaultAnchor(self, UIParent)
--- (origin/classic_anniversary Blizzard_SharedXML/Classic/GameTooltipTemplate.xml:153,
--- GameTooltipTemplate.lua:12-14), and the SetOwner inside the original parks
--- the residue, so at post-hook time parent is UIParent (no .unit) and the unit
--- probes read "menu" -- exactly the shape the applyCustomTooltipAnchor comment
--- (main.lua:1471-1479) documents as the pre-dad58ec "it resets my position"
--- report. What IS still true of that hover, and of no item/panel/menu surface,
--- is that the cursor sits on the 3-D world over a live mouseover unit. The
--- focus test is the same idiom the anchor_mouse_world branch already uses
--- (TT:GetMouseFocus() == WorldFrame, main.lua:4083); UnitExists is required so
--- a world OBJECT tooltip (chest, no mouseover) and a stale mouseover under a
--- bag/panel cursor both read false. Every menu-classified call with the cursor
--- on its own frame -- bag items, character-pane slots, other addons' owners --
--- fails this and keeps the caller-set anchor.
-local function isWorldMouseoverUnitHover()
-    if (type(UnitExists) ~= "function") then
-        return false
-    end
-    local okExists, exists = pcall(UnitExists, "mouseover")
-    if (not okExists or not exists) then
-        return false
-    end
-    -- WorldFrame must be a real frame: nil == nil would otherwise pass.
-    if (WorldFrame == nil) then
-        return false
-    end
-    local okFocus, focus = pcall(function()
-        return TT:GetMouseFocus()
-    end)
-    return okFocus and focus == WorldFrame
-end
-
--- IS THIS CALL A UNIT HOVER?
---
--- The caller, not the tooltip, answers. The tooltip's residue is STALE by
--- construction: the client calls GameTooltip_SetDefaultAnchor(tooltip, self)
--- BEFORE GameTooltip:SetUnit(...) (UnitFrame.lua:451-452 on classic), so at
--- post-hook time the tooltip still describes the PREVIOUS hover. A bag or
--- other addon's tooltip raised right after a unit hover therefore reads
--- "unit" (IsUnit / GetUnit / GetDisplayedUnit all answer about the old
--- content) and the old residue-based gate re-pinned it to the saved handle
--- -- the operator's "other addons get written over" report. The only
--- durable facts are the caller's: a unit frame carries .unit, and the
--- world-mouseover shape puts the cursor on the 3-D world over a live
--- mouseover unit (GameTooltipMixin: SetDefaultAnchor(self, UIParent)).
-local function isUnitParent(parent)
-    if (not parent or type(parent.unit) ~= "string" or parent.unit == "") then
-        return false
-    end
-    if (type(UnitExists) ~= "function") then
-        return true
-    end
-    local ok, exists = pcall(UnitExists, parent.unit)
-    return (ok and exists) and true or false
-end
-
 local function onGameTooltipSetDefaultAnchor(tooltip, parent)
-    if (not tooltip) then
-        return
-    end
-    if (isAddonAnchorFrame(parent) or isAddonAnchorFrame(tooltip)) then
-        TT.ev = TT.ev or {}
-        TT.ev.lastAnchorDecision = "addon-self"
-        return
-    end
     if (TacoTipConfig.anchor_mouse_spells) then
-        -- Hunter H-NEW4: same guard as above. This is the raw call the audit
-        -- flagged: a parent without GetParent raised out of the post-hook and
-        -- the unit gate below never ran.
-        local parentparent = nil
-        if (parent and type(parent.GetParent) == "function") then
-            local okPP, pp = pcall(parent.GetParent, parent)
-            if (okPP) then
-                parentparent = pp
-            end
-        end
+        local parentparent = parent and parent:GetParent()
         if (parent and (parent.action or parent.spellId or (parentparent and parentparent.action) or (parentparent and parentparent.spellId))) then
             if (parentparent == MultiBarBottomRight or parentparent == MultiBarRight or parentparent == MultiBarLeft) then
                 tooltip:SetOwner(parent, "ANCHOR_LEFT")
@@ -4119,73 +2820,8 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             if (tooltip.EnableMouse) then
                 tooltip:EnableMouse(false)
             end
-            TT.ev = TT.ev or {}
-            TT.ev.lastAnchorDecision = "spells"
             return
         end
-    end
-    -- Unit gate: menus, popups and item/spell tooltips this addon does not
-    -- manage pass through untouched, so this post-hook never taints secure
-    -- menu code with a reposition. Spell/action owners already returned above;
-    -- everything below here is unit-only by construction.
-    -- Hunter M-NEW2: count the passthrough by kind (menu-by-design vs
-    -- unit-like-but-unresolved). Neutral tallies, not failure events.
-    local managedAnchor, anchorSkipKind = isManagedAnchorTarget(tooltip, parent)
-    -- CALLER IDENTITY, decided once: unit frames (.unit), action/spell
-    -- buttons (.action/.spellId), and the world-mouseover shape. Those are the
-    -- tooltip sources this addon owns the position of. Everything else --
-    -- bag buttons, character-pane slots, menus, other addons' frames -- keeps
-    -- its own anchor untouched. Deciding by the caller (not by the tooltip's
-    -- content) is what makes it immune to the stale residue that SetOwner
-    -- leaves behind.
-    local unitParent = isUnitParent(parent)
-    local spellParent = false
-    if (parent) then
-        local parentparent = nil
-        if (type(parent.GetParent) == "function") then
-            local okPP, pp = pcall(parent.GetParent, parent)
-            if (okPP) then
-                parentparent = pp
-            end
-        end
-        if (parent.action or parent.spellId
-                or (parentparent and (parentparent.action or parentparent.spellId))) then
-            spellParent = true
-        end
-    end
-    local worldMouseoverUnit = (not unitParent and not spellParent) and isWorldMouseoverUnitHover()
-    local isOwnedHover = unitParent or spellParent or worldMouseoverUnit
-    local mouseoverRepin = false
-    local decision = "none"
-    if (not managedAnchor) then
-        TT.ev = TT.ev or {}
-        if (anchorSkipKind == "menu") then
-            TT.ev.anchorSkippedMenu = (TT.ev.anchorSkippedMenu or 0) + 1
-        elseif (anchorSkipKind == "unresolved") then
-            TT.ev.anchorSkippedUnresolved = (TT.ev.anchorSkippedUnresolved or 0) + 1
-        end
-    end
-    if (TacoTipConfig.anchor_mouse) then
-        -- Mouse anchoring keeps its pre-existing scope: managed hovers only.
-        if (not managedAnchor) then
-            TT.ev = TT.ev or {}
-            TT.ev.lastAnchorDecision = "passthrough"
-            return
-        end
-    elseif (TacoTipConfig.custom_pos) then
-        -- THE RULE: with a saved position, re-pin only a tooltip this addon
-        -- owns -- a unit frame, an action/spell button, or a world-mouseover
-        -- unit. Every other caller keeps the anchor it was given, untouched.
-        if (not isOwnedHover) then
-            TT.ev = TT.ev or {}
-            TT.ev.lastAnchorDecision = "passthrough"
-            return
-        end
-        mouseoverRepin = worldMouseoverUnit
-    elseif (not managedAnchor) then
-        TT.ev = TT.ev or {}
-        TT.ev.lastAnchorDecision = "passthrough"
-        return
     end
     if (TacoTipConfig.anchor_mouse) then
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
@@ -4194,7 +2830,6 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             end
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMLEFT", TacoTipMouseAnchor, "CENTER", 10, 10)
-            decision = "mouse"
         end
     else
         if (TacoTipConfig.custom_pos) then
@@ -4202,32 +2837,15 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
                 TacoTip_CustomPosEnable(false)
             end
             if (TacoTipDragButton) then
+                tooltip:ClearAllPoints()
                 local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
-                -- Validate BEFORE ClearAllPoints: a bad anchor with cleared
-                -- points leaves the tooltip with no anchor at all (invisible
-                -- until something else re-anchors it). The load-time sanitizer
-                -- owns the literals; this owns the mid-session value. On bad
-                -- input do nothing -- the caller-set anchor survives -- and
-                -- count it so /tacotip diag names it instead of hiding it.
-                if (type(anchorPoint) ~= "string") then
-                    TT.ev = TT.ev or {}
-                    TT.ev.anchorInvalidSkipped = (TT.ev.anchorInvalidSkipped or 0) + 1
-                    decision = "invalid"
-                else
-                    tooltip:ClearAllPoints()
-                    tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
-                    decision = mouseoverRepin and "repin-mouseover"
-                        or (spellParent and "repin-spell" or "repin-managed")
-                end
+                tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y + 9)
-            decision = "twobar"
         end
     end
-    TT.ev = TT.ev or {}
-    TT.ev.lastAnchorDecision = decision
     if (tooltip.EnableMouse) then
         tooltip:EnableMouse(false)
     end
@@ -4241,39 +2859,8 @@ end
 -- working. GameTooltip_SetDefaultAnchor comes from Blizzard_SharedXML, which is
 -- not LoadOnDemand, so it is present on all five supported clients; guarding it
 -- costs one branch and not guarding it costs the whole addon.
---
--- Hunter M-NEW3 (accepted, no change): LibDBIcon is out of this hook's blast
--- radius by construction. It owns a SEPARATE GameTooltip frame
--- (LibDBIconTooltip, Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua:21) and mutates
--- only it (SetOwner ANCHOR_NONE + SetPoint, :80-83/:111-114), never the
--- shared GameTooltip. The instant-fade post-hook targets the GameTooltip
--- FadeOut identity only, and this post-hook passes non-unit owners through
--- without a single SetOwner/SetPoint call -- so a minimap-icon hover can
--- neither taint the quit path nor be repositioned by it.
 if (type(_G.GameTooltip_SetDefaultAnchor) == "function") then
-    hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
-        -- runUntainted: this post-hook BODY is addon code that runs inside
-        -- the caller's script chain -- the unit frame's OnEnter ->
-        -- GameTooltip:SetOwner -> GameTooltip_SetDefaultAnchor -> here. A
-        -- hooksecurefunc does not replace the hooked function, but its body
-        -- still runs as addon code in that chain, which taints the unit
-        -- frame; the taint reaches the game menu, and the Logout/Quit
-        -- button -- whose callback is the engine function Logout/Quit, so a
-        -- reporter can only name it 'UNKNOWN()' -- is refused with
-        -- ADDON_ACTION_FORBIDDEN. The 0.8.4 quit-menu fix removed the
-        -- DETOUR here and left the body; this closes the body.
-        --
-        -- The explicit pcall keeps a raise visible: securecall swallows it
-        -- and returns nil, so without this the failure would be silent.
-        return runUntainted(function()
-            local ok, err = pcall(onGameTooltipSetDefaultAnchor, tooltip, parent)
-            if (not ok) then
-                TT.ev = TT.ev or {}
-                TT.ev.anchorHookFailed = (TT.ev.anchorHookFailed or 0) + 1
-                TT.ev.lastAnchorHookError = tostring(err)
-            end
-        end)
-    end)
+    hooksecurefunc("GameTooltip_SetDefaultAnchor", onGameTooltipSetDefaultAnchor)
     TT.HookedDefaultAnchor = true
 else
     -- Only the spell-anchor side selection is lost. Every other anchoring path
@@ -4300,17 +2887,6 @@ local function syncTooltipMoverPosition(showExample)
     end
 
     local pos = (TacoTipConfig and TacoTipConfig.custom_pos) or getDefaultTooltipMoverPosition()
-    -- Runtime guard beside the load-time sanitizer: the table can be
-    -- hand-edited mid-session, and the old GetPoint-bug shape (nil offsets)
-    -- predates the sanitizer. A raw SetPoint with this shape raises; the
-    -- callers run inside hook chains that swallow it. Fall back to the
-    -- default position and count it so /tacotip diag names it.
-    if (type(pos) ~= "table" or type(pos[1]) ~= "string" or type(pos[2]) ~= "string"
-            or type(pos[3]) ~= "number" or type(pos[4]) ~= "number") then
-        TT.ev = TT.ev or {}
-        TT.ev.moverPosFallback = (TT.ev.moverPosFallback or 0) + 1
-        pos = getDefaultTooltipMoverPosition()
-    end
     TacoTipDragButton:ClearAllPoints()
     TacoTipDragButton:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
 
@@ -4325,53 +2901,12 @@ end
 
 stage("status-bar")
 
---- Hook a script on a Blizzard frame without risking the file-scope load.
----
---- `Frame:HookScript` raises "bad argument #2 to 'HookScript'" for a script the
---- frame does not already declare — that is the failure that aborted this
---- add-on's whole Retail load in 0.7.8 (`main.lua`'s tooltip-hook comment
---- above), and every tooltip hook has been `HasScript`-guarded since.
----
---- The tooltip status bar is the one frame here whose script set cannot justify
---- a `HasScript` gate: it declares NO `OnHide` on ANY of the five clients. The
---- classic chain declares exactly `<OnValueChanged>`
---- (origin/classic_era:Interface/AddOns/Blizzard_SharedXML/Classic/GameTooltipTemplate.xml:138-148)
---- and the modern pair declares `<OnLoad>`, `<OnUpdate>` and `<OnValueChanged>`
---- (origin/live and origin/forever:Interface/AddOns/Blizzard_GameTooltip/Mainline/GameTooltip.xml:9-23).
---- A gate would therefore skip the hook on every client — a behaviour change,
---- not a safety measure.
----
---- So the primitive here is the pcall, not the predicate: the hook installs
---- exactly where the client accepts it (which is today's behaviour on the only
---- client observed in game, Classic Era), and a refusal becomes a counted skip
---- instead of an abort of the rest of `main.lua`.
-local function hookSafely(frame, scriptName, handler)
-    if (type(frame) ~= "table" or type(frame.HookScript) ~= "function") then
-        return false
-    end
-    local ok = pcall(frame.HookScript, frame, scriptName, handler)
-    if (not ok) then
-        TT.ev = TT.ev or {}
-        TT.ev.statusBarHookRefused = (TT.ev.statusBarHookRefused or 0) + 1
-    end
-    return ok
-end
-
--- The status bar IS a live global on every client (the `$parent` naming rule).
--- Its teardown is belt-and-braces with the tooltip's own OnHide, which calls
--- `clearTooltipVisuals` — so a refused hook costs nothing, and the counter
--- makes the refusal visible in `/tacotip diag` rather than silent.
 if (GameTooltipStatusBar) then
-    hookSafely(GameTooltipStatusBar, "OnHide", function()
-        -- runUntainted: addon code inside a Blizzard frame's script chain
-        -- taints that frame, and the taint reaches the game menu. See
-        -- runUntainted.
-        return runUntainted(function()
-            if (TacoTipPowerBar) then
-                TacoTipPowerBar:Hide()
-            end
-            stopPowerBarTicker()
-        end)
+    GameTooltipStatusBar:HookScript("OnHide", function()
+        if (TacoTipPowerBar) then
+            TacoTipPowerBar:Hide()
+        end
+        stopPowerBarTicker()
     end)
 end
 
@@ -4470,53 +3005,7 @@ function TT:InitCharacterFrame()
     end)
     PersonalAvgItemLvlText:RefreshPosition()
 
-    -- The pane that actually fires OnShow.
-    --
-    -- PaperDollFrame carries NO `hidden` attribute on any of the five branches,
-    -- so it is shown from the moment it is created -- its OnShow fired long
-    -- before this addon loaded, and the hook this line replaced could never
-    -- fire again. The overlay therefore never repainted when the player
-    -- opened the character pane, and it could sit on the "0" it was
-    -- initialised with.
-    --
-    -- Mirror evidence (all five branches -- origin/classic_era,
-    -- origin/classic_anniversary, origin/classic_titan, origin/forever,
-    -- origin/live):
-    --   <Frame name="PaperDollFrame" setAllPoints="true" ...>       (no hidden)
-    --   <Frame name="CharacterFrame" toplevel="true" ... hidden="true" ...>
-    --
-    -- CharacterFrame IS hidden at creation on every branch, so ITS OnShow
-    -- fires exactly once per pane open -- which is the refresh the overlay
-    -- needed. One hook, one refresh, one inventory walk per open.
-    --
-    -- The handler is an adapter, not TT.RefreshCharacterFrame itself: a
-    -- HookScript handler is called as handler(frame), so the method would
-    -- have received the FRAME as `self`.
-    if (_G.CharacterFrame and _G.CharacterFrame.HookScript) then
-        -- Unguarded deliberately: CharacterFrame declares OnShow on all five
-        -- branches (classic_era Vanilla and live Mainline verified), so a
-        -- HasScript gate would be a no-op in game. The harness reason not to
-        -- add one is in the note above the InspectFrame OnHide hook below.
-        _G.CharacterFrame:HookScript("OnShow", function()
-            -- runUntainted: addon code inside a Blizzard frame's script chain
-            -- taints that frame, and the taint reaches the game menu.
-            return runUntainted(function()
-                characterPaneReadyBudget = 1
-                -- A raise in here would unwind through the CLIENT's own
-                -- CharacterFrame OnShow dispatch, so the rest of Blizzard's
-                -- handler for that frame would never run and the pane would be
-                -- left half drawn. The call is bounded and counted on the same
-                -- idiom as the item-load path: the raise stays off the engine's
-                -- callback and the count is visible in /tacotip diag.
-                local ok, err = pcall(TT.RefreshCharacterFrame, TT)
-                if (not ok) then
-                    TT.ev = TT.ev or {}
-                    TT.ev.characterPaneOnShowFailed = (TT.ev.characterPaneOnShowFailed or 0) + 1
-                    TT.ev.lastCharacterPaneOnShowError = tostring(err)
-                end
-            end)
-        end)
-    end
+    PaperDollFrame:HookScript("OnShow", TT.RefreshCharacterFrame)
 end
 
 function TT:RefreshCharacterFrame()
@@ -4608,84 +3097,16 @@ end
 -- Only the modern global form is wrapped. The Classic clients reach the same
 -- frame through the Cata branch, whose Update guards every value it formats,
 -- so there is nothing to fix there and nothing here should pretend otherwise.
---
--- M-2 (final hunter): the wrapper used to claim it was "deliberately narrow"
--- when it was not -- it pcalled the WHOLE of Blizzard's Update, so ANY error
--- inside it was swallowed AND counted as `inspectGuildGuardCaught`, a name
--- that asserts the error was the guild-nil case. It was not: a raise from
--- anywhere else in the function was filed under a cause we had not checked,
--- and the rest of the inspect update was lost with no trace of why.
---
--- The guard now says what it actually does:
---
---   * It still swallows every error from the wrapped function. That is the
---     POINT of the guard: the player must never get an engine error out of a
---     frame we wrapped, and the wrapped function is Blizzard's, so its raise
---     is not something we can re-raise usefully.
---   * It COUNTS the two cases separately, so the count names the cause:
---       inspectGuildGuardCaught  -- the known Blizzard defect (below)
---       inspectUpdateErrors      -- anything else, with the message kept
---
--- The classification does NOT guess from the error text. The wording of a
--- C-API argument error varies by client and by locale, and a text match would
--- file an unrelated raise under a cause we had not proved. It asks the
--- CLIENT'S OWN DATA instead: the guild realm name is nil exactly when the
--- inspected player has no guild, and that nil is what Blizzard's guild block
--- formats -- so "the realm name is nil" IS the precondition of the defect.
---
--- Which guild value is the unguarded nil depends on the variant, and the
--- precondition is the same either way:
---   origin/live, Mainline/InspectGuildFrame.lua:18-22 -- the realm name:
---     InspectGuildFrame.guildRealmName:SetFormattedText(INSPECT_GUILD_REALM, guildRealmName)
---   origin/forever, Camelot/InspectGuildFrame.lua:17-23 -- the same global
---     without the realm line; the guild NAME is the nil the block formats.
---
--- The probe is the same API Blizzard's own Update calls first
--- (C_PaperDollInfo.GetInspectGuildInfo, four values: achievement points,
--- member count, guild name, realm name -- PaperDollInfoDocumentation.lua:95
--- on origin/live and :104 on origin/forever), and it is pcall-guarded: if it
--- cannot run, the error is filed in the honest bucket, because a case that
--- cannot be proved is not a case that may be claimed.
-local function isKnownGuildRealmDefect()
-    local api = rawget(_G, "C_PaperDollInfo")
-    if (type(api) ~= "table" or type(api.GetInspectGuildInfo) ~= "function") then
-        return false
-    end
-    local frame = rawget(_G, "InspectFrame")
-    local unit = frame and frame.unit
-    if (not unit) then
-        return false
-    end
-    local ok, _, _, _, realmName = pcall(api.GetInspectGuildInfo, unit)
-    if (not ok) then
-        return false
-    end
-    return realmName == nil
-end
-
 local function guardBlizzardInspectGuildFrame()
     local update = rawget(_G, "InspectGuildFrame_Update")
     if (type(update) ~= "function") then return false end
     if (rawget(_G, "_tacoTipInspectGuildGuarded")) then return true end
     rawset(_G, "_tacoTipInspectGuildGuarded", true)
     rawset(_G, "InspectGuildFrame_Update", function(...)
-        local ok, err = pcall(update, ...)
-        if (ok) then
-            return
-        end
-        TT.ev = TT.ev or {}
-        if (isKnownGuildRealmDefect()) then
-            -- The known Blizzard defect: the inspected player has no guild, so
-            -- the realm line raised. Swallowed on purpose -- the player's
-            -- inspect must survive a defect that is not ours.
-            TT.ev.inspectGuildGuardCaught = (TT.ev.inspectGuildGuardCaught or 0) + 1
-        else
-            -- Anything else. Still swallowed (see above), but NO LONGER counted
-            -- as a guild-guard catch: this bucket, with its message, says what
-            -- actually went wrong.
-            TT.ev.inspectUpdateErrors = (TT.ev.inspectUpdateErrors or 0) + 1
-            TT.ev.lastInspectUpdateError = tostring(err)
-        end
+        -- Deliberately narrow: the frame's own guild block is the only thing
+        -- that throws, and it throwing must not cost the player the rest of
+        -- their inspect.
+        pcall(update, ...)
     end)
     return true
 end
@@ -4732,58 +3153,10 @@ function TT:InitInspectFrame()
     end)
     InspectAvgItemLvlText:RefreshPosition()
 
-    -- The pane that actually fires OnShow.
-    --
-    -- InspectPaperDollFrame carries NO `hidden` attribute on any of the five
-    -- branches, so it is shown from creation and its OnShow fired before this
-    -- addon loaded -- the hook on it could never fire. InspectFrame IS hidden
-    -- at creation on every branch, so ITS OnShow fires once per inspect
-    -- open, which is the refresh the overlay needed.
-    --
-    -- Mirror evidence (all five branches -- origin/classic_era,
-    -- origin/classic_anniversary, origin/classic_titan, origin/forever,
-    -- origin/live):
-    --   <Frame name="InspectPaperDollFrame" setAllPoints="true" ...>  (no hidden)
-    --   <Frame name="InspectFrame" toplevel="true" ... hidden="true" ...>
-    --
-    -- The handler is an adapter, not TT.RefreshInspectFrame itself: a
-    -- HookScript handler is called as handler(frame), so the method would
-    -- have received the FRAME as `self`.
-    if (_G.InspectFrame and _G.InspectFrame.HookScript) then
-        _G.InspectFrame:HookScript("OnShow", function()
-            -- runUntainted: addon code inside a Blizzard frame's script chain
-            -- taints that frame, and the taint reaches the game menu.
-            return runUntainted(function()
-                -- Bounded and counted, for the same reason as the character pane
-                -- hook above: a raise in here unwinds through the client's own
-                -- InspectFrame OnShow dispatch and leaves the inspect pane half
-                -- drawn.
-                local ok, err = pcall(TT.RefreshInspectFrame, TT)
-                if (not ok) then
-                    TT.ev = TT.ev or {}
-                    TT.ev.inspectPaneOnShowFailed = (TT.ev.inspectPaneOnShowFailed or 0) + 1
-                    TT.ev.lastInspectPaneOnShowError = tostring(err)
-                end
-            end)
-        end)
-    end
-    -- Deliberately unguarded — not an oversight. `InspectFrame` declares
-    -- OnShow AND OnHide on all five branches (classic_era Vanilla and live
-    -- Mainline both verified), so a `HasScript` gate here is a no-op in game.
-    --
-    -- It is also load-bearing for the 0.7.9 guildless-inspect pin: that pin
-    -- re-runs `TT:InitInspectFrame` from the ADDON_LOADED handler, and it can
-    -- only do so because THIS call raises on the test's stub `InspectFrame`
-    -- (a bare table with no `HookScript`) and short-circuits the lazy-init in
-    -- `TT:RefreshInspectFrame` before it can nil the flag. Guarding this call
-    -- makes the init complete, the flag disappear, and the pin unobservable —
-    -- verified by bisect: guarding OnShow alone leaves the pin green, guarding
-    -- OnHide alone turns it red. So it stays exactly as shipped in 0.7.9.
+    InspectPaperDollFrame:HookScript("OnShow", TT.RefreshInspectFrame)
     InspectFrame:HookScript("OnHide", function()
-        return runUntainted(function()
-            InspectGearScore:Hide()
-            InspectAvgItemLvl:Hide()
-        end)
+        InspectGearScore:Hide()
+        InspectAvgItemLvl:Hide()
     end)
 end
 
@@ -4904,135 +3277,38 @@ local function reportEventCounters(line)
     -- is not a useful outcome.
     local total = (ev.unitRender or 0) + (ev.gsCallback or 0) + (ev.portraitHide or 0)
         + (ev.portraitDestroy or 0) + (ev.portraitModelHidden or 0)
-        + (ev.optionsPanelOpenFailed or 0) + (ev.optionsPanelShowFailed or 0)
-        + (ev.moverSaveSkipped or 0) + (ev.moverSaveFailed or 0)
-        + (ev.moverDisableFailed or 0) + (ev.configRepairs or 0)
-        + (ev.characterPaneOnShowFailed or 0) + (ev.inspectPaneOnShowFailed or 0)
-        + (ev.anchorHookFailed or 0) + (ev.statusBarHookRefused or 0)
-        + (ev.anchorInvalidSkipped or 0) + (ev.moverPosFallback or 0)
-    -- The four counters read first on every report. Printed even when the
-    -- session is fresh: "0 renders" is information, and the old early return
-    -- ("no events recorded yet") hid these behind a single line.
-    print("|cff59f0dc-- counters (since /reload) --|r")
-    line("unit renders", ev.unitRender or 0)
-    line("portrait Hide() calls (on clear)", ev.portraitModelHidden or 0)
-    line("portrait teardowns (hide + ClearModel)", ev.portraitHide or 0)
-    line("portrait destroys (ClearModel)", ev.portraitDestroy or 0)
     if (total == 0) then
+        line("event counters", "no events recorded yet -- hover a character first")
         return
     end
+    print("|cff59f0dc-- event counters (cumulative since /reload) --|r")
     line("unit renders", ev.unitRender or 0)
     line("GearScore callbacks", ev.gsCallback or 0)
     line("  of those, dropped as re-entrant", ev.gsCallbackReentrant or 0)
     line("  of those, wrong unit", ev.gsCallbackWrongUnit or 0)
-    -- Labels here MUST name what is counted. TT.ev.portraitHide counts
-    -- teardowns that released a loaded model, not Hide() calls, and printing it
-    -- as "portrait hide" made it look like the hide was being measured when
-    -- nothing could observe that call. Hence the separate portraitModelHidden
-    -- counter, which counts every Hide() that actually ran in
-    -- clearTooltipVisuals -- and, since the no-op guard, only the ones that ran
-    -- because the frame was still shown. Hide() on an already-hidden frame is
-    -- not called any more, so this is the number to read for "a clear took the
-    -- frame away", with no engine no-ops mixed in.
+    -- Labels here MUST name what is counted. TT.ev.portraitHide is incremented
+    -- inside the retainModel guard at :1431, so it counts teardowns, not
+    -- Hide() calls, and printing it as "portrait hide" made it look like the
+    -- hide was being measured when nothing could observe that call. Hence the
+    -- separate portraitModelHidden counter, which is incremented on EVERY
+    -- clearTooltipVisuals Hide() and is the number to read for "a clear took
+    -- the frame away".
     --
     -- The "(on clear)" in the label is load-bearing, not decoration:
-    -- TT:ApplyTooltipAppearance has its own Hide(), on the branch taken when
-    -- the portrait option is off or the unit is nil, and that one is NOT
+    -- TT:ApplyTooltipAppearance has its own Hide() at :1211, on the branch taken
+    -- when the portrait option is off or the unit is nil, and that one is NOT
     -- counted here. A label reading plain "Hide() calls" would claim to see a
     -- call it cannot.
     line("portrait Hide() calls (on clear)", ev.portraitModelHidden or 0)
     -- portraitHide and portraitDestroy are incremented in the same two lines
     -- and therefore always equal; both are kept so the older name still reads.
-    -- Both -- and teardownBy below -- count only teardowns where the
-    -- loaded-unit cache still named a model: a teardown of a frame with no mesh
-    -- is the engine no-op that inflated destroys 310 against 99 renders, and it
-    -- no longer records as a teardown at all.
     line("portrait teardowns (hide + ClearModel)", ev.portraitHide or 0)
     line("portrait destroys (ClearModel)", ev.portraitDestroy or 0)
     line("portrait re-anchor", ev.portraitAnchor or 0)
-    line("portrait guard flips (measured off-screen)", ev.portraitGuardFlip or 0)
-    line("portrait set failures", ev.portraitSetFailed or 0)
-    -- H1 / L1: the calls whose pcall result used to be discarded outright.
-    -- Each names the CALL SITE it counts, so a rising number can be acted on.
-    line("portrait zoom failures", ev.portraitZoomFailed or 0)
-    line("portrait zoom unsupported (no published default)", ev.portraitZoomUnsupported or 0)
-    line("portrait ClearModel failures (render path)", ev.portraitClearModelFailed or 0)
-    line("portrait ClearModel failures (teardown path)", ev.portraitTeardownClearModelFailed or 0)
-    line("tooltip repaint failures (timer path)", ev.tooltipRepaintFailed or 0)
-    line("tooltip repaint failures (item-load callback)", ev.tooltipRepaintCallbackFailed or 0)
-    line("item-load callback registration failures", ev.itemLoadCallbackFailed or 0)
-    line("mouseover guard hits", ev.tooltipIsMouseoverGuarded or 0)
-    -- Hunter M-NEW2: neutral passthrough tallies from the secure anchor gate
-    -- (not failure events -- a menu hover is supposed to skip). Split so a
-    -- rising "unresolved" is distinguishable from routine menu traffic.
-    line("anchor passthrough (menu/popup surface)", ev.anchorSkippedMenu or 0)
-    line("anchor passthrough (unit-like, unresolved)", ev.anchorSkippedUnresolved or 0)
-    -- The anchor post-hook is the one callback that runs inside a Blizzard
-    -- call (GameTooltip_SetDefaultAnchor) and mutates a Blizzard frame, so it
-    -- is counted where a raise would otherwise be invisible: the containment
-    -- swallows it (securecall) and the pcall inside it counts it here.
-    line("anchor hook failures", ev.anchorHookFailed or 0)
-    if (ev.anchorHookFailed and ev.anchorHookFailed > 0) then
-        line("  last anchor hook error", ev.lastAnchorHookError or "?")
-    end
-    -- Fallback counters: inputs bad enough to skip a pin or reposition must
-    -- be visible here, not just absorbed. Both mean a saved value went bad
-    -- mid-session (the load-time sanitizer owns the load path).
-    line("anchor pins skipped (bad anchor, caller kept)", ev.anchorInvalidSkipped or 0)
-    line("mover position fallbacks (bad pos, default used)", ev.moverPosFallback or 0)
-    -- The tooltip status bar declares no OnHide on any of the five clients, so
-    -- the teardown hook is installed under a pcall. Zero is the healthy value;
-    -- a non-zero count means this client refused it.
-    if (ev.statusBarHookRefused and ev.statusBarHookRefused > 0) then
-        line("tooltip status-bar hook refused", ev.statusBarHookRefused)
-    end
-    line("not-ready scores hidden (pending)", ev.gsPendingHidden or 0)
-    line("item refresh fire-and-forget", ev.itemRefreshFireAndForget or 0)
-    line("power-bar unit-reg fallbacks", ev.powerBarRegFailed or 0)
-    line("resolve failures", ev.resolveTooltipUnitFailed or 0)
-    if (ev.resolveTooltipUnitFailed and ev.resolveTooltipUnitFailed > 0) then
-        line("  last resolve cause", ev.resolveTooltipUnitLastCause or "?")
-        line("  no-tooltip", ev.resolveFailNoTooltip or 0)
-        line("  no-source", ev.resolveFailNoSource or 0)
-        line("  unresolved", ev.resolveFailUnresolved or 0)
-    end
-    line("inspect guild guard caught (no-guild realm nil)", ev.inspectGuildGuardCaught or 0)
-    -- The two inspect-frame buckets, kept apart on purpose (M-2). The first
-    -- counts the KNOWN Blizzard defect -- the inspected player has no guild,
-    -- so Blizzard's own realm line raises. The second counts every OTHER
-    -- error the wrapped function produced, with its message, because a count
-    -- that says "the guild case" for a cause nobody checked is worse than no
-    -- count at all.
-    line("  inspect update errors (other)", ev.inspectUpdateErrors or 0)
-    if (ev.inspectUpdateErrors and ev.inspectUpdateErrors > 0) then
-        line("  last inspect update error", ev.lastInspectUpdateError or "?")
-    end
-    -- Cold-path counters added by the final hunter: each names a call whose
-    -- failure used to be swallowed with no trace.
-    line("tooltip width cap failures", ev.tooltipMaxWidthFailed or 0)
-    line("inspect trigger failures", ev.inspectTriggerFailed or 0)
-    line("character pane refresh failures", ev.characterPaneRefreshFailed or 0)
-    -- The options panel and the tooltip mover's slash commands (final
-    -- hardening pass). Each of these used to be a silent no-op: the command
-    -- was typed, nothing happened, and nothing was counted.
-    line("options panel open failures", ev.optionsPanelOpenFailed or 0)
-    line("options panel show failures", ev.optionsPanelShowFailed or 0)
-    line("/tacotip save skipped (mover not shown)", ev.moverSaveSkipped or 0)
-    line("/tacotip save failures", ev.moverSaveFailed or 0)
-    line("/tacotip default failures", ev.moverDisableFailed or 0)
-    -- The corrupt-saved-data ledger: how many settings the sanitiser had to
-    -- repair on the last pass, and which one it repaired first.
-    line("corrupt saved settings repaired", ev.configRepairs or 0)
-    -- The two pane OnShow hooks (final hardening pass). A raise in either one
-    -- used to unwind through the CLIENT's own frame script, so the rest of
-    -- Blizzard's handler never ran and the pane was left half drawn.
-    line("character pane OnShow refresh failures", ev.characterPaneOnShowFailed or 0)
-    line("inspect pane OnShow refresh failures", ev.inspectPaneOnShowFailed or 0)
     -- Name the path that let the model go. A single portrait-hide count could
     -- not distinguish them, and a fix aimed at the wrong one shipped on top of
     -- that -- the unresolved-unit path was patched and the blink stayed, because
-    -- a different call site was the one actually firing. Only teardowns that
-    -- actually released a model are recorded, matching the counters above.
+    -- a different call site was the one actually firing.
     if (ev.teardownBy) then
         print("|cff59f0dc-- teardown path (which call site released the model) --|r")
         for reason, count in pairs(ev.teardownBy) do
@@ -5079,41 +3355,14 @@ local function reportEventCounters(line)
             -- refusal delivered as a UI error. The label used to read "last
             -- refusal", so on a client whose refusals never raise the line was
             -- permanently empty and read as "no refusals" while `probe errors
-            -- suppressed` climbed beside it. hunter H11: the overlap is
-            -- documented in the label, and the error carries its own uptime
-            -- timestamp (lastErrorAt) so staleness is decidable. No counters
-            -- are merged: refusals and raises stay separate by design.
+            -- suppressed` climbed beside it.
             if (st.lastError) then
-                line("  last inspect-call error (raise only; refusals counted above, not here)",
-                    tostring(st.lastError))
-                line("  last error at (uptime)", st.lastErrorAt or "?")
-            end
-            -- Watchdog attribution (hunter H10): which unit the 3s watchdog
-            -- gave up on, and how long queued units wait before dispatch.
-            if (st.lastWatchdogUnit) then
-                line("  last watchdog drop", tostring(st.lastWatchdogUnit))
-            end
-            line("  max queue wait", st.maxQueueWait or 0)
-            line("  avg queue wait", st.avgQueueWait or 0)
-            -- Engine availability (hunter H5): without C_Timer.NewTicker the
-            -- whole inspect engine is inert. The library records the install
-            -- state; the retry rides ADDON_LOADED.
-            if (st.tickersInstalled == false) then
-                line("  tickers installed", false)
+                line("  last inspect-call error", tostring(st.lastError))
             end
             line("  learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown")
             line("  scan enqueued", st.scanEnqueued or 0)
             line("  scan via fallback", st.scanFallback or 0)
             line("  scan skipped (range)", st.scanSkippedDistance or 0)
-            -- Queue overflow is silent by design (the oldest queued inspect is
-            -- discarded to make room), so the count is the only trace. The last
-            -- evicted guid and its queue age say WHO was dropped and how long
-            -- they had waited.
-            line("  queue dropped (overflow)", st.queueDropped or 0)
-            if (st.lastQueueDropGuid) then
-                line("  last queue drop", tostring(st.lastQueueDropGuid)
-                    .. " after " .. tostring(st.lastQueueDropAge or "?") .. "s queued")
-            end
         end
     end
     -- The old text here read "portrait destroy should be ~1 for a character and
@@ -5176,42 +3425,23 @@ local function reportSilentFailures(line)
     -- the per-client default instead. That is correct behaviour but INVISIBLE, so
     -- a player who picked a border that has since disappeared would see the
     -- fallback and have no way to tell why.
-    --
-    -- Hunter M6: the border had this diag; font, bar and background resolved
-    -- through the same silent-fallback shape and had none. All four now report
-    -- the same way.
     local cfg = _G.TacoTipConfig
-    local mediaChecks = {
-        { key = "tooltip_border_texture", choicesFn = TT.GetTooltipBorderChoices,
-            def = TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder() },
-        { key = "tooltip_font", choicesFn = TT.GetTooltipFontChoices,
-            def = "Fonts\\FRIZQT__.TTF" },
-        { key = "tooltip_bar_texture", choicesFn = TT.GetTooltipStatusBarTextureChoices,
-            def = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill" },
-        { key = "tooltip_background_texture", choicesFn = TT.GetTooltipBackgroundChoices,
-            def = "Interface\\Tooltips\\UI-Tooltip-Background" },
-    }
-    if (cfg) then
-        for _, mc in ipairs(mediaChecks) do
-            local value = cfg[mc.key]
-            local getChoices = mc.choicesFn
-            if (value and type(getChoices) == "function") then
-                local matched = false
-                local ok, choices = pcall(getChoices, TT)
-                if (ok and choices) then
-                    for _, entry in ipairs(choices) do
-                        if (entry.value == value or entry.text == value) then
-                            matched = true
-                            break
-                        end
-                    end
-                end
-                if (not matched) then
-                    problems[#problems + 1] = tostring(mc.key) .. " setting '" .. tostring(value)
-                        .. "' matches no entry and is being replaced by the per-client default ("
-                        .. tostring(mc.def) .. ")"
+    if (cfg and cfg.tooltip_border_texture and TT.GetTooltipBorderChoices) then
+        local value = cfg.tooltip_border_texture
+        local matched = false
+        local ok, choices = pcall(function() return TT:GetTooltipBorderChoices() end)
+        if (ok and choices) then
+            for _, entry in ipairs(choices) do
+                if (entry.value == value or entry.text == value) then
+                    matched = true
+                    break
                 end
             end
+        end
+        if (not matched) then
+            problems[#problems + 1] = "border setting '" .. tostring(value)
+                .. "' matches no entry and is being replaced by the per-client default ("
+                .. tostring(TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder()) .. ")"
         end
     end
 
@@ -5245,144 +3475,6 @@ local function reportSilentFailures(line)
             .. "border branch would activate and start drawing the background texture"
     end
 
-    -- Pawn late-load vs no-scale (hunter C3). The render gate stays on the
-    -- file-scope snapshot, so a Pawn that appears after load is a fact the
-    -- player can act on (reload) rather than a silent absence. Read live here
-    -- so diag names it; no state is changed.
-    if (not isPawnLoaded and isPawnAvailableNow()) then
-        problems[#problems + 1] = "Pawn detected after load -- scores unavailable until reload"
-    end
-
-    -- Options-side failures (hunter H7): registration and scan-apply errors
-    -- are recorded by options.lua into TT.optionsRegErrors, one chat line per
-    -- distinct failure, and surfaced here. Read-only: no state is changed.
-    if (TT.optionsRegErrors) then
-        for _, e in ipairs(TT.optionsRegErrors) do
-            problems[#problems + 1] = tostring(e)
-        end
-    end
-
-    -- Options load leg (hunter H-NEW2): the six LoadAddOn probes in
-    -- options.lua are counted with the last error kept (TT.ev). Any failure
-    -- leaves the corresponding options surface missing with no other trace,
-    -- so it is named here. Read-only: no state is changed.
-    if (TT.ev and TT.ev.optionsLoadFailures and TT.ev.optionsLoadFailures > 0) then
-        problems[#problems + 1] = "options load failures: " .. tostring(TT.ev.optionsLoadFailures)
-            .. " (last: " .. tostring(TT.ev.lastOptionsLoadError or "?") .. ")"
-    end
-
-    -- The options panel itself (final hardening pass).
-    --
-    -- options.lua opened the panel through three protected calls whose
-    -- RESULTS were discarded, so a raising one left the player with a typed
-    -- command, no panel, and no message and no count. The failures are
-    -- counted with the last error kept, and named here. Read-only: no state
-    -- is changed.
-    if (TT.ev and TT.ev.optionsPanelOpenFailed and TT.ev.optionsPanelOpenFailed > 0) then
-        problems[#problems + 1] = "options panel open failures: "
-            .. tostring(TT.ev.optionsPanelOpenFailed)
-            .. " (last: " .. tostring(TT.ev.lastOptionsPanelError or "?") .. ")"
-    end
-    if (TT.ev and TT.ev.optionsPanelShowFailed and TT.ev.optionsPanelShowFailed > 0) then
-        problems[#problems + 1] = "options panel show failures: "
-            .. tostring(TT.ev.optionsPanelShowFailed)
-            .. " (last: " .. tostring(TT.ev.lastOptionsPanelError or "?") .. ")"
-    end
-    -- The tooltip mover's slash commands. "/tacotip save" did NOTHING and said
-    -- nothing when the mover was not open, and a raising save was swallowed
-    -- by the abort. Both are counted now, so the report can say that the
-    -- command was a dead end rather than leaving the player guessing.
-    if (TT.ev and TT.ev.moverSaveSkipped and TT.ev.moverSaveSkipped > 0) then
-        problems[#problems + 1] = "/tacotip save skipped (the tooltip mover was not shown): "
-            .. tostring(TT.ev.moverSaveSkipped)
-    end
-    if (TT.ev and TT.ev.moverSaveFailed and TT.ev.moverSaveFailed > 0) then
-        problems[#problems + 1] = "/tacotip save failures: "
-            .. tostring(TT.ev.moverSaveFailed)
-    end
-    if (TT.ev and TT.ev.moverDisableFailed and TT.ev.moverDisableFailed > 0) then
-        problems[#problems + 1] = "/tacotip default failures (the mover could not be disabled): "
-            .. tostring(TT.ev.moverDisableFailed)
-    end
-
-    -- The corrupt-saved-data ledger (final hardening pass).
-    --
-    -- A hand-edited TacoTipConfig fails closed and recovers to the shipped
-    -- defaults -- but the repair was SILENT, so a player whose settings had
-    -- been reset had no way to learn that one of their options had changed
-    -- under them. The number of repaired settings is counted and the first one
-    -- is named here.
-    if (TT.ev and TT.ev.configRepairs and TT.ev.configRepairs > 0) then
-        problems[#problems + 1] = "corrupt saved settings repaired: "
-            .. tostring(TT.ev.configRepairs)
-            .. " (first: " .. tostring(TT.ev.lastConfigRepair or "?") .. ")"
-    end
-
-    -- M1: the TacoTip Extras forward ledger.
-    --
-    -- gearscore.lua counts a raise inside an Extras handler, keeps the last
-    -- command and the last error, and prints ONE actionable chat line. The
-    -- counters were never read by anything, so /tacotip diag answered
-    -- "problems: none detected" while the Extras forward was broken -- the
-    -- pointer to the report was a lie. The count, the last command and the
-    -- last error are all named here, so the report is true.
-    if (TT.ev and TT.ev.extrasForwardFailed and TT.ev.extrasForwardFailed > 0) then
-        problems[#problems + 1] = "TacoTip Extras forward failures: "
-            .. tostring(TT.ev.extrasForwardFailed)
-            .. " (last command: " .. tostring(TT.ev.extrasForwardLastCommand or "?")
-            .. ", last error: " .. tostring(TT.ev.extrasForwardLastError or "?") .. ")"
-    end
-
-    -- L2: TacoTip Extras' own failure counters. The Extras counts the calls
-    -- whose failures it used to discard (a slash-command registration that
-    -- returned false, an options panel that could not open) and publishes
-    -- them for this diagnostic, so a degraded Extras is visible from the main
-    -- add-on's report and not only from "/ttgsdebug".
-    local extrasCounters = nil
-    local extrasCounterGetter = rawget(_G, "TacoTipExtrasGetFailureCounters")
-    if (type(extrasCounterGetter) == "function") then
-        local ok, counters = pcall(extrasCounterGetter)
-        if (ok and type(counters) == "table") then
-            extrasCounters = counters
-        end
-    end
-    if (extrasCounters) then
-        -- Sorted, so the report reads the same way twice.
-        local names = {}
-        for name in pairs(extrasCounters) do
-            names[#names + 1] = name
-        end
-        table.sort(names)
-        for _, name in ipairs(names) do
-            local count = extrasCounters[name]
-            if (type(count) == "number" and count > 0) then
-                problems[#problems + 1] = "TacoTip Extras failure: " .. tostring(name)
-                    .. " (" .. tostring(count) .. ")"
-            end
-        end
-    end
-
-    -- Engine availability (hunter H5): without C_Timer.NewTicker the inspect
-    -- engine never ticks. The library records the install state and retries
-    -- on ADDON_LOADED; here it is a fact the player can act on (client
-    -- without the timer API), not a silent dead scan.
-    if (CI and CI.tickersInstalled == false) then
-        problems[#problems + 1] = "inspect engine tickers not installed (no C_Timer.NewTicker) -- proximity scan and queue are inert"
-    end
-
-    -- C2 clock availability (load-time probe): without GetTime/C_Timer.After
-    -- every throttle, cooldown, guard window and queue pacing above is
-    -- bypassed fail-open instead of wedged on a memoised 0. Read-only: no
-    -- state is changed.
-    do
-        local gsClock = _G.TT_GS and _G.TT_GS.ClockAvailable
-        local libClock = CI and CI.clockAvailable
-        if (clockAvailable == false or libClock == false or gsClock == false) then
-            problems[#problems + 1] = "system clock unavailable (GetTime/C_Timer.After missing) -- throttles, cooldowns and queue pacing are bypassed (fail-open)"
-        end
-    end
-
-
     if (#problems == 0) then
         line("problems", "none detected")
         return
@@ -5391,48 +3483,6 @@ local function reportSilentFailures(line)
     for i, p in ipairs(problems) do
         print("|cffff8080" .. i .. ". " .. p .. "|r")
     end
-end
-
--- ERRORS FIRST.
---
--- handlePipelineError records every distinct raise it contains into
--- TT.ev.pipelineErrorSeen -- and nothing ever printed that table. The report
--- therefore said "problems: none detected" while errors were being collected
--- behind it, which is exactly the "diag never shows errors" report. Every
--- captured message is printed here with its count, before any counters: a
--- report whose first screen is numbers and whose errors are nowhere is not a
--- diagnostic.
-local function reportErrors(line)
-    local ev = TT.ev or {}
-    local seen = ev.pipelineErrorSeen
-    local names, total = {}, 0
-    if (type(seen) == "table") then
-        for msg, count in pairs(seen) do
-            names[#names + 1] = tostring(msg)
-            total = total + (tonumber(count) or 1)
-        end
-    end
-    table.sort(names)
-    print("|cffff8080-- errors --|r")
-    if (#names == 0) then
-        line("captured errors", "none since /reload")
-    else
-        line("captured errors", total .. " across " .. #names .. " distinct message(s)")
-        for i = 1, #names do
-            if (i <= 6) then
-                print("|cffff8080  " .. tostring(seen[names[i]]) .. "x " .. names[i] .. "|r")
-            end
-        end
-        if (#names > 6) then
-            line("  not listed", (#names - 6) .. " more distinct message(s)")
-        end
-    end
-    line("last tooltip error", TT.lastTooltipError or "none")
-    line("anchor hook failures", ev.anchorHookFailed or 0)
-    if (ev.anchorHookFailed and ev.anchorHookFailed > 0) then
-        line("  last anchor hook error", ev.lastAnchorHookError or "?")
-    end
-    line("pipeline errors suppressed", ev.pipelineErrorsSuppressed or 0)
 end
 
 function TT:PrintDiagnostics()
@@ -5444,23 +3494,6 @@ function TT:PrintDiagnostics()
     line("load OK", TT.LOAD_OK and "yes" or "NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE))
     line("client family", CI and CI.family or "?")
     line("interface", CI and CI.interfaceVersion or "?")
-    reportErrors(line)
-    -- The saved-position state, in one place. Every "my tooltip position"
-    -- report needs exactly these facts: whether a position is saved, what
-    -- anchor literal it uses, whether the handle exists, and what the hook did
-    -- to the LAST tooltip (the decision line). No counters, no theory.
-    print("|cff59f0dc-- tooltip anchor --|r")
-    local cfg = TacoTipConfig or {}
-    line("saved custom position", cfg.custom_pos and "yes" or "no")
-    line("custom anchor", cfg.custom_anchor or "nil")
-    line("anchor to mouse", cfg.anchor_mouse and "on" or "off")
-    local dragButton = _G.TacoTipDragButton
-    line("drag handle", dragButton and (dragButton:IsShown() and "shown" or "exists (hidden)") or "NOT CREATED")
-    line("last anchor decision", (TT.ev and TT.ev.lastAnchorDecision) or "none yet")
-    line("passthrough (not our tooltip)", ((TT.ev and TT.ev.anchorSkippedMenu) or 0)
-        + ((TT.ev and TT.ev.anchorSkippedUnresolved) or 0))
-    line("  (a count of hovers left to their own anchor -- not errors)")
-    line("pins skipped (bad anchor)", (TT.ev and TT.ev.anchorInvalidSkipped) or 0)
     -- Which widget surface this client actually presents. These three facts
     -- select the tooltip code paths, so reporting them makes a "looks wrong on
     -- client X" report answerable without guesswork. Read-only: no widget is
@@ -5469,24 +3502,12 @@ function TT:PrintDiagnostics()
     line("tooltip has NineSlice", gt and gt.NineSlice ~= nil)
     line("tooltip has SetBackdrop", type(gt and gt.SetBackdrop))
     line("tooltip has OnTooltipSetUnit", (gt and gt.HasScript) and gt:HasScript("OnTooltipSetUnit") or "?")
-    -- Which fade path this client can actually take (arbiter N2).
-    -- GameTooltip.FadeOut exists only on the modern pair (origin/live and
-    -- origin/forever); the Classic family has no such method, so the option
-    -- degrades there. Without this line the mode was recorded in
-    -- TT.InstantFadeMode and printed nowhere, so "the toggle does nothing"
-    -- was indistinguishable from "the toggle is off".
-    --   secure-hook   -- the FadeOut post-hook is installed (instant fade on)
-    --   standard-fade -- the option is off, the client fades normally
-    --   unsupported   -- this client has no GameTooltip.FadeOut at all
-    line("instant fade", TT.InstantFadeMode or "not recorded")
-    line("instant fade API", type(gt and gt.FadeOut))
     line("TT.HookedTooltipScripts", TT.HookedTooltipScripts
         and ("unit=" .. tostring(TT.HookedTooltipScripts.Unit)
-            .. " item=" .. tostring(TT.HookedTooltipScripts.Item)
-            .. " spell=" .. tostring(TT.HookedTooltipScripts.Spell)) or "none")
+            .. " item=" .. tostring(TT.HookedTooltipScripts.Item)) or "none")
     -- A C API argument error carries no Lua stack, so this is the only place it
     -- can be named. Reported once per distinct message; see handlePipelineError.
-    line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
+    line("last tooltip error", TT.lastTooltipError or "none")
     if (not TT.LOAD_OK) then
         print("|cff59f0dcIf the stage is not \"complete\", an error was raised while|r")
         print("|cff59f0dclloading main.lua at or after that point. /reload cannot fix|r")
@@ -5569,62 +3590,12 @@ local function onEvent(self, event, ...)
             end
             if (TacoTipConfig.instant_fade) then
                 self:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-                -- GameMenu-quit taint fix: never replace GameTooltip.FadeOut.
-                -- The old Detours:DetourHook swapped the Blizzard method for
-                -- addon code, so any secure path that faded the tooltip ran
-                -- tainted code (ADDON_ACTION_FORBIDDEN). A hooksecurefunc
-                -- post-hook preserves the original function identity and hides
-                -- after the genuine fade starts, which reads as instant.
-                -- Toggle and default (off) unchanged.
-                if (GameTooltip and type(GameTooltip.FadeOut) == "function") then
-                    Detours:SecureHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
-                        -- runUntainted: a hooksecurefunc post-hook does not
-                        -- replace the hooked function, but its BODY still runs
-                        -- as addon code inside the caller's script chain --
-                        -- here, the unit frame's OnLeave
-                        -- (Blizzard_UnitFrame/Classic/UnitFrame.lua:447
-                        -- `GameTooltip:FadeOut();`). That taints the unit
-                        -- frame, the taint reaches the game menu, and the
-                        -- Logout/Quit button is refused. Replacing the
-                        -- DETOUR (the 0.8.3 shape) fixed the method identity
-                        -- but not the body; this fixes the body.
-                        return runUntainted(safeCall, function()
-                            if (TacoTipConfig and TacoTipConfig.instant_fade and tooltipFrame) then
-                                tooltipFrame:Hide()
-                            end
-                        end)
-                    end)
-                    TT.InstantFadeMode = "secure-hook"
-                else
-                    -- No FadeOut to hook: degrade to the standard fade rather
-                    -- than tainting anything to reinvent it.
-                    --
-                    -- GameTooltip.FadeOut is an ENGINE method with no Lua
-                    -- definition on any branch, so a whole-tree sweep cannot
-                    -- prove it absent -- and Blizzard's own call sites say it
-                    -- is present on all five:
-                    --   origin/classic_era, origin/classic_anniversary,
-                    --   origin/classic_titan:
-                    --     Interface/AddOns/Blizzard_UnitFrame/Classic/UnitFrame.lua:447
-                    --   origin/forever:
-                    --     Interface/AddOns/Blizzard_UnitFrame/Mainline/UnitFrame.lua:393
-                    --   origin/live:
-                    --     Interface/AddOns/Blizzard_UnitFrame/Mainline/UnitFrame.lua:386
-                    -- On the Classic family that handler is wired to the OnLeave
-                    -- of PlayerFrame.xml:374 and TargetFrame.xml:380, so the
-                    -- call runs on every mouse-out. This branch is the
-                    -- capability guard for a client that genuinely lacks the
-                    -- method, not the expected path on any supported client.
-                    --
-                    -- "unsupported" is recorded rather than "standard-fade" so
-                    -- /tacotip diag can say the client CANNOT do it, not
-                    -- merely that it is off.
-                    TT.InstantFadeMode = "unsupported"
+                local function safeFadeOut(tooltipFrame)
+                    tooltipFrame:Hide()
                 end
-            else
-                -- The option is off: the client fades normally. Recorded so
-                -- diag can distinguish "off" from "cannot be done".
-                TT.InstantFadeMode = "standard-fade"
+                Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame, ...)
+                    return safeCall(safeFadeOut, tooltipFrame, ...)
+                end)
             end
             -- characterFrameHost, not CharacterModelFrame: Retail has no model
             -- frame but does have PaperDollFrame, and the font strings are
@@ -5650,7 +3621,7 @@ local function onEvent(self, event, ...)
             end
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
-        if (TacoTipConfig.instant_fade and GameTooltip and GameTooltip:IsShown() and tooltipIsMouseover(GameTooltip)) then
+        if (TacoTipConfig.instant_fade and GameTooltip and GameTooltip:IsShown() and ((GameTooltip.IsUnit and GameTooltip:IsUnit("mouseover")) or (GameTooltip.GetUnit and select(2, GameTooltip:GetUnit()) == "mouseover"))) then
             cancelFadeTimer(GameTooltip)
             local state = getTooltipState(GameTooltip)
             local timer
@@ -5660,7 +3631,7 @@ local function onEvent(self, event, ...)
                         state.fadeTimer = nil
                     end
                     safeCall(function()
-                        if (TacoTipConfig.instant_fade and not UnitExists("mouseover") and GameTooltip and GameTooltip:IsShown() and tooltipIsMouseover(GameTooltip)) then
+                        if (TacoTipConfig.instant_fade and not UnitExists("mouseover") and GameTooltip and GameTooltip:IsShown() and ((GameTooltip.IsUnit and GameTooltip:IsUnit("mouseover")) or (GameTooltip.GetUnit and select(2, GameTooltip:GetUnit()) == "mouseover"))) then
                             GameTooltip:Hide()
                         end
                     end)
@@ -5685,22 +3656,13 @@ local function onEvent(self, event, ...)
                 -- GUID with a short window, so a genuine later update still
                 -- rebuilds. GetTime is the same monotonic clock the library uses.
                 local st = getTooltipState(GameTooltip)
-                -- C2 fail-open: without a clock there is no coalesce window to
-                -- measure, so every render rebuilds (never memoise 0, never
-                -- suppress a genuine update on now-renderTime == 0).
-                if (clockAvailable and type(GetTime) == "function") then
-                    local now = GetTime()
-                    local duplicate = (st.inspectRenderGUID == guid
-                        and st.inspectRenderTime ~= nil
-                        and (now - st.inspectRenderTime) < INSPECT_RENDER_COALESCE)
-                    if (not duplicate) then
-                        st.inspectRenderGUID = guid
-                        st.inspectRenderTime = now
-                        GameTooltip:SetUnit(ttUnit)
-                    end
-                else
+                local now = (type(GetTime) == "function") and GetTime() or 0
+                local duplicate = (st.inspectRenderGUID == guid
+                    and st.inspectRenderTime ~= nil
+                    and (now - st.inspectRenderTime) < INSPECT_RENDER_COALESCE)
+                if (not duplicate) then
                     st.inspectRenderGUID = guid
-                    st.inspectRenderTime = nil
+                    st.inspectRenderTime = now
                     GameTooltip:SetUnit(ttUnit)
                 end
             end
@@ -5729,46 +3691,6 @@ end
 
 
 stage("mover-defined")
-
--- Secure-menu taint guard (hunter H-NEW1). ShowExample mutates the shared
--- GameTooltip (SetOwner/ClearAllPoints/SetPoint/SetUnit/Show) from a 1s
--- ticker plus OnShow/OnHide post-hooks whenever the mover is shown. Running
--- any of that while GameMenu owns the screen taints the quit path
--- (ADDON_ACTION_FORBIDDEN), the same class the instant-fade fix removed.
--- The guard is one helper so the ticker, both hooks, ShowExample itself,
--- the drag OnUpdate and the right-click confirm cannot drift apart again.
---
--- The dialog pool is exactly StaticPopup1..4 (hunter M-NEW4). Verified on ALL
--- FIVE branches of the FrameXML mirror (wow-ui-source), file
--- Interface/AddOns/Blizzard_StaticPopup_Game/GameDialog.xml:
---   origin/classic_era          GameDialog.xml:334-349  (StaticPopup1..4, ids 1..4)
---   origin/classic_anniversary  GameDialog.xml:334-349  (StaticPopup1..4, ids 1..4)
---   origin/classic_titan        GameDialog.xml:334-349  (StaticPopup1..4, ids 1..4)
---   origin/live                 GameDialog.xml:334-349  (StaticPopup1..4, ids 1..4)
---   origin/forever              GameDialog.xml:339-354  (StaticPopup1..4, ids 1..4)
--- Those four named frames are the whole pool on every branch, and "StaticPopup5"
--- matches NOWHERE in any of the five -- so the loop bound below is named, not
--- magic.
-local MAX_STATIC_POPUP_DIALOGS = 4
-local function isSecureMenuBusy()
-    local gameMenu = rawget(_G, "GameMenuFrame")
-    if (gameMenu and type(gameMenu.IsShown) == "function") then
-        local okMenu, menuShown = pcall(gameMenu.IsShown, gameMenu)
-        if (okMenu and menuShown) then
-            return true
-        end
-    end
-    for i = 1, MAX_STATIC_POPUP_DIALOGS do
-        local popup = _G["StaticPopup" .. i]
-        if (popup and type(popup.IsShown) == "function") then
-            local okShown, shown = pcall(popup.IsShown, popup)
-            if (okShown and shown) then
-                return true
-            end
-        end
-    end
-    return false
-end
 
 function TacoTip_CustomPosEnable(show)
     if (not TacoTipDragButton) then
@@ -5803,14 +3725,7 @@ function TacoTip_CustomPosEnable(show)
             if (left and bottom) then
                 TacoTipConfig.custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", left, bottom }
             else
-                -- A nil read here is transient: the frame's rect is not valid in
-                -- the same frame the drag ends. Storing the DEFAULT at that
-                -- moment is what made a just-dragged handle snap back to the
-                -- corner and lose the user's position -- keep whatever was
-                -- saved, and count it so /tacotip diag names the failure.
-                TT.ev = TT.ev or {}
-                TT.ev.moverSaveFailed = (TT.ev.moverSaveFailed or 0) + 1
-                print("|cff59f0dcTacoTip:|r The tooltip position could not be saved.")
+                TacoTipConfig.custom_pos = getDefaultTooltipMoverPosition()
             end
             syncTooltipMoverPosition(true)
             refreshOptionsUI()
@@ -5831,12 +3746,6 @@ function TacoTip_CustomPosEnable(show)
                 TacoTipDragButton:ShowExample()
                 refreshOptionsUI()
             elseif (button == "RightButton") then
-                -- Zero-risk taint guard: never stack our confirm while any
-                -- secure/static dialog owns the screen. The mover stays open
-                -- for retry, so skipping loses nothing.
-                if (isSecureMenuBusy()) then
-                    return
-                end
                 rawset(StaticPopupDialogs, "_TacoTipDragButtonConfirm_",
                     {
                         ["whileDead"] = 1,
@@ -5859,18 +3768,12 @@ function TacoTip_CustomPosEnable(show)
                 self.ticker:Cancel()
             end
             local function onMoverTick()
-                if (isSecureMenuBusy()) then
-                    return
-                end
                 TacoTipDragButton:ShowExample()
             end
             self.ticker = NewTicker(1, function(...)
                 safeCall(onMoverTick, ...)
             end)
             local function onMoverGameTooltipShow(tooltipFrame)
-                if (isSecureMenuBusy()) then
-                    return
-                end
                 if (TacoTipDragButton:IsShown()) then
                     local shownUnit = resolveTooltipUnit(tooltipFrame)
                     if (not shownUnit or not UnitIsUnit(shownUnit, "player")) then
@@ -5879,22 +3782,15 @@ function TacoTip_CustomPosEnable(show)
                 end
             end
             local function onMoverGameTooltipHide(tooltipFrame)
-                if (isSecureMenuBusy()) then
-                    return
-                end
                 if (TacoTipDragButton:IsShown()) then
                     TacoTipDragButton:ShowExample()
                 end
             end
-            -- runUntainted: both hooks put addon code inside the shared
-            -- GameTooltip's script chain. The tooltip is reached from the
-            -- unit frames' own chains, so that taint lands on the unit frame
-            -- and reaches the game menu.
             Detours:ScriptHook(TT, GameTooltip, "OnShow", function(tooltipFrame, ...)
-                return runUntainted(safeCall, onMoverGameTooltipShow, tooltipFrame, ...)
+                return safeCall(onMoverGameTooltipShow, tooltipFrame, ...)
             end)
             Detours:ScriptHook(TT, GameTooltip, "OnHide", function(tooltipFrame, ...)
-                return runUntainted(safeCall, onMoverGameTooltipHide, tooltipFrame, ...)
+                return safeCall(onMoverGameTooltipHide, tooltipFrame, ...)
             end)
             TacoTipDragButton:ShowExample()
             print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_MOVER_SHOWN"])
@@ -5910,12 +3806,6 @@ function TacoTip_CustomPosEnable(show)
             return safeCall(function()
                 self:StartMoving()
                 self:SetScript("OnUpdate", function()
-                    -- Zero-risk taint guard: never reposition the tooltip while
-                    -- the secure menu owns the screen. Dragging the mover with
-                    -- GameMenu open has no valid use; skipping is a no-op.
-                    if (isSecureMenuBusy()) then
-                        return
-                    end
                     if (not GameTooltip or not GameTooltip:IsShown()) then
                         return
                     end
@@ -5941,12 +3831,6 @@ function TacoTip_CustomPosEnable(show)
             return safeCall(onDragButtonHide, self, ...)
         end)
         rawset(TacoTipDragButton, "ShowExample", function(self)
-            -- Defense in depth (hunter H-NEW1): every caller above already
-            -- guards, but ShowExample itself must never mutate the shared
-            -- GameTooltip while secure menu code is on the stack.
-            if (isSecureMenuBusy()) then
-                return
-            end
             -- When custom_pos is set, the GameTooltip is already anchored
             -- to TacoTipDragButton (a UIParent child) via the hook at
             -- line 1244.  Calling GameTooltip_SetDefaultAnchor here to
