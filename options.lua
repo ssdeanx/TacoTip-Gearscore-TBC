@@ -208,7 +208,7 @@ local DEFAULTS = {
     tooltip_font_size = 12,
     tooltip_bar_texture = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill",
     instant_fade = false,
-    anchor_mouse = false,
+    anchor_mouse = true,
     anchor_mouse_world = true,
     -- Off by default: a spell/action-button tooltip must respect the saved
     -- custom tooltip position unless the user opts into mouse anchoring.
