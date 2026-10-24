@@ -2,7 +2,7 @@
    _____              _____ _____
   |_   _|            |_   _|__  / __|
     | | |__   __ _  __  | |  / /|  _\
-    | | '_ \ / _` |/ _` | | / / | |  \ 
+    | | '_ \ / _` |/ _` | | / / | |  \
     | | | | | (_| | (_| | |/ /__| |_) |
     |_|_| |_|\__, |\__,_|_/_____|____/
              __/ |
@@ -22,17 +22,17 @@ interfaces: ["11509", "20506", "38002", "16001", "120100"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 optional: [WoWUnit]
-status: unreleased
+status: released
 updated: 2026-10-23
 ```
-
 
 TacoTip is a character, item and guild tooltip enhancement that runs on **every**
 World of Warcraft engine family from one build — no per-client downloads, no
 "which version do I install" question:
 
 - **CurseForge** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
-- **Companion** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview), optional, separately installed
+
+- **<span style="color:#e67e23"><span style="text-decoration:underline">Companion App</span></span>** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview) ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png)
 
 | Client | Interface |
 | :--- | :--- |
