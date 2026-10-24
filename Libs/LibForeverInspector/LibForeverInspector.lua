@@ -143,7 +143,8 @@ local isRetail = isMainline and not isForever
 -- produced the "Not in range" popup + sound on hover/selection.
 local isClassic = (WOW_PROJECT_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CLASSIC)
 local isTBC = (WOW_PROJECT_BC_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_BC_CLASSIC) or (clientBuildMajor == 2)
-local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC) or (clientBuildMajor == 3)
+local isWotlk = (WOW_PROJECT_WRATH_CLASSIC ~= nil and WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC) or
+(clientBuildMajor == 3)
 
 -- Fallbacks for when WOW_PROJECT_ID is unavailable or unrecognised (it is
 -- engine-defined on WoW Forever, so it is not verifiable from source there).
@@ -324,9 +325,9 @@ elseif (currentLocale == "ruRU") then
         ["MAGE"] = { "\208\162\208\176\208\185\208\189\208\176\209\143 \208\188\208\176\208\179\208\184\209\143", "\208\158\208\179\208\190\208\189\209\140", "\208\155\208\181\208\180" },
         ["WARLOCK"] = { "\208\154\208\190\208\187\208\180\208\190\208\178\209\129\209\130\208\178\208\190", "\208\148\208\181\208\188\208\190\208\187\208\190\208\179\208\184\209\143", "\208\160\208\176\208\183\209\128\209\131\209\136\208\181\208\189\208\184\208\181" },
         ["DRUID"] = { "\208\145\208\176\208\187\208\176\208\189\209\129", "\208\161\208\184\208\187\208\176 \208\183\208\178\208\181\209\128\209\143", "\208\146\208\190\209\129\209\129\209\130\208\176\208\189\208\190\208\178\208\187\208\181\208\189\208\184\208\181" },
-        ["MONK"] = { "Braumeister", "Nebelwirker", "Windl\195\164ufer" },
-        ["DEMONHUNTER"] = { "Havoc", "Vengeance" },
-        ["EVOKER"] = { "Devastation", "Preservation", "Augmentation" },
+        ["MONK"] = { "Хмелевар", "Ткач туманов", "Танцующий с ветром" },
+        ["DEMONHUNTER"] = { "Истребление", "Месть" },
+        ["EVOKER"] = { "Опустошитель", "Хранитель", "Насыщатель" },
     }
 elseif (currentLocale == "zhCN") then
     lib.spec_table_localized = lib.spec_table_localized or {
@@ -349,6 +350,8 @@ else
 end
 
 local inspectPendingUnit = nil
+local inspectPendingSince = 0
+local queue = {}
 
 -- Inspect-interaction distance index.
 --
@@ -419,6 +422,26 @@ function lib:GetInspectStats()
     local stats = lib.inspectStats
     if (type(stats) == "table") then
         stats.learnedRange = lib.inspectRangeLimit and lib.inspectRangeLimit[lib.family] or nil
+        stats.queueLength = (type(queue) == "table") and #queue or 0
+        stats.pendingUnit = inspectPendingUnit
+        local now = (type(GetTime) == "function") and GetTime() or 0
+        stats.pendingDuration = (inspectPendingUnit and inspectPendingSince and inspectPendingSince > 0)
+            and (now - inspectPendingSince) or 0
+        local cacheCount = 0
+        local staleCount = 0
+        local incompleteCount = 0
+        if (type(lib.cache) == "table") then
+            for _, entry in pairs(lib.cache) do
+                cacheCount = cacheCount + 1
+                if (type(entry) == "table") then
+                    if (entry.stale) then staleCount = staleCount + 1 end
+                    if (entry.incomplete) then incompleteCount = incompleteCount + 1 end
+                end
+            end
+        end
+        stats.cacheCount = cacheCount
+        stats.staleCount = staleCount
+        stats.incompleteCount = incompleteCount
     end
     return stats
 end
@@ -3739,7 +3762,7 @@ local function cacheUnitData(unit, guid)
 end
 
 local nextInspectTime = 0
-local inspectPendingSince = 0
+inspectPendingSince = 0
 
 local inspectQueueTick
 
@@ -3827,16 +3850,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
     elseif (event == "PLAYER_TARGET_CHANGED") then
         if (type(UnitExists) == "function" and UnitExists("target")
-            and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))
-            and isCloseEnoughToAsk("target")) then
+                and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
+                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))
+                and isCloseEnoughToAsk("target")) then
             lib:DoInspect("target")
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (type(UnitExists) == "function" and UnitExists("mouseover")
-            and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))
-            and isCloseEnoughToAsk("mouseover")) then
+                and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
+                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))
+                and isCloseEnoughToAsk("mouseover")) then
             lib:DoInspect("mouseover")
         end
     elseif (event == "GROUP_ROSTER_UPDATE") then
@@ -3846,9 +3869,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif (event == "UNIT_INVENTORY_CHANGED") then
         local unit = ...
         if (unit and type(UnitExists) == "function" and UnitExists(unit)
-            and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-            and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))
-            and isCloseEnoughToAsk(unit)) then
+                and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
+                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))
+                and isCloseEnoughToAsk(unit)) then
             local guid = type(UnitGUID) == "function" and UnitGUID(unit)
             if (guid and lib.cache[guid]) then
                 -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
@@ -3882,7 +3905,7 @@ local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
 -- intended rate, forever, for as long as it stayed targeted.
 local INSPECT_PENDING_TIMEOUT = 3.0
 local CACHE_REFRESH_DELAY = 300
-local queue = {}
+queue = {}
 
 -- Fresh = has data, has not been flagged stale by UNIT_INVENTORY_CHANGED, and is
 -- younger than the refresh window. Stale data is still served to readers.
@@ -4185,6 +4208,10 @@ end
 local function noteInspectRejectedImpl(unit, yards, err)
     if (lib.inspectStats) then
         lib.inspectStats.rejected = (lib.inspectStats.rejected or 0) + 1
+        lib.inspectStats.lastRejectedUnit = unit
+        lib.inspectStats.lastRejectedReason = tostring(err or "unknown")
+        lib.inspectStats.lastRejectedDistance = yards
+        lib.inspectStats.lastRejectedTime = (type(GetTime) == "function") and GetTime() or 0
     end
     local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
     if (guid) then
@@ -4492,8 +4519,8 @@ end
 -- delivered just after it.
 local probeDepth = 0
 local probeUnit = nil
-local guardUnit = nil          -- the unit the open attribution window belongs to
-local guardUntil = 0           -- GetTime() after which the window has expired
+local guardUnit = nil -- the unit the open attribution window belongs to
+local guardUntil = 0  -- GetTime() after which the window has expired
 local swallowedVoiceID = nil
 local swallowedSoundKitID = nil
 local inspectErrorAddMessage, inspectPlayVocal, inspectPlayVocalID, inspectGameMessageInfo
@@ -4958,7 +4985,7 @@ inspectQueueTick = function()
     if (type(UnitExists) == "function" and UnitExists("target")) then
         local guid = (type(UnitGUID) == "function") and UnitGUID("target") or nil
         if (guid and not isCacheFresh(lib.cache[guid])
-            and isCloseEnoughToAsk("target") and lib:CanInspect("target")) then
+                and isCloseEnoughToAsk("target") and lib:CanInspect("target")) then
             if (requestInspect("target")) then
                 return
             end
@@ -4979,7 +5006,7 @@ inspectQueueTick = function()
                 unit = lib:PlayerGUIDToUnitToken(guid)
             end
             if (unit and not isCacheFresh(lib.cache[guid])
-                and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
+                    and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
                 if (requestInspect(unit)) then
                     return
                 end
@@ -4999,7 +5026,7 @@ inspectQueueTick = function()
                     -- probes per tick to discover that nothing needed doing.
                     local guid = (type(UnitGUID) == "function") and UnitGUID(u) or nil
                     if (guid and not isCacheFresh(lib.cache[guid])
-                        and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
+                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
                         if (requestInspect(u)) then
                             return
                         end
@@ -5012,7 +5039,7 @@ inspectQueueTick = function()
                 if (UnitExists(u)) then
                     local guid = (type(UnitGUID) == "function") and UnitGUID(u) or nil
                     if (guid and not isCacheFresh(lib.cache[guid])
-                        and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
+                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
                         if (requestInspect(u)) then
                             return
                         end
@@ -5109,7 +5136,7 @@ local function scanNearby()
             end
             if (type(unit) == "string" and type(UnitExists) == "function" and UnitExists(unit)) then
                 if (type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-                    and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
+                        and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
                     local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
                     if (guid and guid ~= UnitGUID("player")) then
                         platesWithUnit = platesWithUnit + 1
@@ -5345,7 +5372,8 @@ function lib:GetSpecializationIcon(class, specIndex)
     if (lib.GetTalentInfoByClass) then
         local bestTexture, bestTier = nil, -1
         for talentIndex = 1, 40 do
-            local ok, name, iconTexture, tier, _, _, _, isExceptional = pcall(lib.GetTalentInfoByClass, lib, class, specIndex, talentIndex)
+            local ok, name, iconTexture, tier, _, _, _, isExceptional = pcall(lib.GetTalentInfoByClass, lib, class,
+                specIndex, talentIndex)
             if (not ok) then break end
             if (name and iconTexture) then
                 if (isExceptional) then

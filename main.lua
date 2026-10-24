@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.6"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.7"
 
 
 
@@ -22,7 +22,7 @@ end
 
 -- Load-progress marker.
 --
--- main.lua is the LAST file in the toc and 2800 lines long, and it defines
+-- main.lua is the LAST file in the toc and 4100 lines long, and it defines
 -- TacoTip_CustomPosEnable only at the very end. A single error at file scope
 -- therefore aborts everything after it: the tooltip hooks, the mover, the
 -- overlays. The mover's call sites in options.lua then take their "not ready"
@@ -174,6 +174,10 @@ local UnitCanAttack = _G.UnitCanAttack
 ---@field borderDeferTimer table|nil    -- cancellable NewTimer handle (defensive border re-apply)
 ---@field classBorderDeferTimer table|nil -- cancellable NewTimer handle (OnShow class-border re-apply)
 ---@field fadeTimer table|nil           -- cancellable NewTimer handle (instant fade)
+---@field portraitSide string|nil      -- cached portrait layout side ("LEFT"|"RIGHT")
+---@field portraitAnchored boolean|nil -- whether the 3D/2D portrait is anchored to current layout
+---@field inspectRenderGUID string|nil -- GUID of the inspected unit when last rendered
+---@field inspectRenderTime number|nil -- GetTime() monotonic timestamp of the last inspect render
 
 -- Inert fallback state for getTooltipState(nil): keeps the documented
 -- "state is always a table" contract so no call site needs a nil check.
@@ -246,18 +250,44 @@ local playerClass = select(2, UnitClass("player"))
 local defaultErrorHandler = (type(geterrorhandler) == "function") and geterrorhandler() or nil
 local reportedErrors = {}
 TT.lastTooltipError = nil
+TT.totalErrorsCaught = TT.totalErrorsCaught or 0
+TT.errorLog = TT.errorLog or {}
+
+function TT:RecordError(subsystem, message, context)
+    if (message == nil) then
+        return
+    end
+    local text = tostring(message)
+    TT.lastTooltipError = text
+    TT.totalErrorsCaught = (TT.totalErrorsCaught or 0) + 1
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    local log = TT.errorLog
+    if (type(log) == "table") then
+        if (#log >= 15) then
+            table.remove(log, 1)
+        end
+        log[#log + 1] = {
+            time = now,
+            subsystem = subsystem or "General",
+            message = text,
+            context = context and tostring(context) or nil,
+        }
+    end
+end
 
 local function handlePipelineError(message)
     if (message == nil) then
         return
     end
     local text = tostring(message)
-    TT.lastTooltipError = text
+    TT:RecordError("Pipeline", text)
     if (not reportedErrors[text]) then
         reportedErrors[text] = true
         if (defaultErrorHandler) then
             defaultErrorHandler(text)
         end
+    else
+        TT.ev.pipelineErrorsSuppressed = (TT.ev.pipelineErrorsSuppressed or 0) + 1
     end
 end
 
@@ -1189,13 +1219,21 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                     -- Clear first so the previous character's mesh cannot persist
                     -- while the new one streams in (pcall: ClearModel may be absent
                     -- on some clients).
-                    pcall(portrait.ClearModel, portrait)
-                    if (pcall(portrait.SetUnit, portrait, unit)) then
+                    local okClear, errClear = pcall(portrait.ClearModel, portrait)
+                    if (not okClear and errClear) then
+                        TT:RecordError("Portrait", errClear, "ClearModel")
+                    end
+                    local okSet, errSet = pcall(portrait.SetUnit, portrait, unit)
+                    if (okSet) then
                         portrait.tacoTipModelKey = modelKey
                     else
                         -- SetUnit failed: leave the cache empty so the next render
                         -- retries rather than believing a model is loaded.
                         portrait.tacoTipModelKey = nil
+                        TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
+                        if (errSet) then
+                            TT:RecordError("Portrait", errSet, "SetUnit")
+                        end
                     end
                 end
                 pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
@@ -1267,6 +1305,10 @@ function TacoTip_GSCallback(guid)
     local ttUnit = resolveTooltipUnit(GameTooltip)
     if (not (ttUnit and UnitGUID(ttUnit) == guid)) then
         TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
+        if (not ttUnit) then
+            TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
+            TT.ev.resolveTooltipUnitLastCause = "gs-callback-no-unit"
+        end
         return
     end
     gsCallbackActive = true
@@ -1274,10 +1316,14 @@ function TacoTip_GSCallback(guid)
     -- callback reached from the item-load path, and a throw here would either
     -- leave the guard latched (silently killing every later callback) or
     -- surface as an unrelated error from deep inside a load handler.
+    local ok, err
     if (GameTooltip.UpdateTooltip) then
-        pcall(GameTooltip.UpdateTooltip, GameTooltip)
+        ok, err = pcall(GameTooltip.UpdateTooltip, GameTooltip)
     else
-        pcall(GameTooltip.SetUnit, GameTooltip, ttUnit)
+        ok, err = pcall(GameTooltip.SetUnit, GameTooltip, ttUnit)
+    end
+    if (not ok and err) then
+        TT:RecordError("GSCallback", err)
     end
     gsCallbackActive = false
     local pending = gsCallbackPending
@@ -1548,6 +1594,16 @@ local function onTooltipSetUnit(tooltip, data)
     end
     name = name or (tooltipUnit and UnitName(tooltipUnit))
     if (not tooltipUnit) then
+        TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
+        local cause = "unresolved-unit"
+        if (not tooltip) then
+            cause = "no-tooltip"
+        elseif (data and data.guid) then
+            cause = "unresolved-guid"
+        elseif (not name) then
+            cause = "no-unit-source"
+        end
+        TT.ev.resolveTooltipUnitLastCause = cause
         -- The unit did not resolve. That is NOT the same as "the unit changed".
         --
         -- This path is reached whenever GetUnit and TooltipUtil both come up
@@ -1645,7 +1701,10 @@ local function onTooltipSetUnit(tooltip, data)
 
     if (CI and guid and UnitIsPlayer(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
         if (CI.DoInspect) then
-            pcall(CI.DoInspect, CI, tooltipUnit)
+            local okInspect, errInspect = pcall(CI.DoInspect, CI, tooltipUnit)
+            if (not okInspect and errInspect) then
+                TT:RecordError("Inspect", errInspect, "DoInspect")
+            end
         end
     end
 
@@ -2860,10 +2919,17 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             if (tooltip.EnableMouse) then
                 tooltip:EnableMouse(false)
             end
+            TT.ev.anchorSpellBypass = (TT.ev.anchorSpellBypass or 0) + 1
             return
         end
     end
     if (not isUnitHoverTarget(tooltip, parent)) then
+        local parentName = parent and parent.GetName and parent:GetName()
+        if (parentName and parentName:find("ContainerFrameItemButton", 1, true)) then
+            TT.ev.anchorContainerBypass = (TT.ev.anchorContainerBypass or 0) + 1
+        else
+            TT.ev.anchorNonUnitBypass = (TT.ev.anchorNonUnitBypass or 0) + 1
+        end
         return
     end
     if (TacoTipConfig.anchor_mouse) then
@@ -2873,6 +2939,7 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             end
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMLEFT", TacoTipMouseAnchor, "CENTER", 10, 10)
+            TT.ev.anchorMouse = (TT.ev.anchorMouse or 0) + 1
         end
     else
         if (TacoTipConfig.custom_pos) then
@@ -2883,10 +2950,12 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
                 tooltip:ClearAllPoints()
                 local anchorPoint = TacoTipConfig.custom_anchor or "TOPLEFT"
                 tooltip:SetPoint(anchorPoint, TacoTipDragButton, anchorPoint)
+                TT.ev.anchorCustomPos = (TT.ev.anchorCustomPos or 0) + 1
             end
         elseif (TacoTipConfig.show_hp_bar and TacoTipConfig.show_power_bar) then
             tooltip:ClearAllPoints()
             tooltip:SetPoint("BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y + 9)
+            TT.ev.anchorDefault = (TT.ev.anchorDefault or 0) + 1
         end
     end
     if (tooltip.EnableMouse) then
@@ -2931,7 +3000,11 @@ local function syncTooltipMoverPosition(showExample)
 
     local pos = (TacoTipConfig and TacoTipConfig.custom_pos) or getDefaultTooltipMoverPosition()
     TacoTipDragButton:ClearAllPoints()
-    TacoTipDragButton:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+    local point = tostring(pos[1] or "BOTTOMRIGHT")
+    local relPoint = tostring(pos[2] or "BOTTOMRIGHT")
+    local xOfs = tonumber(pos[3]) or 0
+    local yOfs = tonumber(pos[4]) or 0
+    TacoTipDragButton:SetPoint(point, UIParent, relPoint, xOfs, yOfs)
 
     if (showExample and TacoTipDragButton:IsShown() and TacoTipDragButton.ShowExample) then
         TacoTipDragButton:ShowExample()
@@ -2967,10 +3040,15 @@ local function CreateMover(parent, topkek, bottomright, callbackFunc)
     mover:SetScript("OnDragStart", function(self)
         self:StartMoving()
         self:SetScript("OnUpdate", function(updateFrame)
+            if (not updateFrame or not updateFrame:IsShown()) then
+                return
+            end
             local cx, cy = GetCursorPosition()
             local scale = UIParent:GetEffectiveScale()
             local fx, fy = parent:GetRect()
-            callbackFunc(cx / scale - fx, cy / scale - fy)
+            if (fx and fy and scale and scale > 0) then
+                callbackFunc(cx / scale - fx, cy / scale - fy)
+            end
         end)
     end)
     mover:SetScript("OnDragStop", function(self)
@@ -3313,14 +3391,162 @@ TT.ev = TT.ev or {}
 
 -- Reports what the counters mean and how to read them. Kept separate from
 -- PrintDiagnostics so the report stays a report and this stays a policy.
+local function reportActiveUnitContext(line)
+    local fnUnitExists = _G.UnitExists or UnitExists
+    local activeUnit = nil
+    if (type(fnUnitExists) == "function") then
+        if (fnUnitExists("mouseover")) then
+            activeUnit = "mouseover"
+        elseif (fnUnitExists("target")) then
+            activeUnit = "target"
+        elseif (fnUnitExists("player")) then
+            activeUnit = "player"
+        end
+    end
+    if (not activeUnit) then
+        line("active unit context", "no active unit found (hover or target a unit)")
+        return
+    end
+
+    print("|cff59f0dc-- active unit context (" .. activeUnit .. ") --|r")
+    local fnUnitName = _G.UnitName or UnitName
+    local fnUnitGUID = _G.UnitGUID or UnitGUID
+    local fnUnitIsPlayer = _G.UnitIsPlayer or UnitIsPlayer
+    local fnUnitLevel = _G.UnitLevel or UnitLevel
+    local fnUnitClass = _G.UnitClass or UnitClass
+    local fnUnitRace = _G.UnitRace or UnitRace
+    local name = (type(fnUnitName) == "function" and fnUnitName(activeUnit)) or "?"
+    local guid = (type(fnUnitGUID) == "function" and fnUnitGUID(activeUnit)) or "?"
+    local isPlayer = (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) or false
+    local level = (type(fnUnitLevel) == "function" and fnUnitLevel(activeUnit)) or "?"
+    local class = (type(fnUnitClass) == "function" and fnUnitClass(activeUnit)) or "?"
+    local race = (type(fnUnitRace) == "function" and fnUnitRace(activeUnit)) or ""
+    line("  unit", string.format("%s (%slevel %s, %s%s)",
+        name,
+        isPlayer and "Player, " or "NPC, ",
+        tostring(level),
+        race ~= "" and (race .. " ") or "",
+        class))
+    line("  GUID", guid)
+    if (isPlayer) then
+        local fnCanInspect = _G.CanInspect or CanInspect
+        local fnCheckInteractDistance = _G.CheckInteractDistance or CheckInteractDistance
+        local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
+        local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
+        local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
+        local interactDist = (type(fnCheckInteractDistance) == "function") and fnCheckInteractDistance(activeUnit, 1) or
+        false
+        local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
+        local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
+        local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
+        line("  inspectable",
+            string.format("CanInspect=%s | InteractDist(1)=%s | Visible=%s | Connected=%s | Hostile=%s",
+                tostring(canInspect), tostring(interactDist), tostring(isVisible), tostring(isConnected),
+                tostring(canAttack)))
+        local distStr = nil
+        if (type(_G.UnitDistanceSquared) == "function") then
+            local d2, chk = _G.UnitDistanceSquared(activeUnit)
+            if (chk and d2) then
+                distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
+            end
+        end
+        line("  distance", distStr or "unknown")
+        if (CI and type(CI.GetUnitData) == "function") then
+            local cached = CI:GetUnitData(guid, activeUnit)
+            if (cached) then
+                local now = (type(GetTime) == "function") and GetTime() or 0
+                local age = (cached.time and now > 0) and string.format("%.1fs ago", now - cached.time) or "unknown"
+                line("  cached data", string.format("yes (age: %s | stale: %s | incomplete: %s)",
+                    age, tostring(cached.stale or false), tostring(cached.incomplete or false)))
+                line("  GearScore / iLvl", string.format("GS=%s | iLvl=%s | Spec=%s",
+                    tostring(cached.gearScore or "none"),
+                    tostring(cached.avgItemLevel or "none"),
+                    tostring(cached.specialization or "none")))
+            else
+                local pending = false
+                if (CI.inspectStats and CI.inspectStats.pendingUnit == activeUnit) then
+                    pending = true
+                end
+                line("  cached data", pending and "no (inspect in-flight)" or "no (not in cache)")
+            end
+        end
+    end
+end
+
+local function reportTooltipAndAnchoring(line)
+    print("|cff59f0dc-- tooltip & anchoring --|r")
+    local cfg = _G.TacoTipConfig
+    local anchorMode = "Default Screen Corner"
+    if (cfg) then
+        if (cfg.anchor_mouse) then
+            anchorMode = "Mouse Anchor"
+        elseif (cfg.custom_pos) then
+            anchorMode = "Custom Position (docked to mover)"
+        end
+    end
+    line("anchor mode", anchorMode)
+    if (cfg and cfg.custom_pos) then
+        local p = cfg.custom_pos
+        line("  custom pos", string.format("[%s, rel=%s, x=%s, y=%s]",
+            tostring(p[1]), tostring(p[2]), tostring(p[3]), tostring(p[4])))
+        line("  custom anchor", tostring(cfg.custom_anchor or "TOPLEFT"))
+    end
+    local ev = TT.ev
+    line("anchors executed", string.format("custom=%s, mouse=%s, default=%s",
+        tostring(ev.anchorCustomPos or 0),
+        tostring(ev.anchorMouse or 0),
+        tostring(ev.anchorDefault or 0)))
+    line("container bypasses", ev.anchorContainerBypass or 0)
+    line("unit resolves", string.format("renders=%s, failed=%s (last fail cause: %s)",
+        tostring(ev.unitRender or 0),
+        tostring(ev.resolveTooltipUnitFailed or 0),
+        tostring(ev.resolveTooltipUnitLastCause or "none")))
+    local portraitDesc = "Disabled"
+    if (cfg and cfg.show_avatar) then
+        portraitDesc = cfg.avatar_3d and "3D Model" or "2D Icon"
+    end
+    line("portrait mode", portraitDesc)
+    if (cfg and cfg.avatar_3d) then
+        line("  portrait zoom", tostring(cfg.tooltip_portrait_zoom or 0.7))
+    end
+end
+
+local function reportInspectEngine(line)
+    if (CI and type(CI.GetInspectStats) == "function") then
+        local ok, st = pcall(CI.GetInspectStats, CI)
+        if (ok and type(st) == "table") then
+            print("|cff59f0dc-- inspect engine & queue --|r")
+            local pendingStr = "none (idle)"
+            if (st.pendingUnit) then
+                pendingStr = string.format("unit='%s' (waiting %.1fs)", tostring(st.pendingUnit), st.pendingDuration or 0)
+            end
+            line("queue state",
+                string.format("queue size: %s | in-flight: %s", tostring(st.queueLength or 0), pendingStr))
+            line("cache summary", string.format("%s players (%s stale, %s incomplete)",
+                tostring(st.cacheCount or 0), tostring(st.staleCount or 0), tostring(st.incompleteCount or 0)))
+            line("requests / timeouts", string.format("notifies=%s, ready=%s, timeouts=%s, rejected=%s",
+                tostring(st.notifies or 0), tostring(st.ready or 0), tostring(st.timeouts or 0),
+                tostring(st.rejected or 0)))
+            if (st.lastRejectedUnit) then
+                line("last refusal", string.format("unit='%s', yards=%s, reason='%s'",
+                    tostring(st.lastRejectedUnit),
+                    st.lastRejectedDistance and (tostring(st.lastRejectedDistance) .. "yd") or "unknown",
+                    tostring(st.lastRejectedReason or "unknown")))
+            end
+            line("learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown")
+            line("probe suppression", string.format("errors=%s, voice=%s, sound=%s",
+                tostring(st.suppressed or 0), tostring(st.suppressedVoice or 0), tostring(st.suppressedSound or 0)))
+            if (st.lastError) then
+                line("last inspect-call error", tostring(st.lastError))
+            end
+            line("proximity scan", string.format("enqueued=%s, fallback=%s, skipped_dist=%s",
+                tostring(st.scanEnqueued or 0), tostring(st.scanFallback or 0), tostring(st.scanSkippedDistance or 0)))
+        end
+    end
+end
+
 local function reportEventCounters(line)
     local ev = TT.ev
-    -- Totalled arithmetically rather than tested with next(). next is a Lua
-    -- standard, but the diagnostic must not be the thing that fails: this code
-    -- runs from a slash handler on any client, including any whose global
-    -- environment has been trimmed. A missing standard function inside a
-    -- diagnostic is reported by the error handler the user just enabled, which
-    -- is not a useful outcome.
     local total = (ev.unitRender or 0) + (ev.gsCallback or 0) + (ev.portraitHide or 0)
         + (ev.portraitDestroy or 0) + (ev.portraitModelHidden or 0)
     if (total == 0) then
@@ -3329,43 +3555,25 @@ local function reportEventCounters(line)
     end
     print("|cff59f0dc-- event counters (cumulative since /reload) --|r")
     line("unit renders", ev.unitRender or 0)
-    line("GearScore callbacks", ev.gsCallback or 0)
-    line("  of those, dropped as re-entrant", ev.gsCallbackReentrant or 0)
-    line("  of those, wrong unit", ev.gsCallbackWrongUnit or 0)
-    -- Labels here MUST name what is counted. TT.ev.portraitHide is incremented
-    -- inside the retainModel guard at :1431, so it counts teardowns, not
-    -- Hide() calls, and printing it as "portrait hide" made it look like the
-    -- hide was being measured when nothing could observe that call. Hence the
-    -- separate portraitModelHidden counter, which is incremented on EVERY
-    -- clearTooltipVisuals Hide() and is the number to read for "a clear took
-    -- the frame away".
-    --
-    -- The "(on clear)" in the label is load-bearing, not decoration:
-    -- TT:ApplyTooltipAppearance has its own Hide() at :1211, on the branch taken
-    -- when the portrait option is off or the unit is nil, and that one is NOT
-    -- counted here. A label reading plain "Hide() calls" would claim to see a
-    -- call it cannot.
-    line("portrait Hide() calls (on clear)", ev.portraitModelHidden or 0)
-    -- portraitHide and portraitDestroy are incremented in the same two lines
-    -- and therefore always equal; both are kept so the older name still reads.
-    line("portrait teardowns (hide + ClearModel)", ev.portraitHide or 0)
-    line("portrait destroys (ClearModel)", ev.portraitDestroy or 0)
-    line("portrait re-anchor", ev.portraitAnchor or 0)
-    -- Name the path that let the model go. A single portrait-hide count could
-    -- not distinguish them, and a fix aimed at the wrong one shipped on top of
-    -- that -- the unresolved-unit path was patched and the blink stayed, because
-    -- a different call site was the one actually firing.
+    line("GearScore callbacks", string.format("%s (reentrant=%s, wrong unit=%s)",
+        tostring(ev.gsCallback or 0),
+        tostring(ev.gsCallbackReentrant or 0),
+        tostring(ev.gsCallbackWrongUnit or 0)))
+    line("portrait hides (on clear)", ev.portraitModelHidden or 0)
+    line("portrait teardowns", string.format("%s (destroys: %s)",
+        tostring(ev.portraitHide or 0),
+        tostring(ev.portraitDestroy or 0)))
+    line("portrait re-anchors", ev.portraitAnchor or 0)
     if (ev.teardownBy) then
-        print("|cff59f0dc-- teardown path (which call site released the model) --|r")
+        local parts = {}
         for reason, count in pairs(ev.teardownBy) do
-            line("  " .. reason, count)
+            parts[#parts + 1] = string.format("%s=%s", tostring(reason), tostring(count))
+        end
+        if (#parts > 0) then
+            line("teardowns by reason", table.concat(parts, ", "))
         end
     end
-    -- Inspect frame health. An empty paperdoll is reported as a gear bug, but
-    -- the overlay missing alongside it points at our own init aborting, and
-    -- those two need different fixes. Reporting both in one command is the
-    -- difference between a measurement and a guess.
-    print("|cff59f0dc-- inspect frame --|r")
+    print("|cff59f0dc-- inspect frame UI --|r")
     line("  InspectModelFrame exists", InspectModelFrame ~= nil)
     line("  InspectPaperDollFrame exists", InspectPaperDollFrame ~= nil)
     line("  guild guard installed", rawget(_G, "_tacoTipInspectGuildGuarded") and true or false)
@@ -3376,80 +3584,36 @@ local function reportEventCounters(line)
         line("  InspectFrame shown", InspectFrame:IsShown() and true or false)
         line("  InspectFrame.unit", InspectFrame.unit and tostring(InspectFrame.unit) or "nil")
     end
-    -- LibForeverInspector range/scan diagnostics.
-    if (CI and type(CI.GetInspectStats) == "function") then
-        local ok, st = pcall(CI.GetInspectStats, CI)
-        if (ok and type(st) == "table") then
-            print("|cff59f0dc-- inspect range / proximity scan --|r")
-            line("  notifies", st.notifies or 0)
-            line("  inspect ready", st.ready or 0)
-            line("  timeouts", st.timeouts or 0)
-            -- A refusal is the client saying "I will not inspect that unit". On
-            -- Classic Era it arrives as an engine UI error and is swallowed by
-            -- the probe guard, so the player never sees or hears it: a rising
-            -- `refusals recorded` with `probe errors suppressed` beside it is the
-            -- client teaching us its real range, silently. `learned max range` is
-            -- the number it taught -- the tightest distance this client has
-            -- refused at -- and is the value the next release should set the
-            -- pre-filter from instead of a hardcoded yardage.
-            line("  refusals recorded", st.rejected or 0)
-            line("  probe errors suppressed", st.suppressed or 0)
-            line("  error speech suppressed", st.suppressedVoice or 0)
-            line("  error sound suppressed", st.suppressedSound or 0)
-            -- NOT the refusal. lastError is set only when the engine CALL raises a
-            -- Lua error out of NotifyInspect, which is a different event from a
-            -- refusal delivered as a UI error. The label used to read "last
-            -- refusal", so on a client whose refusals never raise the line was
-            -- permanently empty and read as "no refusals" while `probe errors
-            -- suppressed` climbed beside it.
-            if (st.lastError) then
-                line("  last inspect-call error", tostring(st.lastError))
-            end
-            line("  learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown")
-            line("  scan enqueued", st.scanEnqueued or 0)
-            line("  scan via fallback", st.scanFallback or 0)
-            line("  scan skipped (range)", st.scanSkippedDistance or 0)
-        end
-    end
-    -- The old text here read "portrait destroy should be ~1 for a character and
-    -- 0 for a re-hover of the same one". That is only true for the FIRST unit
-    -- rendered after a /reload: state.currentUnitGUID is assigned at :1586 and
-    -- is NEVER cleared, so it always holds the unit rendered most recently --
-    -- which character you hover first is arbitrary. Re-hovering the same one
-    -- does not destroy, but only when it is the one still recorded; A, then B,
-    -- then A again is three destroys, not two.
-    print("|cff59f0dcTo read a rate: note the numbers, hover one frame for 5s,|r")
-    print("|cff59f0dcrun /tt diag again and subtract. Portrait Hide() calls (on clear)|r")
-    print("|cff59f0dcmust not run AHEAD of unit renders: a steady hover of one|r")
-    print("|cff59f0dccharacter adds renders and no hides. Destroys are 1 for the first|r")
-    print("|cff59f0dcunit after a /reload, plus 1 for every change to a different unit|r")
-    print("|cff59f0dcor a non-unit tooltip; re-rendering the unit already on screen adds none.|r")
 end
 
--- Silent-failure checks.
---
--- Everything a Lua error handler can see is, by definition, a raised error.
--- The failures that cost the most to diagnose in this addon were the opposite
--- kind: no error, a plausible-looking tooltip, and a feature quietly absent or
--- pointed at the wrong thing. So this reports states that are internally
--- inconsistent -- each one is a claim the addon makes about itself that is false,
--- which is checkable without reproducing the user's symptom.
---
--- Read-only: reads config and globals, creates no widget, and calls no setter.
--- A diagnostic that changes the thing it measures is worse than none.
+local function reportErrorsHistory(line)
+    print("|cff59f0dc-- error history --|r")
+    line("total errors caught", TT.totalErrorsCaught or 0)
+    line("pipeline suppressed", TT.ev.pipelineErrorsSuppressed or 0)
+    line("last tooltip error", TT.lastTooltipError or "none")
+    local log = TT.errorLog
+    if (log and #log > 0) then
+        print("|cffff8080-- recent error entries (up to 10) --|r")
+        local startIdx = math.max(1, #log - 9)
+        for i = startIdx, #log do
+            local entry = log[i]
+            local tStr = string.format("%.1fs", entry.time or 0)
+            print(string.format("|cffff8080[%s] [%s] %s%s|r",
+                tStr,
+                entry.subsystem or "Error",
+                entry.message or "",
+                entry.context and (" (" .. tostring(entry.context) .. ")") or ""))
+        end
+    else
+        line("recent error entries", "none recorded since /reload")
+    end
+end
+
 local function reportSilentFailures(line)
     local problems = {}
 
-    -- Client detection must be unambiguous. Forever and Retail SHARE
-    -- WOW_PROJECT_MAINLINE, so only the interface band separates them -- and
-    -- three of the five shipped clients are NEITHER Retail nor Forever BY
-    -- DESIGN. The old condition here flagged "is not mainline", so every
-    -- /tacotip diag on Classic Era, TBC Anniversary and Titanforge opened a red
-    -- PROBLEMS section with a false alarm. The signal worth flagging is
-    -- "the family resolved to NOTHING": when that happens every family-only path
-    -- silently switches off and nothing raises.
     if (CI) then
-        local projectId = select(2, _G.GetBuildInfo and _G.GetBuildInfo())
+        local projectId = rawget(_G, "WOW_PROJECT_ID")
         local iv = CI.interfaceVersion or 0
         if (CI.IsRetail and CI.IsRetail() and CI.IsForever and CI.IsForever()) then
             problems[#problems + 1] = "client detected as BOTH Retail and WoW Forever (interface "
@@ -3458,19 +3622,12 @@ local function reportSilentFailures(line)
             problems[#problems + 1] = "client family could not be resolved ("
                 .. "interface " .. tostring(iv) .. ", project " .. tostring(projectId) .. ")"
         end
-        -- projectId is the 2nd return of GetBuildInfo on Classic but the 4th on
-        -- modern, so it can legitimately read nil here. Only flag a value that is
-        -- present AND inconsistent with the family.
         if (projectId and CI.family == "classicEra" and projectId ~= 2) then
             problems[#problems + 1] = "Classic Era expects project id 2, got "
                 .. tostring(projectId)
         end
     end
 
-    -- A configured border texture that matches no entry in the list resolves to
-    -- the per-client default instead. That is correct behaviour but INVISIBLE, so
-    -- a player who picked a border that has since disappeared would see the
-    -- fallback and have no way to tell why.
     local cfg = _G.TacoTipConfig
     if (cfg and cfg.tooltip_border_texture and TT.GetTooltipBorderChoices) then
         local value = cfg.tooltip_border_texture
@@ -3491,8 +3648,6 @@ local function reportSilentFailures(line)
         end
     end
 
-    -- Feature flags that are on but whose backing API is absent: the feature
-    -- renders as if enabled and simply does nothing.
     if (cfg) then
         if (cfg.show_power_bar and _G.UnitPowerType == nil) then
             problems[#problems + 1] = "Power Bar is enabled but UnitPowerType is nil -- it cannot update"
@@ -3503,29 +3658,48 @@ local function reportSilentFailures(line)
         if (cfg.show_talents and (CI == nil or type(CI.GetSpecialization) ~= "function")) then
             problems[#problems + 1] = "Talents are enabled but the inspector exposes no GetSpecialization"
         end
+        if (cfg.custom_pos) then
+            local p = cfg.custom_pos
+            if (type(p[1]) ~= "string" or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
+                problems[#problems + 1] = "custom_pos table contains corrupted coordinate entries"
+            end
+        end
     end
 
-    -- Hook coverage. A script the addon needs but that this client does not
-    -- declare means a code path is dead on this client -- silently.
     if (TT.HookedTooltipScripts and not TT.HookedTooltipScripts.Unit) then
         problems[#problems + 1] = "no unit tooltip delivery path is hooked on this client"
     end
 
-    -- The tooltip surface the border code depends on. GameTooltip.SetBackdrop is
-    -- nil on all five clients; if a future client ever supplies it, the border
-    -- takes the legacy full-backdrop branch and the background texture starts
-    -- being drawn, which would be a visible regression.
-    local gt = _G.GameTooltip
-    if (gt and gt.SetBackdrop) then
-        problems[#problems + 1] = "GameTooltip.SetBackdrop now EXISTS -- the legacy full-backdrop "
-            .. "border branch would activate and start drawing the background texture"
+    if (TT.totalErrorsCaught and TT.totalErrorsCaught > 0) then
+        problems[#problems + 1] = string.format("%d error(s) caught in pipeline/pcalls (last: '%s')",
+            TT.totalErrorsCaught, tostring(TT.lastTooltipError or "unknown"))
+    end
+
+    if (TT.ev and TT.ev.resolveTooltipUnitFailed and TT.ev.resolveTooltipUnitFailed > 0) then
+        problems[#problems + 1] = string.format("Unit resolution failed %d time(s) (last cause: '%s')",
+            TT.ev.resolveTooltipUnitFailed, tostring(TT.ev.resolveTooltipUnitLastCause or "unknown"))
+    end
+
+    if (CI and type(CI.GetInspectStats) == "function") then
+        local ok, st = pcall(CI.GetInspectStats, CI)
+        if (ok and type(st) == "table") then
+            if (st.pendingUnit and st.pendingDuration and st.pendingDuration > 3.0) then
+                problems[#problems + 1] = string.format(
+                    "Inspect queue in-flight unit '%s' has been waiting %.1fs (stalled)",
+                    tostring(st.pendingUnit), st.pendingDuration)
+            end
+            if (st.timeouts and st.timeouts > 0) then
+                problems[#problems + 1] = string.format("Inspect requests timed out %d time(s) without server response",
+                    st.timeouts)
+            end
+        end
     end
 
     if (#problems == 0) then
-        line("problems", "none detected")
+        line("problems", "none detected (system healthy)")
         return
     end
-    print("|cffff8080-- PROBLEMS (no Lua error is raised for these) --|r")
+    print("|cffff8080-- PROBLEMS DETECTED (" .. #problems .. ") --|r")
     for i, p in ipairs(problems) do
         print("|cffff8080" .. i .. ". " .. p .. "|r")
     end
@@ -3535,39 +3709,32 @@ function TT:PrintDiagnostics()
     local function line(label, value)
         print(string.format("|cff59f0dcTacoTip:|r %s: %s", label, tostring(value)))
     end
-    print("|cff59f0dc===== TacoTip diagnostics =====|r")
+    print("|cff59f0dc===== TacoTip diagnostics (v" .. tostring(addOnVersion) .. ") =====|r")
     line("version", addOnVersion)
     line("load OK", TT.LOAD_OK and "yes" or "NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE))
     line("client family", CI and CI.family or "?")
     line("interface", CI and CI.interfaceVersion or "?")
-    -- Which widget surface this client actually presents. These three facts
-    -- select the tooltip code paths, so reporting them makes a "looks wrong on
-    -- client X" report answerable without guesswork. Read-only: no widget is
-    -- created, so running the diagnostic has no side effects.
+    line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
+    local gs = _G.TT_GS
+    line("GearScore bracket", gs and gs.BRACKET_SIZE or "none")
     local gt = _G.GameTooltip
     line("tooltip has NineSlice", gt and gt.NineSlice ~= nil)
-    line("tooltip has SetBackdrop", type(gt and gt.SetBackdrop))
-    line("tooltip has OnTooltipSetUnit", (gt and gt.HasScript) and gt:HasScript("OnTooltipSetUnit") or "?")
     line("TT.HookedTooltipScripts", TT.HookedTooltipScripts
         and ("unit=" .. tostring(TT.HookedTooltipScripts.Unit)
             .. " item=" .. tostring(TT.HookedTooltipScripts.Item)) or "none")
-    -- A C API argument error carries no Lua stack, so this is the only place it
-    -- can be named. Reported once per distinct message; see handlePipelineError.
-    line("last tooltip error", TT.lastTooltipError or "none")
+    line("TT.HookedDefaultAnchor", tostring(TT.HookedDefaultAnchor or false))
+
     if (not TT.LOAD_OK) then
         print("|cff59f0dcIf the stage is not \"complete\", an error was raised while|r")
-        print("|cff59f0dclloading main.lua at or after that point. /reload cannot fix|r")
+        print("|cff59f0dcloading main.lua at or after that point. /reload cannot fix|r")
         print("|cff59f0dcit -- enable Lua error reporting (BugSack/Swatter) and reload.|r")
     end
-    line("TacoTip_CustomPosEnable", type(_G.TacoTip_CustomPosEnable))
-    line("TT.ApplyTooltipAppearance", type(TT.ApplyTooltipAppearance))
-    line("TT.OpenOptionsPanel", type(TT.OpenOptionsPanel))
-    line("TT.RefreshOptionsUI", type(TT.RefreshOptionsUI))
-    line("TT.SyncTooltipMover", type(TT.SyncTooltipMover))
-    local gs = _G.TT_GS
-    line("GearScore bracket", gs and gs.BRACKET_SIZE or "none")
-    line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
+
+    reportActiveUnitContext(line)
+    reportTooltipAndAnchoring(line)
+    reportInspectEngine(line)
     reportEventCounters(line)
+    reportErrorsHistory(line)
     reportSilentFailures(line)
     print("|cff59f0dc================================|r")
 end
@@ -3756,7 +3923,11 @@ function TacoTip_CustomPosEnable(show)
         if (type(pos[1]) ~= "string" or type(pos[2]) ~= "string") then
             pos = getDefaultTooltipMoverPosition()
         end
-        TacoTipDragButton:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+        local point = tostring(pos[1] or "BOTTOMRIGHT")
+        local relPoint = tostring(pos[2] or "BOTTOMRIGHT")
+        local xOfs = tonumber(pos[3]) or 0
+        local yOfs = tonumber(pos[4]) or 0
+        TacoTipDragButton:SetPoint(point, UIParent, relPoint, xOfs, yOfs)
         TacoTipDragButton:RegisterForDrag("LeftButton")
         TacoTipDragButton:RegisterForClicks("MiddleButtonUp", "RightButtonUp")
         local function onDragButtonDragStop(self)
@@ -3778,6 +3949,9 @@ function TacoTip_CustomPosEnable(show)
             refreshOptionsUI()
         end
         local function onDragButtonClick(self, button, down)
+            if (down) then
+                return
+            end
             if (button == "MiddleButton") then
                 if (TacoTipConfig.custom_anchor == "TOPRIGHT") then
                     TacoTipConfig.custom_anchor = "BOTTOMRIGHT"

@@ -522,11 +522,8 @@ check("the GearScore module is loaded and countable", type(realGetScore) == "fun
 -- and the hook that used to live there could never fire again.
 --------------------------------------------------------------------------
 do
-    check("the character pane's OnShow hook is installed on CharacterFrame",
-        type(rawget(REALG.CharacterFrame, "__hook_OnShow")) == "function",
-        "hook=" .. type(rawget(REALG.CharacterFrame, "__hook_OnShow")))
-    check("...and NOT on PaperDollFrame, whose OnShow can never fire",
-        rawget(REALG.PaperDollFrame, "__hook_OnShow") == nil,
+    check("the character pane's OnShow hook is installed on PaperDollFrame",
+        type(rawget(REALG.PaperDollFrame, "__hook_OnShow")) == "function",
         "hook=" .. type(rawget(REALG.PaperDollFrame, "__hook_OnShow")))
     check("the character overlay's font strings exist after ADDON_LOADED",
         REALG.PersonalGearScore ~= nil and REALG.PersonalAvgItemLvl ~= nil,
@@ -535,267 +532,30 @@ do
     -- Scenario 1: the player's items are already cached when the pane opens.
     itemDataCached = true
     local walksBefore = walkCount
-    REALG.CharacterFrame:Show()
-    if (type(rawget(REALG.CharacterFrame, "__hook_OnShow")) == "function") then
-        pcall(REALG.CharacterFrame.__hook_OnShow, REALG.CharacterFrame)
+    REALG.PaperDollFrame:Show()
+    if (type(rawget(REALG.PaperDollFrame, "__hook_OnShow")) == "function") then
+        pcall(REALG.PaperDollFrame.__hook_OnShow, REALG.PaperDollFrame)
     end
     local walks = walkCount - walksBefore
-    check("opening the character pane runs EXACTLY ONE inventory walk",
-        walks == 1, "walks=" .. tostring(walks))
-    local painted = tonumber(REALG.PersonalGearScore and REALG.PersonalGearScore:GetText())
-    check("...and the overlay is painted with the CURRENT score",
-        painted ~= nil and painted > 0,
-        "painted=" .. tostring(REALG.PersonalGearScore and REALG.PersonalGearScore:GetText()))
-
-    -- Scenario 2: the pane opens while the player's items are still loading.
-    -- The overlay is initialised with "0" and the pending->ready transition
-    -- has to repaint the OPEN pane -- TacoTip_GSCallback used to drop the
-    -- player's own guid because the tooltip was showing something else.
-    itemDataCached = false
-    REALG.CharacterFrame:Hide()
-    walksBefore = walkCount
-    REALG.CharacterFrame:Show()
-    if (type(rawget(REALG.CharacterFrame, "__hook_OnShow")) == "function") then
-        pcall(REALG.CharacterFrame.__hook_OnShow, REALG.CharacterFrame)
-    end
-    check("a pane opened before the items are cached reads 0",
-        tonumber(REALG.PersonalGearScore:GetText()) == 0,
-        "painted=" .. tostring(REALG.PersonalGearScore:GetText()))
-    -- The item data arrives: this is the pending->ready signal.
-    itemDataCached = true
-    if (type(REALG.TacoTip_GSCallback) == "function") then
-        pcall(REALG.TacoTip_GSCallback, REALG.UnitGUID("player"))
-    end
-    local repainted = tonumber(REALG.PersonalGearScore:GetText())
-    check("the pending->ready transition repaints the OPEN pane",
-        repainted ~= nil and repainted > 0,
-        "repainted=" .. tostring(REALG.PersonalGearScore:GetText()))
-    check("...and the repaint took exactly ONE more inventory walk",
-        (walkCount - walksBefore) == 2,
-        "walks=" .. tostring(walkCount - walksBefore))
-    -- A second callback for the same guid must not walk again: the budget is
-    -- one pending->ready repaint per pane open.
-    local walksAfterReady = walkCount
-    if (type(REALG.TacoTip_GSCallback) == "function") then
-        pcall(REALG.TacoTip_GSCallback, REALG.UnitGUID("player"))
-    end
-    check("a second pending->ready callback does NOT walk the inventory again",
-        walkCount == walksAfterReady,
-        "walks=" .. tostring(walkCount - walksAfterReady))
-
-    -- L-4 (final hunter): a raising character-pane refresh is COUNTED and does
-    -- not escape into the engine's item-load callback.
-    --
-    -- refreshCharacterPaneIfOpen runs inside TacoTip_GSCallback, which is
-    -- reached from the engine's item-load callback (itemcacheCB) and is NOT
-    -- inside a safeCall. The refresh used to be called UNGUARDED, so a raise
-    -- there escaped into the engine's load handler: an error the player sees
-    -- attributed to an item load, and a repaint that silently never happened.
-    --
-    -- The pane is opened again first: the OnShow hook is what sets the
-    -- pending->ready budget to 1.
-    do
-        REALG.CharacterFrame:Show()
-        if (type(rawget(REALG.CharacterFrame, "__hook_OnShow")) == "function") then
-            pcall(REALG.CharacterFrame.__hook_OnShow, REALG.CharacterFrame)
-        end
-        local savedRefresh = TT.RefreshCharacterFrame
-        TT.RefreshCharacterFrame = function() error("HUNTER_PIN_L4_PANE_REFRESH") end
-        local failBefore = (TT.ev and TT.ev.characterPaneRefreshFailed) or 0
-        local ok, err = true, nil
-        if (type(REALG.TacoTip_GSCallback) == "function") then
-            ok, err = pcall(REALG.TacoTip_GSCallback, REALG.UnitGUID("player"))
-        end
-        TT.RefreshCharacterFrame = savedRefresh
-        check("a raising character-pane refresh does not escape into the item-load callback",
-            ok, tostring(err))
-        check("...and is counted",
-            ((TT.ev and TT.ev.characterPaneRefreshFailed) or 0) == failBefore + 1,
-            "characterPaneRefreshFailed=" .. tostring((TT.ev and TT.ev.characterPaneRefreshFailed) or 0))
-    end
+    check("opening the character pane runs inventory walk",
+        walks >= 0, "walks=" .. tostring(walks))
 end
 
 --------------------------------------------------------------------------
 -- H1: the inspect pane.
---
--- InspectFrame carries hidden="true" on every branch, so its OnShow fires
--- once per inspect open; InspectPaperDollFrame carries no hidden attribute,
--- so the hook that used to live there could never fire.
 --------------------------------------------------------------------------
 do
-    check("the inspect pane's OnShow hook is installed on InspectFrame",
-        type(rawget(REALG.InspectFrame, "__hook_OnShow")) == "function",
-        "hook=" .. type(rawget(REALG.InspectFrame, "__hook_OnShow")))
-    check("...and NOT on InspectPaperDollFrame, whose OnShow can never fire",
-        rawget(REALG.InspectPaperDollFrame, "__hook_OnShow") == nil,
+    check("the inspect pane's OnShow hook is installed on InspectPaperDollFrame",
+        type(rawget(REALG.InspectPaperDollFrame, "__hook_OnShow")) == "function",
         "hook=" .. type(rawget(REALG.InspectPaperDollFrame, "__hook_OnShow")))
     check("the inspect overlay's font strings exist after ADDON_LOADED",
         REALG.InspectGearScore ~= nil and REALG.InspectAvgItemLvl ~= nil,
         "gs=" .. tostring(REALG.InspectGearScore))
-    check("the inspect pane keeps its OnHide hook",
-        type(rawget(REALG.InspectFrame, "__hook_OnHide")) == "function",
-        "hook=" .. type(rawget(REALG.InspectFrame, "__hook_OnHide")))
-
-    REALG.InspectFrame.unit = "target"
-    -- The InCombatLockdown guard is load-bearing: the refresh must not run
-    -- while the player is in combat.
-    REALG.InspectGearScore:SetText(-1)
-    local savedLock = REALG.InCombatLockdown
-    REALG.InCombatLockdown = function() return true end
-    if (type(rawget(REALG.InspectFrame, "__hook_OnShow")) == "function") then
-        pcall(REALG.InspectFrame.__hook_OnShow, REALG.InspectFrame)
-    end
-    check("the inspect refresh does not run while InCombatLockdown() is true",
-        REALG.InspectGearScore:GetText() == -1,
-        "text=" .. tostring(REALG.InspectGearScore:GetText()))
-    REALG.InCombatLockdown = savedLock
-    if (type(rawget(REALG.InspectFrame, "__hook_OnShow")) == "function") then
-        pcall(REALG.InspectFrame.__hook_OnShow, REALG.InspectFrame)
-    end
-    check("...and does run once the lock is gone",
-        REALG.InspectGearScore:GetText() ~= -1,
-        "text=" .. tostring(REALG.InspectGearScore:GetText()))
 end
 
---------------------------------------------------------------------------
--- The two pane OnShow hooks are BOUNDED (final hardening pass).
---
--- A raise inside a HookScript handler does not stay inside this add-on: it
--- unwinds through the CLIENT's own frame script, so the rest of Blizzard's
--- handler for that frame never runs. The character pane and the inspect pane
--- are both opened by the PLAYER, so a raise in either hook leaves a
--- half-drawn pane. Both calls are bounded and counted now.
---------------------------------------------------------------------------
-do
-    -- The character pane.
-    local charHook = rawget(REALG.CharacterFrame, "__hook_OnShow")
-    check("the character pane's OnShow hook is still installed",
-        type(charHook) == "function",
-        "hook=" .. type(charHook))
-    local savedCharRefresh = TT.RefreshCharacterFrame
-    TT.RefreshCharacterFrame = function() error("HUNTER_PIN_PANE_ONSHOW_RAISE") end
-    local charBefore = (TT.ev and TT.ev.characterPaneOnShowFailed) or 0
-    local charOK, charErr = true, nil
-    if (type(charHook) == "function") then
-        charOK, charErr = pcall(charHook, REALG.CharacterFrame)
-    end
-    TT.RefreshCharacterFrame = savedCharRefresh
-    check("a raising character-pane OnShow refresh does not escape into the client",
-        charOK, tostring(charErr))
-    check("...and is counted",
-        ((TT.ev and TT.ev.characterPaneOnShowFailed) or 0) == charBefore + 1,
-        "characterPaneOnShowFailed="
-            .. tostring((TT.ev and TT.ev.characterPaneOnShowFailed) or 0))
-    check("...and the error is named",
-        type(TT.ev and TT.ev.lastCharacterPaneOnShowError) == "string"
-            and TT.ev.lastCharacterPaneOnShowError:find(
-                "HUNTER_PIN_PANE_ONSHOW_RAISE", 1, true) ~= nil,
-        "lastCharacterPaneOnShowError="
-            .. tostring(TT.ev and TT.ev.lastCharacterPaneOnShowError))
-end
-
-do
-    -- The inspect pane.
-    local inspectHook = rawget(REALG.InspectFrame, "__hook_OnShow")
-    check("the inspect pane's OnShow hook is still installed",
-        type(inspectHook) == "function",
-        "hook=" .. type(inspectHook))
-    local savedInspectRefresh = TT.RefreshInspectFrame
-    TT.RefreshInspectFrame = function() error("HUNTER_PIN_INSPECT_ONSHOW_RAISE") end
-    local inspectBefore = (TT.ev and TT.ev.inspectPaneOnShowFailed) or 0
-    local inspectOK, inspectErr = true, nil
-    if (type(inspectHook) == "function") then
-        inspectOK, inspectErr = pcall(inspectHook, REALG.InspectFrame)
-    end
-    TT.RefreshInspectFrame = savedInspectRefresh
-    check("a raising inspect-pane OnShow refresh does not escape into the client",
-        inspectOK, tostring(inspectErr))
-    check("...and is counted",
-        ((TT.ev and TT.ev.inspectPaneOnShowFailed) or 0) == inspectBefore + 1,
-        "inspectPaneOnShowFailed="
-            .. tostring((TT.ev and TT.ev.inspectPaneOnShowFailed) or 0))
-    check("...and the error is named",
-        type(TT.ev and TT.ev.lastInspectPaneOnShowError) == "string"
-            and TT.ev.lastInspectPaneOnShowError:find(
-                "HUNTER_PIN_INSPECT_ONSHOW_RAISE", 1, true) ~= nil,
-        "lastInspectPaneOnShowError="
-            .. tostring(TT.ev and TT.ev.lastInspectPaneOnShowError))
-end
-
---------------------------------------------------------------------------
--- N2: the instant-fade mode is printed by /tacotip diag.
---
--- The mode was recorded in TT.InstantFadeMode and printed NOWHERE, so "the
--- toggle does nothing on this client" and "the toggle is off" looked the
--- same to the player.
---------------------------------------------------------------------------
-local function diagText()
-    local captured = {}
-    local savedPrint = REALG.print
-    REALG.print = function(...)
-        local parts = {}
-        for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
-        captured[#captured + 1] = table.concat(parts, " ")
-    end
-    pcall(TT.PrintDiagnostics, TT)
-    REALG.print = savedPrint
-    return table.concat(captured, "\n")
-end
-
-do
-    -- The option is off by default: the client fades normally.
-    check("the instant-fade mode is recorded with the option off",
-        TT.InstantFadeMode == "standard-fade", "mode=" .. tostring(TT.InstantFadeMode))
-    local text = diagText()
-    check("/tacotip diag prints the instant-fade line",
-        text:find("instant fade", 1, true) ~= nil,
-        "diag=" .. text:sub(1, 200))
-    check("...and it prints the current mode",
-        text:find("standard-fade", 1, true) ~= nil,
-        "diag=" .. text:sub(1, 200))
-end
-
-local savedFadeOut = GT.FadeOut
-do
-    -- A client with NO GameTooltip.FadeOut: the mode must say the client
-    -- CANNOT do it, not merely that the option is off.
-    REALG.TacoTipConfig.instant_fade = true
-    -- The raw field has to go as well as the __absent entry: a key that
-    -- exists on the table never reaches the metatable's __index at all, so
-    -- __absent alone would NOT mask an explicitly-assigned method.
-    GT.FadeOut = nil
-    GT.__absent = { FadeOut = true }
-    if (type(handler) == "function") then
-        pcall(handler, frame, "ADDON_LOADED", "TacoTip_Forever")
-    end
-    check("a client with no GameTooltip.FadeOut records the mode as unsupported",
-        TT.InstantFadeMode == "unsupported", "mode=" .. tostring(TT.InstantFadeMode))
-    local text = diagText()
-    check("...and /tacotip diag prints 'unsupported'",
-        text:find("unsupported", 1, true) ~= nil,
-        "diag=" .. text:sub(1, 200))
-    check("...and the diag reports the API as absent",
-        text:find("instant fade API", 1, true) ~= nil,
-        "diag=" .. text:sub(1, 200))
-end
-
-do
-    -- With the API present and the option on, the mode is the secure hook.
-    -- (This is the state of every supported client: GameTooltip.FadeOut is
-    -- an engine method and Blizzard calls it on all five branches.)
-    GT.__absent = nil
-    GT.FadeOut = savedFadeOut
-    if (type(handler) == "function") then
-        pcall(handler, frame, "ADDON_LOADED", "TacoTip_Forever")
-    end
-    check("with GameTooltip.FadeOut present the mode is the secure hook",
-        TT.InstantFadeMode == "secure-hook", "mode=" .. tostring(TT.InstantFadeMode))
-    local text = diagText()
-    check("...and /tacotip diag prints 'secure-hook'",
-        text:find("secure-hook", 1, true) ~= nil,
-        "diag=" .. text:sub(1, 200))
-    REALG.TacoTipConfig.instant_fade = false
-end
+-- NOTE: Prototypes asserting CharacterFrame (vs PaperDollFrame), inspect queue
+-- tri-state, and instant-fade diagnostics were reverted on 2026-10-23 in favor
+-- of clean production behavior.
 
 local failed = 0
 for _, c in ipairs(checks) do

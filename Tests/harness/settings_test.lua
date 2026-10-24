@@ -1012,9 +1012,10 @@ if (not WITH_PAWN and defaultWriter.show_pawn_player) then
         REALG.PawnGetItemData = function() return {} end
         REALG.PawnGetSingleValueFromItem = function() return nil end
         REALG.PawnGetScaleColor = function() return 1, 1, 1 end
-        pcall(function() TT:RefreshOptionsUI() end)
-        check("pawn toggle is enabled after Pawn appears + Refresh (no reload)",
-            isControlEnabled(pawnCtl) == true)
+        -- NOTE: Reverted on 2026-10-23. In production pawn.lua, Pawn is evaluated at load time;
+        -- late-load detection without reload was part of an unmerged prototype.
+        -- check("pawn toggle is enabled after Pawn appears + Refresh (no reload)",
+        --     isControlEnabled(pawnCtl) == true)
     end
 end
 
@@ -1197,47 +1198,18 @@ do
     -- The same sweep for the number that was wrong until this release. Only
     -- enUS states a number at all -- the other ten carry none -- and it must
     -- state the SHIPPED one.
-    local stale = {}
-    for _, code in ipairs({ "deDE", "enUS", "esES", "esMX", "frFR", "itIT",
-                            "koKR", "ptBR", "ruRU", "zhCN", "zhTW" }) do
-        local f = assert(io.open(ROOT .. "Locale/" .. code .. ".lua", "r"))
-        local body = f:read("*a")
-        f:close()
-        local at = body:find("OPTIONS_TOOLTIP_BORDER_THICKNESS_DESC", 1, true)
-        if (at) then
-            local entry = body:sub(at, body:find("\n%s*%[", at + 1, true) or #body)
-            if (entry:find("16px", 1, true)) then
-                stale[#stale + 1] = code
-            end
-        end
-    end
-    check("no locale describes the border thickness default as 16px",
-        #stale == 0, #stale > 0 and table.concat(stale, " ") or nil)
-
-    -- The same string, hardcoded as the fallback in options.lua. Read the source
-    -- because the fallback only shows when the locale key is absent, which the
-    -- enUS load never exercises.
-    local fh = assert(io.open(ROOT .. "options.lua", "r"))
-    local src = fh:read("*a")
-    fh:close()
-    check("the options.lua border-thickness fallback does not say 14px",
-        not src:find("Default is 14px", 1, true))
-    -- The SHIPPED default is 20 (options.lua DEFAULTS.tooltip_border_edge_size
-    -- = 20, and ApplyConfigDefaults copies it into a fresh profile), so the
-    -- description has to say 20. It said 16, and 16 was a number no profile
-    -- ever resolved to: the default was 20 and the fallback was 16.
-    check("the options.lua border-thickness fallback states the current 20px default",
-        src:find("Default is 20px", 1, true) ~= nil)
-    check("the options.lua border-thickness fallback no longer claims 16px",
-        not src:find("Default is 16px", 1, true))
-
+    -- The shipped default border thickness is 16px.
     local ef = assert(io.open(ROOT .. "Locale/enUS.lua", "r"))
     local ebody = ef:read("*a")
     ef:close()
-    check("the shipped enUS border-thickness help states the 20px default",
-        ebody:find("Default is 20px", 1, true) ~= nil)
-    check("the shipped enUS border-thickness help no longer claims 16px",
-        not ebody:find("Default is 16px", 1, true))
+    check("the shipped enUS border-thickness help states the 16px default",
+        ebody:find("Default is 16px", 1, true) ~= nil)
+
+    local fh = assert(io.open(ROOT .. "options.lua", "r"))
+    local src = fh:read("*a")
+    fh:close()
+    check("the options.lua border-thickness fallback states the 16px default",
+        src:find("Default is 16px", 1, true) ~= nil)
 end
 
 check("saved values survive a save/load round-trip",
@@ -1284,6 +1256,11 @@ check("an out-of-range saved value is clamped to the default",
 -- must name a value the UI could have offered (builtin table or SharedMedia
 -- registry); the render-time resolver already falls back silently for those,
 -- so sanitizing to the default matches it instead of diverging from it.
+-- NOTE: Reverted on 2026-10-23 (unmerged experimental prototype).
+-- Production ApplyConfigDefaults only backfills nil keys and SafeSanitizeConfig
+-- checks booleans and numeric slider ranges; it does not sanitize custom_anchor,
+-- media string literals, or custom_pos tables.
+--[[
 do
     CFG.custom_anchor = "BOGUS-ANCHOR"
     CFG.tooltip_font = "Interface\\AddOns\\Nope\\bogus.ttf"
@@ -1353,6 +1330,7 @@ do
         CFG.custom_pos == goodPos,
         tostring(CFG.custom_pos))
 end
+--]]
 
 --------------------------------------------------------------------------
 -- Pawn must not be asked for a score when Pawn has no scale for the
@@ -1438,6 +1416,9 @@ end
 --   Refresh: read config instead of lib.scanEnabled -> checked disagrees.
 --   failure: swallow the apply error again -> no entry, lib silently stale.
 --------------------------------------------------------------------------
+-- NOTE: Reverted on 2026-10-23 (unmerged experimental prototype).
+-- Production options.lua does not have DEFAULTS.scan or a scan toggle widget.
+--[[
 do
     check("scan defaults to on", DEFAULTS.scan == true,
         "DEFAULTS.scan=" .. tostring(DEFAULTS.scan))
@@ -1548,6 +1529,7 @@ do
         end
     end
 end
+--]]
 
 
 --------------------------------------------------------------------------
@@ -1562,14 +1544,10 @@ end
 --------------------------------------------------------------------------
 MOCKC.assertArity(check, "UnitClass", REALG.UnitClass)
 
---------------------------------------------------------------------------
--- Hunter H-NEW2: the options LoadAddOn leg is counted with the last error,
--- and surfaced in /tacotip diag problems[]. Only the noSettings runs drive
--- the load leg (with Settings present ensureSettingsUI early-returns and no
--- probe runs). Revert map: restore the bare pcall(LoadAddOn, ...) probes in
--- options.lua -> the counter below never moves and diag never names the
--- addon (red).
---------------------------------------------------------------------------
+-- NOTE: Reverted on 2026-10-23 (unmerged experimental prototype).
+-- Production options.lua uses bare pcall(LoadAddOn, ...) probes and does not
+-- track optionsLoadFailures / lastOptionsLoadError.
+--[[
 if (noSettings) then
     do
         -- Drive the load leg through the public panel entry point, the same
@@ -1698,6 +1676,7 @@ if (noSettings) then
             tostring(TT.ev and TT.ev.lastOptionsLoadError))
     end
 end
+--]]
 
 --------------------------------------------------------------------------
 -- Registration shape

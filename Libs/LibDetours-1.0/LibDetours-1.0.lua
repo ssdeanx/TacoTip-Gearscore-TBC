@@ -21,7 +21,7 @@ end
 
 local function getTargetKey(funcTable, funcName)
     if (funcTable) then
-        return tostring(funcTable).."__"..funcName
+        return tostring(funcTable) .. "__" .. funcName
     end
     return funcName
 end
@@ -41,7 +41,7 @@ function lib:SecureHook(addon, arg1, arg2, arg3)
         funcTable = arg1
         funcName = arg2
         func = arg3
-        isHookInstalled = (addon.hooks[tostring(funcTable).."__"..funcName] ~= nil)
+        isHookInstalled = (addon.hooks[tostring(funcTable) .. "__" .. funcName] ~= nil)
     else
         funcName = arg1
         func = arg2
@@ -80,6 +80,7 @@ function lib:SecureHook(addon, arg1, arg2, arg3)
         end
     end
 end
+
 function lib:SecureUnhook(addon, arg1, arg2)
     if (type(arg1) == "table") then
         lib:SecureHook(addon, arg1, arg2, nil)
@@ -98,7 +99,7 @@ function lib:DetourHook(addon, arg1, arg2, arg3)
         funcTable = arg1
         funcName = arg2
         func = arg3
-        isDetourInstalled = (addon.detours[tostring(funcTable).."__"..funcName] ~= nil)
+        isDetourInstalled = (addon.detours[tostring(funcTable) .. "__" .. funcName] ~= nil)
     else
         funcName = arg1
         func = arg2
@@ -136,6 +137,7 @@ function lib:DetourHook(addon, arg1, arg2, arg3)
         end
     end
 end
+
 function lib:DetourUnhook(addon, arg1, arg2)
     if (type(arg1) == "table") then
         lib:DetourHook(addon, arg1, arg2, nil)
@@ -154,7 +156,7 @@ function lib:ScriptHook(addon, arg1, arg2, arg3)
     local funcTable = arg1
     local funcName = arg2
     local func = arg3
-    local isScriptHookInstalled = (addon.shooks[tostring(funcTable).."__"..funcName] ~= nil)
+    local isScriptHookInstalled = (addon.shooks[tostring(funcTable) .. "__" .. funcName] ~= nil)
     local isScriptHookBeingRemoved = (func == nil)
     if (not isScriptHookInstalled and isScriptHookBeingRemoved) then
         return
@@ -171,6 +173,7 @@ function lib:ScriptHook(addon, arg1, arg2, arg3)
         end)
     end
 end
+
 function lib:ScriptUnhook(addon, arg1, arg2)
     lib:ScriptHook(addon, arg1, arg2, nil)
 end

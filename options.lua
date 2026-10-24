@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.6"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.7"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -439,6 +439,12 @@ local function registerSlashCommands()
                 TT:PrintDiagnostics()
             else
                 print("|cff59f0dcTacoTip:|r main.lua did not finish loading, so diagnostics are unavailable.")
+                if (TT and TT.LOAD_STAGE) then
+                    print("|cff59f0dcTacoTip:|r Last stage reached: " .. tostring(TT.LOAD_STAGE))
+                end
+                if (CI) then
+                    print(string.format("|cff59f0dcTacoTip:|r Client family: %s, Interface: %s", tostring(CI.family), tostring(CI.interfaceVersion)))
+                end
                 print("|cff59f0dcTacoTip:|r Enable a Lua error handler (BugSack/Swatter) and /reload.")
             end
         else

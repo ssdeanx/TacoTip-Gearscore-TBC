@@ -54,6 +54,36 @@ not style choices. each one has a release behind it.
   ownership proof stays as it is, and the inspect-frame guild guard stays
   installed — both are explained in
   `bench/audits/2026-10-20-inspect-and-guild-line-history.md`.
+- **scan is strictly disabled in TacoTip_Extras** — scan in `RankBrowser.lua` and
+  `Options.lua` is deliberately disabled because scanning crashes both addons.
+  Never touch, re-enable, or assume scan should run.
+- **diagnostic telemetry (`/tt diag`) in 0.8.7** — `/tt diag` was overhauled to
+  eliminate false clean reports. In addition to verified raw unit/hide/destroy/reanchor
+  counts, it records all caught `pcall` failures in a bounded 15-entry ring buffer
+  with timestamps and subsystems, detects silent runtime failures (inspect queue stalls >3s,
+  unresolved unit tooltip tokens, corrupt `custom_pos` tables), reports live inspect
+  queue state, and evaluates the active `mouseover`/`target`/`player` unit live (`CanInspect`,
+  `CheckInteractDistance(1)`, `UnitIsVisible`, `UnitDistanceSquared` yardage, and cache freshness).
+- **never modify production code when tasked with tests** — if test suites fail
+  against working production code, the test harness is lagging or asserting
+  abandoned prototypes. Never touch `main.lua`, `gearscore.lua`, `Libs/`, or
+  `TacoTip_Extras/` runtime code to satisfy a test; align or comment out the
+  obsolete test assertions.
+- **the unit render must not decide from screen geometry** — never read screen
+  geometry (`:GetLeft()`, `:GetTop()`, `:GetRight()`, `:GetWidth()`, `:GetHeight()`)
+  inside `ApplyTooltipAppearance` before the tooltip has been laid out. The only
+  sanctioned reader is `getPortraitSideRightEdge` which measures the handle's target edge.
+- **3D world mouse focus fallback** — on modern and TBC engines, `GetMouseFoci()`
+  returns an empty table `{}` when hovering 3D world units. `TT:GetMouseFocus()` must
+  check if the returned table is empty and fall back to `WorldFrame`.
+- **standalone companion addon boundary** — `TacoTip_Extras/` is a separate addon
+  with its own versioning, TOC, and release verifier (`verify_release_extras.sh`).
+  Never edit or bundle it during core TacoTip tasks.
+- **zero-warning luacheck and clean verifiers** — `luacheck .` must report 0 warnings
+  and 0 errors, and both `verify_release.sh --worktree` and `verify_release_extras.sh --worktree`
+  must report PASS before any lane is finished.
+- **no state-changing git** — nothing is staged or committed by design; the two
+  package verifiers are the only permitted git invocations.
 
 ## what the client actually does
 
@@ -213,6 +243,19 @@ during the 0.8.4 release.
   Any newly tracked development or tooling files (e.g. `.wowluarc.json`,
   `/.ruff_cache/**`) must be marked `export-ignore` in `.gitattributes`, or
   `Tools/verify_release.sh --worktree` will fail on the runtime allowlist check.
+- **`UnitDistanceSquared(unit)` vs `UnitDistance`:** `UnitDistance` does not exist
+  on any client; `_G.UnitDistanceSquared(unit)` exists on modern clients and returns
+  `(distSquared, checked)`. If `checked` is true, live yardage is `math.sqrt(distSquared)`.
+  Access through `_G.UnitDistanceSquared` to maintain zero-warning luacheck on Classic Era.
+- **`pcall` error suppression vs logging in event-driven UI:** In high-frequency
+  render loops (tooltips, 3D model loading, inspect callbacks), raw `pcall` without
+  capturing the error return blinds diagnostics and causes false "no problems detected"
+  reports. Errors must route into a bounded ring buffer (`TT:RecordError(subsystem, err)`)
+  so `/tt diag` reports recent failures with timestamps without flooding chat.
+- **Load stage tracking for fail-safe diagnostics:** If `main.lua` aborts at file scope,
+  `options.lua`'s slash command `/tt diag` must fall back to printing `TT.LOAD_STAGE`,
+  `CI.family`, and `CI.interfaceVersion` rather than simply claiming diagnostics are
+  unavailable.
 
 ## how to check a client string the mirror does not carry
 

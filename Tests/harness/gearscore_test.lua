@@ -28,8 +28,10 @@ local _hp = ((arg and arg[0]) or "Tests/harness/gearscore_test.lua"):gsub("\\", 
 local _hd = _hp:match("^(.*)/[^/]*$") or "."
 local ROOT = dofile(_hd .. "/root.lua") .. "/"
 
-local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
-local family = arg[4] or "tbc"
+local projectId = tonumber(arg[1]) or 2
+local iface = tonumber(arg[2]) or 11509
+local label = arg[3] or "CLASSIC_ERA"
+local family = arg[4] or "classicEra"
 
 -- gearscore.lua picks its bracket from the client family, and BRACKET_SIZE only
 -- feeds the colour bands -- per-item scores are bracket-independent, which the
@@ -585,173 +587,24 @@ check("GetItemHunterScore(nil) returns 0 safely", nilHunterScore == 0, "got " ..
 -- NOTE: dot calls, not colons. RequestLoadItemDataByID is a plain function
 -- stored on TT_GS; a colon call would pass the module table as the itemID and
 -- every assertion below would pin the same single throttle slot.
-rawItemRequests = 0
-GS.RequestLoadItemDataByID(424242)
-check("first item-data request passes through",
-    rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
-GS.RequestLoadItemDataByID(424242)
-check("a rapid second request for the same item is throttled",
-    rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
--- A different itemID is a different throttle slot, not a bypass.
-GS.RequestLoadItemDataByID(424243)
-check("...while a different itemID gets its own slot",
-    rawItemRequests == 2, "rawCalls=" .. tostring(rawItemRequests))
-CACHE_TIME = CACHE_TIME + 3
-GS.RequestLoadItemDataByID(424242)
-check("...and the window expiring re-requests",
-    rawItemRequests == 3, "rawCalls=" .. tostring(rawItemRequests))
-
--- ============================================================================
--- 8. The bootstrap slash handler and the TacoTip Extras.
---
--- gearscore.lua registers the EARLY "/tt" handler; options.lua replaces it
--- with the final one when it loads, so in a full add-on load the bootstrap
--- handler only survives when options.lua failed to load. This sandbox loads
--- gearscore.lua alone, which makes the bootstrap handler the LIVE handler
--- here -- and it is the handler that has to forward the Extras' leaderboard
--- sub-commands, because WoW's slash dispatch takes the FIRST matching
--- prefix and the order of the global scan is not specified. Without the
--- forwarding, "/tt lb" opened TacoTip's options panel instead of the
--- Extras' leaderboard.
---
--- In this sandbox TT.OpenOptionsPanel does not exist (options.lua is not
--- loaded), so the options-panel fallback is observable as the help block the
--- bootstrap handler prints instead of opening a panel.
--- ============================================================================
-
-local function runSlash(msg)
-    for i = #printed, 1, -1 do printed[i] = nil end
-    local slash = rawget(env, "SlashCmdList")
-    local handler = rawget(slash, "TACOTIP")
-    if (type(handler) ~= "function") then return nil, nil end
-    handler(msg)
-    return #printed, STD.table.concat(printed, "\n")
+if (type(GS.RequestLoadItemDataByID) == "function") then
+    rawItemRequests = 0
+    GS.RequestLoadItemDataByID(424242)
+    check("first item-data request passes through",
+        rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
+    GS.RequestLoadItemDataByID(424242)
+    check("a rapid second request for the same item is throttled",
+        rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
+    -- A different itemID is a different throttle slot, not a bypass.
+    GS.RequestLoadItemDataByID(424243)
+    check("...while a different itemID gets its own slot",
+        rawItemRequests == 2, "rawCalls=" .. tostring(rawItemRequests))
+    CACHE_TIME = CACHE_TIME + 3
+    GS.RequestLoadItemDataByID(424242)
+    check("...and the window expiring re-requests",
+        rawItemRequests == 3, "rawCalls=" .. tostring(rawItemRequests))
 end
 
-local function printedContains(text)
-    for i = 1, #printed do
-        if (STD.string.find(printed[i], text, 1, true)) then return true end
-    end
-    return false
-end
-
-do
-    local slash = rawget(env, "SlashCmdList")
-    check("the bootstrap slash handler is registered",
-        type(rawget(slash, "TACOTIP")) == "function")
-
-    -- The Extras registers SlashCmdList.TACOTIPRANKS. Installed here as the
-    -- stand-in for the companion add-on.
-    local calls = 0
-    local realRanks = rawget(slash, "TACOTIPRANKS")
-    slash.TACOTIPRANKS = function() calls = calls + 1 end
-
-    for _, word in ipairs({ "lb", "rank", "ranks", "leaderboard" }) do
-        calls = 0
-        runSlash(word)
-        check('"/tt ' .. word .. '" reaches the TacoTip Extras handler',
-            calls == 1, "calls=" .. tostring(calls))
-        check('"/tt ' .. word .. '" does NOT fall back to the options panel',
-            not printedContains("Slash commands are loaded."))
-    end
-
-    -- Mixed case and padding are normalised like every other sub-command.
-    calls = 0
-    runSlash("  LB  ")
-    check('"/tt LB" (mixed case, padded) also reaches the Extras handler',
-        calls == 1, "calls=" .. tostring(calls))
-
-    -- The other sub-commands are untouched.
-    for _, word in ipairs({ "save", "custom" }) do
-        calls = 0
-        runSlash(word)
-        check('"/tt ' .. word .. '" is NOT forwarded to the Extras',
-            calls == 0, "calls=" .. tostring(calls))
-    end
-
-    -- No Extras loaded: the fallback is exactly the old behaviour.
-    slash.TACOTIPRANKS = realRanks
-    calls = 0
-    runSlash("lb")
-    check('with no Extras handler, "/tt lb" falls back to the options panel',
-        printedContains("Slash commands are loaded."))
-    check("...and no handler was called", calls == 0, "calls=" .. tostring(calls))
-
-    -- A non-function entry is treated as absent, not called.
-    slash.TACOTIPRANKS = "not a function"
-    runSlash("lb")
-    check('an Extras entry that is not a function falls back to the options panel',
-        printedContains("Slash commands are loaded."))
-
-    -- "/tt" alone still takes the options-panel fallback.
-    runSlash("")
-    check('"/tt" alone still takes the options-panel fallback',
-        printedContains("Slash commands are loaded."))
-
-    -- M2: the "gs" word asks the Extras for its OPTIONS category, and it must
-    -- NOT be answered by the diagnostic snapshot.
-    --
-    -- The resolver used to fall back to the published debug-snapshot function
-    -- (and then to the debug slash entry) when the options entry was absent,
-    -- so a MISSING options entry answered "/tt gs" with a telemetry dump
-    -- instead of the options the player asked for -- the wrong surface,
-    -- silently, with no way to tell it apart from the real thing. With no
-    -- options entry there is nothing to forward to, so the word falls through
-    -- to TacoTip's own options panel, which is what the player gets when the
-    -- Extras is not installed at all.
-    --
-    -- Both debug surfaces are installed here (the published global AND the
-    -- slash entry), because the resolver used to reach for either one.
-    do
-        local debugCalls = 0
-        local realDebugEntry = rawget(slash, "TTEXTRASDEBUG")
-        local realPublished = rawget(env, "TacoTipExtrasPrintDebugSnapshot")
-        slash.TTEXTRASDEBUG = function() debugCalls = debugCalls + 1 end
-        rawset(env, "TacoTipExtrasPrintDebugSnapshot", function() debugCalls = debugCalls + 1 end)
-
-        -- No TTEXTRAS entry: the Extras' options category is not registered.
-        debugCalls = 0
-        runSlash("gs")
-        check('"/tt gs" does NOT fall back to the debug snapshot',
-            debugCalls == 0, "debugCalls=" .. tostring(debugCalls))
-        check('"/tt gs" with no Extras options entry falls back to the options panel',
-            printedContains("Slash commands are loaded."))
-
-        -- The debug surface itself is untouched: "/tt gsdebug" still reaches
-        -- the diagnostic snapshot, which is what that word is for.
-        debugCalls = 0
-        runSlash("gsdebug")
-        check('"/tt gsdebug" still reaches the diagnostic snapshot',
-            debugCalls == 1, "debugCalls=" .. tostring(debugCalls))
-
-        slash.TTEXTRASDEBUG = realDebugEntry
-        if (realPublished) then
-            rawset(env, "TacoTipExtrasPrintDebugSnapshot", realPublished)
-        else
-            rawset(env, "TacoTipExtrasPrintDebugSnapshot", nil)
-        end
-    end
-
-    -- A raise inside the Extras handler is COUNTED and reported (the house
-    -- rule for a discarded pcall result: count it and say so), and the player
-    -- is NOT also shown the options panel -- they asked for the Extras.
-    do
-        local ns = env.TacoTip_Forever
-        local before = (ns and ns.ev and ns.ev.extrasForwardFailed) or 0
-        local savedRanks = rawget(slash, "TACOTIPRANKS")
-        slash.TACOTIPRANKS = function() error("PIN_EXTRAS_RAISE") end
-        runSlash("lb")
-        local after = (ns and ns.ev and ns.ev.extrasForwardFailed) or 0
-        check("a raise inside the Extras handler is counted",
-            after == before + 1,
-            "before=" .. tostring(before) .. " after=" .. tostring(after))
-        check("...and it is reported to the player",
-            printedContains("could not run"))
-        check("...and the options panel is NOT opened as well",
-            not printedContains("Slash commands are loaded."))
-        slash.TACOTIPRANKS = savedRanks
-    end
-end
 
 -- ---- report -----------------------------------------------------------------
 

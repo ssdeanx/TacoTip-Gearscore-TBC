@@ -39,3 +39,19 @@ General rule: a harness that never exercises a code path cannot report on it, an
 ## 3. Mock Teardown Discipline
 
 In tests, every global mock (e.g. `GetGuildInfo`, `UnitExists`, `GameTooltip.GetUnit`) must be cleaned up in a guaranteed teardown (`pcall` wrapper with `ClearReplaces()`) so subsequent test runs are never polluted.
+
+---
+
+## 4. Package Release Verifiers
+
+- **Commands:**
+  - `bash Tools/verify_release.sh --worktree`
+  - `bash Tools/verify_release_extras.sh --worktree`
+- **Standard:** Both must report PASS. Validates the working tree against release packaging allowlists, strictly excluding workshop files (`desks/`, `bench/`, `Tools/`, `OLD/`, `Tests/`), documentation dotfiles, and ensuring valid single-TOC structure.
+
+---
+
+## 5. Offline Test Runner Gate
+
+- **Command:** `bash Tests/harness/run_all.sh`
+- **Standard:** 71 passed, 0 failed across all 5 supported client families (`classicEra`, `tbc`, `titanforge`, `forever`, `retail`) and both `GetBuildInfo` return layouts (`slot4`, `slot7`).

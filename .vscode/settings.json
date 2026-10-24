@@ -165,5 +165,8 @@
     "chat.tools.terminal.autoApprove": {
         "git ls-tree": true,
         "git checkout": true
-    }
+    },
+    "Lua.diagnostics.disable": [
+        "assign-type-mismatch"
+    ]
 }

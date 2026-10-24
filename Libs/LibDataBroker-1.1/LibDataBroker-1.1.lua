@@ -1,4 +1,3 @@
-
 assert(LibStub, "LibDataBroker-1.1 requires LibStub")
 assert(LibStub:GetLibrary("CallbackHandler-1.0", true), "LibDataBroker-1.1 requires CallbackHandler-1.0")
 
@@ -7,7 +6,8 @@ if not lib then return end
 oldminor = oldminor or 0
 
 lib.callbacks = lib.callbacks or LibStub:GetLibrary("CallbackHandler-1.0"):New(lib)
-lib.attributestorage, lib.namestorage, lib.proxystorage = lib.attributestorage or {}, lib.namestorage or {}, lib.proxystorage or {}
+lib.attributestorage, lib.namestorage, lib.proxystorage = lib.attributestorage or {}, lib.namestorage or {},
+	lib.proxystorage or {}
 local attributestorage, namestorage, callbacks = lib.attributestorage, lib.namestorage, lib.callbacks
 
 if oldminor < 2 then
@@ -25,9 +25,9 @@ if oldminor < 3 then
 		local name = namestorage[self]
 		if not name then return end
 		callbacks:Fire("LibDataBroker_AttributeChanged", name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged_"..name, name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged_"..name.."_"..key, name, key, value, self)
-		callbacks:Fire("LibDataBroker_AttributeChanged__"..key, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged_" .. name, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged_" .. name .. "_" .. key, name, key, value, self)
+		callbacks:Fire("LibDataBroker_AttributeChanged__" .. key, name, key, value, self)
 	end
 end
 
@@ -38,7 +38,7 @@ if oldminor < 2 then
 		if dataobj then
 			assert(type(dataobj) == "table", "Invalid dataobj, must be nil or a table")
 			self.attributestorage[dataobj] = {}
-			for i,v in pairs(dataobj) do
+			for i, v in pairs(dataobj) do
 				self.attributestorage[dataobj][i] = v
 				dataobj[i] = nil
 			end

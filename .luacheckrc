@@ -305,6 +305,7 @@ files["Tests/harness/*.lua"] = {
     -- A harness routinely shadows a mocked global (TT, TT_GS) with a local
     -- stand-in; that shadowing is the test's mechanism, not a defect.
     shadowing = false,
+    unused = false,
 }
 
 -- TacoTip Extras is a SEPARATE add-on with its own .luacheckrc. That config is

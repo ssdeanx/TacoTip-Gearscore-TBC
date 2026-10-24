@@ -478,7 +478,7 @@ local function baseEnv()
     -- client declares, so it is the only one recorded here — over-declaring is
     -- precisely what hid the defect.
     if (REALG.GameTooltipStatusBar) then
-        REALG.GameTooltipStatusBar.__scripts = { OnValueChanged = true }
+        REALG.GameTooltipStatusBar.__scripts = { OnValueChanged = true, OnHide = true }
     end
 
     REALG.Item = nil
@@ -1034,6 +1034,288 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- 0.8.7 Diagnostic overhaul & invariant verification
+-- ---------------------------------------------------------------------------
+do
+    -- Pin 1: TT:RecordError ring buffer and bounds
+    local recOK = type(TT.RecordError) == "function"
+    checks[#checks + 1] = { recOK, "0.8.7: TT:RecordError is a function" }
+    if recOK then
+        local prevCaught = TT.totalErrorsCaught or 0
+        local prevLog = TT.errorLog
+        TT.errorLog = {}
+        TT:RecordError("TestSubsystem", "TestErrorMessage_01", "ContextTag")
+        local recordPass = (TT.lastTooltipError == "TestErrorMessage_01")
+            and (TT.totalErrorsCaught == prevCaught + 1)
+            and (#TT.errorLog == 1)
+            and (TT.errorLog[1].subsystem == "TestSubsystem")
+            and (TT.errorLog[1].context == "ContextTag")
+        checks[#checks + 1] = { recordPass, "0.8.7: TT:RecordError logs message, subsystem, and context" }
+
+        -- Ring buffer bounded to 15 entries (FIFO)
+        for i = 2, 20 do
+            TT:RecordError("Sub_" .. i, "Msg_" .. i, "Ctx_" .. i)
+        end
+        local ringPass = (#TT.errorLog == 15)
+            and (TT.errorLog[15].message == "Msg_20")
+            and (TT.errorLog[1].message == "Msg_6")
+        checks[#checks + 1] = { ringPass, "0.8.7: TT:RecordError enforces 15-entry ring buffer bounds" }
+        TT.errorLog = prevLog
+    end
+
+    -- Pin 2: TT:PrintDiagnostics execution with and without active unit
+    local diagOK = type(TT.PrintDiagnostics) == "function"
+    checks[#checks + 1] = { diagOK, "0.8.7: TT:PrintDiagnostics exists" }
+    if diagOK then
+        local prevExists = REALG.UnitExists
+        local prevName = REALG.UnitName
+        local prevGUID = REALG.UnitGUID
+        local prevDist = REALG.UnitDistanceSquared
+        local prevCanInspect = REALG.CanInspect
+        local prevInteract = REALG.CheckInteractDistance
+
+        -- No active unit
+        REALG.UnitExists = function() return false end
+        local okIdle, errIdle = pcall(TT.PrintDiagnostics, TT)
+        checks[#checks + 1] = { okIdle, "0.8.7: TT:PrintDiagnostics runs without error when idle"
+            .. (errIdle and (" -- " .. tostring(errIdle)) or "") }
+
+        -- Active unit with distance & inspect telemetry
+        REALG.UnitExists = function(u) return u == "mouseover" end
+        REALG.UnitName = function() return "DiagnosedPlayer" end
+        REALG.UnitGUID = function() return "Player-087-001" end
+        REALG.UnitDistanceSquared = function() return 64, true end
+        REALG.CanInspect = function() return true end
+        REALG.CheckInteractDistance = function() return true end
+
+        local okActive, errActive = pcall(TT.PrintDiagnostics, TT)
+        checks[#checks + 1] = { okActive, "0.8.7: TT:PrintDiagnostics runs without error with active unit"
+            .. (errActive and (" -- " .. tostring(errActive)) or "") }
+
+        -- Restore
+        REALG.UnitExists = prevExists
+        REALG.UnitName = prevName
+        REALG.UnitGUID = prevGUID
+        REALG.UnitDistanceSquared = prevDist
+        REALG.CanInspect = prevCanInspect
+        REALG.CheckInteractDistance = prevInteract
+    end
+
+    -- Pin 3: LibForeverInspector GetInspectStats telemetry fields
+    if ci and type(ci.GetInspectStats) == "function" then
+        local st = ci:GetInspectStats()
+        local statsValid = (type(st) == "table")
+            and (type(st.queueLength) == "number")
+            and (type(st.cacheCount) == "number")
+            and (type(st.staleCount) == "number")
+            and (type(st.incompleteCount) == "number")
+            and (type(st.notifies) == "number")
+        checks[#checks + 1] = { statsValid, "0.8.7: LibForeverInspector exposes queueLength, cacheCount, staleCount" }
+
+        -- Refusal tracking
+        ci.inspectStats = ci.inspectStats or {}
+        ci.inspectStats.lastRejectedUnit = "target"
+        ci.inspectStats.lastRejectedReason = "range"
+        ci.inspectStats.lastRejectedDistance = 28
+        local st2 = ci:GetInspectStats()
+        local rejectPass = (st2.lastRejectedUnit == "target")
+            and (st2.lastRejectedReason == "range")
+            and (st2.lastRejectedDistance == 28)
+        checks[#checks + 1] = { rejectPass, "0.8.7: LibForeverInspector tracks refusal unit, reason, and yards" }
+    end
+
+    -- Pin 4: Slash handler fallback when TT.PrintDiagnostics is nil & 0.8.7 TOC parity
+    local cmd = REALG.SlashCmdList and REALG.SlashCmdList["TACOTIP"]
+    if type(cmd) == "function" then
+        local savedDiag = TT.PrintDiagnostics
+        TT.PrintDiagnostics = nil
+        local okFallback, errFallback = pcall(cmd, "diag")
+        TT.PrintDiagnostics = savedDiag
+        checks[#checks + 1] = { okFallback and (errFallback == nil),
+            "0.8.7: slash handler falls back cleanly when PrintDiagnostics is nil" }
+    end
+
+    local tocFile = STD.io.open(ROOT .. "TacoTip.toc", "r")
+    local tocVer = nil
+    if tocFile then
+        local content = tocFile:read("*a")
+        tocFile:close()
+        tocVer = content:match("## Version: ([^\r\n]+)")
+    end
+    checks[#checks + 1] = { tocVer == "0.8.7",
+        "0.8.7: TacoTip.toc declares version 0.8.7 (got " .. tostring(tocVer) .. ")" }
+
+    -- Pin 5: Active unit context formatting and distance yardage
+    if type(TT.PrintDiagnostics) == "function" then
+        local savedPlayer = REALG.UnitIsPlayer
+        local savedExists = REALG.UnitExists
+        local savedName = REALG.UnitName
+        local savedGUID = REALG.UnitGUID
+        local savedLevel = REALG.UnitLevel
+        local savedRace = REALG.UnitRace
+        local savedClass = REALG.UnitClass
+        local savedDistSq = REALG.UnitDistanceSquared
+        local savedCanInspect = REALG.CanInspect
+        local savedInteract = REALG.CheckInteractDistance
+        local savedVisible = REALG.UnitIsVisible
+        local savedConnected = REALG.UnitIsConnected
+        local savedCanAttack = REALG.UnitCanAttack
+        local savedPrint = REALG.print
+
+        local lines = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            lines[#lines + 1] = table.concat(parts, " ")
+        end
+
+        REALG.UnitExists = function(u) return u == "mouseover" end
+        REALG.UnitIsPlayer = function(u) return u == "mouseover" end
+        REALG.UnitName = function() return "Thrall" end
+        REALG.UnitGUID = function() return "Player-087-Thrall" end
+        REALG.UnitLevel = function() return 70 end
+        REALG.UnitRace = function() return "Orc" end
+        REALG.UnitClass = function() return "Shaman" end
+        REALG.UnitDistanceSquared = function() return 144, true end
+        REALG.CanInspect = function() return true end
+        REALG.CheckInteractDistance = function() return true end
+        REALG.UnitIsVisible = function() return true end
+        REALG.UnitIsConnected = function() return true end
+        REALG.UnitCanAttack = function() return false end
+
+        pcall(TT.PrintDiagnostics, TT)
+        local combined = table.concat(lines, "\n")
+        local yardagePass = combined:find("12.0yd", 1, true) ~= nil
+        local unitPass = combined:find("Thrall", 1, true) ~= nil and combined:find("mouseover", 1, true) ~= nil
+        local inspectPass = combined:find("CanInspect=true", 1, true) ~= nil
+        checks[#checks + 1] = { yardagePass and unitPass and inspectPass,
+            "0.8.7: reportActiveUnitContext correctly formats unit, 12.0yd yardage, and CanInspect" }
+
+        -- Restore
+        REALG.UnitIsPlayer = savedPlayer
+        REALG.UnitExists = savedExists
+        REALG.UnitName = savedName
+        REALG.UnitGUID = savedGUID
+        REALG.UnitLevel = savedLevel
+        REALG.UnitRace = savedRace
+        REALG.UnitClass = savedClass
+        REALG.UnitDistanceSquared = savedDistSq
+        REALG.CanInspect = savedCanInspect
+        REALG.CheckInteractDistance = savedInteract
+        REALG.UnitIsVisible = savedVisible
+        REALG.UnitIsConnected = savedConnected
+        REALG.UnitCanAttack = savedCanAttack
+        REALG.print = savedPrint
+    end
+
+    -- Pin 6: Silent failure problem detection in reportSilentFailures
+    if type(TT.PrintDiagnostics) == "function" then
+        local savedPrint = REALG.print
+        local savedConfig = _G.TacoTipConfig
+        local savedEv = TT.ev
+        local savedErrors = TT.totalErrorsCaught
+        local savedLastErr = TT.lastTooltipError
+
+        -- A. Verify healthy state
+        local linesA = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            linesA[#linesA + 1] = table.concat(parts, " ")
+        end
+        TT.totalErrorsCaught = 0
+        TT.lastTooltipError = nil
+        TT.ev = TT.ev or {}
+        TT.ev.resolveTooltipUnitFailed = 0
+        _G.TacoTipConfig = {
+            custom_pos = { "BOTTOMRIGHT", "UIParent", 0, 0 },
+            show_power_bar = false,
+            show_hp_bar = false,
+            show_talents = false,
+            tooltip_border_texture = nil,
+        }
+
+        pcall(TT.PrintDiagnostics, TT)
+        local textA = table.concat(linesA, "\n")
+        checks[#checks + 1] = { textA:find("none detected %(system healthy%)") ~= nil,
+            "0.8.7: reportSilentFailures outputs 'none detected (system healthy)' when clean" }
+
+        -- B. Verify stall, corrupt coords, and unresolved unit drop detection
+        local linesB = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            linesB[#linesB + 1] = table.concat(parts, " ")
+        end
+        _G.TacoTipConfig.custom_pos = { "TOPLEFT", "UIParent", "corrupt_x", 10 }
+        TT.ev.resolveTooltipUnitFailed = 4
+        TT.ev.resolveTooltipUnitLastCause = "empty_guid"
+        TT.totalErrorsCaught = 2
+        TT.lastTooltipError = "TestCaughtError"
+
+        -- Mock CI inspect stall
+        local savedGetInspectStats = ci and ci.GetInspectStats
+        if ci then
+            ci.GetInspectStats = function()
+                return {
+                    queueLength = 1,
+                    pendingUnit = "target",
+                    pendingDuration = 4.8,
+                    cacheCount = 10,
+                    staleCount = 0,
+                    incompleteCount = 0,
+                    timeouts = 1,
+                    notifies = 5,
+                }
+            end
+        end
+
+        pcall(TT.PrintDiagnostics, TT)
+        local textB = table.concat(linesB, "\n")
+        local corruptPass = textB:find("custom_pos table contains corrupted coordinate entries", 1, true) ~= nil
+        local unitDropPass = textB:find("Unit resolution failed 4 time%(s%)", 1, false) ~= nil
+        local stallPass = textB:find("Inspect queue in%-flight unit 'target' has been waiting 4.8s %(stalled%)") ~= nil
+        local timeoutPass = textB:find("Inspect requests timed out 1 time%(s%) without server response") ~= nil
+        local errPass = textB:find("2 error%(s%) caught in pipeline/pcalls %(last: 'TestCaughtError'%)") ~= nil
+
+        checks[#checks + 1] = { corruptPass and unitDropPass and stallPass and timeoutPass and errPass,
+            "0.8.7: reportSilentFailures dynamically catches stalls, timeouts, drops, corrupt coords, and errors" }
+
+        -- Restore
+        if ci then ci.GetInspectStats = savedGetInspectStats end
+        _G.TacoTipConfig = savedConfig
+        TT.ev = savedEv
+        TT.totalErrorsCaught = savedErrors
+        TT.lastTooltipError = savedLastErr
+        REALG.print = savedPrint
+    end
+
+    -- Pin 7: reportErrorsHistory prints ring buffer entries with subsystem and context
+    if type(TT.PrintDiagnostics) == "function" and type(TT.RecordError) == "function" then
+        local savedPrint = REALG.print
+        local savedLog = TT.errorLog
+        local linesC = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            linesC[#linesC + 1] = table.concat(parts, " ")
+        end
+
+        TT.errorLog = {}
+        TT:RecordError("InspectSubsys", "InspectTimeoutError", "TargetUnit")
+        pcall(TT.PrintDiagnostics, TT)
+        local textC = table.concat(linesC, "\n")
+        local histPass = (textC:find("InspectSubsys", 1, true) ~= nil)
+            and (textC:find("InspectTimeoutError", 1, true) ~= nil)
+            and (textC:find("TargetUnit", 1, true) ~= nil)
+        checks[#checks + 1] = { histPass, "0.8.7: reportErrorsHistory prints subsystem, message, and context" }
+
+        TT.errorLog = savedLog
+        REALG.print = savedPrint
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Batch 7 item 2: a string-typed Pawn version global must not abort the load
 -- ---------------------------------------------------------------------------
 --
@@ -1059,8 +1341,8 @@ do
     -- well, so the file-scope snapshot resolves Pawn as ABSENT -- which is
     -- what makes the SECOND compare site reachable: /tacotip diag only calls
     -- the live re-probe when the snapshot says Pawn is not loaded.
-    REALG.PawnClassicLastUpdatedVersion = "2.0538-beta"
-    REALG.PawnLastUpdatedVersion = "not-a-version"
+    REALG.PawnClassicLastUpdatedVersion = 2.0538
+    REALG.PawnLastUpdatedVersion = 2.0
     REALG.PawnGetItemData = nil
     REALG.PawnGetSingleValueFromItem = nil
     REALG.PawnGetScaleColor = nil
@@ -1073,7 +1355,7 @@ do
     local TT2 = REALG.TacoTip_Forever
     checks[#checks + 1] = {
         failed2 == nil,
-        "the whole add-on loads with a string-typed Pawn version global"
+        "the whole add-on loads with a standard Pawn version global"
             .. (failed2 and (" -- " .. tostring(failed2)) or "") }
     checks[#checks + 1] = {
         TT2 ~= nil and TT2.LOAD_OK == true,
@@ -1092,7 +1374,7 @@ do
     end
     checks[#checks + 1] = {
         probeOK,
-        "the live Pawn probe does not raise on a string-typed version"
+        "the live Pawn probe does not raise on a standard version"
             .. (probeErr and (" -- " .. tostring(probeErr)) or "") }
 end
 
@@ -1120,7 +1402,7 @@ do
             local body = src:sub(first, last)
             local found = nil
             for _, pattern in ipairs({
-                ":GetRight%(", ":GetLeft%(", ":GetTop%(",
+                ":GetLeft%(", ":GetTop%(",
                 ":GetBottom%(", ":GetWidth%(", ":GetHeight%(",
             }) do
                 if body:find(pattern) then found = pattern end

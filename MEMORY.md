@@ -1,6 +1,6 @@
 # TacoTip-Gearscore-TBC — Enterprise Project Memory
 
-> **Version:** `0.8.3` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120100` (Retail)  
+> **Version:** `0.8.7` | **CurseForge ID:** `1555962` | **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever), `120105` (Retail)  
 > **Repository:** `ssdeanx/TacoTip-Gearscore-TBC` | **Maintainer:** Pilsung (AcidBomb) | **Architecture:** Five-client cross-engine, single build
 
 ---
@@ -33,6 +33,7 @@ TacoTip Gearscore TBC is an enterprise-grade World of Warcraft Classic addon pro
 - [04-dual-spec-inspect-handling.md](file:///.omg/rules/04-dual-spec-inspect-handling.md) — Multi-client dual-spec detection, query struct fallbacks, nil-safe arithmetic, zero-alpha prefix alignment.
 - [05-locale-parity-standards.md](file:///.omg/rules/05-locale-parity-standards.md) — Strict 239-key coverage across all 11 languages with matched format tokens.
 - [06-version-release-bumping.md](file:///.omg/rules/06-version-release-bumping.md) — Synchronous 6-point version bump protocol (`TOC`, `main`, `options`, `README`, `CHANGELOG`, `AGENTS`).
+- [07-core-invariants.md](file:///.omg/rules/07-core-invariants.md) — Strict maintenance of cross-client invariants (`PlaySound` taint prevention, container button bypass, incomplete inspect gear retry, `/tt diag` architecture).
 
 ---
 

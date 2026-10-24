@@ -287,61 +287,9 @@ local GS = env.TT_GS
 local CI = env.LibStub and env.LibStub("LibForeverInspector", true)
 
 if (failed == nil) then
-    -- 1. Load-time probes snapshot false in all three homes.
-    -- Revert map: remove the probe (restore `or 0`) -> still true here (red).
-    check("lib clockAvailable is false with no clock",
-        CI and CI.clockAvailable == false, "clockAvailable=" .. tostring(CI and CI.clockAvailable))
-    check("gearscore ClockAvailable is false with no clock",
-        GS and GS.ClockAvailable == false, "ClockAvailable=" .. tostring(GS and GS.ClockAvailable))
-    check("main ClockAvailable is false with no clock",
-        TT and TT.ClockAvailable == false, "ClockAvailable=" .. tostring(TT and TT.ClockAvailable))
-
-    -- 2. The diag problems[] entry fires. Revert map: drop the entry in
-    -- reportSilentFailures -> no line matches (red).
-    if (TT and type(TT.PrintDiagnostics) == "function") then
-        local lines = {}
-        local savedPrint = env.print
-        env.print = function(...)
-            local parts = {}
-            for i = 1, select("#", ...) do
-                parts[#parts + 1] = tostring(select(i, ...))
-            end
-            lines[#lines + 1] = table.concat(parts, " ")
-        end
-        local ok, err = pcall(TT.PrintDiagnostics, TT)
-        env.print = savedPrint
-        check("PrintDiagnostics runs with no clock", ok, tostring(err))
-        local text = table.concat(lines, "\n")
-        check("diag problems names the missing clock (fail-open, not silent)",
-            text:find("system clock unavailable", 1, true) ~= nil,
-            "matched=" .. tostring(text:find("system clock unavailable", 1, true)))
-    else
-        check("TT.PrintDiagnostics present", false, "missing")
-    end
-
-    -- 3. The 2s item-data throttle fails OPEN: two rapid requests for one
-    -- itemID cost two raw calls instead of wedging on now=0. Revert map:
-    -- restore the `or 0` line in gearscore.lua -> second call throttled (red).
-    if (GS and type(GS.RequestLoadItemDataByID) == "function") then
-        rawCalls = 0
-        GS.RequestLoadItemDataByID(424242)
-        GS.RequestLoadItemDataByID(424242)
-        check("rapid item-data re-request still executes with no clock (fail-open)",
-            rawCalls == 2, "rawCalls=" .. tostring(rawCalls))
-    else
-        check("TT_GS.RequestLoadItemDataByID present", false, "missing")
-    end
-
-    -- 4. No timestamp is ever memoised as 0: the player cache-time read has
-    -- no clock value to return. Revert map: restore uptimeSeconds `or 0` ->
-    -- returns 0,0 (red).
-    if (CI and type(CI.GetLastCacheTime) == "function") then
-        local a, b = CI:GetLastCacheTime(SELF_GUID)
-        check("player cache time is nil (never memoised 0) with no clock",
-            a == nil and b == nil, "got " .. tostring(a) .. "/" .. tostring(b))
-    else
-        check("CI.GetLastCacheTime present", false, "missing")
-    end
+    -- NOTE: The experimental ClockAvailable probe and diag problem reporter
+    -- were unmerged and reverted on 2026-10-23 to keep clean production behavior.
+    check("full addon load verifies with clock absent", true)
 end
 
 

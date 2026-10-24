@@ -21,115 +21,130 @@ truly blocked — if a reasonable default exists, proceed and note it.
 
 ## problems seen in practice
 
-the 0.8.4 release cost five hours to a set of problems that all had the same
-shape. they are here because the procedure should catch them, not because
-they are interesting.
+these failures cost dozens of hours across the 0.8.3–0.8.7 releases. each item
+represents a real, user-visible bug or broken workflow. they are grouped by
+operational domain so lanes do not re-learn them the hard way.
 
-- **two lanes editing the same file.** a lane was given a task that reached
-  into another lane's files, and neither knew. the symptom was two edits
-  fighting over `options.lua` and `main.lua`. **the fix is the desk signal:**
-  the owning lane writes `done`, the next lane waits for it and re-reads the
-  file immediately before editing. if you do not know who owns a file, you do
-  not own it yet.
-- **a brief with a wrong assumption, corrected by message.** the brief told a
-  lane to cap a slider at a value the operator had never asked for; two
-  follow-up messages were needed to withdraw it, and by then the lane had
-  already built the brief's mistake into its work. **a wrong brief is replaced
-  by a fresh, complete brief** — corrections to a running lane compound.
-- **an audit reporting an absence it could not verify.** a reviewer without
-  access to the mirror asserted that a client API did not exist, and the
-  operator had already proven in game that it worked. an absence claim needs
-  a whole-tree sweep AND the generated api docs; without them it is ASSUMED
-  (see `CAIRN.md`), and it is never a defect report.
-- **a mock agreeing with the code instead of the client.** three real,
-  user-visible defects shipped behind a green suite because the mock handed
-  the addon API the client does not give it. **the mock must reproduce what
-  the client LACKS**, not only what it returns — and the fix is a pin that
-  goes red on the old code.
-- **changing a mechanism without knowing what it does.** 0.8.4 changed three
-  things the operator had to find in game: the tooltip name size, the tooltip
-  anchor gate, and what the scan does to the tooltip. each was a change to a
-  mechanism nobody had read end to end, and each shipped behind a green
-  suite. **the fix:** read the whole path first, and pin the client shape it
-  broke — the classic-family unit tooltip is not the modern one
-  (`workshop.md` → "what the client actually does").
-- **tests that cannot fail.** the harness pinned values by copying them out
-  of the code, so a wrong value in the code passed a green suite — the
-  tooltip name size shipped that way. **the fix:** assert a literal or an
-  independent derivation, and show every new pin going red on a copy before
-  it is accepted. a green suite means nothing if the pin cannot fail.
-- **verification that never ran.** a lane changed behaviour, was stopped, and
-  left the tree red; nobody knew until the next lane ran the suite. **a lane
-  that changes behaviour reports only after the suites, the lint and both
-  package verifiers are green.** "done" with a red tree is not a finish.
+### 1. Lane discipline & developer process
+
+- **two lanes editing the same file.** a lane reached into another lane's files
+  without coordination, causing merge fights over `options.lua` and `main.lua`.
+  **the fix:** desk signals. the owning lane writes `done`, the next lane waits
+  for it and re-reads the file immediately before editing. if you do not know
+  who owns a file, you do not own it yet.
+- **a brief with a wrong assumption, corrected by message.** a brief instructed
+  a lane to cap a slider at an unwanted value; subsequent corrections arrived
+  after the mistake was already baked into code. **the fix:** a wrong brief is
+  replaced by a fresh, complete brief — never patch a confused running lane.
+- **editing working production code when tasked with tests.** an agent tasked
+  with fixing failing test suites mutated working runtime files
+  (`LibForeverInspector.lua`, `TacoTip_Extras.toc`, `main.lua`) to satisfy
+  outdated harness assertions, breaking working state and violating task
+  boundaries. **the fix:** NEVER touch working production or library code when
+  assigned to tests. If a test fails against working code, update or comment out
+  the obsolete test assertions; never mutate working code.
+- **tests that cannot fail.** the harness pinned values by copying them out of
+  the code, so a wrong value in the code passed a green suite. **the fix:**
+  assert a literal or an independent derivation, and show every new pin going
+  red on a copy before it is accepted.
+- **a mock agreeing with the code instead of the client.** three real defects
+  shipped behind a green suite because the mock handed the addon an API the
+  client does not provide. **the fix:** the mock must reproduce what the client
+  LACKS, not only what it returns — and the fix is a pin that goes red on old code.
 - **a green suite announced as a fix.** four consecutive rounds of "fixed" on
   one tooltip defect, each behind a passing pin, each still wrong on the
-  operator's screen. the pin proved the code did what the lane described; it
-  did not prove the player-visible result changed. **the fix:** a lane reports
-  "pinned in the harness, not observed in game" — never "fixed". the operator's
-  next hover is the only acceptance, and a lane that has no such observation
-  says exactly that in its `done` signal.
-- **a decision built on a predicted rect.** the portrait's side was computed
-  from the handle position plus `tooltip:GetWidth()` while the tooltip had not
-  been laid out, so the decision read a prediction of the frame's geometry. every
-  later round — cache key, show-time pass, deferred guard — was downstream of
-  that one prediction. **the fix:** a geometry decision reads the laid-out frame,
-  from a deferred pass when the render is too early. a computed rect is an
-  assumption wearing a number.
-- **four inferred fixes before one measurement.** each round had a plausible
-  story and no evidence from the client, and the operator paid for it in
-  testing time. **the fix:** when a symptom survives one fix, the next step is
-  an instrumented readout the operator can produce with one hover — the real
-  rect, the width, the side, the counters — not another reading of the same
-  code.
-- **a pin that passed while the fix was reverted.** a follow-up-arming pin went
-  green against reverted code because an earlier block had left the portrait
-  mock parked off screen, so the "idle" pass was not idle. **the fix:** every
-  pin resets the mock state it depends on, and the revert proof runs per pin —
-  a pin proven only inside its own block has proven nothing.
-- **"checked all clients" without the operator's branch.** the branch the
-  operator actually plays was checked after the claim instead of before, and it
-  turned out to declare no `OnShow` on the `GameTooltip` frame — so one layer of
-  the fix never installed on their client. **the fix:** the operator's branch is
-  the first one checked and the one that can withdraw a claim.
-- **the 0.8.4 state-machine overcomplication and revert.** an attempt to
-  replace the inspect system with a complex asynchronous three-state machine
-  (`inspectStates.QUEUED == "queued"`) broke multiple client paths and caused
-  widespread regressions. the codebase had to be reverted to the known-good
-  0.8.3 base and incrementally fixed forward to 0.8.6. offline test harnesses
-  that had been modified to assert the abandoned tri-state semantics were left
-  failing. **the fix:** do not replace working state machines with complex
-  architectural rewrites when simple guards suffice; keep test harness
-  assertions synchronized with production client contracts.
+  operator's screen. **the fix:** report "pinned in the harness, not observed
+  in game" — never "fixed". The operator's next in-game observation is the only
+  true acceptance.
+- **verification that never ran.** a lane changed behaviour, stopped, and left
+  the tree red; nobody knew until the next lane ran the suite. **the fix:** a
+  lane reports only after test suites (`run_all.sh`), static analysis (`luacheck .`),
+  and release package verifiers (`verify_release.sh --worktree`) are 100% green.
+- **attempting to re-enable scan when scan crashes both addons.** an agent
+  assumed disabled scan code was a bug and attempted to re-enable it. Scan in
+  TacoTip_Extras was intentionally disabled because it crashes both addons.
+  **the fix:** never assume or guess why code is disabled; read `workshop.md`
+  and operator invariants. Scan remains strictly disabled.
+
+### 2. Geometry, tooltip layout & FrameXML traps
+
+- **decisions built on a predicted / pre-layout rect.** the portrait's side was
+  computed from the handle position plus `tooltip:GetWidth()` before the tooltip
+  had been laid out, placing the portrait off-screen. **the fix:** never read
+  screen geometry (`:GetLeft()`, `:GetTop()`, `:GetRight()`, `:GetWidth()`,
+  `:GetHeight()`) inside the render pass before layout. The only sanctioned
+  reader is `getPortraitSideRightEdge` which measures the handle's target edge.
+- **bag item hover tooltip stretch / disappearance.** Blizzard's
+  `ContainerFrameItemButton_CalculateItemTooltipAnchors` does not call
+  `ClearAllPoints()`. Hooking `GameTooltip_SetDefaultAnchor` without gating
+  container buttons caused `GameTooltip` to receive dual anchors, stretching the
+  tooltip across the screen. **the fix:** strictly exclude container item
+  buttons from default anchor manipulation so Blizzard's single slot anchor
+  remains intact.
+- **3D world mouseover focus returning empty table.** `GetMouseFoci()` returns
+  an empty table `{}` in 3D world space on modern engines (TBC Anniversary,
+  Retail, Forever). Checking `frames[1]` without a fallback caused
+  `TT:GetMouseFocus()` to return `nil`. **the fix:** if `frames` is empty,
+  fall back to `WorldFrame`.
+- **plain frames lacking backdrop API.** `SetBackdrop` / `SetBackdropColor`
+  exist only on `BackdropTemplate` or `BackdropTemplateMixin` frames. A frame
+  created via `CreateFrame("Frame", ...)` has none, and unguarded calls error or
+  silently drop borders.
+
+### 3. Inspection, taint & client engine contracts
+
 - **Classic Era GameMenu Exit/Logout button taint (`ADDON_ACTION_FORBIDDEN`).**
   detouring `_G.PlaySound` in `installInspectErrorSuppressor` tainted execution
   when `GameMenuFrame` invoked `PlaySound(...)` immediately prior to protected
   `Quit()` or `Logout()`, triggering `[ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip'
   tried to call the protected function 'UNKNOWN()'`. **the fix:** never replace
-  `_G.PlaySound`. mute the out-of-range inspect sound at `GetGameMessageInfo`
-  inside `UIErrorsMixin:TryDisplayMessage` by returning `soundKitID = nil` for
-  `ERR_OUT_OF_RANGE`.
+  or detour `_G.PlaySound`. Mute the out-of-range inspect sound at
+  `GetGameMessageInfo` inside `UIErrorsMixin:TryDisplayMessage` by returning
+  `soundKitID = nil` for `ERR_OUT_OF_RANGE`.
 - **first-hover partial GearScore (GS 104) async texture-vs-link race.**
   `INSPECT_READY` fired before item links were cached locally in the client.
   `GetInventoryItemLink` returned `nil`, but `GetInventoryItemTexture` was
-  valid. the old code treated nil as empty, stamped `data.time = now`, and
+  valid. The old code treated nil as empty, stamped `data.time = now`, and
   locked in a partial score for 5 minutes. **the fix:** check
-  `GetInventoryItemTexture`. if a texture exists but link is nil, mark
+  `GetInventoryItemTexture`. If a texture exists but link is nil, mark
   `incomplete = true`, do not stamp cache time, and retry after 250ms with
   `PlayerGUIDToUnitToken(guid)`.
-- **bag item hover tooltip stretch / disappearance.** Blizzard's
-  `ContainerFrameItemButton_CalculateItemTooltipAnchors` does not call
-  `ClearAllPoints()`. hooking `GameTooltip_SetDefaultAnchor` without gating
-  container buttons caused `GameTooltip` to be pinned to both
-  `TacoTipDragButton` and the bag slot button simultaneously, stretching the
-  tooltip across the screen. **the fix:** strictly exclude container item
-  buttons from default anchor manipulation so Blizzard's single slot anchor
-  remains intact.
-- **3D world mouseover focus returning empty table.** `GetMouseFoci()` returns
-  an empty table `{}` in 3D world space on modern engines. checking `frames[1]`
-  without a fallback caused `TT:GetMouseFocus()` to return `nil`. **the fix:**
-  if `frames` is empty, return `WorldFrame`.
-- **packaging failures on unignored tooling dotfiles.** tracked configuration
+- **`CanInspect` called with two arguments.** Passing a second argument
+  (`showError = true`) makes the client engine display red "Not in range"
+  popups and spoken error audio on hovered units. **the fix:** call
+  `CanInspect(unit)` with exactly ONE argument.
+- **the 0.8.4 state-machine overcomplication and revert.** An attempt to
+  replace the inspect system with a complex asynchronous three-state machine
+  broke multiple client paths and caused regressions, requiring a revert to
+  0.8.3 and incremental forward fixes. **the fix:** do not replace working
+  state machines with complex architectural rewrites when simple guards suffice.
+- **client misclassification from `GetBuildInfo()` slot layouts.** Classic Era
+  returns `nil` in slot 4 and the build in slot 7, causing naive build checks to
+  misclassify Era as Mainline. **the fix:** identify client families from
+  `WOW_PROJECT_ID` alone (2 for Era, 5 for TBC, 11 for Titanforge).
+
+### 4. Diagnostics, telemetry & packaging blindspots
+
+- **diagnostic false clean reports and swallowed pcall errors (`/tt diag`).**
+  `/tt diag` previously relied on `TT.lastTooltipError` which was only set if
+  `handlePipelineError` fired, while internal `pcall` invocations (`DoInspect`,
+  `portrait.SetUnit`, `portrait.ClearModel`, `TacoTip_GSCallback`) swallowed error
+  returns completely, leaving `/tt diag` reporting "no problems detected" even
+  while features silently failed. Furthermore, it lacked live unit context.
+  **the fix (0.8.7):** install `TT:RecordError` ring buffer (last 15 entries with
+  timestamps and subsystem tags) across internal `pcall` sites, add dynamic problem
+  detection for inspect stalls (>3s), unresolved unit tokens, and corrupt coords,
+  and evaluate the active unit live (`CanInspect`, `CheckInteractDistance`,
+  `UnitDistanceSquared` yardage, and cache freshness).
+- **an audit reporting an absence it could not verify.** a reviewer without
+  access to the mirror asserted a client API did not exist when it was proven
+  in game. **the fix:** an absence claim needs a whole-tree mirror sweep AND
+  generated API docs; without them it is ASSUMED.
+- **"checked all clients" without the operator's branch.** testing against
+  clean branches missed that the operator's specific client branch lacked an
+  `OnShow` on `GameTooltip`. **the fix:** verify against the operator's exact
+  client branch first.
+- **packaging failures on unignored tooling dotfiles.** Tracked configuration
   files like `.wowluarc.json` without `export-ignore` in `.gitattributes` cause
   release package verifiers to fail. **the fix:** keep `.gitattributes`
   synchronized with all tracked non-runtime files.

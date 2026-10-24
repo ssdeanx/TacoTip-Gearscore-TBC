@@ -11,19 +11,19 @@
 
 ```yaml
 name: TacoTip
-version: 0.8.6
+version: 0.8.7
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE; bundled Libs/ keep their own terms
 curseforge_id: 1555962
 project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
-interfaces: ["11509", "20506", "38002", "16001", "120100"]
+interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 optional: [WoWUnit]
 status: released
-updated: 2026-10-23
+updated: 2026-10-24
 ```
 
 TacoTip is a character, item and guild tooltip enhancement that runs on **every**
@@ -40,12 +40,22 @@ World of Warcraft engine family from one build — no per-client downloads, no
 | **<span style="color:#2ecc71">The Burning Crusade Classic Anniversary</span>** | `20506` | <span style="color:#2ecc71">**Active**</span> |
 | **<span style="color:#3498db">WotLK Titanforge</span>** | `38002` | <span style="color:#2ecc71">**Active**</span> |
 | **<span style="color:#9b59b6">WoW Forever</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#e74c3c">Retail / Live (The War Within & Midnight)</span>** | `120100` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#e74c3c">Retail / Live (The War Within & Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> |
 
 > **<span style="color:#e67e23">This release replaces the previous Classic-only TacoTip.</span>** It is the same
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## <span style="color:#e67e23">What's New in 0.8.7</span>
+
+- **Complete `/tacotip diag` Overhaul:** Replaced incomplete event dump with real-time actionable telemetry and deep health inspection across all five client families.
+- **Real-Time Active Unit Context:** `/tt diag` inspects the active `mouseover`, `target`, or `player` unit live, displaying GUID, inspect capability flags (`CanInspect`, `CheckInteractDistance(1)`, `UnitIsVisible`, `UnitIsConnected`, `UnitCanAttack`), live yardage via `UnitDistanceSquared`, cache age, stale/incomplete status, and queue in-flight state.
+- **Bounded Error History Ring Buffer:** Captures the last 15 caught errors across the pipeline, inspect engine, and GearScore callbacks with timestamps and subsystem tags.
+- **Inspect Queue & Engine Telemetry:** Real-time visibility into inspect queue size, in-flight unit duration, cache health, timeouts, and detailed refusal diagnostics (unit, yards, refusal reason).
+- **Dynamic Silent Failure Detection:** Health check flags stuck inspect queues (>3s), dropped unit tooltip resolutions, corrupt custom_pos tables, and client detection anomalies.
 
 ---
 
@@ -55,27 +65,6 @@ World of Warcraft engine family from one build — no per-client downloads, no
 - **Bag item tooltips protected:** Bag and inventory slot tooltips remain cleanly attached to item slots without stretching across the screen or vanishing.
 - **Taint-free sound suppression (Classic Era):** Cleanly mutes out-of-range inspect sounds without detouring `_G.PlaySound`, ensuring Game Menu Exit Game and Logout buttons are never blocked by UI execution taint.
 - **3D mouse focus on modern clients:** Ensures `TT:GetMouseFocus()` resolves `WorldFrame` correctly when hovering the 3D world on TBC Anniversary and modern clients.
-
----
-
-## What's New in 0.8.3
-
-Proactive GearScore collection for everyone standing near you, the fix for the repeating "Not in Range" popup, and the portrait fix that only ever showed up on the Classic clients.
-
-- **The repeating "Not in Range" popup is addressed, on every client.** `NotifyInspect` is a *server* request, and a refused inspect puts the red text and sound up through the client's own UI error path. What the FrameXML mirror shows is that path — `UIErrorsFrame` consuming `UI_ERROR_MESSAGE` and speaking it via `C_Sound.PlayVocalErrorSound` — and it does **not** show which call produces it, so the fix covers both candidates rather than guessing. Four separate causes, each independently sufficient to keep it going: distance was measured with `UnitDistance`, which **exists on none of the five supported clients**, so the whole range-learning mechanism was unreachable code; the "don't re-ask" memory was a 10-second *timer* rather than a *state*, so a unit that stayed far was re-asked forever; Classic Era was **misclassified as a modern client** (below), which routed it into the one range policy that permits an out-of-range request; and a refusal no longer lifts just because the unit is merely *still within* 20 yards — it lifts when the unit has actually moved **closer** than it was at the refusal. On Classic Era the refusal is also swallowed inside a short window around the addon's own probes, recorded, and used to learn that client's real range — see the CHANGELOG for exactly what is verified and what is assumed.
-- **Classic Era was being detected as a modern client.** Detection required a build-major of `1`, but Classic Era's `GetBuildInfo()` puts `nil` in that slot and the build number in a later one, so Classic Era fell into the "either signal is enough" branch — the only policy that lets an out-of-range inspect through. Identity now comes from `WOW_PROJECT_ID` alone, which is genuinely distinct per Classic client.
-- **The 3D portrait no longer disappears and stays gone on the Classic clients.** On a render where the tooltip could not resolve its unit, the portrait was hidden, re-anchored, and **never restored** — the branch that shows it again was never reached. The cause is structural: the Classic script hook discards its arguments, so the GUID fallback that rescues this case simply does not exist on that family. Retail and WoW Forever were never affected.
-- **Proximity world scan.** Every ~2 seconds the library walks the visible nameplates, distance-gates each player with the rule that is correct for your client, and inspects the ones in range — so GearScore and item level for someone standing next to you are already cached when you hover them. One inspect request per tick, skipped in combat, and never re-requested while the data is still fresh.
-- **Correct range handling on all five clients.** Classic Era / SoD / TBC / Titanforge require *both* `CanInspect` and `CheckInteractDistance(unit, 1)`; Retail and WoW Forever accept either. A single shared constant now drives the range index everywhere.
-- **No more queue deadlocks.** If an inspect request never comes back, a watchdog releases the pending slot after 3 seconds instead of stalling every other player behind it.
-- **Boundary flicker now costs a skipped inspect instead of an error popup.** An earlier grace period that let a recently-inspected unit through a *failed* distance check was removed: it re-introduced the exact "Not in Range" it was meant to prevent.
-- **Cache timestamps come from `GetTime()` (uptime) instead of `time()` (wall clock)**, so a system clock change can no longer make fresh data look expired. The clock read is guarded so a missing API degrades instead of silently killing the inspect pipeline.
-- **The unit `Level` label is no longer hardcoded English** on any client — it was the one label bypassing the locale system, so it read `Level` in Korean, Russian and Chinese too.
-- **`/tacotip diag` now reports the inspect engine:** notify count, inspects completed, watchdog timeouts, refusals recorded, probe errors suppressed (and separately the spoken and sound halves of what the guard swallowed), the learned maximum range for this client, scan-enqueued, scan-via-fallback and scan-skipped-by-range, plus separate counters for portrait `Hide()` calls versus full teardowns.
-
-> **One correction worth reading.** An earlier revision of this release added `CanInspect(unit, true)` as a range gate, on the belief that the second argument was a range flag. **It is not — it is `showError`.** That call was asking the engine to *display* a message, so the fix for the popup was itself a source of one. It has been reverted, and the full reasoning is in [CHANGELOG.md](CHANGELOG.md) rather than edited away.
-
-Full detail, including the tests that were wrong rather than the addon, is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
