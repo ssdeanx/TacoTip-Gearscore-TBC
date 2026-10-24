@@ -274,6 +274,12 @@ REALG.GetCursorPosition = function() return 0, 0 end
 REALG.GetScreenWidth = function() return 1920 end
 REALG.GetClassAtlas = function() return nil end
 REALG.GetGuildInfo = function() return nil end
+local origPlaySound = function() return 1 end
+REALG.PlaySound = origPlaySound
+REALG.GetGameMessageInfo = function() return "ERR_OUT_OF_RANGE", 1234, 5678 end
+REALG.C_Sound = { PlayVocalErrorSound = function() end }
+REALG.UIErrorsFrame = newFrame("Frame", "UIErrorsFrame")
+REALG.UIErrorsFrame.AddMessage = function() end
 
 -- Faithful hooksecurefunc: string form records a post-hook chain without
 -- touching the global; table form records without replacing the method.
@@ -476,303 +482,103 @@ do
     end
 end
 
--- Pin (g): THE CONTAINMENT. Every addon callback this add-on installs into a
--- BLIZZARD frame's script chain runs inside `securecall`, so the client does
--- not taint that frame. Uncontained, the taint reaches the game menu and the
--- Logout/Quit button -- whose callback is the engine function, so a reporter
--- can only name it 'UNKNOWN()' -- is refused:
---     [ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip' tried to call the protected
---     function 'UNKNOWN()'.
---
--- `securecall` is the engine's own containment primitive, and Blizzard uses it
--- for exactly this shape (Blizzard_BuffFrame/BuffFrame.lua:991
--- `securecall(self.UpdateDuration, self, self.timeLeft); -- Taint issue with
--- SecondsToTimeAbbrev`). It is an engine global on every supported client
--- (Blizzard captures it as a local: Blizzard_FrameXML/SharedPetBattleTemplates.lua:5
--- `local securecall = securecall;`).
---
--- Revert map: unwrap any one of these handlers from runUntainted -> the
--- counter does not move for that handler (red).
+-- Pin (c): _G.PlaySound is NEVER hooked or detoured (0.8.5 regression pin).
+-- Detouring _G.PlaySound caused execution taint when clicking Exit Game or
+-- Logout on Classic Era (ADDON_ACTION_FORBIDDEN). In 0.8.5, sound suppression
+-- was relocated to GetGameMessageInfo, leaving _G.PlaySound completely clean.
+check("taint prevention: _G.PlaySound global is never hooked or detoured",
+    REALG.PlaySound == origPlaySound,
+    "PlaySound replaced=" .. tostring(REALG.PlaySound ~= origPlaySound))
+
+-- Pin (d): Inspect error suppression on Classic Era (0.8.5).
+-- Classic Era installs inspectErrorSuppressor at GetGameMessageInfo to mute
+-- out-of-range inspect sound kits without tainting PlaySound. Other clients
+-- do not install the suppressor.
 do
-    local function secureCalls()
-        return REALG.__secureCalls or 0
+    local CI = REALG.LibStub and REALG.LibStub("LibForeverInspector", true)
+    if (projectId == REALG.WOW_PROJECT_CLASSIC) then
+        check("Classic Era: inspect error suppressor is installed",
+            CI and CI.inspectSuppressorInstalled == true,
+            "installed=" .. tostring(CI and CI.inspectSuppressorInstalled))
+    else
+        check("non-Classic: inspect error suppressor is NOT installed",
+            CI and CI.inspectSuppressorInstalled ~= true,
+            "installed=" .. tostring(CI and CI.inspectSuppressorInstalled))
     end
-    local showHook = GT.__hook_OnShow
-    local hideHook = GT.__hook_OnHide
-    check("containment: the shared GameTooltip's OnShow hook is installed",
-        type(showHook) == "function")
-    check("containment: the shared GameTooltip's OnHide hook is installed",
-        type(hideHook) == "function")
-    if (type(showHook) == "function") then
-        local before = secureCalls()
-        pcall(showHook, GT)
-        check("containment: the GameTooltip's OnShow hook runs inside securecall",
-            secureCalls() > before,
-            "secureCalls=" .. tostring(secureCalls() - before))
-    end
-    if (type(hideHook) == "function") then
-        local before = secureCalls()
-        pcall(hideHook, GT)
-        check("containment: the GameTooltip's OnHide hook runs inside securecall",
-            secureCalls() > before,
-            "secureCalls=" .. tostring(secureCalls() - before))
-    end
+end
+
+-- Pin (e): 3D world unit hovering in 0.8.6.
+-- When hovering or targeting units in the 3D world, Blizzard calls
+-- GameTooltip_SetDefaultAnchor(tooltip, UIParent). In 0.8.6,
+-- parent == UIParent, parent == WorldFrame, and parent == nil are explicitly
+-- accepted as valid unit hover parents and dock to custom position.
+do
     local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
-    check("containment: the anchor post-hook is installed",
-        type(anchorHook) == "function")
+    check("anchor post-hook present for 3D world pin", type(anchorHook) == "function")
     if (type(anchorHook) == "function") then
-        local before = secureCalls()
+        local C = REALG.TacoTipConfig
+        C.anchor_mouse = false
+        C.custom_pos = true
+        REALG.TacoTipDragButton = newFrame("Button", "TacoTipDragButton")
+        REALG.TacoTipDragButton:Show()
+
+        -- 1. UIParent as parent (standard 3D world unit default anchor)
+        GT.__points = {}
+        GT.__setPointCalls = 0
         pcall(anchorHook, GT, REALG.UIParent)
-        check("containment: the anchor post-hook body runs inside securecall",
-            secureCalls() > before,
-            "secureCalls=" .. tostring(secureCalls() - before))
-    end
-    -- The tooltip's STATUS BAR is a live global on every client: the classic
-    -- chain declares it as `<StatusBar name="$parentStatusBar" .../>` inside
-    -- GameTooltipTemplate (classic_era:Blizzard_SharedXML/Classic/GameTooltipTemplate.xml:138)
-    -- and the modern one the same way (forever/live:Blizzard_GameTooltip/Mainline/GameTooltip.xml:9).
-    -- The `$parent` prefix makes the child's global the parent's name plus the
-    -- child's -- the same rule the add-on relies on for `$parentTextLeft1` ->
-    -- `GameTooltipTextLeft1`. So this hook is always on, and it is addon code
-    -- inside a Blizzard frame's script chain.
-    local statusBar = REALG.GameTooltipStatusBar
-    check("containment: the tooltip status bar exists (it is a live global)",
-        type(statusBar) == "table")
-    local statusHook = statusBar and statusBar.__hook_OnHide
-    check("containment: the status bar's OnHide hook is installed",
-        type(statusHook) == "function")
-    if (type(statusHook) == "function") then
-        local before = secureCalls()
-        pcall(statusHook, statusBar)
-        check("containment: the status bar's OnHide hook runs inside securecall",
-            secureCalls() > before,
-            "secureCalls=" .. tostring(secureCalls() - before))
-    end
-end
-
--- Pin (c): mover ticker + OnShow/OnHide hooks + ShowExample skip while a
--- secure menu owns the screen (hunter H-NEW1). Revert map: delete the
--- isSecureMenuBusy() early-returns in onMoverTick,
--- onMoverGameTooltipShow/Hide and ShowExample -> every menu-shown fire below
--- mutates (red). The StaticPopup5 leg pins the M-NEW4 loop bound: the pool
--- is exactly 1..4, so a fifth dialog must NOT suppress.
-do
-    -- Isolate the mover/taint behaviour from the options UI: Refresh walks
-    -- dropdown and colour-picker globals this mock never declares, so the
-    -- enable path raises here while it cannot in game. Restored below.
-    local realRefresh = TT.RefreshOptionsUI
-    TT.RefreshOptionsUI = function() end
-    local restored = false
-    local function restoreRefresh()
-        if (not restored) then
-            restored = true
-            TT.RefreshOptionsUI = realRefresh
-        end
-    end
-    local mover = nil
-    local tickFn = nil
-    check("mover entry point present", type(REALG.TacoTip_CustomPosEnable) == "function")
-    if (type(REALG.TacoTip_CustomPosEnable) == "function") then
-        local okEnable = pcall(REALG.TacoTip_CustomPosEnable, true)
-        check("mover enable does not raise", okEnable == true)
-        mover = REALG.TacoTipDragButton
-        check("mover button exists after enable", mover ~= nil)
-        if (mover ~= nil) then
-            check("mover is shown after enable(true)", mover:IsShown() == true)
-            local onShowFn = mover.GetScript and mover:GetScript("OnShow") or nil
-            check("mover OnShow script installed", type(onShowFn) == "function")
-            if (type(onShowFn) == "function") then
-                -- Mock accommodation: this mock resolves ANY absent field to a
-                -- no-op function, so the fresh button reads self.ticker as a
-                -- (truthy) function and self.ticker:Cancel() indexes it. In
-                -- game the field starts nil and the branch is skipped. Seed a
-                -- cancellable ticker, the legitimate "previous ticker" state.
-                mover.ticker = { Cancel = function() end }
-                local okShow = pcall(onShowFn, mover)
-                check("mover OnShow does not raise", okShow == true)
-            end
-            -- rawget: the mock __index fabricates functions for absent keys,
-            -- so a plain read can never observe "no ticker".
-            local rawTicker = rawget(mover, "ticker")
-            tickFn = (type(rawTicker) == "table" and rawTicker.func) or nil
-            check("mover ticker captured", type(tickFn) == "function")
-        end
-    end
-    if (mover ~= nil and type(tickFn) == "function") then
-        local function resetMoverCounts()
-            GT.__setPointCalls = 0
-            GT.__clearCalls = 0
-            GT.__setOwnerCalls = 0
-            GT.__enableMouseCalls = 0
-        end
-        local function fireMover()
-            pcall(tickFn)
-            local hookShow = GT.__hook_OnShow
-            if (type(hookShow) == "function") then pcall(hookShow, GT) end
-            local hookHide = GT.__hook_OnHide
-            if (type(hookHide) == "function") then pcall(hookHide, GT) end
-        end
-        -- Control: secure screen clear -> the example renders via the
-        -- custom_pos _Enable installs (the SetOwner branch).
-        resetMoverCounts()
-        fireMover()
-        check("control: mover fire with no menu renders (SetOwner ran)",
-            GT.__setOwnerCalls >= 1, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        -- Menu shown: ticker + both hooks must all no-op.
-        REALG.GameMenuFrame:Show()
-        resetMoverCounts()
-        fireMover()
-        check("menu shown: ticker+hooks cause no SetOwner",
-            GT.__setOwnerCalls == 0, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        check("menu shown: ticker+hooks cause no SetPoint",
-            GT.__setPointCalls == 0, "setPoint=" .. tostring(GT.__setPointCalls))
-        -- Defense in depth: ShowExample itself refuses too.
-        resetMoverCounts()
-        pcall(function() mover:ShowExample() end)
-        check("menu shown: direct ShowExample causes no SetOwner",
-            GT.__setOwnerCalls == 0, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        check("menu shown: direct ShowExample causes no SetPoint",
-            GT.__setPointCalls == 0, "setPoint=" .. tostring(GT.__setPointCalls))
-        REALG.GameMenuFrame:Hide()
-        -- Popup leg: a shown StaticPopup1 suppresses as well.
-        REALG.StaticPopup1:Show()
-        resetMoverCounts()
-        pcall(function() mover:ShowExample() end)
-        check("popup shown: ShowExample causes no SetOwner",
-            GT.__setOwnerCalls == 0, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        REALG.StaticPopup1:Hide()
-        -- M-NEW4 loop bound: a fifth dialog is outside the 1..4 pool and
-        -- must NOT suppress.
-        REALG.StaticPopup5 = newFrame("Frame", "StaticPopup5")
-        REALG.StaticPopup5:Show()
-        resetMoverCounts()
-        pcall(function() mover:ShowExample() end)
-        check("StaticPopup5 shown: ShowExample still renders (pool is 1..4)",
-            GT.__setOwnerCalls >= 1, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        REALG.StaticPopup5 = nil
-        -- Restore: menu clear renders again.
-        resetMoverCounts()
-        pcall(function() mover:ShowExample() end)
-        check("menu clear: ShowExample renders again",
-            GT.__setOwnerCalls >= 1, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        pcall(REALG.TacoTip_CustomPosEnable, false)
-    end
-    restoreRefresh()
-end
-
--- Pin (d): the anchor spell branch tolerates a parent without GetParent
--- (hunter H-NEW4). Revert map: restore the raw
--- `parent and parent:GetParent()` call -> the pcall below returns false
--- (red) instead of passing through to the unit gate.
-do
-    local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
-    check("anchor post-hook installed (spell-branch pin)", type(anchorHook) == "function")
-    if (type(anchorHook) == "function") then
-        local C = REALG.TacoTipConfig
-        C.anchor_mouse = true
-        C.anchor_mouse_world = false
-        C.anchor_mouse_spells = true
-        C.custom_pos = nil
-        GT.__setPointCalls = 0
-        GT.__clearCalls = 0
-        GT.__setOwnerCalls = 0
-        GT.__enableMouseCalls = 0
-        GT.__unit = nil
-        GT.GetUnit = function() return "n", nil end
-        GT.GetOwner = function() return nil end
-        -- A parent with neither action/spellId nor GetParent: no spell leg,
-        -- no raise, straight to the unit gate (menu passthrough).
-        local okHook = pcall(anchorHook, GT, {})
-        check("parent without GetParent does not raise",
-            okHook == true, "ok=" .. tostring(okHook))
-        check("...and passes through without SetOwner",
-            GT.__setOwnerCalls == 0, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        check("...and without SetPoint",
-            GT.__setPointCalls == 0, "setPoint=" .. tostring(GT.__setPointCalls))
-        -- A parent whose GetParent raises is the same shape, not a new one.
-        local raisingParent = {
-            GetParent = function() error("HNEW4_PIN_RAISING_PARENT") end,
-        }
-        GT.__setOwnerCalls = 0
-        GT.__setPointCalls = 0
-        local okRaise = pcall(anchorHook, GT, raisingParent)
-        check("parent with raising GetParent does not raise",
-            okRaise == true, "ok=" .. tostring(okRaise))
-        check("...and passes through without SetOwner",
-            GT.__setOwnerCalls == 0, "setOwner=" .. tostring(GT.__setOwnerCalls))
-        C.anchor_mouse_spells = nil
-    end
-end
-
--- Pin (e): the anchor unit gate splits silent passthroughs for diag (hunter
--- M-NEW2) -- menu-by-design vs unit-like-but-unresolved. Revert map: delete
--- the TT.ev.anchorSkippedMenu/Unresolved increments in
--- onGameTooltipSetDefaultAnchor -> the counters below never move (red).
-do
-    local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
-    check("anchor post-hook installed (skip-split pin)", type(anchorHook) == "function")
-    if (type(anchorHook) == "function") then
-        local C = REALG.TacoTipConfig
-        C.anchor_mouse = true
-        C.anchor_mouse_world = false
-        C.anchor_mouse_spells = nil
-        C.custom_pos = nil
-        GT.__unit = nil
-        GT.GetUnit = function() return "n", nil end
-        GT.GetOwner = function() return nil end
-        local TT2 = REALG.TacoTip_Forever
-        local function skips()
-            local ev = TT2 and TT2.ev or {}
-            return ev.anchorSkippedMenu or 0, ev.anchorSkippedUnresolved or 0
-        end
-        -- No unit signal anywhere: menu-by-design passthrough.
-        local menuBefore, unresBefore = skips()
-        local menuOwner = newFrame("Frame", "SkipMenuOwner")
-        pcall(anchorHook, GT, menuOwner)
-        local menuAfter, unresAfter = skips()
-        check("menu-surface passthrough counts as menu-skipped",
-            menuAfter == menuBefore + 1, "menu=" .. menuBefore .. "->" .. menuAfter)
-        check("...and not as unresolved",
-            unresAfter == unresBefore, "unresolved=" .. unresBefore .. "->" .. unresAfter)
-        -- A unit signal that resolves nowhere (no such unit in this mock):
-        -- the exotic/battle-pet shape, counted as unresolved.
-        local exoticParent = { unit = "some-unresolvable-token" }
-        pcall(anchorHook, GT, exoticParent)
-        local menuFinal, unresFinal = skips()
-        check("unresolvable-unit passthrough counts as unresolved",
-            unresFinal == unresAfter + 1, "unresolved=" .. unresAfter .. "->" .. unresFinal)
-        check("...and not as menu",
-            menuFinal == menuAfter, "menu=" .. menuAfter .. "->" .. menuFinal)
-    end
-end
-
--- Pin (f): the CLASSIC ERA unit tooltip. On the classic family the tooltip has
--- no GetUnit, no TooltipDataProcessor and no owner.unit -- Blizzard identifies
--- it with IsUnit (origin/classic_era
--- Interface/AddOns/Blizzard_GameTooltip/Classic/GameTooltip.lua:498-503). The
--- gate that 0.8.4 added read such a tooltip as "menu" and skipped it, so the
--- saved custom position was never applied and the tooltip stayed in the
--- bottom-right corner while the mover could not save it back.
--- Revert map: drop the IsUnit probe from isManagedAnchorTarget -> the hook
--- returns early and the setPoint count stays at 0 (red).
-do
-    local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
-    if (type(anchorHook) == "function") then
-        local C = REALG.TacoTipConfig
-        C.anchor_mouse = true
-        C.anchor_mouse_world = false
-        C.anchor_mouse_spells = nil
-        C.custom_pos = nil
-        -- The classic shape: the tooltip IS the mouseover tooltip, but the
-        -- unit cannot be read through the modern APIs.
-        GT.__unit = "mouseover"
-        GT.GetUnit = function() return "n", "mouseover" end
-        GT.GetOwner = function() return nil end
-        local classicParent = newFrame("Frame", "ClassicEraOwner")
-        GT.__setPointCalls = 0
-        pcall(anchorHook, GT, classicParent)
-        check("a classic-era unit tooltip is still repositioned (the saved position applies)",
+        check("3D world: UIParent docks tooltip to custom position",
             GT.__setPointCalls >= 1, "setPoint=" .. tostring(GT.__setPointCalls))
+
+        -- 2. WorldFrame as parent
+        GT.__points = {}
+        GT.__setPointCalls = 0
+        pcall(anchorHook, GT, REALG.WorldFrame)
+        check("3D world: WorldFrame docks tooltip to custom position",
+            GT.__setPointCalls >= 1, "setPoint=" .. tostring(GT.__setPointCalls))
+
+        -- 3. nil parent
+        GT.__points = {}
+        GT.__setPointCalls = 0
+        pcall(anchorHook, GT, nil)
+        check("3D world: nil parent docks tooltip to custom position",
+            GT.__setPointCalls >= 1, "setPoint=" .. tostring(GT.__setPointCalls))
+    end
+end
+
+-- Pin (f): Bag slot item tooltip protection (0.8.6).
+-- Container frame item buttons must bypass TacoTip's default anchor hook
+-- so Blizzard's ContainerFrameItemButton_CalculateItemTooltipAnchors can
+-- dock the item tooltip to the slot without stretching off-screen.
+do
+    local anchorHook = SECURE_HOOKS["GameTooltip_SetDefaultAnchor"]
+    if (type(anchorHook) == "function") then
+        local bagSlot = newFrame("Button", "ContainerFrame1Item1", REALG.UIParent)
+        GT.__unit = nil
+        GT.GetUnit = function() return "n", nil end
+        GT.__points = {}
+        GT.__setPointCalls = 0
+        pcall(anchorHook, GT, bagSlot)
+        check("bag slot button passes through cleanly without SetPoint collision",
+            GT.__setPointCalls == 0, "setPoint=" .. tostring(GT.__setPointCalls))
+    end
+end
+
+-- Pin (g): TT:GetMouseFocus() 3D world empty table fallback (0.8.6).
+-- On TBC Anniversary and modern clients, GetMouseFoci() returns an empty
+-- table {} when the cursor is over the 3D world. TT:GetMouseFocus() falls
+-- back to WorldFrame so world target detection passes reliably.
+do
+    if (type(TT.GetMouseFocus) == "function") then
+        REALG.GetMouseFoci = function() return {} end
+        local focus = TT:GetMouseFocus()
+        check("TT:GetMouseFocus() returns WorldFrame when GetMouseFoci is empty table {}",
+            focus == REALG.WorldFrame, "focus=" .. tostring(focus and focus.GetName and focus:GetName()))
+
+        local sampleFrame = newFrame("Frame", "TestFrame1")
+        REALG.GetMouseFoci = function() return { sampleFrame } end
+        focus = TT:GetMouseFocus()
+        check("TT:GetMouseFocus() returns front frame when GetMouseFoci has entries",
+            focus == sampleFrame, "focus=" .. tostring(focus and focus.GetName and focus:GetName()))
     end
 end
 

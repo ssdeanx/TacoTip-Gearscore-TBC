@@ -6,7 +6,7 @@ in the linked files, not here.
 ## map
 
 | path | role |
-|---|---|
+| --- | --- |
 | `CAIRN.md` | disposition, evidence vocabulary, precedence ladder |
 | `hands-up.md` | escalation procedure — when each signal fires |
 | `desks/` | one desk per workstream; each owns a `journal.md`, its memory. start at `desks/README.md` |
@@ -291,11 +291,10 @@ five hours were lost to lanes colliding on the same files.
    claim, and "all five pass" in a suite is not the same statement — the suite
    proves the code runs, not that the player-visible result is right.
 
-
 ## skill index
 
 | skill | load it when |
-|---|---|
+| :--- | :--- |
 | skill `desk-open` (skill tool) | before opening a desk or sitting at one — new name vs live journal check |
 | skill `desk-journal` (skill tool) | before writing or closing any `desks/<name>/journal.md` entry |
 | skill `bench-read` (skill tool) | before reading or adding any `bench/` artifact |

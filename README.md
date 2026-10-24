@@ -79,90 +79,13 @@ Full detail, including the tests that were wrong rather than the addon, is in [C
 
 ---
 
-## What's New in 0.8.2
-
-- **Classic range gate restored:** Classic Era / SoD / TBC / Titanforge require both `CanInspect` and `CheckInteractDistance(unit, 1)`; Retail / Forever still accept either.
-- **GearScore / iLvl no longer vanish:** gear-change events mark cached data stale rather than erasing it, so values stay on screen until fresh data replaces them.
-- **The tooltip name is 2pt larger than body text.** Previously one size was applied to every line, which flattened the name — the player's on a unit tooltip, the item's on an item tooltip — to body size.
-- **Smaller 3D portrait:** the base is now `66 x 88` (was `72 x 96`). Still an exact 3:4 ratio, and still exact integers at every scale stop — `33x44`, `66x88`, `99x132`, `132x176`.
-- **New `Invert portrait side` option** (default off) to pin the portrait to the other side of the tooltip.
-
----
-
-## What's New in 0.8.1
-
-Inspection engine performance, proactive pre-caching, and remote inspect responsiveness. Full detail in [CHANGELOG.md](CHANGELOG.md):
-
-- **Proactive Target Pre-caching (`PLAYER_TARGET_CHANGED`):** Selecting or tab-targeting any inspectable player immediately triggers background inspection, pre-caching their equipment, talents, specialization, and GearScore before you hover over their model or open the inspect window.
-- **Eager Mouseover Triggering (`UPDATE_MOUSEOVER_UNIT`):** Sweeping over player models in the 3D game world begins the inspection query immediately without waiting for tooltip layout passes.
-- **Group Member Roster Scanning (`GROUP_ROSTER_UPDATE`):** Party and raid member inspections are triggered dynamically on group roster updates.
-- **Instant Unit Inventory Refresh (`UNIT_INVENTORY_CHANGED`):** When an inspected player swaps equipment, their cache entry is invalidated and re-inspected immediately.
-- **Optimized Throttling & Adaptive Queue Timer:** `INSPECT_DELAY` is `0.4s` on Retail / WoW Forever and `1.0s` on the Classic family. The queue ticker runs at `0.5s` and dispatches the next item promptly on `INSPECT_READY`, so an idle queue does not wait a full tick.
-- **Target Prioritization in Queue:** Actively targeted players are prioritized ahead of background group polling.
-- **Range handling that matches each client:** the Classic family (Classic Era / SoD / TBC Anniversary / Titanforge) requires **both** `CanInspect` and `CheckInteractDistance(unit, 1)`, and reads the distance signal *first* so a unit the cheap gate rejects is never asked about; Retail and WoW Forever accept either signal. The index is a single shared constant, and the yardage is not hardcoded — it is learned from the client's own refusals (`/tacotip diag` → `learned max range`).
-- **"Scanning Equipment..." Deadlock Resolution:** Corrected `LibForeverInspector` `INVENTORY_READY` callback dispatch to pass `(guid, true, unit)`, resolved non-targeted unit tokens via `InspectFrame.unit`, and safely parsed item IDs from links when `GetInventoryItemID` returns nil on remote items.
-
----
-
-## What's New in 0.8.0
-
-GearScore correctness. This is the first release whose test suite asserts a GearScore **value** rather
-than only that scoring does not throw — which is precisely why both bugs below shipped green in 0.7.9.
-Full detail in [CHANGELOG.md](CHANGELOG.md):
-
-- **Two-handed weapon math & Titan's Grip correctness.** Standalone 2H weapons (`INVTYPE_2HWEAPON`) occupy slot 16 with slot 17 empty and retain full 2.0x weight (`SlotMOD = 2.0`) so weapon gear budget balances with 1H + Shield wielders (`3625` vs `3624` total at ilvl 200). Titan's Grip dampening (`0.5`) is strictly applied when dual-wielding alongside an offhand weapon or shield (`mainHandLink and offHandLink`), maintaining exact balance for dual 2H Fury Warriors.
-- **Asynchronous item loading resilience & nil-safety.** `GetItemInfo` is guarded against nil arguments, and uncached items cleanly return zeroed scalar scores while triggering `C_Item.RequestLoadItemDataByID` without arithmetic or indexing errors.
-- **Hunter weapon scaling parity.** Unified Hunter melee (`0.3164x`) and ranged (`5.3224x`) multipliers between character total scoring and single-item tooltip evaluation.
-- **An item's tooltip colour now matches the GearScore printed beside it.** The colour band was computed from the slot-mod-free base while the displayed score included the slot modifier, so a 2H and a head of identical item level wore the same colour while showing different numbers. The band is now a pure function of the score shown. **This is the only user-visible colour change in 0.8.0.** Low-slot-mod items shift band: trinket / neck / finger / wrist / cloak (0.5625), shoulder / waist / feet / hands (0.75) and ranged / thrown (0.3164) now colour like the slot they occupy instead of like a head.
-- **New `Tests/harness/gearscore_test.lua`**, the first harness to assert numeric scores: per-item score literals, solo 2H full weight, Titan's Grip dual 2H half-weight, an exhaustive enumeration of reachable weapon states, item colour-band consistency across slots and item levels, and Hunter weapon scaling.
-
----
-
-## What's New in 0.7.9
-
-Portrait, inspect, unit-frame hover, and border correctness across all five client families. Full detail in
-[CHANGELOG.md](CHANGELOG.md):
-
-- **Stationary hover on PlayerFrame & TargetFrame no longer flickers or destroys on Retail.**
-  In modern Blizzard FrameXML, `UnitFrame_UpdateTooltip` refreshes every 0.2s by calling `SetOwner`
-  and `ClearLines`. TacoTip previously treated these transient internal 200ms refreshes as genuine
-  tooltip dismissals, tearing down and rebuilding the 3D portrait, power bar, and border overlay
-  5 times per second. Fixed with `isUnitFramePeriodicUpdate`, keeping stationary unit-frame hovers
-  completely stable with zero model reloads, zero un-anchoring, and zero flicker.
-- **Right-click inspect no longer strips gear from the paperdoll on Retail and WoW Forever.**
-  `LibForeverInspector` previously called `ClearInspectPlayer()` inside `INSPECT_READY`, which purged
-  the inspected unit before Blizzard's `InspectPaperDollItemSlotButton_Update` could read equipment links.
-  Fixed by deferring clear until `InspectFrame_OnHide`, adding party/raid member fallback resolution, and
-  protecting `InspectGuildFrame_Update` from crashing on guildless inspected players.
-- **The 3D portrait stopped strobing on Retail and WoW Forever.** The modern
-  client fires tooltip post-calls *before* its own `Show()`, which caused the frame to run against
-  unrendered dimensions and re-anchor on every tick. The portrait now anchors once per hover epoch,
-  survives item load callbacks, and smoothly flips between screen edges when near display boundaries.
-- **Default border set to official Blizzard tooltip border (`Interface\Tooltips\UI-Tooltip-Border`).**
-  Replaces previous unverified defaults and ensures native Blizzard appearance across all clients.
-  Expanded the border options with verified native Blizzard FrameXML borders (`UI-DialogBox-Border`,
-  `UI-DialogBox-Gold-Border`, `UI-Achievement-WoodBorder`, `UI-Party-Border`, `UI-Toast-Border`,
-  `TextPanel-Border`, `UI-SliderBar-Border`, `UI-Arena-Border`, `UI-TutorialFrame-CalloutGlow`),
-  and removed the non-texture placeholder `None`.
-- **`/tt diag` reports problems an error handler cannot see.** BugSack and
-  BugGrabber only see *raised* errors. The costliest defects here were the
-  opposite: no error, a plausible tooltip, and a feature quietly absent or
-  pointed at the wrong thing. It now lists those — ambiguous client detection, a
-  border setting that matches nothing, a feature enabled with its backing API
-  missing, no delivery path hooked — plus event counters for call frequency.
-- **100% Localization parity across all 11 languages.** All 11 shipped locales
-  (`enUS`, `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`)
-  contain 100% key coverage (239/239 keys) with verified syntax and matching `%s`/`%d` format tokens.
-- **The power bar is off by default.** Enable it in settings; its colours are
-  correct for mana, rage, energy and every other power type on all five clients.
-
 Supported clients:
 
 - **Classic Era / Season of Discovery (SoD)**: Interface `11509`
 - **The Burning Crusade (TBC) Classic Anniversary**: Interface `20506`
 - **WotLK Titanforge**: Interface `38002`
 - **WoW Forever**: Interface `16001`
-- **Retail / Live (The War Within & Midnight)**: Interfaces `110002`, `110100`, `110200`, `120000`, `120100`
+- **Retail / Live (Midnight)**: Interfaces `120005`, `120107`
 
 ## <span style="color:#e67e23">Key Features & Architecture</span>
 
@@ -219,7 +142,7 @@ Supported clients:
 
 ---
 
-## <span style="color:#59f0dc">Directory Structure</span>
+## Directory Structure
 
 ```text
 TacoTip_Forever/
@@ -287,7 +210,7 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
 
 ---
 
-## <span style="color:#59f0dc">Verification & Testing</span>
+## <span style="color:#e67e23">Verification & Testing</span>
 
 - **Luacheck Static Analysis:**
 
@@ -346,26 +269,9 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
   > never the latter.** That is precisely the bug this release fixes, and it is
   > now caught by a check that cannot be satisfied by a self-consistent mock.
 
-- **WoWUnit In-Game Test Suite (opt-in).** Copy `Tests/` to
-  `Interface/AddOns/TacoTipTests/`, enable it alongside the addon, then
-  type `/tttest`. 11 suites:
-  - `TacoTip-Core`
-  - `TacoTip-Config`
-  - `TacoTip-Borders`
-  - `TacoTip-Portrait`
-  - `TacoTip-Guild`
-  - `TacoTip-Stats`
-  - `TacoTip-Mover`
-  - `TacoTip-Modules`
-  - `TacoTip-MinimapAndAnchor`
-  - `TacoTip-Lifecycle`
-  - `TacoTip-Client` (detection, alias, locale registry, override including the
-    Titanforge `zhCN` pin, font filter, and cross-engine talent point / spec
-    index / active-group invariants)
-
 ---
 
-## <span style="color:#e67e23">License and credits</span>
+## License and credits
 
 TacoTip is licensed under the **MIT License**. The full text ships in
 [LICENSE](LICENSE).
