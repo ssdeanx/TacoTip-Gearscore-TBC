@@ -36,6 +36,20 @@ not style choices. each one has a release behind it.
   removed.
 - **no invented translations.** a name you cannot source is left alone and
   reported.
+- **`_G.PlaySound` is NEVER replaced or detoured.** Detouring `PlaySound`
+  taints `GameMenuFrame` and triggers `ADDON_ACTION_FORBIDDEN` calling `UNKNOWN()`
+  when the player clicks "Exit Game" or "Logout" on Classic Era. Out-of-range
+  inspect sounds are suppressed at `GetGameMessageInfo` inside
+  `UIErrorsMixin:TryDisplayMessage`.
+- **container item buttons are strictly excluded from default tooltip re-anchoring.**
+  Blizzard's `ContainerFrameItemButton_CalculateItemTooltipAnchors` does NOT
+  call `ClearAllPoints()`. If `onGameTooltipSetDefaultAnchor` pins `GameTooltip`
+  to `TacoTipDragButton`, bag items get dual anchors, causing the tooltip to
+  stretch across the display or collapse off-screen.
+- **do not cache incomplete inspect gear.** When `GetInventoryItemTexture` is
+  non-nil but `GetInventoryItemLink` is nil, item data is still in-flight from
+  the server. Never write `data.time = now` or finalize GearScore prematurely;
+  retry asynchronously (250ms) until links resolve.
 - the extras' whisper path stays deleted. the guild/level line-index
   ownership proof stays as it is, and the inspect-frame guild guard stays
   installed — both are explained in
@@ -179,6 +193,26 @@ during the 0.8.4 release.
   neither. the add-on's own in-game suite records this
   (`Tests/TacoTip_Forever_Tests.lua` → `BackdropTemplateContract`), and the
   legacy no-NineSlice graft in `main.lua` is therefore dead on every client.
+- **`GetGameMessageInfo` is the safe sound suppression boundary on Classic Era.**
+  Blizzard's `UIErrorsMixin:TryDisplayMessage` calls
+  `local errorStringId, soundKitID, voiceID = GetGameMessageInfo(messageType)`
+  right before playing the sound kit. Returning `soundKitID = nil` for
+  `ERR_OUT_OF_RANGE` stops the error sound without replacing `PlaySound` or
+  tainting `GameMenuFrame`.
+- **`GetMouseFoci()` returns an empty table `{}` in 3D world space on modern engines.**
+  On TBC Anniversary, Retail, and Forever, hovering over 3D world units returns an
+  empty table from `GetMouseFoci()`. `TT:GetMouseFocus()` must check for an
+  empty list and fall back to `WorldFrame`, otherwise `frames[1]` evaluates to `nil`.
+- **`GetInventoryItemTexture` exists and is non-nil before `GetInventoryItemLink` on fresh inspects.**
+  When `INSPECT_READY` fires, the client engine may have loaded the icon texture
+  before the full item link string has returned from the server. Checking
+  `GetInventoryItemTexture(unit, slot)` identifies equipped items whose links
+  are still resolving asynchronously, avoiding premature 5-minute caching of
+  partial GearScores (such as GS 104).
+- **tracked tooling dotfiles require explicit `export-ignore` rules.**
+  Any newly tracked development or tooling files (e.g. `.wowluarc.json`,
+  `/.ruff_cache/**`) must be marked `export-ignore` in `.gitattributes`, or
+  `Tools/verify_release.sh --worktree` will fail on the runtime allowlist check.
 
 ## how to check a client string the mirror does not carry
 

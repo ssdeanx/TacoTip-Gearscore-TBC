@@ -1,4 +1,4 @@
-## Interface: 11509, 20506, 38002, 16001, 120105
+## Interface: 11509, 20506, 38002, 16001, 120105, 120107
 ## Title: |cffd4a84bTacoTip|r |cffbcc3ccExtras|r
 ## Notes: Optional companion add-on for TacoTip. Requires TacoTip; installs nothing on its own.
 ## Author: AcidBomb

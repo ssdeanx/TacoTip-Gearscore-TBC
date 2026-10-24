@@ -30,26 +30,26 @@ TacoTip is a character, item and guild tooltip enhancement that runs on **every*
 World of Warcraft engine family from one build — no per-client downloads, no
 "which version do I install" question:
 
-- **CurseForge** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
+- **<span style="color:#59f0dc"><span style="text-decoration:underline">CurseForge</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
 
 - **<span style="color:#e67e23"><span style="text-decoration:underline">Companion App</span></span>** — [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview) ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png)
 
-| Client | Interface |
-| :--- | :--- |
-| **Classic Era / Season of Discovery (SoD)** | `11509` |
-| **The Burning Crusade Classic Anniversary** | `20506` |
-| **WotLK Titanforge** | `38002` |
-| **WoW Forever** | `16001` |
-| **Retail / Live (Midnight)** | `120100` |
+| Client Family | Supported Interface | Client Status |
+| :--- | :--- | :--- |
+| **<span style="color:#f39c12">Classic Era / Season of Discovery (SoD)</span>** | `11509` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#2ecc71">The Burning Crusade Classic Anniversary</span>** | `20506` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#3498db">WotLK Titanforge</span>** | `38002` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#9b59b6">WoW Forever</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#e74c3c">Retail / Live (The War Within & Midnight)</span>** | `120100` | <span style="color:#2ecc71">**Active**</span> |
 
-> **This release replaces the previous Classic-only TacoTip.** It is the same
+> **<span style="color:#e67e23">This release replaces the previous Classic-only TacoTip.</span>** It is the same
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
 
 ---
 
-## What's New in 0.8.6
+## <span style="color:#e67e23">What's New in 0.8.6</span>
 
 - **Custom position anchoring restored for 3D world units:** Fixed a regression where hovering or targeting creatures, NPCs, and players in the 3D world caused tooltips to fall back to the bottom-left corner of the screen instead of docking to your saved custom position (`custom_pos`).
 - **Bag item tooltips protected:** Bag and inventory slot tooltips remain cleanly attached to item slots without stretching across the screen or vanishing.
@@ -164,9 +164,9 @@ Supported clients:
 - **WoW Forever**: Interface `16001`
 - **Retail / Live (The War Within & Midnight)**: Interfaces `110002`, `110100`, `110200`, `120000`, `120100`
 
-## Key Features & Architecture
+## <span style="color:#e67e23">Key Features & Architecture</span>
 
-1. **Multi-Engine Client Detection:**
+1. **<span style="color:#59f0dc">Multi-Engine Client Detection:</span>**
    - Powered by `LibForeverInspector` with runtime client gates: `IsClassic()`, `IsTBC()`, `IsWotlk()`, `IsForever()`, and `IsRetail()`, plus `IsUnknown()`.
    - Identity is resolved from `WOW_PROJECT_ID` (distinct per Classic client) with the interface version used only to separate WoW Forever from Retail, which share `WOW_PROJECT_MAINLINE`.
    - The interface number is read from whichever `GetBuildInfo()` return slot is numeric, so detection does not depend on the return layout, which is only documented for Retail and Forever.
@@ -174,20 +174,20 @@ Supported clients:
    - An unrecognised client resolves to `family == "unknown"` rather than silently inheriting a default.
    - Backward-compatible alias `LibStub("LibClassicInspector")` provided for existing modules, registered with a minor version.
 
-2. **Adaptive GearScore & Item Level Engine:**
+2. **<span style="color:#59f0dc">Adaptive GearScore & Item Level Engine:</span>**
    - Client-aware quality bracket sizing: **200 for Classic Era and WoW Forever, 400 for TBC, 1000 for Titanforge and Retail**.
    - WoW Forever is a Classic-like client (level cap 60, no level scaling) and previously inherited the 1000 default, which inflated every score 5x and collapsed the colour ramp into a single band.
    - The bracket is a pure mapping: `GS_Quality` is keyed off `BRACKET_SIZE` at load and item level passes through raw, so each client gets the correct colour ramp with no formula change.
    - Dynamic `C_Item.GetItemInfo` and `GetItemInfo` resolution with instant caching.
    - Support for Retail / Live stat calculations and item comparison.
 
-3. **Pawn Integration:**
+3. **<span style="color:#59f0dc">Pawn Integration:</span>**
    - The scale library is **resolved per client, never hardcoded.** Pawn's `Pawn.toc` gates its two providers by game type — `AskMrRobot.lua` is `[AllowLoadGameType mainline]` (`"MrRobot"`, Retail + WoW Forever) and `ClassicHawsJon.lua` is `[AllowLoadGameType classic]` (`"Classic"`, Vanilla/TBC/Wrath) — so exactly one exists per client and the correct prefix differs between them.
    - Resolution reads Pawn's own globals, `PawnScaleProviders` and `PawnCommon.Scales`, and is completely silent. Pawn's own API **cannot** be asked: `PawnIsScaleVisible` and `PawnGetScaleColor` report an unknown name through `VgerCore.Fail`, which does not raise a Lua error but writes straight to `DEFAULT_CHAT_FRAME`, so `pcall` cannot suppress it. `PawnGetScaleColor` is therefore only ever called with a name already proven to exist in `PawnCommon.Scales`; when none matches, the colour is skipped.
    - Score lookups go through `PawnGetSingleValueFromItem`, which answers `0` for an unknown name and never calls `VgerCore.Fail`, so both libraries are tried and the score works on every client.
    - Version detection supporting modern `PawnLastUpdatedVersion` and legacy `PawnClassicLastUpdatedVersion`.
 
-4. **Zero-Allocation Tooltip Pipeline:**
+4. **<span style="color:#59f0dc">Zero-Allocation Tooltip Pipeline:</span>**
    - Static pooled record buffers (`pooledLinesToAdd`, `pooledTooltipText`, `pooledPlayerText`) eliminating garbage collection pressure on high-frequency mouseovers.
    - Integer-floored color formatting (`makeColorCode`) strictly preventing Lua 5.3+ float representation errors.
    - Dynamic visual clearing (`clearTooltipVisuals`) isolating non-unit tooltips (items, spells, map POIs) from stale unit overlays.
@@ -195,11 +195,11 @@ Supported clients:
    - Both hook paths are registered as insurance; the duplicate is inert because Blizzard's pipeline-client tooltips do not fire `OnTooltipSetUnit` / `OnTooltipSetItem`.
    - `tooltip_max_width` is implemented by capping the line `FontString` widths, since `GameTooltip` has no `SetMaximumWidth` on any supported client.
 
-5. **Universal Options UI:**
+5. **<span style="color:#59f0dc">Universal Options UI:</span>**
    - Supports modern `Settings.RegisterCanvasLayoutCategory` and legacy `InterfaceOptions_AddCategory`.
    - Client-adaptive toggles (e.g. Achievement Points toggle dynamically enabled on Titanforge, Retail, and Forever; cleanly hidden on Classic Era / TBC).
 
-6. **Talents & Specializations:**
+6. **<span style="color:#59f0dc">Talents & Specializations:</span>**
    - Per-client talent data that does **not** depend on the `loadDeprecationFallbacks` CVar:
      - **Classic Era / TBC Anniversary / Titanforge** — points are the sum of each talent's `rank` within a tab, read via `C_SpecializationInfo.GetTalentInfo` (query form `specializationIndex` + `talentIndex`, which is what `Vanilla\TalentFrameBase.lua` uses on all three). This is the algorithm from the known-good Classic addon.
      - **WoW Forever / Retail** — per-specialization `pointsSpent` + `previewPointsSpent` from `C_SpecializationInfo.GetSpecializationInfo`, which has an identical 7-argument signature and 10-value return on all five clients.
@@ -209,7 +209,7 @@ Supported clients:
    - `GetSpecialization` returns a 1-based **index**, not a specID. The modern clients previously returned `GetSpecialization()` (an ID such as `72`), which made `spec_table[class][72]` nil and removed the entire specialization line on Retail and Forever.
    - Icons resolve per client. On Classic they come from a **static talent table** ported verbatim from `LibClassicInspector` (~1840 records) as **numeric fileIDs**, inlined with `tostring()` because a `|T` escape accepts a fileID as well as a texture path. Each expansion selects its own set: Classic Era 18 talents in Warrior tab 1 (Vanilla), TBC Anniversary 23 (TBC), Titanforge 31 (WotLK, Death Knight included). On Retail/Forever they come from `GetTalentInfo` using the **tier/column** query form `[Family]\TalentFrameBase.lua` uses, drawn with a `Texture` overlay since a fileID cannot go in a `|T` escape.
 
-7. **Localization:**
+7. **<span style="color:#59f0dc">Localization:</span>**
    - Every `Locale/*.lua` registers its table into `TACOTIP_LOCALES` under its own code; `enUS.lua` is the single selector and exposes `TacoTipApplyLocale()`.
    - Resolution order: `TacoTipConfig.locale_override` (always wins) → **WotLK Titanforge, pinned to `zhCN`** → the client language when a table ships for it → English. Titanforge is the Chinese build of WotLK, so it is pinned rather than trusting `GetLocale()`. English is both the default and the per-key fallback every other language layers over.
    - Selection is re-applied on `ADDON_LOADED`, because addon files run *before* WoW populates `SavedVariables`, so `TacoTipConfig.locale_override` is unreadable during file execution.
@@ -219,7 +219,7 @@ Supported clients:
 
 ---
 
-## Directory Structure
+## <span style="color:#59f0dc">Directory Structure</span>
 
 ```text
 TacoTip_Forever/
@@ -260,7 +260,7 @@ registered the tooltip hooks twice.
 
 ---
 
-## Troubleshooting
+## <span style="color:#e67e23">Troubleshooting</span>
 
 If something looks inert, run this first:
 
@@ -287,7 +287,7 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
 
 ---
 
-## Verification & Testing
+## <span style="color:#59f0dc">Verification & Testing</span>
 
 - **Luacheck Static Analysis:**
 
@@ -365,7 +365,7 @@ clears the custom position, `/tacotip anchor <corner>` sets the anchor.
 
 ---
 
-## License and credits
+## <span style="color:#e67e23">License and credits</span>
 
 TacoTip is licensed under the **MIT License**. The full text ships in
 [LICENSE](LICENSE).

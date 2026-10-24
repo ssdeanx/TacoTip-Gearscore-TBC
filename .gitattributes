@@ -59,6 +59,8 @@
 /.omo/** export-ignore
 /.opencode/** export-ignore
 /.vscode/** export-ignore
+/.wowluarc.json export-ignore
+/.ruff_cache/** export-ignore
 
 # Vendored-but-unloaded libraries. Not referenced by TacoTip.toc and not part of
 # the release until licence provenance is verified; excluded here so a future

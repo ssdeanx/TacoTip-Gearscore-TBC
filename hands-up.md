@@ -9,7 +9,7 @@ with a later outcome signal.
 ## signal types
 
 | signal | fires when | `signal_type` / `subtype` |
-|---|---|---|
+| :--- | :--- | :--- |
 | hands-up | two desks disagree and can't settle it against external facts | `escalation` / `hands-up` |
 | blocked | a desk can't proceed without input — missing access, ambiguous scope, a decision only the operator can make | `escalation` / `blocked` |
 | done | work is complete and ready for review; artifacts are on the bench | `execution` / `done` |
@@ -92,7 +92,47 @@ they are interesting.
   turned out to declare no `OnShow` on the `GameTooltip` frame — so one layer of
   the fix never installed on their client. **the fix:** the operator's branch is
   the first one checked and the one that can withdraw a claim.
-
+- **the 0.8.4 state-machine overcomplication and revert.** an attempt to
+  replace the inspect system with a complex asynchronous three-state machine
+  (`inspectStates.QUEUED == "queued"`) broke multiple client paths and caused
+  widespread regressions. the codebase had to be reverted to the known-good
+  0.8.3 base and incrementally fixed forward to 0.8.6. offline test harnesses
+  that had been modified to assert the abandoned tri-state semantics were left
+  failing. **the fix:** do not replace working state machines with complex
+  architectural rewrites when simple guards suffice; keep test harness
+  assertions synchronized with production client contracts.
+- **Classic Era GameMenu Exit/Logout button taint (`ADDON_ACTION_FORBIDDEN`).**
+  detouring `_G.PlaySound` in `installInspectErrorSuppressor` tainted execution
+  when `GameMenuFrame` invoked `PlaySound(...)` immediately prior to protected
+  `Quit()` or `Logout()`, triggering `[ADDON_ACTION_FORBIDDEN] AddOn 'TacoTip'
+  tried to call the protected function 'UNKNOWN()'`. **the fix:** never replace
+  `_G.PlaySound`. mute the out-of-range inspect sound at `GetGameMessageInfo`
+  inside `UIErrorsMixin:TryDisplayMessage` by returning `soundKitID = nil` for
+  `ERR_OUT_OF_RANGE`.
+- **first-hover partial GearScore (GS 104) async texture-vs-link race.**
+  `INSPECT_READY` fired before item links were cached locally in the client.
+  `GetInventoryItemLink` returned `nil`, but `GetInventoryItemTexture` was
+  valid. the old code treated nil as empty, stamped `data.time = now`, and
+  locked in a partial score for 5 minutes. **the fix:** check
+  `GetInventoryItemTexture`. if a texture exists but link is nil, mark
+  `incomplete = true`, do not stamp cache time, and retry after 250ms with
+  `PlayerGUIDToUnitToken(guid)`.
+- **bag item hover tooltip stretch / disappearance.** Blizzard's
+  `ContainerFrameItemButton_CalculateItemTooltipAnchors` does not call
+  `ClearAllPoints()`. hooking `GameTooltip_SetDefaultAnchor` without gating
+  container buttons caused `GameTooltip` to be pinned to both
+  `TacoTipDragButton` and the bag slot button simultaneously, stretching the
+  tooltip across the screen. **the fix:** strictly exclude container item
+  buttons from default anchor manipulation so Blizzard's single slot anchor
+  remains intact.
+- **3D world mouseover focus returning empty table.** `GetMouseFoci()` returns
+  an empty table `{}` in 3D world space on modern engines. checking `frames[1]`
+  without a fallback caused `TT:GetMouseFocus()` to return `nil`. **the fix:**
+  if `frames` is empty, return `WorldFrame`.
+- **packaging failures on unignored tooling dotfiles.** tracked configuration
+  files like `.wowluarc.json` without `export-ignore` in `.gitattributes` cause
+  release package verifiers to fail. **the fix:** keep `.gitattributes`
+  synchronized with all tracked non-runtime files.
 
 **when to signal `blocked`:** when the only way forward is a decision the
 operator must make (a version to hold, a value to change, a feature to drop).
