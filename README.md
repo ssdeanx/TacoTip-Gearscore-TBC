@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.8.3
+version: 0.8.6
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE; bundled Libs/ keep their own terms
@@ -23,7 +23,7 @@ tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn,
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 optional: [WoWUnit]
 status: unreleased
-updated: 2026-10-14
+updated: 2026-10-23
 ```
 
 
@@ -46,6 +46,15 @@ World of Warcraft engine family from one build — no per-client downloads, no
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## What's New in 0.8.6
+
+- **Custom position anchoring restored for 3D world units:** Fixed a regression where hovering or targeting creatures, NPCs, and players in the 3D world caused tooltips to fall back to the bottom-left corner of the screen instead of docking to your saved custom position (`custom_pos`).
+- **Bag item tooltips protected:** Bag and inventory slot tooltips remain cleanly attached to item slots without stretching across the screen or vanishing.
+- **Taint-free sound suppression (Classic Era):** Cleanly mutes out-of-range inspect sounds without detouring `_G.PlaySound`, ensuring Game Menu Exit Game and Logout buttons are never blocked by UI execution taint.
+- **3D mouse focus on modern clients:** Ensures `TT:GetMouseFocus()` resolves `WorldFrame` correctly when hovering the 3D world on TBC Anniversary and modern clients.
 
 ---
 

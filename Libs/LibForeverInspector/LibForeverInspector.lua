@@ -3642,7 +3642,6 @@ local function cacheUnitData(unit, guid)
     if (not unit or not guid) then return end
     local now = uptimeSeconds()
     local data = lib.cache[guid] or {}
-    data.time = now
     data.stale = nil
     data.items = data.items or {}
 
@@ -3651,8 +3650,43 @@ local function cacheUnitData(unit, guid)
     -- gearscore.lua skips slot 4 explicitly for the same reason. Consumers
     -- (gearscore.lua, pawn.lua) mirror this range, so changing it here without
     -- changing them would silently double-count.
+    local anyMissingEquipped = false
+    local getTexture = _G.GetInventoryItemTexture
     for slot = 1, 18 do
-        data.items[slot] = inventoryItemLink(unit, slot)
+        local link = inventoryItemLink(unit, slot)
+        if (link) then
+            data.items[slot] = link
+        elseif (not data.items[slot]) then
+            if (type(getTexture) == "function") then
+                local okTex, tex = pcall(getTexture, unit, slot)
+                if (okTex and tex) then
+                    anyMissingEquipped = true
+                end
+            end
+        end
+    end
+
+    if (not anyMissingEquipped or (data.retryCount and data.retryCount >= 4)) then
+        data.time = now
+        data.incomplete = nil
+        data.retryCount = nil
+    else
+        data.incomplete = true
+        data.retryCount = (data.retryCount or 0) + 1
+        if (type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function") then
+            _G.C_Timer.After(0.25, function()
+                local targetUnit = unit
+                if (not targetUnit or not (type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit))
+                        or not (type(_G.UnitGUID) == "function" and _G.UnitGUID(targetUnit) == guid)) then
+                    if (lib.PlayerGUIDToUnitToken) then
+                        targetUnit = lib:PlayerGUIDToUnitToken(guid)
+                    end
+                end
+                if (targetUnit and type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit)) then
+                    cacheUnitData(targetUnit, guid)
+                end
+            end)
+        end
     end
 
     -- Modern specialization API (Retail & Forever)
@@ -4462,7 +4496,7 @@ local guardUnit = nil          -- the unit the open attribution window belongs t
 local guardUntil = 0           -- GetTime() after which the window has expired
 local swallowedVoiceID = nil
 local swallowedSoundKitID = nil
-local inspectErrorAddMessage, inspectPlayVocal, inspectPlayVocalID, inspectPlaySound
+local inspectErrorAddMessage, inspectPlayVocal, inspectPlayVocalID, inspectGameMessageInfo
 
 -- How long a probe's refusal may arrive after the call returned. Short on
 -- purpose: it only has to cover this client's own dispatch for the call we just
@@ -4491,10 +4525,11 @@ local SUPPRESSIBLE_INSPECT_ERROR_NAMES = {
 -- message path. `MayReturnNothing = true` is documented, so a nil name is a real
 -- outcome and is handled by the caller rather than papered over here.
 local function gameMessageInfo(messageType)
-    if (type(messageType) ~= "number" or type(_G.GetGameMessageInfo) ~= "function") then
+    local getter = inspectGameMessageInfo or _G.GetGameMessageInfo
+    if (type(messageType) ~= "number" or type(getter) ~= "function") then
         return nil
     end
-    local ok, name, soundKitID, voiceID = pcall(_G.GetGameMessageInfo, messageType)
+    local ok, name, soundKitID, voiceID = pcall(getter, messageType)
     if (not ok) then
         return nil
     end
@@ -4569,14 +4604,18 @@ local function noteSuppressedRefusal(messageType, name)
     if (name == nil) then
         name = resolvedName
     end
-    -- Arm only the sound the client will actually play: TryDisplayMessage plays
-    -- the voice when it has one and the sound kit otherwise
-    -- (Blizzard_UIErrorsFrame/Classic/UIErrorsFrame.lua:142-147). Arming both
-    -- would leave an unconsumed latch that could swallow an unrelated sound later.
-    if (voiceID ~= nil) then
-        swallowedVoiceID, swallowedSoundKitID = voiceID, nil
+    -- OPERATOR RULE: only the OUT-OF-RANGE refusal has its sound muted.
+    -- On Classic Era the client kept spamming "out of range", which was noise
+    -- from our background inspect probes. A refusal that is not about distance
+    -- stays audible so the player is notified.
+    if (name == INSPECT_RANGE_ERROR_NAME) then
+        if (voiceID ~= nil) then
+            swallowedVoiceID, swallowedSoundKitID = voiceID, nil
+        else
+            swallowedSoundKitID, swallowedVoiceID = soundKitID, nil
+        end
     else
-        swallowedSoundKitID, swallowedVoiceID = soundKitID, nil
+        swallowedVoiceID, swallowedSoundKitID = nil, nil
     end
     -- The sound is played from the same TryDisplayMessage that displayed the
     -- message, so a latch still set a frame later belongs to nothing. Clear it on
@@ -4673,23 +4712,18 @@ local function inspectVoiceSink(voiceID, ...)
     return nil
 end
 
-local function inspectSoundSink(soundKitID, ...)
-    if (swallowedSoundKitID ~= nil and soundKitID == swallowedSoundKitID) then
-        swallowedSoundKitID = nil
-        -- Counted separately from the voice: a refusal carries EITHER a voice or a
-        -- sound kit (TryDisplayMessage plays the voice when there is one), and
-        -- without this counter a client whose refusals are sound-only showed
-        -- `probe errors suppressed` climbing with `error speech suppressed` at 0
-        -- and nothing in the diag to explain the difference.
-        if (lib.inspectStats) then
-            lib.inspectStats.suppressedSound = (lib.inspectStats.suppressedSound or 0) + 1
-        end
-        return nil
+local function inspectGameMessageInfoSink(messageType, ...)
+    local errorName, soundKitID, voiceID = inspectGameMessageInfo(messageType, ...)
+    if (swallowedSoundKitID == nil or soundKitID == nil
+            or soundKitID ~= swallowedSoundKitID) then
+        return errorName, soundKitID, voiceID
     end
-    if (inspectPlaySound) then
-        return inspectPlaySound(soundKitID, ...)
+    swallowedSoundKitID = nil
+    if (lib.inspectStats) then
+        lib.inspectStats.suppressedSound = (lib.inspectStats.suppressedSound or 0) + 1
     end
-    return nil
+    -- No sound kit: the client plays nothing for this message.
+    return errorName, nil, voiceID
 end
 
 local function installInspectErrorSuppressor()
@@ -4721,8 +4755,12 @@ local function installInspectErrorSuppressor()
         if (type(_G.PlayVocalErrorSoundID) == "function") then
             inspectPlayVocalID = Detours:DetourHook(lib, "PlayVocalErrorSoundID", inspectVoiceSink)
         end
-        if (type(_G.PlaySound) == "function") then
-            inspectPlaySound = Detours:DetourHook(lib, "PlaySound", inspectSoundSink)
+        -- The sound kit is muted at GetGameMessageInfo, NOT at PlaySound.
+        -- Replacing the client's global PlaySound was a taint bomb: the game menu's
+        -- own Logout/Quit callback calls it, and the protected Logout()/Quit()
+        -- that follows was refused (blocking the exit button).
+        if (type(_G.GetGameMessageInfo) == "function") then
+            inspectGameMessageInfo = Detours:DetourHook(lib, "GetGameMessageInfo", inspectGameMessageInfoSink)
         end
     end)
     if (not installedOk or type(inspectErrorAddMessage) ~= "function") then

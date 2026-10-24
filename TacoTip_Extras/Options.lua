@@ -1766,12 +1766,12 @@ local function createPanel()
     -- that can drift.
     controls.scanNow = createActionButton(
         addonName .. "ScanNowButton",
-        "Scan now",
+        "Disabled Temporarily",
         16,
         function()
             local browser = namespace.RankBrowser
             if type(browser) == "table" and type(browser.StartScan) == "function" then
-                runBrowserAction("StartScan", "start a scan")
+                -- Disabled temporarily
                 return
             end
             -- The button was pressed and NOTHING happened. Say which module
@@ -1782,6 +1782,12 @@ local function createPanel()
         "scanNow",
         -384
     )
+    if controls.scanNow and type(controls.scanNow.Disable) == "function" then
+        controls.scanNow:Disable()
+    end
+    if controls.scanNow and type(controls.scanNow.SetText) == "function" then
+        controls.scanNow:SetText("Disabled Temporarily")
+    end
 
     -- Progress rail for the same scan. Both surfaces read
     -- RankBrowser.RefreshProgress, so they cannot show different numbers.

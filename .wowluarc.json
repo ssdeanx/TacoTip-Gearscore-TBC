@@ -1,0 +1,23 @@
+{
+    "ignore": [
+        "Libs/",
+        "docs/",
+        "tests/",
+        "Media/"
+    ],
+    "flavors": [
+        "retail",
+        "classic",
+        "classic_anniversary",
+        "titanforge",
+        "forever"
+    ],
+    "diagnostics": {
+        "enable": [
+            "need-check-nil",
+            "undefined-global",
+            "missing-return",
+            "duplicate-set-field"
+        ]
+    }
+}

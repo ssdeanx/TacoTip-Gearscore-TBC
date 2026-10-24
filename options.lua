@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.6"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -255,11 +255,15 @@ local function updateInstantFadeState(enabled)
         end
     end
     if (enabled) then
-        Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
-            tooltipFrame:Hide()
-        end)
+        if (GameTooltip and type(GameTooltip.FadeOut) == "function") then
+            Detours:SecureHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
+                if (tooltipFrame and type(tooltipFrame.Hide) == "function") then
+                    tooltipFrame:Hide()
+                end
+            end)
+        end
     else
-        Detours:DetourUnhook(TT, GameTooltip, "FadeOut")
+        Detours:SecureUnhook(TT, GameTooltip, "FadeOut")
     end
 end
 

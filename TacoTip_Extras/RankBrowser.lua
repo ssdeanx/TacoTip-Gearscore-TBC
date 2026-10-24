@@ -1178,26 +1178,8 @@ end
 -- second generation while one is already pending. So the generation is bumped
 -- exactly once per scan, and a scan that is started actually runs.
 function RankBrowser.StartScan()
-    local core = namespace.Core
-    if type(core) ~= "table" or type(core.RequestLocalScan) ~= "function" then
-        -- No home for "start a scan": say so rather than leaving the button a
-        -- dead end. The Scanner is not called directly any more -- that was
-        -- the second implementation of this action, and the two could drift
-        -- (and did).
-        if type(_G.DEFAULT_CHAT_FRAME) == "table"
-            and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
-            pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
-                "|cffff5555TacoTip Extras:|r the scan is unavailable: "
-                    .. "Core.RequestLocalScan is missing.")
-        end
-        return false
-    end
-    local ok, started = pcall(core.RequestLocalScan, "leaderboard")
-    if not ok then
-        return false
-    end
-    RankBrowser.RefreshProgress()
-    return started == true
+    -- Disabled temporarily
+    return false
 end
 
 -- How long the "scan complete" line stays up where timers exist. Any longer
@@ -1300,9 +1282,10 @@ function RankBrowser.RefreshProgress()
             progress.total or 0))
     end
     if f.scanButton and type(f.scanButton.SetText) == "function" then
-        f.scanButton:SetText(f.scanning
-            and (L["LB_SCAN_BUSY"] or "Scanning...")
-            or (L["LB_SCAN"] or "Scan now"))
+        f.scanButton:SetText("Disabled Temporarily")
+        if type(f.scanButton.Disable) == "function" then
+            f.scanButton:Disable()
+        end
     end
     return true
 end
@@ -2715,11 +2698,14 @@ function RankBrowser.CreateUI()
     -- RankBrowser.StartScan / read RankBrowser.RefreshProgress, so the two
     -- surfaces cannot disagree about whether a scan is running.
     local scanButton = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    scanButton:SetSize(100, 22)
-    scanButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -222, footerBottom())
-    scanButton:SetText(L["LB_SCAN"] or "Scan now")
+    scanButton:SetSize(140, 22)
+    scanButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -210, footerBottom())
+    scanButton:SetText("Disabled Temporarily")
+    if type(scanButton.Disable) == "function" then
+        scanButton:Disable()
+    end
     scanButton:SetScript("OnClick", function()
-        RankBrowser.StartScan()
+        -- Disabled temporarily
     end)
     f.scanButton = scanButton
 

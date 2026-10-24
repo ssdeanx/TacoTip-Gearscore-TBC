@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.6"
 
 
 
@@ -2808,6 +2808,46 @@ end
 
 stage("anchor-hook")
 
+local function isUnitHoverTarget(tooltip, parent)
+    if (parent == UIParent or parent == nil or parent == WorldFrame) then
+        return true
+    end
+    if (parent and (parent.unit or (type(parent.GetAttribute) == "function" and parent:GetAttribute("unit")))) then
+        return true
+    end
+    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
+    if (owner and (owner.unit or (type(owner.GetAttribute) == "function" and owner:GetAttribute("unit")))) then
+        return true
+    end
+    if (tooltip) then
+        if (tooltip.IsTooltipType and Enum and Enum.TooltipDataType and tooltip:IsTooltipType(Enum.TooltipDataType.Unit)) then
+            return true
+        end
+        if (tooltip.GetUnit) then
+            local ok, _, unit = pcall(tooltip.GetUnit, tooltip)
+            if (ok and unit and type(UnitExists) == "function" and UnitExists(unit)) then
+                return true
+            end
+        end
+        if (resolveTooltipUnit and resolveTooltipUnit(tooltip)) then
+            return true
+        end
+    end
+    local focus
+    if (TT and type(TT.GetMouseFocus) == "function") then
+        focus = TT:GetMouseFocus()
+    elseif (type(GetMouseFoci) == "function") then
+        local foci = GetMouseFoci()
+        focus = foci and foci[1]
+    elseif (type(GetMouseFocus) == "function") then
+        focus = GetMouseFocus()
+    end
+    if (focus == WorldFrame and type(UnitExists) == "function" and UnitExists("mouseover")) then
+        return true
+    end
+    return false
+end
+
 local function onGameTooltipSetDefaultAnchor(tooltip, parent)
     if (TacoTipConfig.anchor_mouse_spells) then
         local parentparent = parent and parent:GetParent()
@@ -2822,6 +2862,9 @@ local function onGameTooltipSetDefaultAnchor(tooltip, parent)
             end
             return
         end
+    end
+    if (not isUnitHoverTarget(tooltip, parent)) then
+        return
     end
     if (TacoTipConfig.anchor_mouse) then
         if (not TacoTipConfig.anchor_mouse_world or TT:GetMouseFocus() == WorldFrame) then
@@ -3233,7 +3276,10 @@ end
 function TT:GetMouseFocus()
     if (GetMouseFoci) then
         local frames = GetMouseFoci()
-        return frames and frames[1]
+        if (frames and frames[1]) then
+            return frames[1]
+        end
+        return WorldFrame
     end
     return GetMouseFocus()
 end
@@ -3590,12 +3636,13 @@ local function onEvent(self, event, ...)
             end
             if (TacoTipConfig.instant_fade) then
                 self:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-                local function safeFadeOut(tooltipFrame)
-                    tooltipFrame:Hide()
+                if (GameTooltip and type(GameTooltip.FadeOut) == "function") then
+                    Detours:SecureHook(TT, GameTooltip, "FadeOut", function(tooltipFrame)
+                        if (tooltipFrame and type(tooltipFrame.Hide) == "function") then
+                            tooltipFrame:Hide()
+                        end
+                    end)
                 end
-                Detours:DetourHook(TT, GameTooltip, "FadeOut", function(tooltipFrame, ...)
-                    return safeCall(safeFadeOut, tooltipFrame, ...)
-                end)
             end
             -- characterFrameHost, not CharacterModelFrame: Retail has no model
             -- frame but does have PaperDollFrame, and the font strings are

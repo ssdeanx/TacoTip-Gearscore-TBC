@@ -42,9 +42,8 @@ if (type(securecall) == "function") then
     -- this add-on's context, so a build that ever refused addon code to call
     -- it degrades to the direct call instead of raising on every tooltip
     -- event.
-    local probeRan = false
-    local probeOk = pcall(securecall, function() probeRan = true end)
-    if (probeOk and probeRan) then
+    local probeOk, probeRan = pcall(securecall, function() return 2 end)
+    if (probeOk and probeRan and probeRan == 2) then
         secureCallFn = securecall
     end
 end
@@ -946,7 +945,7 @@ local function recordConsumerError(err)
             and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
             pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
                 "|cffff5555TacoTip Extras:|r the scan callback failed: " .. message
-                    .. " (the inspect engine keeps running; the count is in /ttgsdebug)")
+                .. " (the inspect engine keeps running; the count is in /ttgsdebug)")
         end
     end
 end
@@ -1165,23 +1164,23 @@ local function printDebugSnapshot()
             or (classicFamily and "classic" or "mainline")
         addChatLine(
             "client-family=" .. familyText
-                .. " pvp-surface=" .. (Core.UsesModernPvPSurface() and "modern" or "classic")
+            .. " pvp-surface=" .. (Core.UsesModernPvPSurface() and "modern" or "classic")
         )
     end
     addChatLine(
         "state=" .. tostring(state.status or "unknown")
-            .. " generation=" .. tostring(state.generation or 0)
-            .. " reason=" .. tostring(state.reason or "none")
-            .. " occupied=" .. occupied
-            .. " confirmed-empty=" .. empty
-            .. " unknown/pending=" .. unknown
-            .. " pending-item-ids=" .. pendingCount
+        .. " generation=" .. tostring(state.generation or 0)
+        .. " reason=" .. tostring(state.reason or "none")
+        .. " occupied=" .. occupied
+        .. " confirmed-empty=" .. empty
+        .. " unknown/pending=" .. unknown
+        .. " pending-item-ids=" .. pendingCount
     )
     addChatLine(
         metricText("Unenhanced GS", metrics.baseGS) .. " "
-            .. metricText("Current GS", metrics.gearScore) .. " "
-            .. metricText("Potential GS", metrics.potentialGS) .. " "
-            .. metricText("Delta", metrics.delta)
+        .. metricText("Current GS", metrics.gearScore) .. " "
+        .. metricText("Potential GS", metrics.potentialGS) .. " "
+        .. metricText("Delta", metrics.delta)
     )
     addChatLine(completionText(metrics.completion) .. " "
         .. averageText(metrics.averageItemLevel))
@@ -1443,7 +1442,7 @@ local function recordInitializeFailure(label, reason)
         and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
         pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
             "|cffff5555TacoTip Extras:|r " .. label .. " failed to start: "
-                .. tostring(reason))
+            .. tostring(reason))
     end
 end
 
@@ -1580,7 +1579,7 @@ local function initialize(self)
     scheduleWelcome(
         root.settings,
         adapterReady and callbackReady
-            and tooltipsReady and optionsReady and minimapReady
+        and tooltipsReady and optionsReady and minimapReady
     )
 end
 

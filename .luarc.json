@@ -1,7 +1,8 @@
 {
-
     "Lua.runtime.version": "Lua 5.1",
-    "Lua.diagnostics.disable": ["undefined-field"],
+    "Lua.diagnostics.disable": [
+        "undefined-field"
+    ],
     "Lua.diagnostics.globals": [
         "_G",
         "assert",
@@ -213,7 +214,11 @@
         "GetItemStats",
         "PawnCommon",
         "PawnScaleProviders",
-        "GUIDIsPlayer"
+        "GUIDIsPlayer",
+        "dofile",
+        "loadfile",
+        "os",
+        "io"
     ],
     "Lua.runtime.builtin": {
         "basic": "disable",
