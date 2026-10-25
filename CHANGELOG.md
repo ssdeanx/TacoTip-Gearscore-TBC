@@ -41,6 +41,21 @@ All notable changes to TacoTip are documented in this file.
 - **IMPROVEMENT — EmmyLua Typing & Annotation Parity:**
   - Added explicit field annotations to `---@class tacoTipTooltipState` (`portraitSide`, `portraitAnchored`, `inspectRenderGUID`, `inspectRenderTime`), ensuring static analysis tools and language servers recognize tooltip lifecycle properties without warning.
 
+### Settings & Tooltips Configuration Layout
+
+- **FEATURE — Global Tooltip Scaling (`tooltip_scale`):**
+  - Added dedicated global scaling support (50% to 200%, default 100%) dynamically resizing `GameTooltip`, comparison shopping tooltips, and item tooltips.
+- **IMPROVEMENT — Tooltip Settings Page Reorganization (`/tt` → Tooltips):**
+  - Positioned the **Global tooltip scale** slider and **Portrait scale** slider directly at the very top of the Tooltips settings page for instant access.
+  - Redesigned the configuration page into structured, clearly delineated sections:
+    1. *Scaling, Presets & General Layout*: Global tooltip scaler (50%–200%), Portrait scaler (50%–200%), quick style presets, font selector, side-by-side text size & max width sliders, and section separator toggle.
+    2. *Player & Unit Content*: Symmetrical two-column grid organizing titles, guild info, realm, talents, target, GearScore, inline iLvl, Pawn, faction/PvP indicators, and class icon with dedicated size slider.
+    3. *Tooltip Status & Power Bars*: Unified health and power bar display toggles alongside status bar fill texture picker.
+    4. *Character Portrait (2D / 3D)*: Master unit portrait toggle, 3D model mode, invert portrait side, and dedicated portrait 3D zoom slider.
+    5. *Item Tooltip Data*: Item level, item GearScore, and HunterScore toggles.
+    6. *Backdrop & Border Styling*: Class-colored border and background tint toggles, color swatch pickers, border thickness slider, border & background alpha sliders, and border/background texture dropdowns.
+  - **Live Control Dependency Updates:** Toggling parent controls (such as Guild Name, Item GearScore, Unit Portrait, 3D Portrait, or Class Icon) dynamically enables or disables their child controls in real time, preventing confusing interactions with inactive sub-options.
+
 ---
 
 ## [0.8.6] — 2026-10-23

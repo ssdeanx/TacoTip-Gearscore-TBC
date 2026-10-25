@@ -1063,10 +1063,33 @@ local function resolveTooltipUnit(tooltip, unit)
 end
 
 
+local function applyFrameScale(frame, scale)
+    if (frame and type(frame) == "table" and frame.SetScale and frame.GetScale) then
+        scale = scale or 1
+        local current = frame:GetScale()
+        if (not current or math.abs(current - scale) > 0.001) then
+            frame:SetScale(scale)
+        end
+    end
+end
+
+function TT:ApplyTooltipScale()
+    local scale = (TacoTipConfig and TacoTipConfig.tooltip_scale) or 1
+    applyFrameScale(GameTooltip, scale)
+    applyFrameScale(ItemRefTooltip, scale)
+    applyFrameScale(ShoppingTooltip1, scale)
+    applyFrameScale(ShoppingTooltip2, scale)
+    applyFrameScale(_G["ItemRefShoppingTooltip1"], scale)
+    applyFrameScale(_G["ItemRefShoppingTooltip2"], scale)
+end
+
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
         return
     end
+
+    local scale = (TacoTipConfig and TacoTipConfig.tooltip_scale) or 1
+    applyFrameScale(tooltip, scale)
 
     unit = resolveTooltipUnit(tooltip, unit)
 
@@ -2674,6 +2697,9 @@ TT.HookedTooltipScripts.Item = TT.HookedTooltipScripts.Item
 stage("item-hooks")
 
 local function onTooltipShow(tooltip)
+    local scale = (TacoTipConfig and TacoTipConfig.tooltip_scale) or 1
+    applyFrameScale(tooltip, scale)
+
     local state = getTooltipState(tooltip)
     local shownItemLink
     if (tooltip and tooltip.GetItem) then
@@ -3773,6 +3799,9 @@ local function onEvent(self, event, ...)
             registerSharedMediaCallbacks()
             if (TT.ApplyConfigDefaults) then
                 TT:ApplyConfigDefaults(TacoTipConfig)
+            end
+            if (TT.ApplyTooltipScale) then
+                TT:ApplyTooltipScale()
             end
             local first_login = (TacoTipConfig.conf_version ~= addOnVersion)
             if (first_login) then
