@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-26T19:15:00Z",
+  "run_id": "audit-v088-readiness-2026-10-26",
+  "agent_name": "audit-v088-readiness",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Three read-only subagents split cache / portrait / diag, then every load-bearing claim was re-verified against file:line; client truth read branch-qualified from the mirror; every gate was actually run.",
+    "what_was_hard": "The TBC 'unresolved unit' has two possible cause strings and the operator's exact text is unknown; the Era/TBC tooltip files are content-identical, so the difference is session state, not a client API.",
+    "skill_gap": "The cache path has almost no offline pins; the portrait-side and diag-cache blocks are dead/unpinned, so a green suite does not cover them."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

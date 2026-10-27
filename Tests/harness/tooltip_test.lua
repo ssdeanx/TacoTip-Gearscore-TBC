@@ -3968,6 +3968,247 @@ do
     end
 end
 
+-- ==================================================================
+-- 0.8.8 CACHE PINS: staged reads, freshness, retry budget, stale, eviction.
+--
+-- The 0.8.7 defects these pin, all of which left the suite green:
+--   * a re-inspect whose links had not arrived kept the old `.time`, cleared
+--     `.stale`, and was served as fresh (mixed old/new gear, no re-ask);
+--   * an emptied slot kept its old link and stayed scored;
+--   * the 4-retry cutoff committed a partial table as complete, and the
+--     budget was per record, so a new inspect could start already exhausted;
+--   * UNIT_INVENTORY_CHANGED only marked stale inside the ask radius;
+--   * lib.cache had no ceiling.
+-- ==================================================================
+do
+    local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+    check("cache: the inspector is reachable", okCI and CI ~= nil)
+    if (okCI and CI and type(CI.frame) == "table") then
+        local handler = CI.frame.__scripts and CI.frame.__scripts.OnEvent
+        check("cache: the INSPECT_READY handler is reachable", type(handler) == "function")
+        if (type(handler) == "function") then
+            local token = "mouseover"
+            local guid = UNITS[token].guid
+            local savedLink = REALG.GetInventoryItemLink
+            local savedTexture = REALG.GetInventoryItemTexture
+            local savedDistance = REALG.UnitDistanceSquared
+            local savedExists = REALG.UnitExists
+            local savedAfter = REALG.C_Timer.After
+            local savedCache = CI.cache
+            local savedClock = REALG.__testClock
+
+            local links = {}
+            local textures = {}
+            local function saveRetry(fn)
+                REALG.__pendingRetry = fn
+            end
+            REALG.GetInventoryItemLink = function(_, slot) return links[slot] end
+            REALG.GetInventoryItemTexture = function(_, slot) return textures[slot] and "icon" or nil end
+            REALG.__testClock = 1000
+
+            local function freshCache()
+                CI.cache[guid] = nil
+                links = { [1] = "item:1001", [2] = "item:1002", [5] = "item:1005" }
+                textures = { [1] = true, [2] = true, [5] = true }
+            end
+            local function triggerInspect()
+                pcall(handler, CI.frame, "INSPECT_READY", guid)
+                return CI.cache[guid]
+            end
+
+            -- 1. A complete inspect commits the staged slots and stamps time.
+            freshCache()
+            local d1 = triggerInspect()
+            check("cache: a complete inspect commits the slot links",
+                type(d1) == "table" and d1.items[1] == "item:1001" and d1.items[2] == "item:1002"
+                and d1.items[5] == "item:1005",
+                "slot1=" .. tostring(d1 and d1.items and d1.items[1]))
+            check("cache: a complete inspect stamps time and clears incomplete",
+                type(d1) == "table" and d1.time == 1000 and d1.incomplete == nil,
+                "time=" .. tostring(d1 and d1.time) .. " incomplete=" .. tostring(d1 and d1.incomplete))
+            check("cache: a complete inspect is fresh", CI:IsCacheFresh(guid) == true)
+
+            -- 1b. Slot 4 (shirt) is special: it can legitimately be empty, and
+            --     its icon can exist while its link is in flight. Neither may
+            --     block completion (it is unscored); when the link does arrive
+            --     it is staged like any other slot.
+            textures[4] = true
+            triggerInspect()
+            local d1b = CI.cache[guid]
+            check("cache: an empty/loading shirt slot never blocks completion",
+                type(d1b) == "table" and d1b.incomplete == nil and d1b.items[4] == nil,
+                "incomplete=" .. tostring(d1b and d1b.incomplete))
+            links[4] = "item:1004"
+            triggerInspect()
+            local d1c = CI.cache[guid]
+            check("cache: an equipped shirt is staged like any other slot",
+                type(d1c) == "table" and d1c.items[4] == "item:1004" and d1c.incomplete == nil)
+            links[4] = nil
+            textures[4] = nil
+
+            -- 2. A gear swap whose new link is still in flight stages the read:
+            --    the mixed table is NOT committed and the old complete snapshot
+            --    stays. The retry owns the entry, so request-making treats it as
+            --    fresh until that retry runs.
+            links = { [1] = "item:2001", [2] = "item:1002", [5] = "item:1005" }
+            textures = { [1] = true, [2] = true, [5] = true, [3] = true }
+            REALG.__pendingRetry = nil
+            REALG.C_Timer.After = function(_, fn) saveRetry(fn) end
+            local d2 = triggerInspect()
+            check("cache: an incomplete re-inspect does NOT commit the mixed slot table",
+                type(d2) == "table" and d2.items[1] == "item:1001",
+                "slot1=" .. tostring(d2 and d2.items and d2.items[1]))
+            check("cache: an incomplete re-inspect keeps the last complete timestamp",
+                type(d2) == "table" and d2.time == 1000,
+                "time=" .. tostring(d2 and d2.time))
+            check("cache: an incomplete re-inspect is marked incomplete with a retry pending",
+                type(d2) == "table" and d2.incomplete == true and d2.retryPending == true,
+                "incomplete=" .. tostring(d2 and d2.incomplete)
+                .. " pending=" .. tostring(d2 and d2.retryPending))
+            check("cache: a pending retry owns the entry (no duplicate request)",
+                CI:IsCacheFresh(guid) == true)
+            check("cache: the incomplete path scheduled a retry", type(REALG.__pendingRetry) == "function")
+
+            -- 3. The retry cannot resolve the unit (the cursor left): the entry
+            --    must fall back to "not fresh" so the next hover re-asks. This is
+            --    the old C1 defect, inverted: it used to stay "fresh" forever.
+            REALG.UnitExists = function() return false end
+            local failedRetry = REALG.__pendingRetry
+            REALG.__pendingRetry = nil
+            if (type(failedRetry) == "function") then pcall(failedRetry) end
+            local d3 = CI.cache[guid]
+            check("cache: a retry that cannot resolve the unit clears retryPending",
+                type(d3) == "table" and not d3.retryPending and d3.incomplete == true,
+                "pending=" .. tostring(d3 and d3.retryPending)
+                .. " incomplete=" .. tostring(d3 and d3.incomplete))
+            check("cache: an unresolved incomplete entry is NOT fresh (the old bug)",
+                CI:IsCacheFresh(guid) == false)
+            REALG.UnitExists = savedExists
+
+            -- 4. A fresh inspect is asked again, then the missing link arrives
+            --    before the retry runs: the retry commits the complete staged
+            --    table and the entry is fresh again.
+            REALG.__pendingRetry = nil
+            triggerInspect()
+            check("cache: the re-ask schedules a new retry", type(REALG.__pendingRetry) == "function")
+            links[3] = "item:2003"
+            local retry = REALG.__pendingRetry
+            REALG.__pendingRetry = nil
+            if (type(retry) == "function") then pcall(retry) end
+            local d4 = CI.cache[guid]
+            check("cache: the resolving retry commits the new complete snapshot",
+                type(d4) == "table" and d4.items[1] == "item:2001" and d4.items[3] == "item:2003"
+                and d4.incomplete == nil and d4.time == 1000,
+                "slot1=" .. tostring(d4 and d4.items and d4.items[1])
+                .. " slot3=" .. tostring(d4 and d4.items and d4.items[3]))
+            check("cache: the completed entry is fresh again", CI:IsCacheFresh(guid) == true)
+
+            -- 5. An emptied slot is cleared on the next complete read.
+            links = { [1] = "item:2001", [2] = "item:1002" }
+            textures = { [1] = true, [2] = true }
+            triggerInspect()
+            local d5 = CI.cache[guid]
+            check("cache: an emptied slot is removed instead of keeping the old link",
+                type(d5) == "table" and d5.items[5] == nil,
+                "slot5=" .. tostring(d5 and d5.items and d5.items[5]))
+
+            -- 6. Exhaustion never commits the incomplete read, keeps the last
+            --    complete snapshot, and stops with a terminal state.
+            links = { [1] = "item:2001", [2] = "item:1002" }
+            textures = { [1] = true, [2] = true, [3] = true }
+            REALG.__pendingRetry = nil
+            triggerInspect()
+            local guard = 0
+            while (type(REALG.__pendingRetry) == "function" and guard < 12) do
+                local fn = REALG.__pendingRetry
+                REALG.__pendingRetry = nil
+                pcall(fn)
+                guard = guard + 1
+            end
+            local d6 = CI.cache[guid]
+            check("cache: the retry budget is bounded (no unbounded timer chain)", guard <= 8,
+                "retries=" .. guard)
+            check("cache: exhaustion keeps the last complete snapshot, never the mixed read",
+                type(d6) == "table" and d6.items[1] == "item:2001" and d6.items[5] == nil,
+                "slot1=" .. tostring(d6 and d6.items and d6.items[1]))
+            check("cache: exhaustion does NOT claim freshness or a new timestamp",
+                type(d6) == "table" and d6.incomplete == true and not d6.retryPending
+                and d6.time == 1000,
+                "incomplete=" .. tostring(d6 and d6.incomplete)
+                .. " time=" .. tostring(d6 and d6.time))
+            check("cache: exhaustion parks the entry for a short GetTime backoff",
+                type(d6) == "table" and d6.failedUntil == 1020,
+                "failedUntil=" .. tostring(d6 and d6.failedUntil))
+            check("cache: the backoff suppresses the next ask inside its window",
+                CI:IsCacheFresh(guid) == true)
+            REALG.__testClock = 1021
+            check("cache: the backoff expires and the entry is askable again",
+                CI:IsCacheFresh(guid) == false)
+            REALG.__testClock = 1000
+
+            -- 6b. A FIRST inspect that exhausts must not look fresh with no data.
+            --     The old code stamped .time on failure, so the empty record was
+            --     served as fresh for the whole 300 s window: no GearScore line
+            --     and no re-inspect for five minutes.
+            CI.cache[guid] = nil
+            links = { [1] = "item:4001" }
+            textures = { [1] = true, [3] = true }
+            REALG.__pendingRetry = nil
+            triggerInspect()
+            local guard2 = 0
+            while (type(REALG.__pendingRetry) == "function" and guard2 < 12) do
+                local fn = REALG.__pendingRetry
+                REALG.__pendingRetry = nil
+                pcall(fn)
+                guard2 = guard2 + 1
+            end
+            local d6b = CI.cache[guid]
+            check("cache: a failed first inspect leaves NO timestamp",
+                type(d6b) == "table" and d6b.time == nil and d6b.incomplete == true,
+                "time=" .. tostring(d6b and d6b.time)
+                .. " incomplete=" .. tostring(d6b and d6b.incomplete))
+            local emptyTime = CI:GetLastCacheTime(guid)
+            check("cache: a failed first inspect serves no cache time to GearScore",
+                emptyTime == 0, "time=" .. tostring(emptyTime))
+
+            -- 7. A gear change OUT OF RANGE still marks the entry stale.
+            CI.cache[guid] = { items = { [1] = "item:2001" }, time = 1000 }
+            REALG.UnitDistanceSquared = function() return 10000, true end
+            pcall(handler, CI.frame, "UNIT_INVENTORY_CHANGED", token)
+            check("cache: a gear change out of range is still marked stale",
+                CI.cache[guid] and CI.cache[guid].stale == true,
+                "stale=" .. tostring(CI.cache[guid] and CI.cache[guid].stale))
+
+            -- 8. The session cache is bounded; old complete entries with no live
+            --    unit are evicted, and an incomplete entry is not.
+            CI.cache = {}
+            for i = 1, 512 do
+                CI.cache["Player-9-" .. string.format("%08d", i)] =
+                    { items = {}, lastAttempt = 1, incomplete = true, retryPending = false }
+            end
+            CI.cache["Player-9-incomplete"] = { items = {}, time = 1, incomplete = true, retryPending = true }
+            links = { [1] = "item:3001" }
+            textures = { [1] = true }
+            triggerInspect()
+            local count = 0
+            for _ in pairs(CI.cache) do count = count + 1 end
+            check("cache: the session cache stays bounded when failed reads accumulate",
+                count <= 512, "count=" .. count)
+            check("cache: eviction never removes an entry whose retry is in flight",
+                CI.cache["Player-9-incomplete"] ~= nil)
+
+            CI.cache = savedCache
+            REALG.GetInventoryItemLink = savedLink
+            REALG.GetInventoryItemTexture = savedTexture
+            REALG.UnitDistanceSquared = savedDistance
+            REALG.UnitExists = savedExists
+            REALG.C_Timer.After = savedAfter
+            REALG.__testClock = savedClock
+            REALG.__pendingRetry = nil
+        end
+    end
+end
+
 -- ONE COMPLETED INSPECT REBUILDS THE TOOLTIP ONCE.
 --
 -- The library fires INVENTORY_READY and TALENTS_READY back to back from a single
@@ -4047,25 +4288,45 @@ do
         end
     end
 
-    -- M2: an unresolvable unit tooltip counts the resolve failure with a cause.
+    -- M2 (0.8.8): an item-load completion with no tooltip unit is a callback
+    -- miss, NOT a resolve failure; a shown, genuinely unresolved RENDER still
+    -- counts. The 0.8.7 version of this pin drove TacoTip_GSCallback and called
+    -- the miss a failure, which is exactly the false positive /tt diag showed.
     do
         local savedGetUnit, savedDisp, savedUnit = GT.GetUnit,
             REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil, GT.__unit
+        local savedShown = GT.__shown
         GT.__unit = nil
+        GT.__shown = true
         GT.GetUnit = function() return "n", nil end
         if (REALG.TooltipUtil) then
             REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
         end
         local failBefore = (TT.ev and TT.ev.resolveTooltipUnitFailed) or 0
+        local missBefore = (TT.ev and TT.ev.gsCallbackNoUnit) or 0
         pcall(_G.TacoTip_GSCallback, UNITS.player.guid)
-        GT.GetUnit, GT.__unit = savedGetUnit, savedUnit
-        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
-        check("unresolvable unit counts a resolve failure",
-            ((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0) == failBefore + 1,
+        check("an item-load completion with no tooltip unit is a callback miss",
+            ((TT.ev and TT.ev.gsCallbackNoUnit) or 0) == missBefore + 1,
+            "misses=" .. tostring((TT.ev and TT.ev.gsCallbackNoUnit) or 0))
+        check("...and is NOT counted as a unit-resolution failure",
+            ((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0) == failBefore,
             "failed=" .. tostring((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0))
-        check("...and names the cause",
-            type(TT.ev and TT.ev.resolveTooltipUnitLastCause) == "string",
-            "cause=" .. tostring(TT.ev and TT.ev.resolveTooltipUnitLastCause))
+
+        -- The script path only exists on the classic families; the modern pair
+        -- uses the postcall. When it is present, a shown unresolved render must
+        -- still count (the counter is narrowed, not removed).
+        local hook = GT.__hooks and GT.__hooks.OnTooltipSetUnit
+        if (type(hook) == "function") then
+            pcall(hook, GT)
+            check("a shown, genuinely unresolved render still counts a failure",
+                ((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0) == failBefore + 1,
+                "failed=" .. tostring((TT.ev and TT.ev.resolveTooltipUnitFailed) or 0))
+            check("...and names the cause",
+                type(TT.ev and TT.ev.resolveTooltipUnitLastCause) == "string",
+                "cause=" .. tostring(TT.ev and TT.ev.resolveTooltipUnitLastCause))
+        end
+        GT.GetUnit, GT.__unit, GT.__shown = savedGetUnit, savedUnit, savedShown
+        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
     end
 
     -- M1: a raising engine probe counts the mouseover guard hit.

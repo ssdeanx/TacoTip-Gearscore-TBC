@@ -16,18 +16,23 @@ local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if (not lib) then return end
 
 -- Alias registration so legacy and modern callers can resolve the inspector.
--- Registered unconditionally and with a minor version: the previous
--- `if not stubLibs[...]` guard meant that after a version bump in the same Lua
--- state the alias kept pointing at the OLD table while `lib` was the new one,
--- and minors["LibClassicInspector"] stayed nil for any caller that reads it.
+-- It must never take a name another add-on owns: a real LibClassicInspector
+-- already registered by someone else is left exactly as it is (its table and
+-- its minor). Publishing unconditionally used to displace that library and
+-- relabel its minor as 2, silently handing its callers this port instead.
+-- Publishing when the name is free -- or already points at this library, which
+-- is what a same-major version bump leaves behind -- keeps the convenience.
 if (type(LibStub) == "table") then
     local stubLibs = rawget(LibStub, "libs")
     local stubMinors = rawget(LibStub, "minors")
     if (type(stubLibs) == "table") then
-        stubLibs["LibClassicInspector"] = lib
-    end
-    if (type(stubMinors) == "table") then
-        stubMinors["LibClassicInspector"] = MINOR
+        local alias = stubLibs["LibClassicInspector"]
+        if (alias == nil or alias == lib) then
+            stubLibs["LibClassicInspector"] = lib
+            if (type(stubMinors) == "table") then
+                stubMinors["LibClassicInspector"] = MINOR
+            end
+        end
     end
 end
 
@@ -3661,43 +3666,147 @@ local function inventoryItemLink(unit, slot)
     return nil
 end
 
-local function cacheUnitData(unit, guid)
+-- Cache limits and the asynchronous retry schedule.
+--
+-- MAX is the session memory ceiling. Entries are evicted only when they are
+-- old, complete, and not a live unit this client knows -- an entry with a
+-- retry in flight is never removed from under its own closure.
+--
+-- The retry budget is per INSPECTION, not per record: cacheUnitData resets it
+-- when called from INSPECT_READY (isRetry nil), so a record that exhausted its
+-- retries in an earlier inspection cannot finalise a fresh one on its first
+-- call. (The old budget was per entry and could start exhausted.)
+local CACHE_MAX_ENTRIES = 512
+local CACHE_RETRY_LIMIT = 6
+local CACHE_RETRY_DELAYS = { 0.20, 0.35, 0.50, 0.75, 1.00, 1.50 }
+-- How long a read that exhausted its retries parks the entry before another
+-- hover may ask again. Short enough that a transient server silence heals on
+-- the next hover or two, long enough that a player the client will never
+-- describe cannot turn every tooltip render into a NotifyInspect.
+local CACHE_FAILED_BACKOFF = 20
+-- 2 x CACHE_REFRESH_DELAY (300). Literal because that constant is declared
+-- further down, beside the inspect tick; a local declared later is a global
+-- lookup here, not the value.
+local CACHE_EVICT_AGE = 600
+
+local function cacheEntryCount()
+    local n = 0
+    for _ in pairs(lib.cache) do n = n + 1 end
+    return n
+end
+
+-- Evicts only entries that can no longer be in use: older than ten minutes,
+-- not resolvable to a live unit token, and with no retry in flight. Failed
+-- reads are reclaimable too, aged by their last attempt -- otherwise records
+-- that never completed could not be deleted at all and the ceiling would stop
+-- holding as soon as enough of them accumulated. Soft ceiling: if every
+-- survivor is live or retrying, the cache stays above it rather than dropping
+-- a player that is being looked at right now.
+local function evictCacheEntries(currentGuid, now)
+    if (cacheEntryCount() <= CACHE_MAX_ENTRIES) then return end
+    local victims = {}
+    for guid, entry in pairs(lib.cache) do
+        local retrying = (type(entry) == "table") and entry.incomplete and entry.retryPending
+        if (guid ~= currentGuid and type(entry) == "table" and not retrying) then
+            local stamp = entry.time or entry.lastAttempt
+            if (stamp and (now - stamp) > CACHE_EVICT_AGE
+                    and not lib:PlayerGUIDToUnitToken(guid)) then
+                victims[#victims + 1] = { guid = guid, time = stamp }
+            end
+        end
+    end
+    table.sort(victims, function(a, b) return a.time < b.time end)
+    local count = cacheEntryCount()
+    for i = 1, #victims do
+        if (count <= CACHE_MAX_ENTRIES) then break end
+        lib.cache[victims[i].guid] = nil
+        count = count - 1
+    end
+end
+
+local function cacheUnitData(unit, guid, isRetry)
     if (not unit or not guid) then return end
     local now = uptimeSeconds()
     local data = lib.cache[guid] or {}
     data.stale = nil
     data.items = data.items or {}
+    -- Age stamp for eviction, independent of .time: a record that never
+    -- completed has no .time, and without this it could never be reclaimed.
+    data.lastAttempt = now
+    -- Every call supersedes any retry scheduled by an older call. A timer
+    -- cannot be cancelled on every client, so the closure checks this and
+    -- no-ops instead of resurrecting an incomplete read over newer data.
+    data.retryGeneration = (data.retryGeneration or 0) + 1
+    local retryGeneration = data.retryGeneration
+    if (not isRetry) then
+        -- A fresh inspection gets the whole retry schedule back, and a manual
+        -- re-inspect is never blocked by the backoff a previous failure set.
+        data.retryCount = nil
+        data.retryPending = nil
+        data.failedUntil = nil
+    end
 
     -- 1-18 is deliberate, not an off-by-one. Slot 4 is the shirt and slot 19
     -- the tabard; both are unscored by the original GearScore formula, and
     -- gearscore.lua skips slot 4 explicitly for the same reason. Consumers
     -- (gearscore.lua, pawn.lua) mirror this range, so changing it here without
     -- changing them would silently double-count.
+    --
+    -- STAGED, not written in place. A slot whose icon is present but whose
+    -- hyperlink has not arrived is UNKNOWN, not empty: committing that half
+    -- read is how a gear swap used to be scored as a mix of the new item and
+    -- the previous one. Only a fully resolved read replaces data.items; an
+    -- incomplete read leaves the last complete snapshot untouched, so the
+    -- tooltip keeps showing a consistent score while the retry runs.
+    local staged = {}
     local anyMissingEquipped = false
     local getTexture = _G.GetInventoryItemTexture
     for slot = 1, 18 do
         local link = inventoryItemLink(unit, slot)
         if (link) then
-            data.items[slot] = link
-        elseif (not data.items[slot]) then
-            if (type(getTexture) == "function") then
-                local okTex, tex = pcall(getTexture, unit, slot)
-                if (okTex and tex) then
-                    anyMissingEquipped = true
-                end
+            staged[slot] = link
+        elseif (slot ~= 4 and type(getTexture) == "function") then
+            -- Slot 4 is the shirt. It may legitimately have no item, and it is
+            -- unscored, so an icon without a link must never hold completion
+            -- hostage; when it does have an item and the link arrives, the
+            -- normal branch above stages it.
+            local okTex, tex = pcall(getTexture, unit, slot)
+            if (okTex and tex) then
+                anyMissingEquipped = true
             end
         end
     end
 
-    if (not anyMissingEquipped or (data.retryCount and data.retryCount >= 4)) then
+    local retriesExhausted = (data.retryCount or 0) >= CACHE_RETRY_LIMIT
+    if (not anyMissingEquipped) then
+        data.items = staged
         data.time = now
         data.incomplete = nil
         data.retryCount = nil
+        data.retryPending = nil
+        data.failedUntil = nil
+    elseif (retriesExhausted) then
+        -- The client never produced the last link. Give up on THIS read, never
+        -- commit it, and -- the part that matters -- do NOT stamp .time. A
+        -- failed read is not a fresh read: stamping it made a FIRST inspect
+        -- look complete-and-fresh for the whole 300 s window with no items, so
+        -- that player showed no GearScore and was never re-inspected for five
+        -- minutes. Keeping the last complete stamp (or none at all) means the
+        -- record stays honestly incomplete, and the short GetTime backoff
+        -- below is what stops it from re-asking on every single render.
+        data.incomplete = true
+        data.retryCount = nil
+        data.retryPending = false
+        data.failedUntil = (now > 0) and (now + CACHE_FAILED_BACKOFF) or nil
     else
         data.incomplete = true
         data.retryCount = (data.retryCount or 0) + 1
+        data.retryPending = true
         if (type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function") then
-            _G.C_Timer.After(0.25, function()
+            local delay = CACHE_RETRY_DELAYS[data.retryCount] or CACHE_RETRY_DELAYS[CACHE_RETRY_LIMIT]
+            _G.C_Timer.After(delay, function()
+                if (data.retryGeneration ~= retryGeneration) then return end
+                data.retryPending = false
                 local targetUnit = unit
                 if (not targetUnit or not (type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit))
                         or not (type(_G.UnitGUID) == "function" and _G.UnitGUID(targetUnit) == guid)) then
@@ -3706,9 +3815,13 @@ local function cacheUnitData(unit, guid)
                     end
                 end
                 if (targetUnit and type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit)) then
-                    cacheUnitData(targetUnit, guid)
+                    cacheUnitData(targetUnit, guid, true)
                 end
             end)
+        else
+            -- No timers on this client: never leave the entry looking "fresh
+            -- because a retry is pending". The next render may ask again.
+            data.retryPending = false
         end
     end
 
@@ -3756,6 +3869,7 @@ local function cacheUnitData(unit, guid)
     end
 
     lib.cache[guid] = data
+    evictCacheEntries(guid, now)
     if (lib.inspectStats) then lib.inspectStats.ready = (lib.inspectStats.ready or 0) + 1 end
     lib.callbacks:Fire("INVENTORY_READY", guid, true, unit)
     lib.callbacks:Fire("TALENTS_READY", guid, unit)
@@ -3870,15 +3984,22 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local unit = ...
         if (unit and type(UnitExists) == "function" and UnitExists(unit)
                 and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))
-                and isCloseEnoughToAsk(unit)) then
+                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
             local guid = type(UnitGUID) == "function" and UnitGUID(unit)
             if (guid and lib.cache[guid]) then
                 -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
                 -- means "no data" and hides GearScore/iLvl, so zeroing made
                 -- them vanish until (and unless) the re-inspect succeeded.
+                --
+                -- The flag is set even OUT OF RANGE. The old outer distance
+                -- gate meant a raid member swapping gear at 30yd was never
+                -- marked, so the stale score was served as fresh for the rest
+                -- of the window. Only the immediate re-inspect is gated; out of
+                -- range, the flag waits for the next in-range hover or tick.
                 lib.cache[guid].stale = true
-                lib:DoInspect(unit)
+                if (isCloseEnoughToAsk(unit)) then
+                    lib:DoInspect(unit)
+                end
             end
         end
     end
@@ -3907,11 +4028,52 @@ local INSPECT_PENDING_TIMEOUT = 3.0
 local CACHE_REFRESH_DELAY = 300
 queue = {}
 
--- Fresh = has data, has not been flagged stale by UNIT_INVENTORY_CHANGED, and is
--- younger than the refresh window. Stale data is still served to readers.
+-- Fresh = has a COMPLETE snapshot, has not been flagged stale by
+-- UNIT_INVENTORY_CHANGED, is younger than the refresh window, and is not in the
+-- middle of an asynchronous retry.
+--
+-- While a retry is pending the entry is owned by that retry, so it counts as
+-- fresh for request-making: asking again would only duplicate the inspect. The
+-- last complete snapshot is still served to readers via GetLastCacheTime; a
+-- partial read is never committed, so "fresh" never means "mixed data".
+--
+-- An incomplete entry with NO retry pending (the retry could not resolve the
+-- unit, or the client has no timers) is NOT fresh: it must be re-asked. That is
+-- the fix for the old record that kept its previous timestamp, cleared .stale,
+-- and was then served as fresh for the rest of the 300s window.
 local function isCacheFresh(cached)
-    return (cached and cached.time and not cached.stale
+    if (not cached) then return false end
+    -- A read that exhausted its retries parks the entry for a short window, so a
+    -- player this client will not describe is not re-requested on every hover.
+    -- Same timebase as every other window here: GetTime, monotonic, seconds.
+    local failedUntil = tonumber(cached.failedUntil)
+    if (failedUntil and failedUntil > 0 and uptimeSeconds() < failedUntil) then
+        return true
+    end
+    if (not cached.time) then
+        return (cached.incomplete and cached.retryPending) and true or false
+    end
+    return (not cached.stale
+        and (not cached.incomplete or cached.retryPending)
         and (uptimeSeconds() - cached.time < CACHE_REFRESH_DELAY)) and true or false
+end
+
+-- Public freshness queries for callers outside this file. IsCacheFresh answers
+-- "may I skip an inspect?"; IsCacheStale is only true for a unit we have a
+-- record for (a never-inspected unit is unknown, not stale).
+function lib:IsCacheFresh(unitorguid)
+    local guid = getPlayerGUID(unitorguid)
+    if (not guid) then return false end
+    if (guid == UnitGUID("player")) then return true end
+    return isCacheFresh(lib.cache[guid])
+end
+
+function lib:IsCacheStale(unitorguid)
+    local guid = getPlayerGUID(unitorguid)
+    if (not guid or guid == UnitGUID("player")) then return false end
+    local cached = lib.cache[guid]
+    if (not cached) then return false end
+    return (not isCacheFresh(cached))
 end
 
 -- Forward declarations. Two reasons, both load-order, both fatal if wrong:
@@ -5197,6 +5359,11 @@ if (type(C_Timer) == "table" and type(C_Timer.NewTicker) == "function") then
     lib.scanTicker = C_Timer.NewTicker(lib.scanInterval, scanNearby)
 end
 
+-- The timestamp of the last COMPLETE inspection. While a retry is running this
+-- is deliberately the older stamp: the data still being served is the last
+-- complete snapshot, and hiding it for the length of a retry would blink the
+-- GearScore/iLvl rows off and on. Freshness for request-making is isCacheFresh,
+-- not this.
 function lib:GetLastCacheTime(unitorguid)
     local guid = getPlayerGUID(unitorguid)
     if (guid and guid == UnitGUID("player")) then
@@ -5208,6 +5375,15 @@ function lib:GetLastCacheTime(unitorguid)
         return cached.time, cached.time
     end
     return 0, 0
+end
+
+-- The raw cache record for a unit/GUID, or nil. Read-only: callers must not
+-- mutate the returned table. /tt diag uses this to show what is actually in the
+-- cache; the old code read gearScore/avgItemLevel/specialization fields that
+-- this library never writes.
+function lib:GetUnitData(unitorguid)
+    local guid = getPlayerGUID(unitorguid)
+    return guid and lib.cache[guid] or nil
 end
 
 function lib:GetInventoryItemMixin(unitorguid, slot)

@@ -1,0 +1,215 @@
+Checking Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua [0m[32m[1mOK[0m
+Checking Libs/LibDBIcon-1.0/CallbackHandler-1.0/CallbackHandler-1.0.lua [0m[31m[1m1 warning[0m
+
+    Libs/LibDBIcon-1.0/CallbackHandler-1.0/CallbackHandler-1.0.lua:10:35: accessing undefined variable [0m[1msecurecallfunction[0m
+
+Checking Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua     [0m[32m[1mOK[0m
+Checking Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua [0m[31m[1m5 warnings[0m
+
+    Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua:20:65: accessing undefined variable [0m[1mMinimap[0m
+    Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua:20:87: accessing undefined variable [0m[1mAddonCompartmentFrame[0m
+    Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua:161:24: accessing undefined variable [0m[1mGetMinimapShape[0m
+    Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua:161:44: accessing undefined variable [0m[1mGetMinimapShape[0m
+    Libs/LibDBIcon-1.0/LibDBIcon-1.0/LibDBIcon-1.0.lua:200:9: value assigned to variable [0m[1mpos[0m is unused
+
+Checking Libs/LibDBIcon-1.0/LibDataBroker-1.1/LibDataBroker-1.1.lua [0m[32m[1mOK[0m
+Checking Libs/LibDBIcon-1.0/LibStub/LibStub.lua   [0m[31m[1m10 warnings[0m
+
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:13:1: line contains only whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:17:4: trailing whitespace in a comment
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:22:27: accessing undefined variable [0m[1mstrmatch[0m
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:23:1: line contains only whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:29:1: line contains only whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:42:1: line contains only whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:44:4: trailing whitespace in a comment
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:46:37: line contains trailing whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:47:26: line contains trailing whitespace
+    Libs/LibDBIcon-1.0/LibStub/LibStub.lua:49:1: line contains only whitespace
+
+Checking Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua [0m[32m[1mOK[0m
+Checking Libs/LibDetours-1.0/LibDetours-1.0.lua   [0m[32m[1mOK[0m
+Checking Libs/LibForeverInspector/LibForeverInspector.lua [0m[32m[1mOK[0m
+Checking Libs/LibRangeCheck-2.0/CallbackHandler-1.0/CallbackHandler-1.0.lua [0m[31m[1m1 warning[0m
+
+    Libs/LibRangeCheck-2.0/CallbackHandler-1.0/CallbackHandler-1.0.lua:10:35: accessing undefined variable [0m[1msecurecallfunction[0m
+
+Checking Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua [0m[31m[1m21 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:45:12: unused variable [0m[1moldminor[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:50:7: unused variable [0m[1mIsClassicVanilla[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:51:7: unused variable [0m[1mIsClassicBC[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:393:7: unused variable [0m[1mtonumber[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:402:24: accessing undefined variable [0m[1mBOOKTYPE_SPELL[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:403:22: accessing undefined variable [0m[1mGetSpellInfo[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:404:30: accessing undefined variable [0m[1mGetSpellBookItemName[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:405:25: accessing undefined variable [0m[1mGetNumSpellTabs[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:406:25: accessing undefined variable [0m[1mGetSpellTabInfo[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:408:7: unused variable [0m[1mUnitAura[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:408:18: accessing undefined variable [0m[1mUnitAura[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:410:23: accessing undefined variable [0m[1mUnitCanAssist[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:414:24: accessing undefined variable [0m[1mIsSpellInRange[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:415:23: accessing undefined variable [0m[1mIsItemInRange[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:419:7: unused variable [0m[1mGetSpecialization[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:420:7: unused variable [0m[1mGetSpecializationInfo[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:422:20: accessing undefined variable [0m[1mGetInventorySlotInfo[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:424:23: accessing undefined variable [0m[1mUnitIsVisible[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:506:18: unused variable [0m[1mrank[0m
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:1097:9: shadowing definition of variable [0m[1mlib[0m on line 45
+    Libs/LibRangeCheck-2.0/LibRangeCheck-2.0/LibRangeCheck-2.0.lua:1118:1: value assigned to variable [0m[1mlib[0m is unused
+
+Checking Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua [0m[31m[1m10 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:13:1: line contains only whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:17:4: trailing whitespace in a comment
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:22:27: accessing undefined variable [0m[1mstrmatch[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:23:1: line contains only whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:29:1: line contains only whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:42:1: line contains only whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:44:4: trailing whitespace in a comment
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:46:37: line contains trailing whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:47:26: line contains trailing whitespace
+    Libs/LibRangeCheck-2.0/LibStub-1.0/LibStub.lua:49:1: line contains only whitespace
+
+Checking Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua [0m[31m[1m14 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:1:1: setting non-standard global variable [0m[1mdebugstack[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:2:1: setting non-standard global variable [0m[1mstrmatch[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:17:15: unused variable [0m[1mnewOldMinor[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:20:7: variable [0m[1mnewLib[0m was previously defined on line 17
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:20:15: unused variable [0m[1mnewOldMinor[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:20:15: variable [0m[1mnewOldMinor[0m was previously defined on line 17
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:23:7: variable [0m[1mnewLib[0m was previously defined on line 20
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:23:15: variable [0m[1mnewOldMinor[0m was previously defined on line 20
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:31:7: variable [0m[1mnewLib[0m was previously defined on line 23
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:31:15: variable [0m[1mnewOldMinor[0m was previously defined on line 23
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:35:7: variable [0m[1mnewLib[0m was previously defined on line 31
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:35:15: variable [0m[1mnewOldMinor[0m was previously defined on line 31
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:39:7: variable [0m[1mnewLib[0m was previously defined on line 35
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test.lua:39:15: variable [0m[1mnewOldMinor[0m was previously defined on line 35
+
+Checking Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test2.lua [0m[31m[1m2 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test2.lua:1:1: setting non-standard global variable [0m[1mdebugstack[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test2.lua:2:1: setting non-standard global variable [0m[1mstrmatch[0m
+
+Checking Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test3.lua [0m[31m[1m2 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test3.lua:1:1: setting non-standard global variable [0m[1mdebugstack[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test3.lua:2:1: setting non-standard global variable [0m[1mstrmatch[0m
+
+Checking Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua [0m[31m[1m7 warnings[0m
+
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:1:1: setting non-standard global variable [0m[1mdebugstack[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:2:1: setting non-standard global variable [0m[1mstrmatch[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:9:1: setting read-only field [0m[1mminor[0m of global [0m[1mLibStub[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:10:1: setting read-only field [0m[1mIterateLibraries[0m of global [0m[1mLibStub[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:18:1: setting read-only field [0m[1mIterateLibraries[0m of global [0m[1mLibStub[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:26:1: setting read-only field [0m[1mminor[0m of global [0m[1mLibStub[0m
+    Libs/LibRangeCheck-2.0/LibStub-1.0/tests/test4.lua:34:1: setting read-only field [0m[1mminor[0m of global [0m[1mLibStub[0m
+
+Checking Libs/LibSharedMedia-3.0/CallbackHandler-1.0/CallbackHandler-1.0.lua [0m[31m[1m1 warning[0m
+
+    Libs/LibSharedMedia-3.0/CallbackHandler-1.0/CallbackHandler-1.0.lua:10:35: accessing undefined variable [0m[1msecurecallfunction[0m
+
+Checking Libs/LibSharedMedia-3.0/LibSharedMedia-3.0/LibSharedMedia-3.0.lua [0m[31m[1m1 warning[0m
+
+    Libs/LibSharedMedia-3.0/LibSharedMedia-3.0/LibSharedMedia-3.0.lua:240:25: accessing undefined variable [0m[1mC_UIFileAsset[0m
+
+Checking Libs/LibSharedMedia-3.0/LibStub/LibStub.lua [0m[31m[1m10 warnings[0m
+
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:13:1: line contains only whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:17:4: trailing whitespace in a comment
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:22:27: accessing undefined variable [0m[1mstrmatch[0m
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:23:1: line contains only whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:29:1: line contains only whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:42:1: line contains only whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:44:4: trailing whitespace in a comment
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:46:37: line contains trailing whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:47:26: line contains trailing whitespace
+    Libs/LibSharedMedia-3.0/LibStub/LibStub.lua:49:1: line contains only whitespace
+
+Checking Libs/LibStub/LibStub.lua                 [0m[32m[1mOK[0m
+Checking Locale/deDE.lua                          [0m[32m[1mOK[0m
+Checking Locale/enUS.lua                          [0m[32m[1mOK[0m
+Checking Locale/esES.lua                          [0m[32m[1mOK[0m
+Checking Locale/esMX.lua                          [0m[32m[1mOK[0m
+Checking Locale/frFR.lua                          [0m[32m[1mOK[0m
+Checking Locale/itIT.lua                          [0m[32m[1mOK[0m
+Checking Locale/koKR.lua                          [0m[32m[1mOK[0m
+Checking Locale/ptBR.lua                          [0m[32m[1mOK[0m
+Checking Locale/ruRU.lua                          [0m[32m[1mOK[0m
+Checking Locale/zhCN.lua                          [0m[32m[1mOK[0m
+Checking Locale/zhTW.lua                          [0m[32m[1mOK[0m
+Checking OLD/Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua [0m[32m[1mOK[0m
+Checking OLD/Libs/LibClassicInspector/LibClassicInspector.lua [0m[32m[1mOK[0m
+Checking OLD/Libs/LibDetours-1.0/LibDetours-1.0.lua [0m[32m[1mOK[0m
+Checking OLD/Libs/LibStub/LibStub.lua             [0m[32m[1mOK[0m
+Checking OLD/Locale/deDE.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/enUS.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/esES.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/esMX.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/frFR.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/itIT.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/koKR.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/ptBR.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/ruRU.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/zhCN.lua                      [0m[32m[1mOK[0m
+Checking OLD/Locale/zhTW.lua                      [0m[32m[1mOK[0m
+Checking OLD/TacoTip_Tests.lua                    [0m[32m[1mOK[0m
+Checking OLD/gearscore.lua                        [0m[32m[1mOK[0m
+Checking OLD/main.lua                             [0m[32m[1mOK[0m
+Checking OLD/options.lua                          [0m[32m[1mOK[0m
+Checking OLD/pawn.lua                             [0m[32m[1mOK[0m
+Checking OLD/textures.lua                         [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Cache.lua                 [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Core.lua                  [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Frames.lua                [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/deDE.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/enUS.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/esES.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/esMX.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/frFR.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/itIT.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/koKR.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/ptBR.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/ruRU.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/zhCN.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Locale/zhTW.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Minimap.lua               [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Options.lua               [0m[32m[1mOK[0m
+Checking TacoTip_Extras/RankBrowser.lua           [0m[32m[1mOK[0m
+Checking TacoTip_Extras/RankDB.lua                [0m[32m[1mOK[0m
+Checking TacoTip_Extras/RankSync.lua              [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Scanner.lua               [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Scoring.lua               [0m[32m[1mOK[0m
+Checking TacoTip_Extras/TacoTipAdapter.lua        [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Tests/harness/load_test.lua [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Tests/harness/rankbrowser_test.lua [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Tests/harness/root.lua    [0m[32m[1mOK[0m
+Checking TacoTip_Extras/Tooltips.lua              [0m[32m[1mOK[0m
+Checking Tests/TacoTip_Forever_Tests.lua          [0m[32m[1mOK[0m
+Checking Tests/harness/batch2_pawn_test.lua       [0m[32m[1mOK[0m
+Checking Tests/harness/batch4_clock_test.lua      [0m[32m[1mOK[0m
+Checking Tests/harness/batch8_pane_test.lua       [0m[32m[1mOK[0m
+Checking Tests/harness/detect_test.lua            [0m[32m[1mOK[0m
+Checking Tests/harness/fileguard_test.lua         [0m[32m[1mOK[0m
+Checking Tests/harness/font_test.lua              [0m[32m[1mOK[0m
+Checking Tests/harness/gearscore_test.lua         [0m[32m[1mOK[0m
+Checking Tests/harness/load_test.lua              [0m[32m[1mOK[0m
+Checking Tests/harness/locale_test.lua            [0m[32m[1mOK[0m
+Checking Tests/harness/mock_contract.lua          [0m[32m[1mOK[0m
+Checking Tests/harness/options_test.lua           [0m[32m[1mOK[0m
+Checking Tests/harness/root.lua                   [0m[32m[1mOK[0m
+Checking Tests/harness/settings_test.lua          [0m[32m[1mOK[0m
+Checking Tests/harness/specname_test.lua          [0m[32m[1mOK[0m
+Checking Tests/harness/taint_test.lua             [0m[32m[1mOK[0m
+Checking Tests/harness/talent_check.lua           [0m[32m[1mOK[0m
+Checking Tests/harness/textures_test.lua          [0m[32m[1mOK[0m
+Checking Tests/harness/tooltip_test.lua           [0m[32m[1mOK[0m
+Checking gearscore.lua                            [0m[32m[1mOK[0m
+Checking main.lua                                 [0m[32m[1mOK[0m
+Checking options.lua                              [0m[32m[1mOK[0m
+Checking pawn.lua                                 [0m[32m[1mOK[0m
+Checking textures.lua                             [0m[32m[1mOK[0m
+
+Total: [0m[31m[1m85[0m warnings / [0m[0m[1m0[0m errors in 102 files

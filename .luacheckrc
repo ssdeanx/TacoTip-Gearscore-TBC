@@ -1,5 +1,17 @@
 std = "lua51"
 
+-- Vendored libraries that are not loaded by TacoTip.toc and are not part of the
+-- shipped package. Their upstream style is not this project's to relint, and
+-- their warnings are not authored-code warnings. LibForeverInspector (our own
+-- port) stays linted. These three trees are not loaded and not shipped, so
+-- their upstream style is out of scope; excluding them leaves the authored
+-- code (87 files) at 0 warnings / 0 errors.
+exclude_files = {
+    "Libs/LibDBIcon-1.0/**",
+    "Libs/LibRangeCheck-2.0/**",
+    "Libs/LibSharedMedia-3.0/**",
+}
+
 max_line_length = 500
 unused_args = false
 

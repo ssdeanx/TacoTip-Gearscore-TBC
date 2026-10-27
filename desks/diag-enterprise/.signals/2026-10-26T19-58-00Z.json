@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-10-26T19:58:00Z",
+  "run_id": "diag-enterprise-2026-10-26",
+  "agent_name": "diag-enterprise",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 5,
+    "accuracy": 4,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Collector/renderer split made the report assertable as a table; 24 structural pins run inside the existing per-client load matrix; every gate was run on all three interpreters.",
+    "what_was_hard": "The load_test uses a checks array rather than check(), and the report had to keep every pre-existing pinned substring while changing its internal shape; the temporary sample dump was used to inspect the real output, then removed.",
+    "skill_gap": "No in-game client here, so the operator still has to confirm the pasted report on Era/TBC; the existing portrait-side contract remains an open operator decision."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

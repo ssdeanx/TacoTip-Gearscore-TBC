@@ -1,0 +1,5 @@
+{"v":1,"task":"extras-harness","state":"running","msg":"started: bash TacoTip_Extras/Tests/harness/run_all.sh","at":1793041555372}
+{"v":1,"task":"extras-harness","pct":5,"msg":"-------------------------------------------------------------","at":1793041556379}
+{"v":1,"task":"extras-harness","pct":5,"msg":"== lua5.4 (Lua 5.4.9  Copyright (C) 1994-2026 Lua.org, PUC-Rio) ==","at":1793041564416}
+{"v":1,"task":"extras-harness","pct":5,"msg":"-------------------------------------------------------------","at":1793041565421}
+{"v":1,"task":"extras-harness","state":"failed","pct":5,"msg":"exit code 1","at":1793041574022}

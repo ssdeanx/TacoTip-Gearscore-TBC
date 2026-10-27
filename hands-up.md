@@ -107,8 +107,19 @@ operational domain so lanes do not re-learn them the hard way.
   valid. The old code treated nil as empty, stamped `data.time = now`, and
   locked in a partial score for 5 minutes. **the fix:** check
   `GetInventoryItemTexture`. If a texture exists but link is nil, mark
-  `incomplete = true`, do not stamp cache time, and retry after 250ms with
-  `PlayerGUIDToUnitToken(guid)`.
+  `incomplete = true`, do not stamp cache time, and retry on the
+  `{0.20 .. 1.50}` ladder with `PlayerGUIDToUnitToken(guid)`.
+- **the same defect survived in the exhaustion branch (found in 0.8.8).** The
+  0.8.7 fix applied "do not stamp cache time" to the retry path, but the
+  `retriesExhausted` branch still wrote `data.time = now` and cleared
+  `incomplete`. On a FIRST inspect that never resolved, the record was empty
+  yet looked fresh for the full 300 s window: no GearScore line and no
+  re-inspect for five minutes, which is exactly the reported "sometimes no
+  score". **the fix:** leave `.time` alone, keep `incomplete = true`, clear
+  `retryPending`, and park the entry for 20 s (`failedUntil`, `GetTime`) so it
+  is asked again soon without hammering `NotifyInspect` on every hover. Also:
+  failed records are now reclaimable by eviction (aged by `lastAttempt`), so
+  they can no longer defeat the 512-entry ceiling.
 - **`CanInspect` called with two arguments.** Passing a second argument
   (`showError = true`) makes the client engine display red "Not in range"
   popups and spoken error audio on hovered units. **the fix:** call
@@ -136,6 +147,16 @@ operational domain so lanes do not re-learn them the hard way.
   detection for inspect stalls (>3s), unresolved unit tokens, and corrupt coords,
   and evaluate the active unit live (`CanInspect`, `CheckInteractDistance`,
   `UnitDistanceSquared` yardage, and cache freshness).
+- **the 0.8.7 diag could still lie (0.8.8).** The report skipped the entire
+  inspect-frame block whenever the event counters were zero -- which is the
+  state right after /reload -- rendered "teardowns by reason" from pairs() so
+  two reports of one state never matched, recorded `portraitSetFailed` and both
+  anchor-bypass counters without ever printing them, had no per-section
+  containment (one raising field killed every section after it), carried no
+  verdict and no session uptime, and its tests matched substrings only.
+  **the fix:** collector/renderer split, verdict first, fixed section order,
+  per-section pcall in collection and rendering, deterministic sort, explicit
+  caps, and structural pins.
 - **an audit reporting an absence it could not verify.** a reviewer without
   access to the mirror asserted a client API did not exist when it was proven
   in game. **the fix:** an absence claim needs a whole-tree mirror sweep AND

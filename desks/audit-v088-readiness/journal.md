@@ -1,0 +1,16 @@
+# Desk: audit-v088-readiness — Journal
+
+## 2026-10-26 — Desk opened
+
+- **Purpose:** Pre-0.8.8 audit of the shipped TacoTip core: confirm the tree is green and working as intended, trace the three caches the operator named (GearScore/iLvl, item data, portrait), and explain the `/tt diag` problem reported on TBC Anniversary (`classic_anniversary`) that did not appear on Classic Era.
+- **Scope:** main addon only — `main.lua`, `gearscore.lua`, `options.lua`, `Libs/LibForeverInspector/LibForeverInspector.lua`, `Tests/harness/`. `TacoTip_Extras/**` is out of scope. No production edits this lane; findings only.
+- **Constraints:** invariants from `workshop.md` (no `gearscore.lua` edits, no state-changing git, scan stays disabled, `PlaySound` untouched, one-arg `CanInspect`). Evidence labels per `CAIRN.md`. Operator observation is the top rung.
+- **Next step:** baseline suites + verifiers, then trace the caches and the diag counter.
+
+## 2026-10-26 — [signal:done] audit complete; report on the bench
+
+- **Worked on:** baseline gates + full read-only traces of (a) the GS/iLvl and item-link cache in `LibForeverInspector`/`gearscore.lua`/`main.lua`, (b) the portrait cache/lifecycle, (c) `/tt diag` resolution counters against the classic_era / classic_anniversary FrameXML. Three read-only subagents cross-checked the areas; their claims were re-verified against the tree.
+- **Current state:** main harness PASS 71/71 under lua5.1, lua5.4, luajit. Extras harness FAIL 6/42 invocations (6 distinct checks: 120107 assertion, unused LB_SCAN keys for the disabled scan, LibClassicInspector alias displacement/downgrade, two disabled scan-control assertions). `luacheck .` 85 warnings / 0 errors in 102 files, all in vendored `Libs/`; authored files 0/0 in 42. `verify_release --worktree` FAIL (7 TOCs vs 1); extras verifier PASS. No production file edited.
+- **Findings:** cache — partial re-inspect served fresh (old `.time` kept), emptied slots never cleared, 4-retry cutoff finalizes partial and reuses the per-entry budget, out-of-range swaps never stale, no eviction, incomplete entries with no terminal state. Diag — the TBC "unresolved unit" is a false positive (cumulative counter + benign `gs-callback-no-unit`; the tooltip/unit-frame scripts are identical on Era and TBC); `CI:GetUnitData` does not exist so the cached-data block is dead; portrait mode prints "Disabled" because it reads `show_avatar`/`avatar_3d`. Portrait — the invariant's `getPortraitSideRightEdge` does not exist, the side is read from `tooltip:GetRight()`, and the pins are commented out. Packaging — LibRangeCheck/LibSharedMedia ship without notices; `LibForeverInspector.lua:18-32` overwrites a real `LibClassicInspector` alias (test red).
+- **Artifact:** `bench/audits/2026-10-26-v088-readiness-cache-and-diag.md`.
+- **Next step:** operator decision on the portrait-side contract (P1) and on the cache plan's `time=nil` tradeoff; then one cache lane (plan Task 2 amended with the report's warnings), one diagnostics lane, one gate-cleanup lane. Re-run all five gates; in-game check on classic_anniversary (portrait side at screen edge, quest/text tooltip after a unit hover, `/tt diag` after a cold hover-and-move-away).

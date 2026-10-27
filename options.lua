@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.7"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.8"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -443,7 +443,20 @@ local function registerSlashCommands()
             -- functional -- a state that is otherwise impossible to explain from
             -- the UI. See TT:PrintDiagnostics in main.lua.
             if (TT and TT.PrintDiagnostics) then
-                TT:PrintDiagnostics()
+                -- Last-resort containment: the collector and renderer each guard
+                -- their own sections, but a broken diagnostics module must never
+                -- take the slash command down with it.
+                local ok, err = pcall(TT.PrintDiagnostics, TT)
+                if (not ok) then
+                    print("|cff59f0dcTacoTip:|r diagnostics failed: " .. tostring(err))
+                    if (TT and TT.LOAD_STAGE) then
+                        print("|cff59f0dcTacoTip:|r Last stage reached: " .. tostring(TT.LOAD_STAGE))
+                    end
+                    if (CI) then
+                        print(string.format("|cff59f0dcTacoTip:|r Client family: %s, Interface: %s",
+                            tostring(CI.family), tostring(CI.interfaceVersion)))
+                    end
+                end
             else
                 print("|cff59f0dcTacoTip:|r main.lua did not finish loading, so diagnostics are unavailable.")
                 if (TT and TT.LOAD_STAGE) then

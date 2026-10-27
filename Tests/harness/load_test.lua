@@ -1142,8 +1142,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "0.8.7",
-        "0.8.7: TacoTip.toc declares version 0.8.7 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "0.8.8",
+        "0.8.8: TacoTip.toc declares version 0.8.8 (got " .. tostring(tocVer) .. ")" }
 
     -- Pin 5: Active unit context formatting and distance yardage
     if type(TT.PrintDiagnostics) == "function" then
@@ -1227,18 +1227,46 @@ do
         TT.lastTooltipError = nil
         TT.ev = TT.ev or {}
         TT.ev.resolveTooltipUnitFailed = 0
+        TT.ev.gsCallbackNoUnit = 3
         _G.TacoTipConfig = {
             custom_pos = { "BOTTOMRIGHT", "UIParent", 0, 0 },
             show_power_bar = false,
             show_hp_bar = false,
             show_talents = false,
             tooltip_border_texture = nil,
+            tooltip_portrait = true,
+            tooltip_portrait_3d = false,
         }
+        local savedCacheEntry = ci and ci.cache and ci.cache["Player-087-001"]
+        if (ci and ci.cache) then
+            ci.cache["Player-087-001"] = { items = {}, time = 0, stale = true, incomplete = true }
+        end
+        local savedExists, savedName, savedGUID = REALG.UnitExists, REALG.UnitName, REALG.UnitGUID
+        local savedIsPlayer = REALG.UnitIsPlayer
+        REALG.UnitExists = function(u) return u == "mouseover" end
+        REALG.UnitName = function() return "DiagnosedPlayer" end
+        REALG.UnitIsPlayer = function() return true end
+        REALG.UnitGUID = function(u)
+            if (u == "mouseover") then return "Player-087-001" end
+            return savedGUID(u)
+        end
 
         pcall(TT.PrintDiagnostics, TT)
         local textA = table.concat(linesA, "\n")
         checks[#checks + 1] = { textA:find("none detected %(system healthy%)") ~= nil,
-            "0.8.7: reportSilentFailures outputs 'none detected (system healthy)' when clean" }
+            "0.8.8: reportSilentFailures outputs 'none detected (system healthy)' when clean" }
+        checks[#checks + 1] = { textA:find("gs-callback-misses=3", 1, true) ~= nil,
+            "0.8.8: benign gs-callback misses are reported as a neutral counter, not a problem" }
+        checks[#checks + 1] = { textA:find("portrait mode: 2D Icon", 1, true) ~= nil,
+            "0.8.8: /tt diag reports the real portrait keys (2D Icon, not always Disabled)" }
+        checks[#checks + 1] = { textA:find("cached data: yes", 1, true) ~= nil
+            and textA:find("GearScore / iLvl:", 1, true) ~= nil,
+            "0.8.8: /tt diag prints the real cache record and recomputed GS/iLvl" }
+        checks[#checks + 1] = { textA:find("pending item data", 1, true) == nil,
+            "0.8.8: /tt diag prints no pending-style GearScore placeholder" }
+        checks[#checks + 1] = { textA:find("GearScore / iLvl: GS=- | iLvl=-", 1, true) ~= nil,
+            "0.8.8: an unscored hover reports dashes, not a fake zero or a status word" }
+        if (ci and ci.cache) then ci.cache["Player-087-001"] = savedCacheEntry end
 
         -- B. Verify stall, corrupt coords, and unresolved unit drop detection
         local linesB = {}
@@ -1273,7 +1301,7 @@ do
         pcall(TT.PrintDiagnostics, TT)
         local textB = table.concat(linesB, "\n")
         local corruptPass = textB:find("custom_pos table contains corrupted coordinate entries", 1, true) ~= nil
-        local unitDropPass = textB:find("Unit resolution failed 4 time%(s%)", 1, false) ~= nil
+        local unitDropPass = textB:find("Unit resolution failed 4 time%(s%) since load", 1, false) ~= nil
         local stallPass = textB:find("Inspect queue in%-flight unit 'target' has been waiting 4.8s %(stalled%)") ~= nil
         local timeoutPass = textB:find("Inspect requests timed out 1 time%(s%) without server response") ~= nil
         local errPass = textB:find("2 error%(s%) caught in pipeline/pcalls %(last: 'TestCaughtError'%)") ~= nil
@@ -1283,6 +1311,8 @@ do
 
         -- Restore
         if ci then ci.GetInspectStats = savedGetInspectStats end
+        REALG.UnitExists, REALG.UnitName, REALG.UnitGUID = savedExists, savedName, savedGUID
+        REALG.UnitIsPlayer = savedIsPlayer
         _G.TacoTipConfig = savedConfig
         TT.ev = savedEv
         TT.totalErrorsCaught = savedErrors
@@ -1313,6 +1343,427 @@ do
         TT.errorLog = savedLog
         REALG.print = savedPrint
     end
+end
+
+-- ---------------------------------------------------------------------------
+-- 0.8.8: /tt diag is a structured, resilient, deterministic report.
+--
+-- These pins assert the COLLECTOR's table, not chat text: section ids/order,
+-- the row contract, verdict, rates, deterministic ordering, section-failure
+-- containment, the no-events/inspect-frame case, and the render fallbacks.
+-- ---------------------------------------------------------------------------
+do
+    -- This file reports through the checks array; adapt the label-first shape
+    -- used by the diag pins to that mechanism.
+    local function check(checkLabel, condition, detail)
+        checks[#checks + 1] = { condition, checkLabel, detail }
+    end
+    check("0.8.8: TT:CollectDiagnostics exists", type(TT.CollectDiagnostics) == "function")
+    if (type(TT.CollectDiagnostics) == "function") then
+        local function findSection(d, id)
+            for i = 1, #(d.sections or {}) do
+                if (d.sections[i].id == id) then return d.sections[i] end
+            end
+            return nil
+        end
+        local function findRow(section, rowLabel)
+            if (not section or type(section.rows) ~= "table") then return nil end
+            for i = 1, #section.rows do
+                if (section.rows[i].label == rowLabel) then return section.rows[i] end
+            end
+            return nil
+        end
+        local function hasProblem(d, needle)
+            for i = 1, #(d.problems or {}) do
+                local p = d.problems[i]
+                if (type(p) == "table" and type(p.text) == "string"
+                        and p.text:find(needle, 1, true) ~= nil) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local savedEv = TT.ev
+        local savedLog = TT.errorLog
+        local savedErrors = TT.totalErrorsCaught
+        local savedLast = TT.lastTooltipError
+        local savedLoadOK = TT.LOAD_OK
+        local savedLoadStage = TT.LOAD_STAGE
+        local savedLoadTime = TT.loadTime
+        local savedConfig = _G.TacoTipConfig
+        local savedGetTime = REALG.GetTime
+        local savedPrint = REALG.print
+        local savedCollect = TT.CollectDiagnostics
+        local savedStats = ci and ci.GetInspectStats
+        local savedExists, savedName = REALG.UnitExists, REALG.UnitName
+
+        REALG.GetTime = function() return 10000 end
+        _G.TacoTipConfig = {
+            custom_pos = nil,
+            show_power_bar = false,
+            show_hp_bar = false,
+            show_talents = false,
+            tooltip_border_texture = nil,
+            tooltip_portrait = false,
+        }
+        if (ci) then
+            ci.GetInspectStats = function()
+                return {
+                    queueLength = 0, cacheCount = 0, staleCount = 0, incompleteCount = 0,
+                    notifies = 0, ready = 0, timeouts = 0, rejected = 0,
+                }
+            end
+        end
+
+        local function resetClean(seconds)
+            TT.ev = {}
+            TT.errorLog = {}
+            TT.totalErrorsCaught = 0
+            TT.lastTooltipError = nil
+            TT.LOAD_OK = true
+            TT.LOAD_STAGE = "complete"
+            TT.loadTime = 10000 - (seconds or 5)
+        end
+
+        -- 1. Shape, section order, row contract, healthy verdict.
+        resetClean(5)
+        local okCollect, diag = pcall(TT.CollectDiagnostics, TT)
+        check("0.8.8: TT:CollectDiagnostics returns a table", okCollect and type(diag) == "table")
+        if (okCollect and type(diag) == "table") then
+            local expected = {
+                "environment", "active-unit", "tooltip", "inspect",
+                "events", "inspect-frame", "errors", "problems",
+            }
+            local idsOK = type(diag.sections) == "table" and #diag.sections == #expected
+            local ids = {}
+            for i = 1, #(diag.sections or {}) do
+                ids[i] = diag.sections[i].id
+                if (ids[i] ~= expected[i]) then idsOK = false end
+            end
+            check("0.8.8: diag sections have stable ids in a fixed order", idsOK,
+                table.concat(ids, ","))
+
+            local statuses = { ok = true, info = true, warn = true, error = true }
+            local rowOK, badRow = true, nil
+            for i = 1, #(diag.sections or {}) do
+                local section = diag.sections[i]
+                if (type(section.id) ~= "string" or type(section.title) ~= "string"
+                        or type(section.rows) ~= "table") then
+                    rowOK = false
+                    badRow = "section " .. tostring(i)
+                end
+                for j = 1, #(section.rows or {}) do
+                    local row = section.rows[j]
+                    if (type(row) ~= "table" or type(row.label) ~= "string"
+                            or type(row.value) ~= "string" or not statuses[row.status]) then
+                        rowOK = false
+                        badRow = tostring(section.id) .. " row " .. tostring(j)
+                    end
+                end
+            end
+            check("0.8.8: every diag row has a string label/value and a known status",
+                rowOK, tostring(badRow))
+            check("0.8.8: a clean report is healthy with no problems",
+                type(diag.verdict) == "table" and diag.verdict.healthy == true
+                and diag.verdict.count == 0 and diag.verdict.severity == "none"
+                and #diag.problems == 0,
+                "verdict=" .. tostring(diag.verdict and diag.verdict.text))
+        end
+
+        -- 2. Inspect-frame facts survive a no-events report; "no events" is a row.
+        resetClean(5)
+        local d2 = TT:CollectDiagnostics()
+        local frame2 = findSection(d2, "inspect-frame")
+        local events2 = findSection(d2, "events")
+        check("0.8.8: inspect-frame rows print even when no events are recorded",
+            frame2 ~= nil and findRow(frame2, "InspectModelFrame exists") ~= nil
+            and findRow(frame2, "InspectGearScore exists") ~= nil)
+        local noEventsRow = findRow(events2, "event counters")
+        check("0.8.8: 'no events yet' is a row, not an early return",
+            noEventsRow ~= nil and noEventsRow.value:find("no events recorded yet", 1, true) ~= nil,
+            "row=" .. tostring(noEventsRow and noEventsRow.value))
+
+        -- 3. Deterministic teardown ordering for shuffled input.
+        resetClean(5)
+        TT.ev.teardownBy = { zeta = 1, alpha = 1, mid = 3 }
+        local d3a = TT:CollectDiagnostics()
+        local row3a = findRow(findSection(d3a, "events"), "teardowns by reason")
+        TT.ev.teardownBy = { alpha = 1, mid = 3, zeta = 1 }
+        local d3b = TT:CollectDiagnostics()
+        local row3b = findRow(findSection(d3b, "events"), "teardowns by reason")
+        check("0.8.8: teardown reasons sort by count desc then key asc",
+            row3a ~= nil and row3a.value == "mid=3, alpha=1, zeta=1",
+            "value=" .. tostring(row3a and row3a.value))
+        check("0.8.8: shuffled teardown input renders identically",
+            row3a ~= nil and row3b ~= nil and row3a.value == row3b.value)
+
+        -- 4. Rates, surfaced counters, portrait failure problem.
+        resetClean(130)
+        TT.ev.unitRender = 10
+        TT.ev.resolveTooltipUnitFailed = 2
+        TT.ev.gsCallback = 4
+        TT.ev.gsCallbackNoUnit = 1
+        TT.ev.portraitSetFailed = 2
+        TT.ev.anchorSpellBypass = 3
+        TT.ev.anchorNonUnitBypass = 1
+        local d4 = TT:CollectDiagnostics()
+        local tooltip4 = findSection(d4, "tooltip")
+        local events4 = findSection(d4, "events")
+        local rateRow = findRow(tooltip4, "unit resolution rate")
+        local missRateRow = findRow(tooltip4, "gs-callback miss rate")
+        check("0.8.8: unit-resolution rate is derived from renders",
+            rateRow ~= nil and rateRow.value == "20.0% (2 of 10)",
+            "value=" .. tostring(rateRow and rateRow.value))
+        check("0.8.8: gs-callback miss rate is derived from callbacks",
+            missRateRow ~= nil and missRateRow.value == "25.0% (1 of 4)",
+            "value=" .. tostring(missRateRow and missRateRow.value))
+        local portraitRow = findRow(tooltip4, "portrait set failures")
+        check("0.8.8: portraitSetFailed is surfaced",
+            portraitRow ~= nil and portraitRow.value == "2",
+            "value=" .. tostring(portraitRow and portraitRow.value))
+        local bypassRow = findRow(tooltip4, "anchor bypasses")
+        check("0.8.8: anchor spell/non-unit bypasses are surfaced",
+            bypassRow ~= nil and bypassRow.value == "spell=3, non-unit=1",
+            "value=" .. tostring(bypassRow and bypassRow.value))
+        local missRow = findRow(events4, "GearScore callback misses")
+        check("0.8.8: gs-callback misses have their own event row",
+            missRow ~= nil and missRow.value == "1",
+            "value=" .. tostring(missRow and missRow.value))
+        check("0.8.8: portrait failure adds a problem and changes the verdict",
+            hasProblem(d4, "Portrait model failed to load 2 time(s)")
+            and d4.verdict.healthy == false
+            and d4.verdict.count == #d4.problems
+            and d4.verdict.severity == "error")
+
+        -- 5. Session uptime and the zero-render warning.
+        resetClean(125)
+        local d5 = TT:CollectDiagnostics()
+        local uptimeRow = findRow(findSection(d5, "environment"), "session uptime")
+        check("0.8.8: session uptime is rendered as Xm Ys",
+            uptimeRow ~= nil and uptimeRow.value == "2m 5s",
+            "value=" .. tostring(uptimeRow and uptimeRow.value))
+        check("0.8.8: zero renders after the warning window is a problem",
+            hasProblem(d5, "No unit renders recorded after 2m 5s")
+            and d5.verdict.healthy == false and d5.verdict.severity == "warn",
+            "verdict=" .. tostring(d5.verdict and d5.verdict.text))
+
+        -- 6. A raising section is contained and named; later sections survive.
+        resetClean(5)
+        REALG.UnitExists = function(u) return u == "mouseover" end
+        REALG.UnitName = function() error("diag-active-boom") end
+        local d6 = TT:CollectDiagnostics()
+        local failedRow = findRow(findSection(d6, "active-unit"), "section failed")
+        check("0.8.8: a raising section is reported as 'section failed'",
+            failedRow ~= nil and failedRow.value:find("diag-active-boom", 1, true) ~= nil,
+            "value=" .. tostring(failedRow and failedRow.value))
+        check("0.8.8: a section failure is a problem and later sections still render",
+            hasProblem(d6, "diagnostics section 'active-unit' failed")
+            and findSection(d6, "events") ~= nil
+            and findSection(d6, "inspect-frame") ~= nil
+            and findSection(d6, "problems") ~= nil)
+        REALG.UnitExists, REALG.UnitName = savedExists, savedName
+
+        -- 7. Collection failure still prints the minimal facts.
+        resetClean(5)
+        TT.CollectDiagnostics = function() error("diag-collect-boom") end
+        local lines7 = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            lines7[#lines7 + 1] = table.concat(parts, " ")
+        end
+        local okPrint7 = pcall(TT.PrintDiagnostics, TT)
+        TT.CollectDiagnostics = savedCollect
+        REALG.print = savedPrint
+        local text7 = table.concat(lines7, "\n")
+        check("0.8.8: collection failure still prints the minimal facts",
+            okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
+            and text7:find("version: 0.8.8", 1, true) ~= nil
+            and text7:find("load OK:", 1, true) ~= nil
+            and text7:find("client family:", 1, true) ~= nil
+            and text7:find("interface:", 1, true) ~= nil,
+            text7:sub(1, 200))
+
+        -- 8. A raising row is contained; the next section still renders.
+        resetClean(5)
+        local boom = setmetatable({}, { __tostring = function() error("diag-row-boom") end })
+        TT.CollectDiagnostics = function()
+            return {
+                version = "x",
+                verdict = { healthy = true, count = 0, severity = "none", text = "HEALTHY -- test" },
+                problems = {},
+                sections = {
+                    { id = "bad", title = "bad",
+                        rows = { { label = "bad row", value = boom, status = "ok" } }, notes = {} },
+                    { id = "after", title = "after",
+                        rows = { { label = "after row", value = "still here", status = "ok" } }, notes = {} },
+                },
+            }
+        end
+        local lines8 = {}
+        REALG.print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
+            lines8[#lines8 + 1] = table.concat(parts, " ")
+        end
+        local okPrint8 = pcall(TT.PrintDiagnostics, TT)
+        TT.CollectDiagnostics = savedCollect
+        REALG.print = savedPrint
+        local text8 = table.concat(lines8, "\n")
+        check("0.8.8: a raising row is contained and later sections still render",
+            okPrint8 and text8:find("section failed:", 1, true) ~= nil
+            and text8:find("after row: still here", 1, true) ~= nil,
+            text8:sub(1, 200))
+
+        -- 9. Bounded error history with an explicit truncation row.
+        resetClean(5)
+        TT.errorLog = {}
+        for i = 1, 15 do TT:RecordError("Sub" .. i, "Msg" .. i) end
+        local d9 = TT:CollectDiagnostics()
+        local errors9 = findSection(d9, "errors")
+        local shown = 0
+        local errorRows = (errors9 and errors9.rows) or {}
+        for i = 1, #errorRows do
+            local rowLabel = errorRows[i].label
+            if (rowLabel ~= "recent error entries"
+                    and rowLabel:find("recent error ", 1, true) == 1) then
+                shown = shown + 1
+            end
+        end
+        check("0.8.8: error history is capped at ten rows", shown == 10,
+            "shown=" .. tostring(shown))
+        local moreRow = findRow(errors9, "recent error entries")
+        check("0.8.8: truncated error history says how many are older",
+            moreRow ~= nil and moreRow.value:find("and 5 older entries", 1, true) ~= nil,
+            "value=" .. tostring(moreRow and moreRow.value))
+
+        -- 10. Load failure is a problem with the stage named.
+        resetClean(5)
+        TT.LOAD_OK = false
+        TT.LOAD_STAGE = "tooltip-hooks"
+        local d10 = TT:CollectDiagnostics()
+        check("0.8.8: load failure is a problem with the stage named",
+            hasProblem(d10, "main.lua did not finish loading (stage: tooltip-hooks)")
+            and d10.verdict.healthy == false)
+
+        -- Restore the fixture for everything after this block.
+        TT.ev = savedEv
+        TT.errorLog = savedLog
+        TT.totalErrorsCaught = savedErrors
+        TT.lastTooltipError = savedLast
+        TT.LOAD_OK = savedLoadOK
+        TT.LOAD_STAGE = savedLoadStage
+        TT.loadTime = savedLoadTime
+        TT.CollectDiagnostics = savedCollect
+        _G.TacoTipConfig = savedConfig
+        REALG.GetTime = savedGetTime
+        REALG.print = savedPrint
+        REALG.UnitExists, REALG.UnitName = savedExists, savedName
+        if (ci) then ci.GetInspectStats = savedStats end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- 0.8.8: item data for inspected gear is REQUESTED, not merely awaited.
+--
+-- GetScore registers ContinueOnItemLoad callbacks for uncached slots, but the
+-- client only fires those on ITEM_DATA_LOAD_RESULT; it never requests the data
+-- itself. WarmGearItemData issues that request, skips links the client already
+-- has, and is throttled per item id so a re-render cannot flood the cache.
+-- ---------------------------------------------------------------------------
+do
+    local guid = "Player-0000-0000WARM"
+    local savedGetItemInfo = REALG.C_Item.GetItemInfo
+    local savedRequest = REALG.C_Item.RequestLoadItemDataByID
+    local savedGetTime = REALG.GetTime
+    local savedCache = ci and ci.cache and ci.cache[guid]
+    local savedWarmAt, savedWarmCount = rawget(TT, "_gearWarmAt"), rawget(TT, "_gearWarmCount")
+    local requestedIDs = {}
+    if (ci and ci.cache) then
+        ci.cache[guid] = {
+            time = 1,
+            items = {
+                [1] = "|cff9d9d9d|Hitem:900001::::::::1:::::|h[A]|h|r",
+                [2] = "|cff9d9d9d|Hitem:900002::::::::1:::::|h[B]|h|r",
+                [3] = "|cff9d9d9d|Hitem:900003::::::::1:::::|h[C]|h|r",
+                -- Slot 4 is the shirt: unscored, so it must never be requested.
+                [4] = "|cff9d9d9d|Hitem:900004::::::::1:::::|h[Shirt]|h|r",
+            },
+        }
+    end
+    REALG.C_Item.GetItemInfo = function(link)
+        if (link == "|cff9d9d9d|Hitem:900003::::::::1:::::|h[C]|h|r") then return "cached" end
+        return nil
+    end
+    REALG.C_Item.RequestLoadItemDataByID = function(id)
+        requestedIDs[#requestedIDs + 1] = id
+    end
+    REALG.GetTime = function() return 1000 end
+    TT._gearWarmAt, TT._gearWarmCount = nil, nil
+
+    local ok1, n1 = TT:WarmGearItemData(guid)
+    checks[#checks + 1] = { ok1 == true and n1 == 2,
+        "0.8.8: warm requests exactly the uncached links (got " .. tostring(n1) .. ")" }
+    checks[#checks + 1] = { #requestedIDs == 2 and requestedIDs[1] == 900001
+            and requestedIDs[2] == 900002,
+        "0.8.8: warm asks for the uncached item ids only ("
+            .. table.concat(requestedIDs, ",") .. ")" }
+    local seenShirt = false
+    for i = 1, #requestedIDs do
+        if (requestedIDs[i] == 900004) then seenShirt = true end
+    end
+    checks[#checks + 1] = { not seenShirt,
+        "0.8.8: warm never requests the shirt slot (unscored, may be empty)" }
+
+    local ok2, n2 = TT:WarmGearItemData(guid)
+    checks[#checks + 1] = { ok2 == false and n2 == 0 and #requestedIDs == 2,
+        "0.8.8: warm is throttled per item inside the 2 s window" }
+
+    REALG.GetTime = function() return 1003 end
+    local ok3, n3 = TT:WarmGearItemData(guid)
+    checks[#checks + 1] = { ok3 == true and n3 == 2 and #requestedIDs == 4,
+        "0.8.8: warm re-requests once the cooldown has passed" }
+
+    if (ci and ci.cache) then ci.cache[guid] = savedCache end
+    REALG.C_Item.GetItemInfo = savedGetItemInfo
+    REALG.C_Item.RequestLoadItemDataByID = savedRequest
+    REALG.GetTime = savedGetTime
+    TT._gearWarmAt, TT._gearWarmCount = savedWarmAt, savedWarmCount
+end
+
+-- ---------------------------------------------------------------------------
+-- 0.8.8: the inspect-frame rows report the truth, not the and/or fallback.
+--
+-- The "ok and value or fallback" idiom turned a HIDDEN InspectFrame into
+-- "unknown", because false is falsy and fell through to the fallback. A hidden
+-- frame is the normal state, so the report was lying about the common case.
+-- ---------------------------------------------------------------------------
+do
+    local savedInspectFrame = REALG.InspectFrame
+    REALG.InspectFrame = { IsShown = function() return false end, unit = "target" }
+    local ok, d = pcall(TT.CollectDiagnostics, TT)
+    local sections = (ok and type(d) == "table" and d.sections) or {}
+    local section = nil
+    for i = 1, #sections do
+        if (sections[i].id == "inspect-frame") then section = sections[i] end
+    end
+    local function rowValue(rowLabel)
+        local rows = (section and section.rows) or {}
+        for i = 1, #rows do
+            if (rows[i].label == rowLabel) then return rows[i].value end
+        end
+        return nil
+    end
+    local shownValue = rowValue("InspectFrame shown")
+    checks[#checks + 1] = { shownValue == "false",
+        "0.8.8: a hidden InspectFrame reports false, not unknown (got "
+            .. tostring(shownValue) .. ")" }
+    local unitValue = rowValue("InspectFrame.unit")
+    checks[#checks + 1] = { unitValue == "target",
+        "0.8.8: InspectFrame.unit reports the unit string (got "
+            .. tostring(unitValue) .. ")" }
+    REALG.InspectFrame = savedInspectFrame
 end
 
 -- ---------------------------------------------------------------------------

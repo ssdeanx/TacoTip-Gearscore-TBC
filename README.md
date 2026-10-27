@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.8.7
+version: 0.8.8
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,7 +22,7 @@ interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: released
-updated: 2026-10-25
+updated: 2026-10-26
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -43,6 +43,16 @@ updated: 2026-10-25
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## <span style="color:#e67e23">What's New in v0.8.8</span>
+
+- **<span style="color:#59f0dc">Inspection Cache Correctness:</span>** A gear swap whose item links are still arriving from the server can no longer be scored as a mix of old and new gear, and an emptied slot no longer keeps its old score. The last complete GearScore/iLvl stays visible while the refresh runs, out-of-range gear changes are marked stale instead of being served as fresh for five minutes, and the session cache is bounded.
+- **<span style="color:#59f0dc">GearScore Item Data:</span>** GearScore no longer waits on the client to load item data for inspected gear. Unresolved links are requested explicitly (throttled per item), so the score line appears with the real numbers instead of staying absent for gear the client has never cached.
+- **<span style="color:#59f0dc">Enterprise `/tt diag`:</span>** The report is now structured and fault-isolated: a verdict line first, fixed sections (environment, active unit, tooltip, inspect queue, counters, inspect frame, errors, problems), session uptime and failure rates, and stable paste-friendly ordering. Benign GearScore item-load completions are their own counter instead of "unit resolution failed", the cache row shows the record that actually exists (age, stale, incomplete, GS, iLvl, spec), the portrait row reports the real 2D/3D mode, and one broken section can no longer swallow the rest of the report.
+- **<span style="color:#59f0dc">Library Alias Safety:</span>** The bundled inspector no longer takes the `LibClassicInspector` name from another add-on that already loaded it.
+- **<span style="color:#59f0dc">Release Hygiene:</span>** Unloaded vendored libraries are no longer shipped or linted; the package and lint gates are green again.
 
 ---
 

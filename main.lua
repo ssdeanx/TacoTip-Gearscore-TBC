@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.7"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.8"
 
 
 
@@ -34,6 +34,9 @@ end
 -- so whatever was set before the error survives it.
 TT.LOAD_STAGE = "begin"
 TT.LOAD_OK = false
+-- Session uptime for /tt diag. GetTime is monotonic and resets on /reload,
+-- which is the same lifetime as TT; a nil GetTime degrades to "unknown".
+TT.loadTime = (type(GetTime) == "function") and GetTime() or 0
 local function stage(name)
     TT.LOAD_STAGE = name
 end
@@ -1326,12 +1329,15 @@ function TacoTip_GSCallback(guid)
         return
     end
     local ttUnit = resolveTooltipUnit(GameTooltip)
-    if (not (ttUnit and UnitGUID(ttUnit) == guid)) then
+    if (not ttUnit) then
+        -- An item-load completion is not a render. "The tooltip no longer
+        -- shows that unit" is a normal state (the cursor moved, the tooltip
+        -- hid), so it is counted separately and never as a resolution failure.
+        TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
+        return
+    end
+    if (UnitGUID(ttUnit) ~= guid) then
         TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
-        if (not ttUnit) then
-            TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
-            TT.ev.resolveTooltipUnitLastCause = "gs-callback-no-unit"
-        end
         return
     end
     gsCallbackActive = true
@@ -1598,6 +1604,68 @@ local function addLineSingle(txt, r, g, b)
     pooledLinesToAdd[linesToAddCount] = rec
 end
 
+-- Asks the client to load item data for an inspected player's cached links.
+--
+-- The scoring path registers ContinueOnItemLoad callbacks for every slot whose
+-- item data is not cached yet, but Blizzard's ItemMixin:ContinueOnItemLoad only
+-- queues the callback on ITEM_DATA_LOAD_RESULT -- it never asks the client for
+-- the data (verified in the FrameXML mirror: the method is an
+-- ItemEventListener registration). So for an item the client has never seen,
+-- the callback can wait forever and the GearScore line never appears, even
+-- though every other part of the tooltip rendered. This issues the request the
+-- callbacks are waiting on, paced at the same 2 s per-item interval
+-- gearscore.lua uses so a re-render loop cannot flood the item cache.
+local GEAR_WARM_COOLDOWN = 2.0
+local GEAR_WARM_ENTRY_CAP = 512
+
+function TT:WarmGearItemData(guid)
+    if (not guid) then return false, 0 end
+    if (guid == UnitGUID("player")) then return false, 0 end
+    -- Resolved at call time, not captured at load: this keeps tests able to
+    -- count requests and tolerates a C_Item namespace that appears late.
+    local request = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
+    if (type(request) ~= "function") then return false, 0 end
+    if (not CI or type(CI.GetUnitData) ~= "function") then return false, 0 end
+    local data = CI:GetUnitData(guid)
+    local items = data and data.items
+    if (type(items) ~= "table") then return false, 0 end
+    local getItemInfo = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+    if (type(getItemInfo) ~= "function") then return false, 0 end
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    local warmAt = TT._gearWarmAt
+    if (type(warmAt) ~= "table" or (TT._gearWarmCount or 0) > GEAR_WARM_ENTRY_CAP) then
+        warmAt = {}
+        TT._gearWarmAt = warmAt
+        TT._gearWarmCount = 0
+    end
+    local requested = 0
+    for slot = 1, 18 do
+        local link = items[slot]
+        -- Slot 4 is the shirt: gearscore.lua skips i == 4, so its item data can
+        -- never change a score and a shirt the client cannot resolve must not
+        -- add a request. Slot 17 stays: GetScore scores the offhand outside the
+        -- slot loop.
+        if (link and slot ~= 4) then
+            local okInfo, info = pcall(getItemInfo, link)
+            if (not okInfo or info == nil) then
+                local itemID = tonumber(string.match(link, "item:(%d+)"))
+                if (itemID) then
+                    local last = warmAt[itemID]
+                    -- last == 0 is a real stamp on clients without GetTime, so
+                    -- the "not last" test cannot re-request every render there.
+                    if (not last or (now > 0 and (now - last) >= GEAR_WARM_COOLDOWN)) then
+                        warmAt[itemID] = now
+                        TT._gearWarmCount = (TT._gearWarmCount or 0) + 1
+                        pcall(request, itemID)
+                        requested = requested + 1
+                    end
+                end
+            end
+        end
+    end
+    return requested > 0, requested
+end
+
 local function onTooltipSetUnit(tooltip, data)
     TT.ev.unitRender = (TT.ev.unitRender or 0) + 1
     -- Guarded: on some clients this method is a Lua shim that dereferences a
@@ -1617,7 +1685,6 @@ local function onTooltipSetUnit(tooltip, data)
     end
     name = name or (tooltipUnit and UnitName(tooltipUnit))
     if (not tooltipUnit) then
-        TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
         local cause = "unresolved-unit"
         if (not tooltip) then
             cause = "no-tooltip"
@@ -1626,7 +1693,13 @@ local function onTooltipSetUnit(tooltip, data)
         elseif (not name) then
             cause = "no-unit-source"
         end
-        TT.ev.resolveTooltipUnitLastCause = cause
+        -- Only a tooltip that is actually on screen is a render the player is
+        -- looking at. A hidden tooltip that could not resolve is not a problem;
+        -- counting it was half of the TBC false positive.
+        if (tooltip and tooltip.IsShown and tooltip:IsShown()) then
+            TT.ev.resolveTooltipUnitFailed = (TT.ev.resolveTooltipUnitFailed or 0) + 1
+            TT.ev.resolveTooltipUnitLastCause = cause
+        end
         -- The unit did not resolve. That is NOT the same as "the unit changed".
         --
         -- This path is reached whenever GetUnit and TooltipUtil both come up
@@ -2139,6 +2212,12 @@ local function onTooltipSetUnit(tooltip, data)
             local miniText = ""
             if (TacoTipConfig.show_gs_player) then
                 local gearscore, avg_ilvl = GearScore:GetScore(guid, true)
+                if (gearscore <= 0) then
+                    -- GetScore just registered the load callbacks for every
+                    -- uncached slot. Without a request the client never fires
+                    -- them, so ask now and let the callback re-drive this render.
+                    TT:WarmGearItemData(guid)
+                end
                 if (gearscore > 0) then
                     local r, g, b = GearScore:GetQuality(gearscore)
                     if (wide_style) then
@@ -3415,242 +3494,141 @@ end
 -- ============================================================================
 TT.ev = TT.ev or {}
 
--- Reports what the counters mean and how to read them. Kept separate from
--- PrintDiagnostics so the report stays a report and this stays a policy.
-local function reportActiveUnitContext(line)
-    local fnUnitExists = _G.UnitExists or UnitExists
-    local activeUnit = nil
-    if (type(fnUnitExists) == "function") then
-        if (fnUnitExists("mouseover")) then
-            activeUnit = "mouseover"
-        elseif (fnUnitExists("target")) then
-            activeUnit = "target"
-        elseif (fnUnitExists("player")) then
-            activeUnit = "player"
-        end
-    end
-    if (not activeUnit) then
-        line("active unit context", "no active unit found (hover or target a unit)")
-        return
-    end
+-- Reports what the counters mean and how to read them.
+--
+-- COLLECT vs RENDER. TT:CollectDiagnostics() builds a plain table and never
+-- prints or mutates add-on state; TT:PrintDiagnostics() renders that table and
+-- does nothing else. The split is what makes the report testable: the harness
+-- asserts the table, not chat text.
+--
+-- A row is { label = string, value = string, status = "ok"|"info"|"warn"|"error" }.
+-- Section ids are stable and their order is fixed by DIAG_SECTION_ORDER.
+local DIAG_STATUS = { ok = true, info = true, warn = true, error = true }
+local DIAG_SECTION_ORDER = {
+    "environment", "active-unit", "tooltip", "inspect",
+    "events", "inspect-frame", "errors", "problems",
+}
+local DIAG_MAX_ERROR_ROWS = 10
+local DIAG_MAX_PROBLEM_ROWS = 12
+local DIAG_ZERO_RENDER_WARN_SECONDS = 120
 
-    print("|cff59f0dc-- active unit context (" .. activeUnit .. ") --|r")
-    local fnUnitName = _G.UnitName or UnitName
-    local fnUnitGUID = _G.UnitGUID or UnitGUID
-    local fnUnitIsPlayer = _G.UnitIsPlayer or UnitIsPlayer
-    local fnUnitLevel = _G.UnitLevel or UnitLevel
-    local fnUnitClass = _G.UnitClass or UnitClass
-    local fnUnitRace = _G.UnitRace or UnitRace
-    local name = (type(fnUnitName) == "function" and fnUnitName(activeUnit)) or "?"
-    local guid = (type(fnUnitGUID) == "function" and fnUnitGUID(activeUnit)) or "?"
-    local isPlayer = (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) or false
-    local level = (type(fnUnitLevel) == "function" and fnUnitLevel(activeUnit)) or "?"
-    local class = (type(fnUnitClass) == "function" and fnUnitClass(activeUnit)) or "?"
-    local race = (type(fnUnitRace) == "function" and fnUnitRace(activeUnit)) or ""
-    line("  unit", string.format("%s (%slevel %s, %s%s)",
-        name,
-        isPlayer and "Player, " or "NPC, ",
-        tostring(level),
-        race ~= "" and (race .. " ") or "",
-        class))
-    line("  GUID", guid)
-    if (isPlayer) then
-        local fnCanInspect = _G.CanInspect or CanInspect
-        local fnCheckInteractDistance = _G.CheckInteractDistance or CheckInteractDistance
-        local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
-        local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
-        local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
-        local interactDist = (type(fnCheckInteractDistance) == "function") and fnCheckInteractDistance(activeUnit, 1) or
-        false
-        local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
-        local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
-        local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
-        line("  inspectable",
-            string.format("CanInspect=%s | InteractDist(1)=%s | Visible=%s | Connected=%s | Hostile=%s",
-                tostring(canInspect), tostring(interactDist), tostring(isVisible), tostring(isConnected),
-                tostring(canAttack)))
-        local distStr = nil
-        if (type(_G.UnitDistanceSquared) == "function") then
-            local d2, chk = _G.UnitDistanceSquared(activeUnit)
-            if (chk and d2) then
-                distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
-            end
-        end
-        line("  distance", distStr or "unknown")
-        if (CI and type(CI.GetUnitData) == "function") then
-            local cached = CI:GetUnitData(guid, activeUnit)
-            if (cached) then
-                local now = (type(GetTime) == "function") and GetTime() or 0
-                local age = (cached.time and now > 0) and string.format("%.1fs ago", now - cached.time) or "unknown"
-                line("  cached data", string.format("yes (age: %s | stale: %s | incomplete: %s)",
-                    age, tostring(cached.stale or false), tostring(cached.incomplete or false)))
-                line("  GearScore / iLvl", string.format("GS=%s | iLvl=%s | Spec=%s",
-                    tostring(cached.gearScore or "none"),
-                    tostring(cached.avgItemLevel or "none"),
-                    tostring(cached.specialization or "none")))
-            else
-                local pending = false
-                if (CI.inspectStats and CI.inspectStats.pendingUnit == activeUnit) then
-                    pending = true
-                end
-                line("  cached data", pending and "no (inspect in-flight)" or "no (not in cache)")
-            end
-        end
-    end
+local function diagValue(value)
+    if (value == nil) then return "unknown" end
+    return tostring(value)
 end
 
-local function reportTooltipAndAnchoring(line)
-    print("|cff59f0dc-- tooltip & anchoring --|r")
-    local cfg = _G.TacoTipConfig
-    local anchorMode = "Default Screen Corner"
-    if (cfg) then
-        if (cfg.anchor_mouse) then
-            anchorMode = "Mouse Anchor"
-        elseif (cfg.custom_pos) then
-            anchorMode = "Custom Position (docked to mover)"
-        end
-    end
-    line("anchor mode", anchorMode)
-    if (cfg and cfg.custom_pos) then
-        local p = cfg.custom_pos
-        line("  custom pos", string.format("[%s, rel=%s, x=%s, y=%s]",
-            tostring(p[1]), tostring(p[2]), tostring(p[3]), tostring(p[4])))
-        line("  custom anchor", tostring(cfg.custom_anchor or "TOPLEFT"))
-    end
-    local ev = TT.ev
-    line("anchors executed", string.format("custom=%s, mouse=%s, default=%s",
-        tostring(ev.anchorCustomPos or 0),
-        tostring(ev.anchorMouse or 0),
-        tostring(ev.anchorDefault or 0)))
-    line("container bypasses", ev.anchorContainerBypass or 0)
-    line("unit resolves", string.format("renders=%s, failed=%s (last fail cause: %s)",
-        tostring(ev.unitRender or 0),
-        tostring(ev.resolveTooltipUnitFailed or 0),
-        tostring(ev.resolveTooltipUnitLastCause or "none")))
-    local portraitDesc = "Disabled"
-    if (cfg and cfg.show_avatar) then
-        portraitDesc = cfg.avatar_3d and "3D Model" or "2D Icon"
-    end
-    line("portrait mode", portraitDesc)
-    if (cfg and cfg.avatar_3d) then
-        line("  portrait zoom", tostring(cfg.tooltip_portrait_zoom or 0.7))
-    end
+local function diagSection(id, title)
+    return { id = tostring(id), title = tostring(title), rows = {}, notes = {} }
 end
 
-local function reportInspectEngine(line)
-    if (CI and type(CI.GetInspectStats) == "function") then
-        local ok, st = pcall(CI.GetInspectStats, CI)
-        if (ok and type(st) == "table") then
-            print("|cff59f0dc-- inspect engine & queue --|r")
-            local pendingStr = "none (idle)"
-            if (st.pendingUnit) then
-                pendingStr = string.format("unit='%s' (waiting %.1fs)", tostring(st.pendingUnit), st.pendingDuration or 0)
-            end
-            line("queue state",
-                string.format("queue size: %s | in-flight: %s", tostring(st.queueLength or 0), pendingStr))
-            line("cache summary", string.format("%s players (%s stale, %s incomplete)",
-                tostring(st.cacheCount or 0), tostring(st.staleCount or 0), tostring(st.incompleteCount or 0)))
-            line("requests / timeouts", string.format("notifies=%s, ready=%s, timeouts=%s, rejected=%s",
-                tostring(st.notifies or 0), tostring(st.ready or 0), tostring(st.timeouts or 0),
-                tostring(st.rejected or 0)))
-            if (st.lastRejectedUnit) then
-                line("last refusal", string.format("unit='%s', yards=%s, reason='%s'",
-                    tostring(st.lastRejectedUnit),
-                    st.lastRejectedDistance and (tostring(st.lastRejectedDistance) .. "yd") or "unknown",
-                    tostring(st.lastRejectedReason or "unknown")))
-            end
-            line("learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown")
-            line("probe suppression", string.format("errors=%s, voice=%s, sound=%s",
-                tostring(st.suppressed or 0), tostring(st.suppressedVoice or 0), tostring(st.suppressedSound or 0)))
-            if (st.lastError) then
-                line("last inspect-call error", tostring(st.lastError))
-            end
-            line("proximity scan", string.format("enqueued=%s, fallback=%s, skipped_dist=%s",
-                tostring(st.scanEnqueued or 0), tostring(st.scanFallback or 0), tostring(st.scanSkippedDistance or 0)))
-        end
-    end
+local function diagRow(section, label, value, status)
+    if (not section or type(section.rows) ~= "table") then return end
+    if (not DIAG_STATUS[status]) then status = "info" end
+    section.rows[#section.rows + 1] = {
+        label = tostring(label),
+        value = diagValue(value),
+        status = status,
+    }
 end
 
-local function reportEventCounters(line)
-    local ev = TT.ev
-    local total = (ev.unitRender or 0) + (ev.gsCallback or 0) + (ev.portraitHide or 0)
-        + (ev.portraitDestroy or 0) + (ev.portraitModelHidden or 0)
-    if (total == 0) then
-        line("event counters", "no events recorded yet -- hover a character first")
-        return
+local function diagUptime()
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    local started = tonumber(rawget(TT, "loadTime")) or 0
+    if (now <= 0 or started <= 0) then return 0, "unknown" end
+    local elapsed = now - started
+    if (elapsed < 0) then elapsed = 0 end
+    local minutes = math.floor(elapsed / 60)
+    local seconds = math.floor(elapsed - minutes * 60)
+    if (minutes > 0) then
+        return elapsed, string.format("%dm %ds", minutes, seconds)
     end
-    print("|cff59f0dc-- event counters (cumulative since /reload) --|r")
-    line("unit renders", ev.unitRender or 0)
-    line("GearScore callbacks", string.format("%s (reentrant=%s, wrong unit=%s)",
-        tostring(ev.gsCallback or 0),
-        tostring(ev.gsCallbackReentrant or 0),
-        tostring(ev.gsCallbackWrongUnit or 0)))
-    line("portrait hides (on clear)", ev.portraitModelHidden or 0)
-    line("portrait teardowns", string.format("%s (destroys: %s)",
-        tostring(ev.portraitHide or 0),
-        tostring(ev.portraitDestroy or 0)))
-    line("portrait re-anchors", ev.portraitAnchor or 0)
-    if (ev.teardownBy) then
-        local parts = {}
-        for reason, count in pairs(ev.teardownBy) do
-            parts[#parts + 1] = string.format("%s=%s", tostring(reason), tostring(count))
-        end
-        if (#parts > 0) then
-            line("teardowns by reason", table.concat(parts, ", "))
-        end
-    end
-    print("|cff59f0dc-- inspect frame UI --|r")
-    line("  InspectModelFrame exists", InspectModelFrame ~= nil)
-    line("  InspectPaperDollFrame exists", InspectPaperDollFrame ~= nil)
-    line("  guild guard installed", rawget(_G, "_tacoTipInspectGuildGuarded") and true or false)
-    line("  overlay initialised", TT.InitInspectFrame == nil)
-    line("  InspectGearScore exists", rawget(_G, "InspectGearScore") ~= nil)
-    line("  InspectAvgItemLvl exists", rawget(_G, "InspectAvgItemLvl") ~= nil)
-    if (InspectFrame) then
-        line("  InspectFrame shown", InspectFrame:IsShown() and true or false)
-        line("  InspectFrame.unit", InspectFrame.unit and tostring(InspectFrame.unit) or "nil")
-    end
+    return elapsed, string.format("%ds", seconds)
 end
 
-local function reportErrorsHistory(line)
-    print("|cff59f0dc-- error history --|r")
-    line("total errors caught", TT.totalErrorsCaught or 0)
-    line("pipeline suppressed", TT.ev.pipelineErrorsSuppressed or 0)
-    line("last tooltip error", TT.lastTooltipError or "none")
-    local log = TT.errorLog
-    if (log and #log > 0) then
-        print("|cffff8080-- recent error entries (up to 10) --|r")
-        local startIdx = math.max(1, #log - 9)
-        for i = startIdx, #log do
-            local entry = log[i]
-            local tStr = string.format("%.1fs", entry.time or 0)
-            print(string.format("|cffff8080[%s] [%s] %s%s|r",
-                tStr,
-                entry.subsystem or "Error",
-                entry.message or "",
-                entry.context and (" (" .. tostring(entry.context) .. ")") or ""))
-        end
-    else
-        line("recent error entries", "none recorded since /reload")
-    end
+local function diagRate(count, total)
+    count = tonumber(count) or 0
+    total = tonumber(total) or 0
+    if (total <= 0) then return nil end
+    return string.format("%.1f%% (%d of %d)", (count / total) * 100, count, total)
 end
 
-local function reportSilentFailures(line)
+-- The only map-derived list in the report. Never render from pairs(): sort by
+-- count descending, then key ascending, so two reports of the same state match.
+local function diagSortTeardowns(teardownBy)
+    local list = {}
+    if (type(teardownBy) ~= "table") then return list end
+    for reason, count in pairs(teardownBy) do
+        list[#list + 1] = { reason = tostring(reason), count = tonumber(count) or 0 }
+    end
+    table.sort(list, function(a, b)
+        if (a.count ~= b.count) then return a.count > b.count end
+        return a.reason < b.reason
+    end)
+    return list
+end
+
+local function diagTeardownText(teardownBy)
+    local list = diagSortTeardowns(teardownBy)
+    if (#list == 0) then return "none" end
+    local parts = {}
+    for i = 1, #list do
+        parts[#parts + 1] = string.format("%s=%d", list[i].reason, list[i].count)
+    end
+    return table.concat(parts, ", ")
+end
+
+local function collectEnvironmentSection()
+    local s = diagSection("environment", "environment")
+    local elapsed, uptimeText = diagUptime()
+    diagRow(s, "session uptime", uptimeText, elapsed >= DIAG_ZERO_RENDER_WARN_SECONDS and "info" or "ok")
+    diagRow(s, "version", addOnVersion, "ok")
+    diagRow(s, "load OK", TT.LOAD_OK and "yes"
+        or ("NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE)),
+        TT.LOAD_OK and "ok" or "error")
+    local family = CI and CI.family or "?"
+    diagRow(s, "client family", family, (family == "?" or family == "unknown") and "error" or "ok")
+    diagRow(s, "interface", CI and CI.interfaceVersion or "?", "ok")
+    diagRow(s, "locale", _G.TACOTIP_ACTIVE_LOCALE or "?", "ok")
+    local gs = _G.TT_GS
+    diagRow(s, "GearScore bracket", gs and gs.BRACKET_SIZE or "none", gs and "ok" or "warn")
+    local gt = _G.GameTooltip
+    diagRow(s, "tooltip has NineSlice", gt and gt.NineSlice ~= nil, "ok")
+    diagRow(s, "TT.HookedTooltipScripts", TT.HookedTooltipScripts
+        and ("unit=" .. tostring(TT.HookedTooltipScripts.Unit)
+            .. " item=" .. tostring(TT.HookedTooltipScripts.Item)) or "none",
+        (TT.HookedTooltipScripts and TT.HookedTooltipScripts.Unit) and "ok" or "error")
+    diagRow(s, "TT.HookedDefaultAnchor", tostring(TT.HookedDefaultAnchor or false), "ok")
+    if (not TT.LOAD_OK) then
+        s.notes[#s.notes + 1] = "An error was raised while loading main.lua at or after the stage above. "
+            .. "/reload cannot fix it -- enable Lua error reporting (BugSack/Swatter) and reload."
+    end
+    return s
+end
+
+local function collectProblems()
     local problems = {}
+    local function add(severity, text)
+        problems[#problems + 1] = { severity = severity, text = tostring(text) }
+    end
 
-    if (CI) then
+    if (not TT.LOAD_OK) then
+        add("error", "main.lua did not finish loading (stage: " .. tostring(TT.LOAD_STAGE) .. ")")
+    end
+
+    if (not CI) then
+        add("error", "LibForeverInspector is not available")
+    else
         local projectId = rawget(_G, "WOW_PROJECT_ID")
         local iv = CI.interfaceVersion or 0
         if (CI.IsRetail and CI.IsRetail() and CI.IsForever and CI.IsForever()) then
-            problems[#problems + 1] = "client detected as BOTH Retail and WoW Forever (interface "
-                .. tostring(iv) .. ", project " .. tostring(projectId) .. ")"
+            add("error", "client detected as BOTH Retail and WoW Forever (interface "
+                .. tostring(iv) .. ", project " .. tostring(projectId) .. ")")
         elseif (CI.IsUnknown and CI.IsUnknown()) then
-            problems[#problems + 1] = "client family could not be resolved ("
-                .. "interface " .. tostring(iv) .. ", project " .. tostring(projectId) .. ")"
+            add("error", "client family could not be resolved (interface "
+                .. tostring(iv) .. ", project " .. tostring(projectId) .. ")")
         end
         if (projectId and CI.family == "classicEra" and projectId ~= 2) then
-            problems[#problems + 1] = "Classic Era expects project id 2, got "
-                .. tostring(projectId)
+            add("error", "Classic Era expects project id 2, got " .. tostring(projectId))
         end
     end
 
@@ -3668,100 +3646,559 @@ local function reportSilentFailures(line)
             end
         end
         if (not matched) then
-            problems[#problems + 1] = "border setting '" .. tostring(value)
+            add("warn", "border setting '" .. tostring(value)
                 .. "' matches no entry and is being replaced by the per-client default ("
-                .. tostring(TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder()) .. ")"
+                .. tostring(TT.GetDefaultTooltipBorder and TT:GetDefaultTooltipBorder()) .. ")")
         end
     end
 
     if (cfg) then
         if (cfg.show_power_bar and _G.UnitPowerType == nil) then
-            problems[#problems + 1] = "Power Bar is enabled but UnitPowerType is nil -- it cannot update"
+            add("error", "Power Bar is enabled but UnitPowerType is nil -- it cannot update")
         end
         if (cfg.show_hp_bar and _G.UnitHealthMax == nil) then
-            problems[#problems + 1] = "Health Bar is enabled but UnitHealthMax is nil -- it cannot update"
+            add("error", "Health Bar is enabled but UnitHealthMax is nil -- it cannot update")
         end
         if (cfg.show_talents and (CI == nil or type(CI.GetSpecialization) ~= "function")) then
-            problems[#problems + 1] = "Talents are enabled but the inspector exposes no GetSpecialization"
+            add("error", "Talents are enabled but the inspector exposes no GetSpecialization")
         end
         if (cfg.custom_pos) then
             local p = cfg.custom_pos
-            if (type(p[1]) ~= "string" or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
-                problems[#problems + 1] = "custom_pos table contains corrupted coordinate entries"
+            if (type(p) ~= "table" or type(p[1]) ~= "string"
+                    or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
+                add("error", "custom_pos table contains corrupted coordinate entries")
             end
         end
     end
 
     if (TT.HookedTooltipScripts and not TT.HookedTooltipScripts.Unit) then
-        problems[#problems + 1] = "no unit tooltip delivery path is hooked on this client"
+        add("error", "no unit tooltip delivery path is hooked on this client")
     end
 
-    if (TT.totalErrorsCaught and TT.totalErrorsCaught > 0) then
-        problems[#problems + 1] = string.format("%d error(s) caught in pipeline/pcalls (last: '%s')",
-            TT.totalErrorsCaught, tostring(TT.lastTooltipError or "unknown"))
+    local totalErrors = tonumber(TT.totalErrorsCaught) or 0
+    if (totalErrors > 0) then
+        add("error", string.format("%d error(s) caught in pipeline/pcalls (last: '%s')",
+            totalErrors, tostring(TT.lastTooltipError or "unknown")))
     end
 
-    if (TT.ev and TT.ev.resolveTooltipUnitFailed and TT.ev.resolveTooltipUnitFailed > 0) then
-        problems[#problems + 1] = string.format("Unit resolution failed %d time(s) (last cause: '%s')",
-            TT.ev.resolveTooltipUnitFailed, tostring(TT.ev.resolveTooltipUnitLastCause or "unknown"))
+    local resolveFailed = tonumber(TT.ev and TT.ev.resolveTooltipUnitFailed) or 0
+    if (resolveFailed > 0) then
+        add("error", string.format("Unit resolution failed %d time(s) since load (last cause: '%s')",
+            resolveFailed, tostring(TT.ev.resolveTooltipUnitLastCause or "unknown")))
     end
 
     if (CI and type(CI.GetInspectStats) == "function") then
         local ok, st = pcall(CI.GetInspectStats, CI)
         if (ok and type(st) == "table") then
-            if (st.pendingUnit and st.pendingDuration and st.pendingDuration > 3.0) then
-                problems[#problems + 1] = string.format(
+            local pendingDuration = tonumber(st.pendingDuration) or 0
+            if (st.pendingUnit and pendingDuration > 3.0) then
+                add("error", string.format(
                     "Inspect queue in-flight unit '%s' has been waiting %.1fs (stalled)",
-                    tostring(st.pendingUnit), st.pendingDuration)
+                    tostring(st.pendingUnit), pendingDuration))
             end
-            if (st.timeouts and st.timeouts > 0) then
-                problems[#problems + 1] = string.format("Inspect requests timed out %d time(s) without server response",
-                    st.timeouts)
+            local timeouts = tonumber(st.timeouts) or 0
+            if (timeouts > 0) then
+                add("error", string.format("Inspect requests timed out %d time(s) without server response",
+                    timeouts))
+            end
+            if (st.lastError) then
+                add("warn", "Last inspect-call error: " .. tostring(st.lastError))
             end
         end
     end
 
-    if (#problems == 0) then
-        line("problems", "none detected (system healthy)")
-        return
+    local portraitFailed = tonumber(TT.ev and TT.ev.portraitSetFailed) or 0
+    if (portraitFailed > 0) then
+        add("warn", string.format(
+            "Portrait model failed to load %d time(s); the tooltip retries on the next render",
+            portraitFailed))
     end
-    print("|cffff8080-- PROBLEMS DETECTED (" .. #problems .. ") --|r")
-    for i, p in ipairs(problems) do
-        print("|cffff8080" .. i .. ". " .. p .. "|r")
+
+    local elapsed, uptimeText = diagUptime()
+    if ((tonumber(TT.ev and TT.ev.unitRender) or 0) == 0 and elapsed >= DIAG_ZERO_RENDER_WARN_SECONDS) then
+        add("warn", "No unit renders recorded after " .. tostring(uptimeText)
+            .. "; hover a character to exercise the tooltip pipeline")
+    end
+
+    return problems
+end
+
+local function buildVerdict(problems)
+    local count = #problems
+    if (count == 0) then
+        return { healthy = true, count = 0, severity = "none", text = "HEALTHY -- no problems detected" }
+    end
+    local highest = "warn"
+    local firstText = "unknown"
+    if (type(problems[1]) == "table" and problems[1].text) then
+        firstText = tostring(problems[1].text)
+    end
+    for i = 1, count do
+        local p = problems[i]
+        if (type(p) == "table" and p.severity == "error") then
+            highest = "error"
+            firstText = tostring(p.text or "unknown")
+            break
+        end
+    end
+    if (#firstText > 120) then
+        firstText = string.sub(firstText, 1, 117) .. "..."
+    end
+    local noun = (count == 1) and "problem" or "problems"
+    return {
+        healthy = false,
+        count = count,
+        severity = highest,
+        text = string.format("%d %s, highest: %s -- %s", count, noun, highest, firstText),
+    }
+end
+
+local function collectActiveUnitSection()
+    local s = diagSection("active-unit", "active unit context")
+    local fnUnitExists = _G.UnitExists or UnitExists
+    local activeUnit = nil
+    if (type(fnUnitExists) == "function") then
+        if (fnUnitExists("mouseover")) then
+            activeUnit = "mouseover"
+        elseif (fnUnitExists("target")) then
+            activeUnit = "target"
+        elseif (fnUnitExists("player")) then
+            activeUnit = "player"
+        end
+    end
+    if (not activeUnit) then
+        diagRow(s, "active unit context", "no active unit found (hover or target a unit)", "info")
+        return s
+    end
+
+    s.title = "active unit context (" .. tostring(activeUnit) .. ")"
+    local fnUnitName = _G.UnitName or UnitName
+    local fnUnitGUID = _G.UnitGUID or UnitGUID
+    local fnUnitIsPlayer = _G.UnitIsPlayer or UnitIsPlayer
+    local fnUnitLevel = _G.UnitLevel or UnitLevel
+    local fnUnitClass = _G.UnitClass or UnitClass
+    local fnUnitRace = _G.UnitRace or UnitRace
+    local name = (type(fnUnitName) == "function" and fnUnitName(activeUnit)) or "?"
+    local guid = (type(fnUnitGUID) == "function" and fnUnitGUID(activeUnit)) or "?"
+    local isPlayer = (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) or false
+    local level = (type(fnUnitLevel) == "function" and fnUnitLevel(activeUnit)) or "?"
+    local class = (type(fnUnitClass) == "function" and fnUnitClass(activeUnit)) or "?"
+    local race = (type(fnUnitRace) == "function" and fnUnitRace(activeUnit)) or ""
+    diagRow(s, "unit", string.format("%s (%slevel %s, %s%s)",
+        name,
+        isPlayer and "Player, " or "NPC, ",
+        tostring(level),
+        race ~= "" and (race .. " ") or "",
+        class), "info")
+    diagRow(s, "GUID", guid, "info")
+    if (isPlayer) then
+        local fnCanInspect = _G.CanInspect or CanInspect
+        local fnCheckInteractDistance = _G.CheckInteractDistance or CheckInteractDistance
+        local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
+        local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
+        local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
+        local interactDist = (type(fnCheckInteractDistance) == "function")
+            and fnCheckInteractDistance(activeUnit, 1) or false
+        local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
+        local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
+        local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
+        diagRow(s, "inspectable",
+            string.format("CanInspect=%s | InteractDist(1)=%s | Visible=%s | Connected=%s | Hostile=%s",
+                tostring(canInspect), tostring(interactDist), tostring(isVisible), tostring(isConnected),
+                tostring(canAttack)), "info")
+        local distStr = nil
+        if (type(_G.UnitDistanceSquared) == "function") then
+            local d2, chk = _G.UnitDistanceSquared(activeUnit)
+            if (chk and d2) then
+                distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
+            end
+        end
+        diagRow(s, "distance", distStr or "unknown", "info")
+        if (CI and type(CI.GetUnitData) == "function") then
+            local cached = CI:GetUnitData(guid)
+            if (cached) then
+                local now = (type(GetTime) == "function") and GetTime() or 0
+                local age = (cached.time and cached.time > 0 and now > 0)
+                    and string.format("%.1fs ago", now - cached.time) or "unknown"
+                local cacheStatus = "info"
+                if (cached.incomplete and not cached.retryPending) then cacheStatus = "warn" end
+                diagRow(s, "cached data", string.format("yes (age: %s | stale: %s | incomplete: %s)",
+                    age, tostring(cached.stale or false), tostring(cached.incomplete or false)), cacheStatus)
+                local gs, ilvl, scoreReady = 0, 0, false
+                -- Side-effect-free score: only score when every cached link's
+                -- item data is ALREADY in the client cache. GetItemInfo never
+                -- requests; calling GetScore on a partially cached set would.
+                local getItemInfo = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+                local anyLink, allCached = false, type(getItemInfo) == "function"
+                if (allCached and type(cached.items) == "table") then
+                    for slot = 1, 18 do
+                        local link = cached.items[slot]
+                        if (link) then
+                            anyLink = true
+                            local okInfo, info = pcall(getItemInfo, link)
+                            if (not okInfo or not info) then
+                                allCached = false
+                                break
+                            end
+                        end
+                    end
+                else
+                    allCached = false
+                end
+                if (anyLink and allCached and GearScore and GearScore.GetScore) then
+                    local okScore, score, itemLevel = pcall(GearScore.GetScore, GearScore, guid, false)
+                    if (okScore) then
+                        gs, ilvl, scoreReady = score or 0, itemLevel or 0, true
+                    end
+                end
+                local spec = (CI.GetLocalizedSpecName and CI:GetLocalizedSpecName(guid)) or nil
+                if (not spec and CI.GetSpecialization) then
+                    local specIndex = CI:GetSpecialization(guid)
+                    local _, classToken
+                    if (type(fnUnitClass) == "function") then
+                        _, classToken = fnUnitClass(activeUnit)
+                    end
+                    if (specIndex and classToken and CI.GetSpecializationName) then
+                        spec = CI:GetSpecializationName(classToken, specIndex)
+                    end
+                end
+                if (scoreReady) then
+                    diagRow(s, "GearScore / iLvl", string.format("GS=%s | iLvl=%s | Spec=%s",
+                        tostring(gs), tostring(ilvl), tostring(spec or "none")), "info")
+                else
+                    -- Not scored because the client has not cached every link.
+                    -- Dashes, never a word that could read as a tooltip state:
+                    -- nothing printed here is ever shown on a tooltip, and the
+                    -- tooltip omits the line until the real numbers exist.
+                    diagRow(s, "GearScore / iLvl", "GS=- | iLvl=- | Spec="
+                        .. tostring(spec or "none"), "info")
+                    s.notes[#s.notes + 1] = "GearScore needs every equipped item link in the client "
+                        .. "item cache. The tooltip requests the missing ones and renders the line "
+                        .. "when the data arrives."
+                end
+            else
+                local pending = false
+                if (CI.inspectStats and CI.inspectStats.pendingUnit == activeUnit) then
+                    pending = true
+                end
+                diagRow(s, "cached data", pending and "no (inspect in-flight)" or "no (not in cache)", "info")
+            end
+        end
+    end
+    return s
+end
+
+local function collectTooltipSection()
+    local s = diagSection("tooltip", "tooltip & anchoring")
+    local cfg = _G.TacoTipConfig
+    local anchorMode = "Default Screen Corner"
+    if (cfg) then
+        if (cfg.anchor_mouse) then
+            anchorMode = "Mouse Anchor"
+        elseif (cfg.custom_pos) then
+            anchorMode = "Custom Position (docked to mover)"
+        end
+    end
+    diagRow(s, "anchor mode", anchorMode, "info")
+    if (cfg and type(cfg.custom_pos) == "table") then
+        local p = cfg.custom_pos
+        diagRow(s, "custom pos", string.format("[%s, rel=%s, x=%s, y=%s]",
+            tostring(p[1]), tostring(p[2]), tostring(p[3]), tostring(p[4])), "info")
+        diagRow(s, "custom anchor", tostring(cfg.custom_anchor or "TOPLEFT"), "info")
+    end
+    local ev = TT.ev or {}
+    diagRow(s, "anchors executed", string.format("custom=%s, mouse=%s, default=%s",
+        tostring(ev.anchorCustomPos or 0),
+        tostring(ev.anchorMouse or 0),
+        tostring(ev.anchorDefault or 0)), "info")
+    diagRow(s, "container bypasses", ev.anchorContainerBypass or 0, "info")
+    diagRow(s, "anchor bypasses", string.format("spell=%s, non-unit=%s",
+        tostring(ev.anchorSpellBypass or 0), tostring(ev.anchorNonUnitBypass or 0)), "info")
+    local renders = tonumber(ev.unitRender) or 0
+    local failed = tonumber(ev.resolveTooltipUnitFailed) or 0
+    local misses = tonumber(ev.gsCallbackNoUnit) or 0
+    diagRow(s, "unit resolves", string.format("renders=%s, failed=%s, gs-callback-misses=%s (last fail cause: %s)",
+        tostring(renders), tostring(failed), tostring(misses),
+        tostring(ev.resolveTooltipUnitLastCause or "none")), failed > 0 and "warn" or "info")
+    local resolutionRate = diagRate(failed, renders)
+    if (resolutionRate) then
+        diagRow(s, "unit resolution rate", resolutionRate, failed > 0 and "warn" or "ok")
+    end
+    local callbacks = tonumber(ev.gsCallback) or 0
+    local missRate = diagRate(misses, callbacks)
+    if (missRate) then
+        diagRow(s, "gs-callback miss rate", missRate, "info")
+    end
+    local portraitDesc = "Disabled"
+    if (cfg and cfg.tooltip_portrait) then
+        portraitDesc = cfg.tooltip_portrait_3d and "3D Model" or "2D Icon"
+    end
+    diagRow(s, "portrait mode", portraitDesc, "info")
+    if (cfg and cfg.tooltip_portrait_3d) then
+        diagRow(s, "portrait zoom", tostring(cfg.tooltip_portrait_zoom or 0.75), "info")
+    end
+    local portraitFailed = tonumber(ev.portraitSetFailed) or 0
+    diagRow(s, "portrait set failures", portraitFailed, portraitFailed > 0 and "warn" or "ok")
+    if (portraitFailed > 0) then
+        s.notes[#s.notes + 1] = "portraitSetFailed counts 3D SetUnit failures; the attempt denominator "
+            .. "is not instrumented, so a failure rate is not derivable without new code."
+    end
+    return s
+end
+
+local function collectInspectSection()
+    local s = diagSection("inspect", "inspect engine & queue")
+    if (not CI or type(CI.GetInspectStats) ~= "function") then
+        diagRow(s, "inspect engine", "unavailable (LibForeverInspector did not load)", "error")
+        return s
+    end
+    local ok, st = pcall(CI.GetInspectStats, CI)
+    if (not ok or type(st) ~= "table") then
+        diagRow(s, "inspect engine", "GetInspectStats failed: " .. tostring(st), "error")
+        return s
+    end
+    local pendingStr = "none (idle)"
+    if (st.pendingUnit) then
+        pendingStr = string.format("unit='%s' (waiting %.1fs)", tostring(st.pendingUnit),
+            tonumber(st.pendingDuration) or 0)
+    end
+    diagRow(s, "queue state", string.format("queue size: %s | in-flight: %s",
+        tostring(st.queueLength or 0), pendingStr), "info")
+    diagRow(s, "cache summary", string.format("%s players (%s stale, %s incomplete)",
+        tostring(st.cacheCount or 0), tostring(st.staleCount or 0), tostring(st.incompleteCount or 0)), "info")
+    local timeouts = tonumber(st.timeouts) or 0
+    diagRow(s, "requests / timeouts", string.format("notifies=%s, ready=%s, timeouts=%s, rejected=%s",
+        tostring(st.notifies or 0), tostring(st.ready or 0), tostring(timeouts),
+        tostring(st.rejected or 0)), timeouts > 0 and "warn" or "info")
+    if (st.lastRejectedUnit) then
+        diagRow(s, "last refusal", string.format("unit='%s', yards=%s, reason='%s'",
+            tostring(st.lastRejectedUnit),
+            st.lastRejectedDistance and (tostring(st.lastRejectedDistance) .. "yd") or "unknown",
+            tostring(st.lastRejectedReason or "unknown")), "info")
+    end
+    diagRow(s, "learned max range", st.learnedRange and (tostring(st.learnedRange) .. "yd") or "unknown", "info")
+    diagRow(s, "probe suppression", string.format("errors=%s, voice=%s, sound=%s",
+        tostring(st.suppressed or 0), tostring(st.suppressedVoice or 0), tostring(st.suppressedSound or 0)), "info")
+    if (st.lastError) then
+        diagRow(s, "last inspect-call error", tostring(st.lastError), "warn")
+    end
+    diagRow(s, "proximity scan", string.format("enqueued=%s, fallback=%s, skipped_dist=%s",
+        tostring(st.scanEnqueued or 0), tostring(st.scanFallback or 0), tostring(st.scanSkippedDistance or 0)), "info")
+    return s
+end
+
+local function collectEventSection()
+    local s = diagSection("events", "event counters (cumulative since /reload)")
+    local ev = TT.ev or {}
+    local total = (tonumber(ev.unitRender) or 0) + (tonumber(ev.gsCallback) or 0)
+        + (tonumber(ev.portraitHide) or 0) + (tonumber(ev.portraitDestroy) or 0)
+        + (tonumber(ev.portraitModelHidden) or 0)
+    if (total == 0) then
+        diagRow(s, "event counters", "no events recorded yet -- hover a character first", "info")
+    end
+    diagRow(s, "unit renders", ev.unitRender or 0, "info")
+    diagRow(s, "GearScore callbacks", string.format("%s (reentrant=%s, wrong unit=%s)",
+        tostring(ev.gsCallback or 0),
+        tostring(ev.gsCallbackReentrant or 0),
+        tostring(ev.gsCallbackWrongUnit or 0)), "info")
+    diagRow(s, "GearScore callback misses", ev.gsCallbackNoUnit or 0, "info")
+    diagRow(s, "portrait hides (on clear)", ev.portraitModelHidden or 0, "info")
+    diagRow(s, "portrait teardowns", string.format("%s (destroys: %s)",
+        tostring(ev.portraitHide or 0),
+        tostring(ev.portraitDestroy or 0)), "info")
+    diagRow(s, "portrait re-anchors", ev.portraitAnchor or 0, "info")
+    diagRow(s, "teardowns by reason", diagTeardownText(ev.teardownBy), "info")
+    return s
+end
+
+local function collectInspectFrameSection()
+    local s = diagSection("inspect-frame", "inspect frame UI")
+    diagRow(s, "InspectModelFrame exists", InspectModelFrame ~= nil, "info")
+    diagRow(s, "InspectPaperDollFrame exists", InspectPaperDollFrame ~= nil, "info")
+    diagRow(s, "guild guard installed", rawget(_G, "_tacoTipInspectGuildGuarded") and true or false, "info")
+    diagRow(s, "overlay initialised", TT.InitInspectFrame == nil, "info")
+    diagRow(s, "InspectGearScore exists", rawget(_G, "InspectGearScore") ~= nil, "info")
+    diagRow(s, "InspectAvgItemLvl exists", rawget(_G, "InspectAvgItemLvl") ~= nil, "info")
+    diagRow(s, "InspectFrame exists", InspectFrame ~= nil, "info")
+    if (InspectFrame) then
+        local okShown, shown = pcall(function() return InspectFrame:IsShown() end)
+        -- Do not use the "and value or fallback" idiom here: false is falsy, so a
+        -- HIDDEN InspectFrame would report "unknown" instead of "false".
+        if (okShown) then
+            diagRow(s, "InspectFrame shown", (shown == true) and true or false, "info")
+        else
+            diagRow(s, "InspectFrame shown", "unknown", "info")
+        end
+        local inspected = "nil"
+        if (InspectFrame.unit ~= nil) then
+            inspected = (type(InspectFrame.unit) == "string") and InspectFrame.unit or "set"
+        end
+        diagRow(s, "InspectFrame.unit", inspected, "info")
+    end
+    return s
+end
+
+local function collectErrorsSection()
+    local s = diagSection("errors", "error history")
+    diagRow(s, "total errors caught", TT.totalErrorsCaught or 0, "info")
+    diagRow(s, "pipeline suppressed", (TT.ev and TT.ev.pipelineErrorsSuppressed) or 0, "info")
+    diagRow(s, "last tooltip error", TT.lastTooltipError or "none",
+        TT.lastTooltipError and "warn" or "info")
+    local log = TT.errorLog
+    if (type(log) ~= "table" or #log == 0) then
+        diagRow(s, "recent error entries", "none recorded since /reload", "info")
+        return s
+    end
+    local startIdx = math.max(1, #log - (DIAG_MAX_ERROR_ROWS - 1))
+    local shown = 0
+    for i = startIdx, #log do
+        local entry = log[i]
+        if (type(entry) == "table") then
+            shown = shown + 1
+            local value = string.format("[%.1fs] [%s] %s%s",
+                tonumber(entry.time) or 0,
+                tostring(entry.subsystem or "Error"),
+                tostring(entry.message or ""),
+                entry.context and (" (" .. tostring(entry.context) .. ")") or "")
+            diagRow(s, "recent error " .. shown, value, "error")
+        end
+    end
+    local older = #log - shown
+    if (older > 0) then
+        diagRow(s, "recent error entries", "...and " .. older .. " older "
+            .. (older == 1 and "entry" or "entries"), "info")
+    end
+    return s
+end
+
+local function collectDiagnosticSections(problems)
+    local builders = {
+        collectEnvironmentSection,
+        collectActiveUnitSection,
+        collectTooltipSection,
+        collectInspectSection,
+        collectEventSection,
+        collectInspectFrameSection,
+        collectErrorsSection,
+    }
+    local sections = {}
+    for i = 1, #builders do
+        local ok, section = pcall(builders[i])
+        if (ok and type(section) == "table") then
+            sections[#sections + 1] = section
+        else
+            local id = DIAG_SECTION_ORDER[i] or ("section-" .. i)
+            local failed = diagSection(id, id)
+            diagRow(failed, "section failed", tostring(section), "error")
+            sections[#sections + 1] = failed
+            problems[#problems + 1] = {
+                severity = "error",
+                text = "diagnostics section '" .. tostring(id) .. "' failed: " .. tostring(section),
+            }
+        end
+    end
+    return sections
+end
+
+local function collectProblemSection(problems)
+    local s = diagSection("problems", "problems")
+    if (#problems == 0) then
+        diagRow(s, "problems", "none detected (system healthy)", "ok")
+        return s
+    end
+    local shown = 0
+    for i = 1, #problems do
+        if (shown >= DIAG_MAX_PROBLEM_ROWS) then break end
+        local p = problems[i]
+        shown = shown + 1
+        local severity = (type(p) == "table" and p.severity == "error") and "error" or "warn"
+        diagRow(s, "problem " .. shown .. " (" .. severity .. ")",
+            (type(p) == "table" and p.text) or "unknown", severity)
+    end
+    local remaining = #problems - shown
+    if (remaining > 0) then
+        diagRow(s, "problems", "...and " .. remaining .. " more", "info")
+    end
+    return s
+end
+
+function TT:CollectDiagnostics()
+    local elapsed, uptimeText = diagUptime()
+    local okProblems, problems = pcall(collectProblems)
+    if (not okProblems or type(problems) ~= "table") then
+        problems = { { severity = "error", text = "problem collection failed: " .. tostring(problems) } }
+    end
+    local sections = collectDiagnosticSections(problems)
+    sections[#sections + 1] = collectProblemSection(problems)
+    return {
+        version = addOnVersion,
+        uptime = elapsed,
+        uptimeText = uptimeText,
+        verdict = buildVerdict(problems),
+        sections = sections,
+        problems = problems,
+    }
+end
+
+local function diagRenderRow(row)
+    local label = tostring(row.label or "?")
+    local value = tostring(row.value)
+    local suffix = ""
+    if (row.status == "warn") then
+        suffix = " [warn]"
+    elseif (row.status == "error") then
+        suffix = " [error]"
+    end
+    print(string.format("|cff59f0dcTacoTip:|r %s: %s%s", label, value, suffix))
+end
+
+local function diagRenderSection(section)
+    if (type(section) ~= "table") then return end
+    print("|cff59f0dc-- " .. tostring(section.title or section.id or "section") .. " --|r")
+    local rows = section.rows or {}
+    for i = 1, #rows do
+        if (type(rows[i]) == "table") then
+            diagRenderRow(rows[i])
+        end
+    end
+    local notes = section.notes or {}
+    for i = 1, #notes do
+        print("|cff59f0dcTacoTip:|r note: " .. tostring(notes[i]))
     end
 end
 
 function TT:PrintDiagnostics()
-    local function line(label, value)
-        print(string.format("|cff59f0dcTacoTip:|r %s: %s", label, tostring(value)))
-    end
     print("|cff59f0dc===== TacoTip diagnostics (v" .. tostring(addOnVersion) .. ") =====|r")
-    line("version", addOnVersion)
-    line("load OK", TT.LOAD_OK and "yes" or "NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE))
-    line("client family", CI and CI.family or "?")
-    line("interface", CI and CI.interfaceVersion or "?")
-    line("locale", _G.TACOTIP_ACTIVE_LOCALE or "?")
-    local gs = _G.TT_GS
-    line("GearScore bracket", gs and gs.BRACKET_SIZE or "none")
-    local gt = _G.GameTooltip
-    line("tooltip has NineSlice", gt and gt.NineSlice ~= nil)
-    line("TT.HookedTooltipScripts", TT.HookedTooltipScripts
-        and ("unit=" .. tostring(TT.HookedTooltipScripts.Unit)
-            .. " item=" .. tostring(TT.HookedTooltipScripts.Item)) or "none")
-    line("TT.HookedDefaultAnchor", tostring(TT.HookedDefaultAnchor or false))
-
-    if (not TT.LOAD_OK) then
-        print("|cff59f0dcIf the stage is not \"complete\", an error was raised while|r")
-        print("|cff59f0dcloading main.lua at or after that point. /reload cannot fix|r")
-        print("|cff59f0dcit -- enable Lua error reporting (BugSack/Swatter) and reload.|r")
+    local ok, diag = pcall(function() return TT:CollectDiagnostics() end)
+    if (not ok or type(diag) ~= "table") then
+        local err = tostring(diag)
+        print("|cff59f0dcTacoTip:|r verdict: PROBLEMS: diagnostics collection failed -- "
+            .. err .. " [error]")
+        print("|cff59f0dcTacoTip:|r version: " .. tostring(addOnVersion))
+        print("|cff59f0dcTacoTip:|r load OK: " .. (TT.LOAD_OK and "yes"
+            or ("NO -- main.lua stopped at stage: " .. tostring(TT.LOAD_STAGE))))
+        print("|cff59f0dcTacoTip:|r client family: " .. tostring(CI and CI.family or "?"))
+        print("|cff59f0dcTacoTip:|r interface: " .. tostring(CI and CI.interfaceVersion or "?"))
+        print("|cff59f0dc================================|r")
+        return
     end
-
-    reportActiveUnitContext(line)
-    reportTooltipAndAnchoring(line)
-    reportInspectEngine(line)
-    reportEventCounters(line)
-    reportErrorsHistory(line)
-    reportSilentFailures(line)
+    local verdict = diag.verdict or {}
+    local verdictStatus = verdict.healthy and "ok" or (verdict.severity or "warn")
+    local verdictSuffix = ""
+    if (verdictStatus == "warn") then
+        verdictSuffix = " [warn]"
+    elseif (verdictStatus == "error") then
+        verdictSuffix = " [error]"
+    end
+    print(string.format("|cff59f0dcTacoTip:|r verdict: %s%s",
+        tostring(verdict.text or "UNKNOWN"), verdictSuffix))
+    local sections = diag.sections or {}
+    for i = 1, #sections do
+        local okSection, errSection = pcall(diagRenderSection, sections[i])
+        if (not okSection) then
+            print("|cff59f0dcTacoTip:|r section failed: " .. tostring(errSection) .. " [error]")
+        end
+    end
     print("|cff59f0dc================================|r")
 end
 

@@ -1,0 +1,6 @@
+{"v":1,"task":"verify-workspace","state":"running","msg":"started: bash -c \necho \"=== LUACHECK ===\"; luacheck . 2>&1 | tail -5\necho \"=== MAIN HARNESS ===\"; bash Tests/harness/run_all.sh 2>&1 | tail -8\necho \"=== EXTRAS HARNESS =","at":1792985486884}
+{"v":1,"task":"verify-workspace","msg":"=== LUACHECK ===","at":1792985487890}
+{"v":1,"task":"verify-workspace","msg":"=== MAIN HARNESS ===","at":1792985490904}
+{"v":1,"task":"verify-workspace","msg":"=== EXTRAS HARNESS ===","at":1792985494924}
+{"v":1,"task":"verify-workspace","msg":"verify_release_extras: PASS","at":1792985513661}
+{"v":1,"task":"verify-workspace","state":"done","pct":100,"msg":"finished","at":1792985513662}

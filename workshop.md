@@ -48,8 +48,18 @@ not style choices. each one has a release behind it.
   stretch across the display or collapse off-screen.
 - **do not cache incomplete inspect gear.** When `GetInventoryItemTexture` is
   non-nil but `GetInventoryItemLink` is nil, item data is still in-flight from
-  the server. Never write `data.time = now` or finalize GearScore prematurely;
-  retry asynchronously (250ms) until links resolve.
+  the server. Never commit the staged table, never stamp `data.time`, and never
+  finalize GearScore: keep the last complete snapshot and retry on the
+  `{0.20, 0.35, 0.50, 0.75, 1.00, 1.50}` ladder (six attempts, reset per
+  inspection). If the read exhausts, leave the record `incomplete` with a 20 s
+  `GetTime` backoff (`failedUntil`) instead of claiming freshness -- a failed
+  read is not a fresh read, and stamping one makes an EMPTY first-inspect record
+  look complete for the whole 300 s window.
+- **inspected gear item data is requested, not awaited.** The scoring path
+  registers `ContinueOnItemLoad` callbacks and that API only fires on
+  `ITEM_DATA_LOAD_RESULT`; it never asks the client for the data.
+  `TT:WarmGearItemData` issues `C_Item.RequestLoadItemDataByID` for uncached
+  links (2 s per-item throttle, slot 4 skipped because it is unscored).
 - the extras' whisper path stays deleted. the guild/level line-index
   ownership proof stays as it is, and the inspect-frame guild guard stays
   installed — both are explained in
@@ -57,13 +67,16 @@ not style choices. each one has a release behind it.
 - **scan is strictly disabled in TacoTip_Extras** — scan in `RankBrowser.lua` and
   `Options.lua` is deliberately disabled because scanning crashes both addons.
   Never touch, re-enable, or assume scan should run.
-- **diagnostic telemetry (`/tt diag`) in 0.8.7** — `/tt diag` was overhauled to
-  eliminate false clean reports. In addition to verified raw unit/hide/destroy/reanchor
-  counts, it records all caught `pcall` failures in a bounded 15-entry ring buffer
-  with timestamps and subsystems, detects silent runtime failures (inspect queue stalls >3s,
-  unresolved unit tooltip tokens, corrupt `custom_pos` tables), reports live inspect
-  queue state, and evaluates the active `mouseover`/`target`/`player` unit live (`CanInspect`,
-  `CheckInteractDistance(1)`, `UnitIsVisible`, `UnitDistanceSquared` yardage, and cache freshness).
+- **diagnostic telemetry (`/tt diag`) in 0.8.8** — `/tt diag` is a structured
+  artifact: `TT:CollectDiagnostics()` returns a plain table (verdict, ordered
+  sections, `{label, value, status}` rows, problems) and `TT:PrintDiagnostics()`
+  only renders it, so tests assert the table instead of chat text. Sections:
+  environment, active unit, tooltip/anchoring, inspect queue, event counters,
+  inspect frame, error history, problems. Every section is `pcall`-guarded in
+  both collection and rendering, and a collection failure still prints version,
+  load state, client family and interface. Session uptime plus failure rates
+  give the cumulative counters a denominator; teardown reasons are sorted; error
+  history is capped at 10 rows and problems at 12 with an explicit "...and N more".
 - **never modify production code when tasked with tests** — if test suites fail
   against working production code, the test harness is lagging or asserting
   abandoned prototypes. Never touch `main.lua`, `gearscore.lua`, `Libs/`, or
