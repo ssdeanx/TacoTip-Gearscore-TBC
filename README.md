@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.8.8
+version: 0.8.9
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -21,8 +21,8 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: released
-updated: 2026-10-26
+status: pending in-game verification
+updated: 2026-10-31
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -43,6 +43,16 @@ updated: 2026-10-26
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## <span style="color:#e67e23">What's New in v0.8.9</span>
+
+- **<span style="color:#59f0dc">GearScore Item-Data Retry Gate:</span>** The unit tooltip used to call the GearScore scorer on every client refresh (5×/s). When an equipped item's data was still loading, each call registered another load callback and — on the Classic family — asked the client for that item again, so a stationary hover could repeat the same request dozens of times a second. The scorer now makes one immediate attempt, then backs off 0.5 s → 1 s → 2 s → 4 s → 8 s (capped) until the data arrives; a completed load or a fresh inspection resets the ladder. The GearScore number, the formula and the inspect cache are unchanged.
+- **<span style="color:#59f0dc">GearScore Reuse:</span>** Once a score is available, it is reused until the inspected gear changes, instead of rebuilding 20 item wrappers and 18 item-info reads on every tooltip refresh. The player's own live inventory is never memoised.
+- **<span style="color:#59f0dc">Power-Bar Lifecycle:</span>** The power-bar tooltip padding now survives normal re-renders, is re-applied after a teardown, and is dropped when the bar is hidden. The bar also registers its unit events once per unit instead of three times on every render.
+- **<span style="color:#59f0dc">Modifier Keys:</span>** Ctrl and Alt no longer rebuild the unit tooltip; only the two Shift keys change the wide/mini style.
+- **<span style="color:#59f0dc">Release Gate:</span>** The release verifier now checks version consistency (TOC, Lua fallbacks, README), the five interfaces, `SavedVariables`, and the icon target; the item-request throttle test now actually runs.
 
 ---
 

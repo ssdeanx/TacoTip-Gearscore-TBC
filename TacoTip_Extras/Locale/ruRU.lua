@@ -115,7 +115,7 @@ local L = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "Открыть рейтинг сервера",
     ["HELP_OPENLEADERBOARD_1"] =
-    "Открывает окно рейтинга GearScore TacoTip (/tt ranks), чтобы посмотреть общий рейтинг всего мира.",
+    "Открывает окно рейтинга GearScore TacoTip (/ex ranks), чтобы посмотреть общий рейтинг всего мира.",
 
     ["HELP_RESTORE_HEADING"] = "Восстановить настройки TacoTip",
     ["HELP_RESTORE_1"] =

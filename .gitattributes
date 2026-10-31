@@ -61,6 +61,8 @@
 /.vscode/** export-ignore
 /.wowluarc.json export-ignore
 /.ruff_cache/** export-ignore
+/.dsh-progress/** export-ignore
+/luacheck_report.txt export-ignore
 
 # Vendored-but-unloaded libraries. Not referenced by TacoTip.toc and not part of
 # the release until they are deliberately wired in (licence provenance is

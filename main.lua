@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.8"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.9"
 
 
 
@@ -357,6 +357,9 @@ local function stopPowerBarTicker()
         if (TacoTipPowerBar.UnregisterAllEvents) then
             TacoTipPowerBar:UnregisterAllEvents()
         end
+        -- UnregisterAllEvents dropped the per-unit subscriptions; the next show
+        -- must register them again even for the same unit token.
+        TacoTipPowerBar._tacoTipUnit = nil
     end
 end
 
@@ -1304,6 +1307,115 @@ local function startPowerBarTicker()
     end
 end
 
+-- Bounded retry gate for GearScore item data.
+--
+-- GetScore walks the equipped slots and, for every slot whose item data is not
+-- cached, registers ContinueOnItemLoad callbacks. On the Classic family the
+-- client's own AddCallback asks for that item on EVERY registration, so calling
+-- GetScore on every unit render (5x/s) re-registers and re-requests the same
+-- item for as long as the tooltip stays up. This gate makes one attempt, then
+-- backs off 0.5s -> 1s -> 2s -> 4s -> 8s (capped) until the data arrives. A
+-- completion callback or a fresh inspection resets the ladder.
+--
+-- It is a timestamp, not a state machine: no timer is scheduled and no work is
+-- done between attempts. The next due time is checked on the next render.
+local GS_RETRY_FIRST = 0.5
+local GS_RETRY_MAX = 8
+local GS_RETRY_CAP = 512
+
+local function clearGearScoreRetry(guid)
+    local retries = TT._gsRetry
+    if (retries and guid and retries[guid]) then
+        retries[guid] = nil
+        TT._gsRetryCount = math.max((TT._gsRetryCount or 0) - 1, 0)
+    end
+end
+
+local function gearScoreRetryDue(guid, now)
+    if (not guid or type(now) ~= "number" or now <= 0) then
+        return true
+    end
+    local retries = TT._gsRetry
+    local entry = retries and retries[guid]
+    return (not entry) or now >= entry.at
+end
+
+local function noteGearScoreRetry(guid, now)
+    if (not guid or type(now) ~= "number" or now <= 0) then
+        return
+    end
+    local retries = TT._gsRetry
+    if (not retries) then
+        retries = {}
+        TT._gsRetry = retries
+        TT._gsRetryCount = 0
+    end
+    local entry = retries[guid]
+    if (not entry) then
+        if ((TT._gsRetryCount or 0) >= GS_RETRY_CAP) then
+            retries = {}
+            TT._gsRetry = retries
+            TT._gsRetryCount = 0
+        end
+        entry = { delay = GS_RETRY_FIRST }
+        retries[guid] = entry
+        TT._gsRetryCount = (TT._gsRetryCount or 0) + 1
+    end
+    entry.at = now + entry.delay
+    entry.delay = math.min(entry.delay * 2, GS_RETRY_MAX)
+end
+
+-- Positive-score memo. Once every equipped item's data is cached, GetScore is a
+-- pure read of the cached links -- but it rebuilds 20 Item wrappers, checks 20
+-- item caches and reads 18 item infos on every call, and the unit tooltip calls
+-- it five times a second. The cache record's `items` table is replaced wholesale
+-- on every complete inspection (LibForeverInspector.lua:3782), so its identity
+-- is the invalidation key: the same table means the same gear, so the score
+-- cannot have changed. The player is excluded because their inventory is read
+-- live and is not in that cache at all.
+local GS_SCORE_MEMO_CAP = 512
+
+local function getGearScoreMemo(guid, items)
+    if (not guid or not items) then
+        return nil
+    end
+    local memo = TT._gsMemo
+    local entry = memo and memo[guid]
+    if (entry and entry.items == items) then
+        return entry.score, entry.ilvl
+    end
+    return nil
+end
+
+local function setGearScoreMemo(guid, items, score, ilvl)
+    if (not guid or not items or type(score) ~= "number" or score <= 0) then
+        return
+    end
+    local memo = TT._gsMemo
+    if (not memo) then
+        memo = {}
+        TT._gsMemo = memo
+        TT._gsMemoCount = 0
+    end
+    if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
+        memo = {}
+        TT._gsMemo = memo
+        TT._gsMemoCount = 0
+    end
+    if (not memo[guid]) then
+        TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
+    end
+    memo[guid] = { items = items, score = score, ilvl = ilvl }
+end
+
+local function clearGearScoreMemo(guid)
+    local memo = TT._gsMemo
+    if (memo and guid and memo[guid]) then
+        memo[guid] = nil
+        TT._gsMemoCount = math.max((TT._gsMemoCount or 0) - 1, 0)
+    end
+end
+
 -- Re-entrancy guard for the GearScore completion callback.
 --
 -- itemcacheCB (gearscore.lua) and its Pawn twin fire this once an item load
@@ -1323,6 +1435,10 @@ local gsCallbackPending = nil
 
 function TacoTip_GSCallback(guid)
     TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
+    -- The data this ladder was waiting for has arrived (or the client has just
+    -- finished with it); the next render starts from a clean attempt.
+    clearGearScoreRetry(guid)
+    clearGearScoreMemo(guid)
     if (gsCallbackActive) then
         gsCallbackPending = guid
         TT.ev.gsCallbackReentrant = (TT.ev.gsCallbackReentrant or 0) + 1
@@ -1399,6 +1515,24 @@ end
 -- map POI, and a unit tooltip with no unit resolved -- defaults to teardown:
 -- those tooltips have no unit at all, so a character model is meaningless there
 -- and is freed rather than left resident and hidden.
+-- Drops the power-bar padding from one tooltip. Padding is a property of the
+-- tooltip that is only meaningful while the bar is shown, so it is cleared on
+-- every real teardown and whenever the bar is hidden -- and the memo is reset
+-- with it, or the power-bar block's `_tacoTipPadding ~= 10` guard would skip
+-- the re-apply forever (the 0.8.8 lifecycle bug).
+local function clearPowerBarPadding(tooltip)
+    if (not tooltip or not tooltip._tacoTipPaddingSet) then
+        return
+    end
+    if (tooltip.ClearPadding) then
+        tooltip:ClearPadding()
+    elseif (tooltip.SetPadding) then
+        tooltip:SetPadding(0, 0, 0, 0)
+    end
+    tooltip._tacoTipPaddingSet = nil
+    tooltip._tacoTipPadding = nil
+end
+
 local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reason, retainModel)
     if (not tooltip) then
         return
@@ -1454,6 +1588,10 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
             TacoTipPowerBar:Hide()
             stopPowerBarTicker()
         end
+        -- The padding belongs to the power bar. Keeping it while the bar is
+        -- gone would leave every later tooltip padded; clearing it while the
+        -- memo still said 10 would suppress the re-apply forever.
+        clearPowerBarPadding(tooltip)
     end
     clearTooltipGuildLine(tooltip)
     clearTooltipLevelColorLine(tooltip)
@@ -1548,15 +1686,8 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
             end
         end
     end
-    if (tooltip._tacoTipPaddingSet) then
-        if (tooltip.ClearPadding) then
-            tooltip:ClearPadding()
-        elseif (tooltip.SetPadding) then
-            tooltip:SetPadding(0, 0, 0, 0)
-        end
-        tooltip._tacoTipPaddingSet = nil
-    end
 end
+
 TT.clearTooltipVisuals = clearTooltipVisuals
 
 local scheduleItemTooltipRefresh
@@ -2211,12 +2342,29 @@ local function onTooltipSetUnit(tooltip, data)
             end
             local miniText = ""
             if (TacoTipConfig.show_gs_player) then
-                local gearscore, avg_ilvl = GearScore:GetScore(guid, true)
-                if (gearscore <= 0) then
-                    -- GetScore just registered the load callbacks for every
-                    -- uncached slot. Without a request the client never fires
-                    -- them, so ask now and let the callback re-drive this render.
-                    TT:WarmGearItemData(guid)
+                local gearscore, avg_ilvl
+                local scoreData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
+                local items = scoreData and scoreData.items or nil
+                gearscore, avg_ilvl = getGearScoreMemo(guid, items)
+                if (not gearscore) then
+                    gearscore, avg_ilvl = 0, 0
+                    local now = (type(GetTime) == "function") and GetTime() or 0
+                    if (gearScoreRetryDue(guid, now)) then
+                        gearscore, avg_ilvl = GearScore:GetScore(guid, true)
+                        if (gearscore > 0) then
+                            clearGearScoreRetry(guid)
+                            if (guid ~= UnitGUID("player")) then
+                                setGearScoreMemo(guid, items, gearscore, avg_ilvl)
+                            end
+                        else
+                            -- GetScore just registered the load callbacks for every
+                            -- uncached slot; ask for the data too, then let the
+                            -- callback re-drive this render. The gate above keeps a
+                            -- stationary hover from re-registering on every render.
+                            noteGearScoreRetry(guid, now)
+                            TT:WarmGearItemData(guid)
+                        end
+                    end
                 end
                 if (gearscore > 0) then
                     local r, g, b = GearScore:GetQuality(gearscore)
@@ -2405,6 +2553,7 @@ local function onTooltipSetUnit(tooltip, data)
                     else
                         self:Hide()
                         stopPowerBarTicker()
+                        clearPowerBarPadding(GameTooltip)
                     end
                 end
             end)
@@ -2433,14 +2582,17 @@ local function onTooltipSetUnit(tooltip, data)
             TacoTipPowerBar:Update(tooltipUnit)
             TacoTipPowerBar:Show()
             startPowerBarTicker()
-            if (TacoTipPowerBar.RegisterUnitEvent) then
-                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_POWER_UPDATE", tooltipUnit)
-                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_MAXPOWER", tooltipUnit)
-                pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_DISPLAYPOWER", tooltipUnit)
-            else
-                TacoTipPowerBar:RegisterEvent("UNIT_POWER_UPDATE")
-                TacoTipPowerBar:RegisterEvent("UNIT_MAXPOWER")
-                TacoTipPowerBar:RegisterEvent("UNIT_DISPLAYPOWER")
+            if (TacoTipPowerBar._tacoTipUnit ~= tooltipUnit) then
+                if (TacoTipPowerBar.RegisterUnitEvent) then
+                    pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_POWER_UPDATE", tooltipUnit)
+                    pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_MAXPOWER", tooltipUnit)
+                    pcall(TacoTipPowerBar.RegisterUnitEvent, TacoTipPowerBar, "UNIT_DISPLAYPOWER", tooltipUnit)
+                else
+                    TacoTipPowerBar:RegisterEvent("UNIT_POWER_UPDATE")
+                    TacoTipPowerBar:RegisterEvent("UNIT_MAXPOWER")
+                    TacoTipPowerBar:RegisterEvent("UNIT_DISPLAYPOWER")
+                end
+                TacoTipPowerBar._tacoTipUnit = tooltipUnit
             end
             -- SetPadding re-lays out the tooltip, and this ran on every render
             -- with only `tooltip.SetPadding` as a guard -- i.e. never skipped.
@@ -2456,10 +2608,12 @@ local function onTooltipSetUnit(tooltip, data)
         else
             TacoTipPowerBar:Hide()
             stopPowerBarTicker()
+            clearPowerBarPadding(tooltip)
         end
     elseif (TacoTipPowerBar) then
         TacoTipPowerBar:Hide()
         stopPowerBarTicker()
+        clearPowerBarPadding(tooltip)
     end
 
     -- Unconditional in the old code: not even a capability check, let alone a
@@ -4208,12 +4362,13 @@ local function onEvent(self, event, ...)
             TT:RefreshCharacterFrame()
         end
     elseif (event == "MODIFIER_STATE_CHANGED") then
-        -- Shift re-render (wide/mini style toggle via IsShiftKeyDown in
-        -- onTooltipSetUnit) only matters when a player tooltip is actually
-        -- on screen AND the configured tip_style reads the shift key
-        -- (styles 2/4). Everything else would be a full SetUnit rebuild on
-        -- every modifier press AND release for no visual change.
-        if (GameTooltip and GameTooltip:IsShown()
+        -- The wide/mini style only reads the shift key (IsShiftKeyDown in
+        -- onTooltipSetUnit), so ctrl/alt press and release used to rebuild the
+        -- whole unit tooltip for no visual change. The event payload is
+        -- (key, down); only the two shift keys matter.
+        local key = ...
+        if ((key == "LSHIFT" or key == "RSHIFT")
+                and GameTooltip and GameTooltip:IsShown()
                 and (TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4)) then
             local unit = resolveTooltipUnit(GameTooltip)
             if (unit and UnitIsPlayer(unit)) then
@@ -4326,6 +4481,10 @@ local function onEvent(self, event, ...)
         end
         local guid = ...
         if (guid) then
+            -- A completed inspection supersedes any backoff from the previous
+            -- data; the next render may attempt immediately.
+            clearGearScoreRetry(guid)
+            clearGearScoreMemo(guid)
             local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and UnitGUID(ttUnit) == guid) then
                 -- The library fires INVENTORY_READY and TALENTS_READY back to back

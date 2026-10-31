@@ -1157,28 +1157,83 @@ end
 -- Public: scroll control
 -- ---------------------------------------------------------------------------
 
--- Start an equipment scan from any surface that offers the control.
+-- The rank scan control. It used to start a local capture through
+-- Core.RequestLocalScan (the one home that bumped the generation AND scheduled
+-- the run); that path is deliberately switched off now -- see the block below
+-- for why, and for what is still allowed to run.
 --
--- Guarded rather than assumed: the Scanner can be absent when its file fails to
--- load, and a button must never raise for that. Returns whether a scan was
--- actually started so a caller can tell the difference between "started" and
--- "nothing happened".
+-- THE RANK SCAN IS BLOCKED. It is the control that was in the leaderboard
+-- footer and on the Options page, and starting one wedged the shared inspect
+-- engine (see desks/scan-crash/journal.md): the tooltip showed no scores until
+-- `/reload`. It stays blocked until the path is re-proven in game, so the
+-- button is greyed out and carries the reason, and there is exactly ONE
+-- answer -- this function -- that every surface asks.
 --
--- ONE home for "start a scan". This used to call scanner.BeginGeneration
--- DIRECTLY, which bumped the generation and left the scanner in "pending" --
--- and never called scanner.RunGeneration, so the capture the button promises
--- never ran and the scanner stayed "pending" for the rest of the session: the
--- progress bar spun, and the surfaces that render from the scanner state had
--- no score to show. It also STEALED a scan that was already scheduled: the
--- scheduled run carried the older generation, RunGeneration refused it
--- (targetGeneration ~= generation), and that scan was lost too.
---
--- Core.RequestLocalScan is the one home: it begins the generation AND
--- schedules the run on the next OnUpdate tick, and it refuses to begin a
--- second generation while one is already pending. So the generation is bumped
--- exactly once per scan, and a scan that is started actually runs.
+-- This is NOT the gear-inspection scanner (Scanner.lua): inspecting equipment,
+-- the inspect-frame summary and the tooltip scores are untouched and keep
+-- working. Only the "Scan now" rank capture is off.
+local SCAN_DISABLED_TEXT = "Scan disabled"
+local SCAN_DISABLED_REASON = "The realm scan is temporarily disabled because it was crashing the inspect engine. Inspecting gear and tooltip scores still work."
+
+-- Future work: restore StartScan's Core.RequestLocalScan path and remove this
+-- notice together; do not enable one without the other.
+function RankBrowser.IsScanAvailable()
+    return false
+end
+
+-- Grey a scan control out and make a click a no-op. BOTH scan surfaces call
+-- this, so the label, the disabled state and the explanation cannot drift.
+-- Returns false for a missing button rather than raising: a surface that fails
+-- to build must not take the window down.
+function RankBrowser.StyleScanButton(button, explain)
+    if type(button) ~= "table" then
+        return false
+    end
+    if type(button.SetText) == "function" then
+        pcall(button.SetText, button, SCAN_DISABLED_TEXT)
+    end
+    if type(button.Disable) == "function" then
+        pcall(button.Disable, button)
+    end
+    if type(button.SetAlpha) == "function" then
+        pcall(button.SetAlpha, button, 0.55)
+    end
+    if type(button.SetScript) ~= "function" then
+        return true
+    end
+    -- A disabled button does not dispatch OnClick on every client/template,
+    -- but replacing the handler costs nothing and guarantees the control
+    -- cannot start anything even if the disabled state is lost.
+    pcall(button.SetScript, button, "OnClick", function()
+        return false
+    end)
+    if explain then
+        pcall(button.SetScript, button, "OnEnter", function(self)
+            local tip = _G.GameTooltip
+            if type(tip) ~= "table"
+                or type(tip.SetOwner) ~= "function"
+                or type(tip.SetText) ~= "function" then
+                return
+            end
+            pcall(tip.SetOwner, tip, self, "ANCHOR_RIGHT")
+            pcall(tip.SetText, tip, SCAN_DISABLED_REASON, 1, 0.82, 0.4, true)
+            if type(tip.Show) == "function" then
+                pcall(tip.Show, tip)
+            end
+        end)
+        pcall(button.SetScript, button, "OnLeave", function()
+            local tip = _G.GameTooltip
+            if type(tip) == "table" and type(tip.Hide) == "function" then
+                pcall(tip.Hide, tip)
+            end
+        end)
+    end
+    return true
+end
+
 function RankBrowser.StartScan()
-    -- Disabled temporarily
+    -- Blocked; see IsScanAvailable above. Kept as a function (not a nil) so a
+    -- caller that still asks gets a truthful `false` instead of a raise.
     return false
 end
 
@@ -1243,6 +1298,22 @@ function RankBrowser.RefreshProgress()
     local f = rankFrame
     if not f or type(f.progressBar) ~= "table" then
         return false
+    end
+    -- The rank scan is blocked. Keep the control greyed here as well as at
+    -- creation, and never paint this rail from the gear-inspection scanner's
+    -- progress -- that scanner still runs for the character and inspect
+    -- summaries, and a moving bar under a "Scan disabled" button reads as a
+    -- working scan.
+    if f.scanButton then
+        RankBrowser.StyleScanButton(f.scanButton)
+    end
+    if not RankBrowser.IsScanAvailable() then
+        f.progressBar:Hide()
+        f.scanning = false
+        if type(f.scanStatus) == "table" then
+            f.scanStatus:Hide()
+        end
+        return true
     end
     local scanner = namespace.Scanner
     if type(scanner) ~= "table" or type(scanner.GetProgress) ~= "function" then
@@ -2694,19 +2765,13 @@ function RankBrowser.CreateUI()
         RankBrowser.TrackToPlayer()
     end)
 
-    -- Scan entry point. The Options page carries the same control and both call
-    -- RankBrowser.StartScan / read RankBrowser.RefreshProgress, so the two
-    -- surfaces cannot disagree about whether a scan is running.
+    -- Scan entry point. BLOCKED: see RankBrowser.IsScanAvailable above. The
+    -- button stays on screen -- hidden controls are worse than greyed ones --
+    -- but it is greyed, disabled, safe to click, and explains itself on hover.
     local scanButton = g.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     scanButton:SetSize(140, 22)
     scanButton:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -210, footerBottom())
-    scanButton:SetText("Disabled Temporarily")
-    if type(scanButton.Disable) == "function" then
-        scanButton:Disable()
-    end
-    scanButton:SetScript("OnClick", function()
-        -- Disabled temporarily
-    end)
+    RankBrowser.StyleScanButton(scanButton, true)
     f.scanButton = scanButton
 
     -- Progress band: the scan rail, and the completion line that appears
@@ -2978,63 +3043,31 @@ function RankBrowser.RebuildUI()
     return f
 end
 
--- Slash commands.
+-- The leaderboard toggle, published on a plain global.
 --
--- SLASH_<NAME>1 and SlashCmdList.<NAME> are ONE declaration: Blizzard pairs
--- them by name, so both halves must be written or neither fires. They are
--- written through rawset/_G rather than bare assignment so the declaration and
--- the registration cannot drift apart -- Core.lua and Options.lua used to
--- spell the same pair two different ways in two files.
-local g = _G
-rawset(g, "SLASH_TACOTIPRANKS1", "/ttrank")
-rawset(g, "SLASH_TACOTIPRANKS2", "/ttranks")
-rawset(g, "SLASH_TACOTIPRANKS3", "/ttleaderboard")
+-- Slash commands now have ONE home: Options.lua's registerSlashCommand, which
+-- owns /ex, /extras and /tte (and the `ranks` argument). This file used to
+-- declare SLASH_TACOTIPRANKS1..7 (/ttrank, /ttranks, /ttleaderboard, and four
+-- multi-word aliases no client ever dispatches) -- they are gone with the /tt
+-- prefix so there is exactly one command family and no second registration
+-- that can drift from the first.
 --
--- The four MULTI-WORD aliases below are registered but NEVER dispatched.
---
--- The client only ever looks at the FIRST whitespace-delimited token of what
--- was typed: ChatFrameEditBox.lua:222 does
---     strmatch(text, "^(/[^%s]+)")
--- so "/tt lb" is looked up as "/tt", never as "/tt lb". The command hash the
--- client builds (ChatFrameUtil.lua:717-736) keys on the uppercased alias
--- string, so "/tt lb" is stored there as "/TT LB", but no client ever queries
--- that key -- not on classic_era, not on classic_anniversary, not on
--- classic_titan, not on forever, not on live.
---
--- They are kept because they are harmless and because the main add-on's own
--- "/tt" forwarding is what actually makes "/tt lb" work in practice. Do NOT
--- read them as working entry points: the working ones are the single-token
--- aliases above plus the main add-on's "/tt" forwarding.
-rawset(g, "SLASH_TACOTIPRANKS4", "/tt lb")
-rawset(g, "SLASH_TACOTIPRANKS5", "/tt rank")
-rawset(g, "SLASH_TACOTIPRANKS6", "/tt ranks")
-rawset(g, "SLASH_TACOTIPRANKS7", "/tt leaderboard")
---
--- The toggle the slash handler runs, published on a plain global as well.
---
--- The main add-on CANNOT read this handler back out of SlashCmdList: the
--- client's SlashCmdList is a PROXY table. ChatFrameSetup.lua:3-4 does
+-- The main add-on CANNOT read a handler back out of SlashCmdList: the client's
+-- SlashCmdList is a PROXY table. ChatFrameSetup.lua:3-4 does
 -- `setmetatable(list, { __index = {} })` and line 11 applies it to
 -- `_G.SlashCmdList`, and ChatFrameUtil.lua's ImportListToHash (line 717)
 -- moves every registered handler into getmetatable(list).__index (line 732)
 -- and then WIPES the real table (line 735) -- which happens immediately
 -- BEFORE the handler is dispatched (ChatFrameEditBox.lua:245, 257, 259). So a
--- rawget(SlashCmdList, "TACOTIPRANKS") at dispatch time returns nil on every
+-- rawget(SlashCmdList, "TACOTIPEXTRAS") at dispatch time returns nil on every
 -- one of the five supported clients.
 --
--- So the SAME function is published here on a well-named plain global, which
--- the main add-on can call directly and never touch the client's slash
--- registry internals. It is the same function OBJECT the slash handler
--- invokes -- identity, not a copy -- so the two can never drift apart.
---
--- The lookup of RankBrowser.Toggle happens at CALL time, so a later
+-- So the toggle is published here on a well-named plain global, which the main
+-- add-on can call directly and never touch the client's slash registry
+-- internals. The lookup of RankBrowser.Toggle happens at CALL time, so a later
 -- replacement of the module function is still honoured.
+local g = _G
 local function toggleLeaderboard()
     return RankBrowser.Toggle()
 end
 rawset(g, "TacoTipExtrasToggleLeaderboard", toggleLeaderboard)
-
-local slashCmdList = rawget(g, "SlashCmdList")
-if type(slashCmdList) == "table" then
-    slashCmdList["TACOTIPRANKS"] = toggleLeaderboard
-end

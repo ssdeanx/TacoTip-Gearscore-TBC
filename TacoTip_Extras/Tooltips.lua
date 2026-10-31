@@ -144,7 +144,7 @@ local function noteRenderError(message)
 
     -- The FIRST report of a distinct message goes out in full. The set of
     -- reported messages is bounded: past the cap a new distinct message is
-    -- still counted and still named in /ttgsdebug, it just does not get its
+    -- still counted and still named in /ex debug, it just does not get its
     -- own chat line every single time.
     local distinct = 0
     for _ in pairs(reportedRenderErrors) do distinct = distinct + 1 end

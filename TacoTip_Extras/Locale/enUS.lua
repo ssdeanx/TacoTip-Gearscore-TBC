@@ -120,7 +120,7 @@ local defaults = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "Open Server Leaderboard",
     ["HELP_OPENLEADERBOARD_1"] =
-    "Opens the TacoTip GearScore Server Leaderboard window (/tt ranks) to browse realm-wide standings.",
+    "Opens the TacoTip GearScore Server Leaderboard window (/ex ranks) to browse realm-wide standings.",
 
     ["HELP_RESTORE_HEADING"] = "Restore TacoTip settings",
     ["HELP_RESTORE_1"] =

@@ -2278,7 +2278,7 @@ function Adapter.GetCurrentScoreColor(score)
 end
 
 -- Debug accessor for the M-NEW1 counters above. Read-only: no display or
--- behaviour change, for /ttgsdebug-style surfaces and the harness only.
+-- behaviour change, for /ex debug-style surfaces and the harness only.
 function Adapter.GetDebugState()
     return {
         scoreColorFallbacks = scoreColorFallbacks,

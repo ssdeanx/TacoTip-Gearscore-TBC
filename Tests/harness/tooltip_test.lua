@@ -441,6 +441,9 @@ local function makeWidget(kind, name, parent, template, depth)
     w.__clearPaddingCalls = 0
     w.ClearPadding = function()
         w.__clearPaddingCalls = (w.__clearPaddingCalls or 0) + 1
+        -- Frame:ClearPadding zeroes the values. A counter-only mock could not
+        -- see the padding lifecycle bug, so the value is dropped here too.
+        w.__padding = nil
     end
     w.__backdropCalls = 0
     w.__backdropInfo = nil
@@ -2166,6 +2169,49 @@ do
         check("the clamp insets WERE set",
             GT.__clampInsets ~= nil and (GT.__clampInsets[3] or 0) == 15,
             "insets=" .. tostring(GT.__clampInsets and table.concat(GT.__clampInsets, ",")))
+
+        -- Power-bar lifecycle: padding is a bar property, so a teardown must
+        -- drop it and the next render must put it back; hiding the bar while
+        -- the tooltip stays up must drop it too; and the unit events must be
+        -- registered once per unit rather than on every render.
+        local padCalls = GT.__paddingCalls or 0
+        TT.clearTooltipVisuals(GT, nil, nil, "powerbar-test")
+        check("power-bar teardown clears the tooltip padding",
+            GT.__padding == nil,
+            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
+        settleUnitRender("player")
+        check("...and the next render re-applies it",
+            GT.__padding ~= nil and (GT.__padding[2] or 0) == 10
+            and (GT.__paddingCalls or 0) > padCalls,
+            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ","))
+            .. " calls=" .. tostring(GT.__paddingCalls))
+
+        CFG.show_power_bar = false
+        settleUnitRender("player")
+        check("hiding the power bar clears its padding",
+            GT.__padding == nil,
+            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
+        CFG.show_power_bar = true
+        settleUnitRender("player")
+
+        local regUnit = bar and bar.RegisterUnitEvent
+        local regCalls = 0
+        if (regUnit) then
+            bar.RegisterUnitEvent = function(self, event, unit)
+                regCalls = regCalls + 1
+                return regUnit(self, event, unit)
+            end
+        end
+        settleUnitRender("player")
+        local afterSame = regCalls
+        settleUnitRender("player")
+        check("the power bar registers its unit events once for the same unit",
+            regCalls == afterSame, "calls=" .. tostring(regCalls - afterSame))
+        settleUnitRender("mouseover")
+        check("...and re-registers when the unit changes",
+            regCalls > afterSame, "calls=" .. tostring(regCalls - afterSame))
+        if (regUnit) then bar.RegisterUnitEvent = regUnit end
+        settleUnitRender("player")
 
         -- A real change must write through on the next render, or these guards
         -- are latches rather than comparisons.
@@ -5016,6 +5062,188 @@ do
             GT.GetUnit, GT.__unit = savedGetUnit, savedUnitToken
         end
     end
+
+    -- ---- GearScore item-data backoff -------------------------------------
+    --
+    -- The unit render used to call GetScore on every render. GetScore registers
+    -- a ContinueOnItemLoad callback set for every uncached slot, and on the
+    -- Classic family the client asks for the item on every registration -- so a
+    -- stationary hover re-registered and re-requested the same item five times
+    -- a second. The gate makes one attempt, then backs off 0.5s, 1s, 2s, ...
+    --
+    -- Revert map (each proven red-then-green against a mutated copy):
+    --   remove the gate -> every render calls GetScore and the "inside the
+    --     window" check goes red;
+    --   remove the callback clear -> the "completion clears the ladder" check
+    --     goes red;
+    --   drop the doubling -> the 1s-window check goes red.
+    do
+        local GS = REALG.TT_GS
+        local savedGetScore = GS and GS.GetScore
+        local savedShowGS = REALG.TacoTipConfig.show_gs_player
+        local savedShowPawn = REALG.TacoTipConfig.show_pawn_player
+        local savedClock = REALG.__testClock
+        local savedUnit, savedShown = GT.__unit, GT.__shown
+        local savedGetUnit = GT.GetUnit
+        local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+        local targetGUID = UNITS.mouseover.guid
+        local calls = 0
+
+        -- This block is outside the renderer's original do-block, so it drives
+        -- the same public entry directly: seed the stock lines, install the
+        -- unit resolver, then call the post-call (pipeline) or script hook.
+        local function renderBackoffUnit()
+            local u = "mouseover"
+            local fixture = UNITS[u]
+            GT.__unit = u
+            GT.__shown = true
+            GT.GetUnit = mockGetUnit(u)
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function() return "n", u, fixture.guid end
+            end
+            GT:ClearLines()
+            GT:AddLine(fixture.name)
+            GT:AddLine("Level " .. fixture.level .. " " .. (fixture.race or ""))
+            if (fixture.class) then GT:AddLine(fixture.class) end
+            GT:AddLine("Testguild")
+            GT:AddLine("")
+            GT:AddLine("HP: 50/50")
+            local post = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[1]) or nil
+            if (post) then
+                post.fn(GT, { guid = fixture.guid })
+            elseif (hookUnit) then
+                hookUnit(GT)
+            end
+        end
+
+        check("GS backoff: TT_GS.GetScore is mockable", type(savedGetScore) == "function")
+        if (type(savedGetScore) == "function") then
+            GS.GetScore = function() calls = calls + 1; return 0, 0 end
+            REALG.TacoTipConfig.show_gs_player = true
+            REALG.TacoTipConfig.show_pawn_player = false
+            TT._gsRetry = nil
+            TT._gsRetryCount = nil
+            REALG.__testClock = 1000
+
+            renderBackoffUnit()
+            check("GS backoff: the first render attempts once",
+                calls == 1, "calls=" .. tostring(calls))
+
+            renderBackoffUnit()
+            check("GS backoff: a render inside the 0.5s window does not re-attempt",
+                calls == 1, "calls=" .. tostring(calls))
+
+            REALG.__testClock = 1000.5
+            renderBackoffUnit()
+            check("GS backoff: the next attempt happens after 0.5s",
+                calls == 2, "calls=" .. tostring(calls))
+
+            REALG.__testClock = 1001.0
+            renderBackoffUnit()
+            check("GS backoff: the window doubles to 1s",
+                calls == 2, "calls=" .. tostring(calls))
+
+            REALG.__testClock = 1001.5
+            renderBackoffUnit()
+            check("GS backoff: the doubled window expires",
+                calls == 3, "calls=" .. tostring(calls))
+
+            pcall(_G.TacoTip_GSCallback, targetGUID)
+            check("GS backoff: a completion callback clears the ladder",
+                TT._gsRetry == nil or TT._gsRetry[targetGUID] == nil,
+                "retry=" .. tostring(TT._gsRetry and TT._gsRetry[targetGUID]))
+
+            -- Positive-score memo: once the score exists, a re-render with the
+            -- same cache items table must not call GetScore again; a replaced
+            -- table must. Revert map: remove the memo -> the second check goes
+            -- red (calls=2).
+            do
+                local okMemoCI, memoCI = pcall(REALG.LibStub, "LibForeverInspector", true)
+                if (okMemoCI and memoCI) then
+                    local guid = targetGUID
+                    local savedRecord = memoCI.cache and memoCI.cache[guid]
+                    memoCI.cache = memoCI.cache or {}
+                    memoCI.cache[guid] = { items = {}, time = 1 }
+                    calls = 0
+                    TT._gsMemo = nil
+                    TT._gsMemoCount = nil
+                    TT._gsRetry = nil
+                    TT._gsRetryCount = nil
+                    GS.GetScore = function() calls = calls + 1; return 1234, 100 end
+                    REALG.__testClock = 2000
+                    renderBackoffUnit()
+                    check("GS memo: the first render scores",
+                        calls == 1, "calls=" .. tostring(calls))
+                    renderBackoffUnit()
+                    check("GS memo: a second render with the same gear table reuses the score",
+                        calls == 1, "calls=" .. tostring(calls))
+                    memoCI.cache[guid] = { items = {}, time = 2 }
+                    renderBackoffUnit()
+                    check("GS memo: a new gear table re-scores",
+                        calls == 2, "calls=" .. tostring(calls))
+                    TT._gsMemo = nil
+                    TT._gsMemoCount = nil
+                    if (savedRecord ~= nil) then
+                        memoCI.cache[guid] = savedRecord
+                    else
+                        memoCI.cache[guid] = nil
+                    end
+                end
+            end
+
+            TT._gsRetry = nil
+            TT._gsRetryCount = nil
+            GS.GetScore = savedGetScore
+            REALG.TacoTipConfig.show_gs_player = savedShowGS
+            REALG.TacoTipConfig.show_pawn_player = savedShowPawn
+            REALG.__testClock = savedClock
+            GT.GetUnit, GT.__unit, GT.__shown = savedGetUnit, savedUnit, savedShown
+            if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+        end
+    end
+end
+
+-- ==========================================================================
+-- Modifier re-render: only the shift keys change the wide/mini style, so only
+-- they may rebuild the unit tooltip. Ctrl/Alt press and release used to run
+-- the whole SetUnit path for no visual change. Revert map: drop the key check
+-- -> the LCTRL assertion goes red.
+-- ==========================================================================
+do
+    local prevStyle = REALG.TacoTipConfig.tip_style
+    local prevShown, prevUnit = GT.__shown, GT.__unit
+    local prevGetUnit, prevSetUnit = GT.GetUnit, GT.SetUnit
+    local prevDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+    local rebuilds = 0
+
+    GT.__shown = true
+    GT.__unit = "mouseover"
+    GT.GetUnit = mockGetUnit("mouseover")
+    GT.SetUnit = function() rebuilds = rebuilds + 1 end
+    if (REALG.TooltipUtil) then
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "mouseover", UNITS.mouseover.guid end
+    end
+
+    local handler = TT.frame and TT.frame.__scripts and TT.frame.__scripts.OnEvent
+    check("modifier filter: the event frame handler is reachable", type(handler) == "function")
+    if (type(handler) == "function") then
+        REALG.TacoTipConfig.tip_style = 2
+        pcall(handler, TT.frame, "MODIFIER_STATE_CHANGED", "LCTRL", 1)
+        check("a ctrl press does not rebuild a unit tooltip",
+            rebuilds == 0, "rebuilds=" .. tostring(rebuilds))
+        pcall(handler, TT.frame, "MODIFIER_STATE_CHANGED", "RSHIFT", 1)
+        check("a shift press does rebuild it",
+            rebuilds == 1, "rebuilds=" .. tostring(rebuilds))
+        REALG.TacoTipConfig.tip_style = 3
+        pcall(handler, TT.frame, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+        check("a style that does not read shift does not rebuild",
+            rebuilds == 1, "rebuilds=" .. tostring(rebuilds))
+    end
+
+    REALG.TacoTipConfig.tip_style = prevStyle
+    GT.__shown, GT.__unit = prevShown, prevUnit
+    GT.GetUnit, GT.SetUnit = prevGetUnit, prevSetUnit
+    if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = prevDisp end
 end
 
 -- ==========================================================================

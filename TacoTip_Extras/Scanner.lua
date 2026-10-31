@@ -170,7 +170,7 @@ end
 -- already been committed. But the guard made the failure INVISIBLE -- the
 -- new state was already published when the listener raised, so the update was
 -- lost with nothing said and nothing counted. Counted here with the last
--- message kept, and printed by /ttgsdebug (Core.lua).
+-- message kept, and printed by /ex debug (Core.lua).
 local listenerErrors = 0
 local lastListenerError = nil
 
@@ -186,7 +186,7 @@ local lastListenerError = nil
 -- The capture is therefore guarded, and the failure is COUNTED with its
 -- message kept: a prevented raise that leaves no trace is exactly the
 -- "silent failure" this repository forbids. Counted here, printed by
--- /ttgsdebug (Core.lua).
+-- /ex debug (Core.lua).
 local captureErrors = 0
 local lastCaptureError = nil
 
@@ -1336,7 +1336,7 @@ end
 -- caller (Options.lua's level-70 checkbox) discarded even the pcall's
 -- boolean. The checkbox flipped, the setting was written, the metrics kept
 -- the old verdict, and NOTHING said so: no message, no counter, nothing in
--- /ttgsdebug.
+-- /ex debug.
 --
 -- So the failure is captured, COUNTED, and reported -- once, naming the
 -- failure -- and the caller is told how many evaluations failed so it can
@@ -1495,7 +1495,7 @@ function Scanner.Unsubscribe(listener)
 end
 
 -- Debug accessor for the listener fan-out counter above (read-only). Printed
--- by /ttgsdebug (Core.lua) and read by the harness.
+-- by /ex debug (Core.lua) and read by the harness.
 function Scanner.GetDebugState()
     return {
         listenerErrors = listenerErrors,

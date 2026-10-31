@@ -107,7 +107,7 @@ end
 -- committed. But the guard made the failure INVISIBLE, and the cache entry
 -- was already mutated when the listener raised -- so the update was lost with
 -- nothing said and nothing counted. Counted here with the last message kept,
--- and printed by /ttgsdebug (Core.lua).
+-- and printed by /ex debug (Core.lua).
 local listenerErrors = 0
 local lastListenerError = nil
 
@@ -342,7 +342,7 @@ function Cache.Unsubscribe(listener)
 end
 
 -- Debug accessor for the listener fan-out counter above (read-only). Printed
--- by /ttgsdebug (Core.lua) and read by the harness.
+-- by /ex debug (Core.lua) and read by the harness.
 function Cache.GetDebugState()
     return {
         listenerErrors = listenerErrors,

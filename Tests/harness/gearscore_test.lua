@@ -584,25 +584,32 @@ check("GetItemHunterScore(nil) returns 0 safely", nilHunterScore == 0, "got " ..
 --    the throttle every hover re-requests every uncached item.
 -- ============================================================================
 
--- NOTE: dot calls, not colons. RequestLoadItemDataByID is a plain function
--- stored on TT_GS; a colon call would pass the module table as the itemID and
--- every assertion below would pin the same single throttle slot.
-if (type(GS.RequestLoadItemDataByID) == "function") then
+-- NOTE: the helper is file-local, so this drives the only public path that
+-- reaches it: an unknown link makes GetItemScore request the id through the
+-- throttled helper. The old block guarded on `GS.RequestLoadItemDataByID`,
+-- which is never exported, and therefore never ran at all.
+do
+    local savedThrottle = GS._itemRequestTime
+    GS._itemRequestTime = {}
     rawItemRequests = 0
-    GS.RequestLoadItemDataByID(424242)
+    CACHE_TIME = 1000
+
+    GS:GetItemScore("item:424242")
     check("first item-data request passes through",
         rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
-    GS.RequestLoadItemDataByID(424242)
+    GS:GetItemScore("item:424242")
     check("a rapid second request for the same item is throttled",
         rawItemRequests == 1, "rawCalls=" .. tostring(rawItemRequests))
     -- A different itemID is a different throttle slot, not a bypass.
-    GS.RequestLoadItemDataByID(424243)
+    GS:GetItemScore("item:424243")
     check("...while a different itemID gets its own slot",
         rawItemRequests == 2, "rawCalls=" .. tostring(rawItemRequests))
     CACHE_TIME = CACHE_TIME + 3
-    GS.RequestLoadItemDataByID(424242)
+    GS:GetItemScore("item:424242")
     check("...and the window expiring re-requests",
         rawItemRequests == 3, "rawCalls=" .. tostring(rawItemRequests))
+
+    GS._itemRequestTime = savedThrottle
 end
 
 

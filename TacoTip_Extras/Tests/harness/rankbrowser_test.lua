@@ -1423,6 +1423,16 @@ namespace.Scanner = {
     GetProgress = function() return progressState end,
 }
 
+-- The rank scan is BLOCKED in production: RefreshProgress returns early
+-- while IsScanAvailable() is false, so the completion-edge machinery below is
+-- only reachable once the scan returns. Stub it TRUE here to keep that code
+-- covered; the blocked behaviour itself is pinned in load_test.lua.
+local realIsScanAvailable = RankBrowser.IsScanAvailable
+check(type(realIsScanAvailable) == "function",
+    "RankBrowser publishes the scan-availability probe",
+    type(realIsScanAvailable))
+RankBrowser.IsScanAvailable = function() return true end
+
 check(frame.scanStatus ~= nil, "the window owns a scan-status line", type(frame.scanStatus))
 if frame.scanStatus then
     check(not frame.scanStatus:IsShown(), "the scan-status line starts hidden")
@@ -1486,6 +1496,8 @@ if frame.scanStatus then
     check(not frame.scanStatus:IsShown(), "the auto-hide timer clears the completion line")
     _G.C_Timer = nil
 end
+
+RankBrowser.IsScanAvailable = realIsScanAvailable
 
 -- Restore the environment: no Scanner again, so the next RefreshProgress must
 -- take the scanner-absent path -- bar hidden, no raise.

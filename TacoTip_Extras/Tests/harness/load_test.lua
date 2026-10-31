@@ -1789,8 +1789,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.3",
-    "TOC ## Version is 1.2.3", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.4",
+    "TOC ## Version is 1.2.4", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -1805,7 +1805,12 @@ check(type(tocMeta.IconTexture) == "string"
 -- comparison: a call inside an operator expression is not reliably truncated
 -- to one value, and comparing the substitution COUNT to a string is a test
 -- that can never pass for the right reason.
-local WANTED_INTERFACES = "11509, 20506, 38002, 16001, 120105"
+-- The TOC deliberately advertises retail 12.1.7 (120107) as well as 12.0.5
+-- (120105); the assertion used to pin only 120105 and went red on that
+-- deliberate expansion (bench/audits/2026-10-26-v088-readiness-cache-and-diag.md,
+-- G3a). Keep this literal in step with the TOC: retiring a client family is a
+-- release decision and must be made in BOTH places, never silently here.
+local WANTED_INTERFACES = "11509, 20506, 38002, 16001, 120105, 120107"
 check((tocMeta.Interface or "") == WANTED_INTERFACES or (tocMeta.Interface or "") == "11509, 20506, 38002, 16001, 110002, 110100, 110200, 120000, 120100",
     "TOC ## Interface lists all supported clients",
     "got '" .. tostring(tocMeta.Interface) .. "'")
@@ -2356,9 +2361,21 @@ do
         mark(choiceKey)
     end
 
+    -- The rank scan is BLOCKED (see RankBrowser.IsScanAvailable), so the two
+    -- strings its button used to carry are intentionally unreferenced until
+    -- the feature returns. Their eleven translations are KEPT rather than
+    -- deleted, because deleting translator work for a paused feature is worse
+    -- than two documented dead keys. This is the only permitted retirement,
+    -- named explicitly so a genuinely new orphan key still goes red.
+    local RETIRED_KEYS = {
+        LB_SCAN = true,
+        LB_SCAN_BUSY = true,
+    }
     local unread = {}
     for key in pairs(EX["enUS"]) do
-        if not read[key] then unread[#unread + 1] = key end
+        if not read[key] and not RETIRED_KEYS[key] then
+            unread[#unread + 1] = key
+        end
     end
     table.sort(unread)
     check(#unread == 0, "every locale key is read somewhere in the add-on",
@@ -5346,7 +5363,7 @@ do
 
     -- Old and unknown strides: refused cleanly, never raised. Short payloads
     -- refuse by length; full-stride payloads carrying a foreign version token
-    -- refuse at the gate AND count for /ttgsdebug -- a silent hole would trade
+    -- refuse at the gate AND count for /ex debug -- a silent hole would trade
     -- the noisy fallback for an invisible one. The wire is pre-release, so
     -- there are no compat shims: the ten-field pre-Stage-2 stride, the
     -- eleven-field Stage-2 stride, the diet "1" stride and any unknown
@@ -5369,7 +5386,7 @@ do
         "an unknown version token is refused, never raised (group pin with the versionReject count below)")
     local versionAfter = (RankSync.GetDebugState().outcomes or {}).versionReject or 0
     check(versionAfter == versionBefore + 2,
-        "refused strides are counted for /ttgsdebug (versionReject: diet-\"1\" + unknown; ten/eleven-field refuse by length, uncounted)",
+        "refused strides are counted for /ex debug (versionReject: diet-\"1\" + unknown; ten/eleven-field refuse by length, uncounted)",
         ("before=%s after=%s"):format(tostring(versionBefore), tostring(versionAfter)))
 
     local badPayload = "R;invalid;short"
@@ -6393,7 +6410,7 @@ do
     -- below executes in production but never fired in the harness: RAID
     -- and INSTANCE_CHAT answers, the CHANNEL-active answer, the end-to-end
     -- CHAT_MSG_ADDON threading, the legacy-global nil result, the
-    -- oversize/other/error/channel-throttle buckets, the /ttgsdebug print
+    -- oversize/other/error/channel-throttle buckets, the /ex debug print
     -- lines, and the outbound id shape. All reuse this block's send
     -- capture, phase isolation and re-arm -- no new production seams.
     -- ------------------------------------------------------------------
@@ -6609,23 +6626,23 @@ do
         "a channel-throttled send is re-queued and delivered on the next tick",
         table.concat(ctRetry, " | "))
 
-    -- /ttgsdebug print lines: the buckets are asserted through GetDebugState
+    -- /ex debug print lines: the buckets are asserted through GetDebugState
     -- above, but the printed lines are what the operator reads -- a renamed
     -- bucket key between Core and RankSync would pass every snapshot check
     -- while printing zeros. Capture what the slash handler actually emits.
     local chatBefore = #CHAT
-    REALG.SlashCmdList.TTEXTRASDEBUG()
+    REALG.TacoTipExtrasPrintDebugSnapshot()
     local chatJoined = ""
     for index = chatBefore + 1, #CHAT do
         chatJoined = chatJoined .. "\n" .. tostring(CHAT[index])
     end
-    check(chatJoined:find("/ttgsdebug rank sync", 1, true) ~= nil,
-        "/ttgsdebug prints the rank-sync section",
+    check(chatJoined:find("/ex debug rank sync", 1, true) ~= nil,
+        "/ex debug prints the rank-sync section",
         "lines=" .. tostring(#CHAT - chatBefore))
     check(chatJoined:find("sends success=", 1, true) ~= nil
         and chatJoined:find("skipped no-transport=", 1, true) ~= nil
         and chatJoined:find("channel=", 1, true) ~= nil,
-        "/ttgsdebug prints the outcome buckets and channel state",
+        "/ex debug prints the outcome buckets and channel state",
         chatJoined:sub(1, 120))
 
     -- The surfaces block (final hunter H-3).
@@ -6641,8 +6658,8 @@ do
     -- on the accessor alone would pass with the surface rotting again.
     do
         local surfacesText = chatJoined
-        check(surfacesText:find("/ttgsdebug surfaces", 1, true) ~= nil,
-            "/ttgsdebug prints the surfaces block",
+        check(surfacesText:find("/ex debug surfaces", 1, true) ~= nil,
+            "/ex debug prints the surfaces block",
             "lines=" .. tostring(#CHAT - chatBefore))
 
         local driverState = namespace.Tooltips.GetDriverState()
@@ -6682,7 +6699,7 @@ do
             end
         end
         check(#notPrinted == 0,
-            "/ttgsdebug prints every diagnostic counter with its live value",
+            "/ex debug prints every diagnostic counter with its live value",
             "not printed: " .. table.concat(notPrinted, ", "))
 
         -- The "last reason" companions: a count without a reason is not
@@ -6707,7 +6724,7 @@ do
             end
         end
         check(#missingReasons == 0,
-            "/ttgsdebug prints the last reason beside each counter",
+            "/ex debug prints the last reason beside each counter",
             "not printed: " .. table.concat(missingReasons, ", "))
     end
 
@@ -7296,7 +7313,7 @@ check(RankDB.GetRecord("Player-41-D1")
         and RankDB.GetRecord("Player-41-D1").faction))
 
 -- The scan-time gate: a record the client positively identifies as foreign
--- skips the store, counted for /ttgsdebug. Unresolvable units keep filing
+-- skips the store, counted for /ex debug. Unresolvable units keep filing
 -- (the harness defaults -- UnitTokenFromGUID nil -- must behave EXACTLY
 -- like the unresolved case, or the immediate-register pin above would break).
 local savedResolve = REALG.UnitTokenFromGUID
@@ -7313,7 +7330,7 @@ check(RankDB.GetRecord("Player-41-F1") == nil,
     "Stage2: a positively-foreign scan record does not file",
     "filed=" .. tostring(type(RankDB.GetRecord("Player-41-F1")) == "table"))
 check((gateAfter.scanForeignRealm or 0) > (gateBefore.scanForeignRealm or 0),
-    "Stage2: the foreign-realm skip is counted for /ttgsdebug",
+    "Stage2: the foreign-realm skip is counted for /ex debug",
     ("before=%s after=%s"):format(
         tostring(gateBefore.scanForeignRealm),
         tostring(gateAfter.scanForeignRealm)))
@@ -7517,7 +7534,7 @@ check(type(dbg3) == "table" and type(dbg3.outcomes) == "table"
     and (dbg3.outcomes.versionReject or 0) >= 1
     and dbg3.queueDepth ~= nil and dbg3.channelState ~= nil
     and dbgRow ~= nil and dbgRow.guild == "KnightsOfTheRound",
-    "/ttgsdebug surfaces Stage-3-visible state",
+    "/ex debug surfaces Stage-3-visible state",
     "versionReject=" .. tostring(dbg3.outcomes and dbg3.outcomes.versionReject))
 
 end)
@@ -8098,26 +8115,26 @@ do
                 .. tostring(type(templateTitle) == "table"
                     and templateTitle.GetText and templateTitle:GetText()))
     end
-    -- SLASH_<NAME>1 and SlashCmdList.<NAME> are ONE declaration. Asserting the
-    -- SLASH_ half alone passed while the SlashCmdList half was missing, which
-    -- is how a registered-but-dead command ships.
-    check(type(REALG.SlashCmdList) == "table" and type(REALG.SlashCmdList.TACOTIPRANKS) == "function",
-        "Slash handler TACOTIPRANKS is registered in SlashCmdList")
-    check(REALG.SLASH_TACOTIPRANKS1 == "/ttrank", "Slash command /ttrank registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS1))
-    check(REALG.SLASH_TACOTIPRANKS2 == "/ttranks", "Slash command /ttranks registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS2))
-    check(REALG.SLASH_TACOTIPRANKS3 == "/ttleaderboard", "Slash command /ttleaderboard registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS3))
-    check(REALG.SLASH_TACOTIPRANKS4 == "/tt lb", "Slash command /tt lb registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS4))
-    check(REALG.SLASH_TACOTIPRANKS5 == "/tt rank", "Slash command /tt rank registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS5))
-    check(REALG.SLASH_TACOTIPRANKS6 == "/tt ranks", "Slash command /tt ranks registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS6))
-    check(REALG.SLASH_TACOTIPRANKS7 == "/tt leaderboard", "Slash command /tt leaderboard registered", "got " .. tostring(REALG.SLASH_TACOTIPRANKS7))
+    -- ONE command family, ONE registration: /ex, /extras, /tte. The /tt
+    -- family belongs to TacoTip itself, and the Extras used to add /ttgs,
+    -- /ttrank(s) and /ttgsdebug on top of that prefix -- two add-ons sharing a
+    -- prefix is how a command gets handled by the wrong add-on (/tt lb never
+    -- dispatched at all; TacoTip has no `ranks` branch). The old family must
+    -- be GONE, not merely shadowed.
+    check(type(REALG.SlashCmdList) == "table"
+            and type(REALG.SlashCmdList.TACOTIPEXTRAS) == "function",
+        "Slash handler TACOTIPEXTRAS is registered in SlashCmdList")
+    check(REALG.SLASH_TACOTIPEXTRAS1 == "/ex",
+        "Slash command /ex registered", "got " .. tostring(REALG.SLASH_TACOTIPEXTRAS1))
+    check(REALG.SLASH_TACOTIPEXTRAS2 == "/extras",
+        "Slash command /extras registered", "got " .. tostring(REALG.SLASH_TACOTIPEXTRAS2))
+    check(REALG.SLASH_TACOTIPEXTRAS3 == "/tte",
+        "Slash command /tte registered", "got " .. tostring(REALG.SLASH_TACOTIPEXTRAS3))
 
-    -- Every declared alias must be DISTINCT. A duplicated alias would shadow
-    -- another and make one unreachable, and a table keyed by alias would let
-    -- one silently win.
     do
         local seen, dupes = {}, {}
-        for i = 1, 7 do
-            local alias = REALG["SLASH_TACOTIPRANKS" .. i]
+        for index = 1, 3 do
+            local alias = REALG["SLASH_TACOTIPEXTRAS" .. index]
             if type(alias) == "string" then
                 if seen[alias] then
                     dupes[#dupes + 1] = alias
@@ -8125,10 +8142,27 @@ do
                 seen[alias] = true
             end
         end
-        check(#dupes == 0, "all seven slash aliases are distinct", table.concat(dupes, ","))
+        check(#dupes == 0, "all three /ex aliases are distinct",
+            table.concat(dupes, ","))
     end
 
-    -- The Options button must actually invoke the browser. Reaching into the
+    -- The retired /tt family. A leftover alias would still be dispatched by
+    -- the client and would make the add-on answer to two prefixes again.
+    check(REALG.SlashCmdList.TACOTIPRANKS == nil
+            and REALG.SlashCmdList.TTEXTRAS == nil
+            and REALG.SlashCmdList.TTEXTRASDEBUG == nil,
+        "the Extras registers no /tt-prefixed slash handlers",
+        "TACOTIPRANKS=" .. tostring(REALG.SlashCmdList.TACOTIPRANKS)
+            .. " TTEXTRAS=" .. tostring(REALG.SlashCmdList.TTEXTRAS)
+            .. " TTEXTRASDEBUG=" .. tostring(REALG.SlashCmdList.TTEXTRASDEBUG))
+    check(REALG.SLASH_TACOTIPRANKS1 == nil
+            and REALG.SLASH_TTEXTRAS1 == nil
+            and REALG.SLASH_TTEXTRASDEBUG1 == nil,
+        "the Extras declares no /tt-prefixed slash aliases",
+        "ranks1=" .. tostring(REALG.SLASH_TACOTIPRANKS1)
+            .. " ttgs1=" .. tostring(REALG.SLASH_TTEXTRAS1)
+            .. " debug1=" .. tostring(REALG.SLASH_TTEXTRASDEBUG1))
+
     -- The Options button must actually invoke the browser. Invoking its stored
     -- OnClick is the only way to catch a callback wired to a stale or nil
     -- reference -- a button that exists, looks right, and does nothing.
@@ -8153,8 +8187,6 @@ do
         end
 
         if type(optionsButton) == "table" then
-            -- SetScript stores handlers as __script_<name> (see the patched
-            -- SetScript above); GetScript returns the chained result.
             local onClick = rawget(optionsButton, "__script_OnClick")
             check(type(onClick) == "function",
                 "the Options leaderboard button stored a callable OnClick",
@@ -8173,29 +8205,56 @@ do
         end
     end
 
-    -- The slash handler must open the browser too, not merely exist.
+    -- The /ex handler must dispatch its arguments, and the default must open
+    -- the settings page rather than the leaderboard.
     do
+        local handler = REALG.SlashCmdList.TACOTIPEXTRAS
+        check(type(handler) == "function",
+            "the /ex handler is callable",
+            "got " .. type(handler))
+
         local browser = namespace.RankBrowser
+        local options = namespace.Options
         local toggles = 0
-        local realToggle = nil
-        if type(browser) == "table" and type(browser.Toggle) == "function" then
-            realToggle = browser.Toggle
-            browser.Toggle = function(...)
-                toggles = toggles + 1
-                return realToggle(...)
-            end
+        local opened = 0
+        local realToggle = browser.Toggle
+        local realOpen = options.Open
+        browser.Toggle = function(...)
+            toggles = toggles + 1
+            return realToggle(...)
         end
-        local handler = type(REALG.SlashCmdList) == "table"
-            and REALG.SlashCmdList.TACOTIPRANKS or nil
+        options.Open = function()
+            opened = opened + 1
+            return true
+        end
+
         if type(handler) == "function" then
-            local ok, err = pcall(handler, "/tt lb")
-            check(ok, "the /tt lb slash handler does not raise", tostring(err))
-            check(toggles == 1, "the /tt lb slash handler opens the browser",
-                "Toggle called " .. toggles .. " times")
+            local ok, err = pcall(handler, "")
+            check(ok, "/ex with no argument does not raise", tostring(err))
+            pcall(handler, "   ")
+            check(opened == 2,
+                "/ex and /ex with whitespace open the settings page",
+                "opened=" .. tostring(opened))
+
+            pcall(handler, "ranks")
+            pcall(handler, "RANKS")
+            pcall(handler, "lb")
+            check(toggles == 3,
+                "/ex ranks and /ex lb open the leaderboard (case-insensitive)",
+                "toggles=" .. tostring(toggles))
+
+            local chatBefore = #CHAT
+            pcall(handler, "not-a-command")
+            check(#CHAT > chatBefore,
+                "an unknown /ex argument prints the command list instead of doing nothing",
+                "lines=" .. tostring(#CHAT - chatBefore))
+            check(toggles == 3 and opened == 2,
+                "...and it does not open a window as a side effect",
+                "toggles=" .. tostring(toggles) .. " opened=" .. tostring(opened))
         end
-        if realToggle then
-            browser.Toggle = realToggle
-        end
+
+        browser.Toggle = realToggle
+        options.Open = realOpen
     end
 
     -- The main add-on must be able to open the browser WITHOUT reaching into
@@ -8209,12 +8268,10 @@ do
     -- registered handler into getmetatable(list).__index (line 732) and then
     -- WIPES the real table (line 735), which happens immediately BEFORE the
     -- handler is dispatched (ChatFrameEditBox.lua:245, 257, 259). So a
-    -- rawget(SlashCmdList, "TACOTIPRANKS") at dispatch time returns nil and the
-    -- main add-on's "/tt" forwarding never reaches the Extras.
+    -- rawget(SlashCmdList, "TACOTIPEXTRAS") at dispatch time returns nil and
+    -- the main add-on's "/tt" forwarding never reaches the Extras.
     --
-    -- The Extras therefore publishes the SAME function on a plain global. The
-    -- identity check below is the point: it is not a copy that could drift
-    -- from the registered handler, it IS the registered handler.
+    -- The Extras therefore publishes the SAME function on a plain global.
     do
         local browser = namespace.RankBrowser
         local published = REALG.TacoTipExtrasToggleLeaderboard
@@ -8223,22 +8280,17 @@ do
             "TacoTipExtrasToggleLeaderboard is published as a callable global",
             "type=" .. type(published))
 
-        check(type(REALG.SlashCmdList) == "table"
-            and type(REALG.SlashCmdList.TACOTIPRANKS) == "function"
-            and published == REALG.SlashCmdList.TACOTIPRANKS,
-            "the published global is the same function the slash handler invokes")
-
         -- Model the client's proxy exactly: the handler lives in the
         -- metatable's __index and the real table is empty. A rawget of the
-        -- proxy is nil -- which is what the main add-on used to hit -- while
-        -- the published global is unaffected.
+        -- proxy is nil, while the published global is unaffected.
         local proxy = setmetatable({}, { __index = {} })
         if type(REALG.SlashCmdList) == "table" then
-            getmetatable(proxy).__index["TACOTIPRANKS"] = REALG.SlashCmdList.TACOTIPRANKS
+            getmetatable(proxy).__index["TACOTIPEXTRAS"] =
+                REALG.SlashCmdList.TACOTIPEXTRAS
         end
-        check(rawget(proxy, "TACOTIPRANKS") == nil,
+        check(rawget(proxy, "TACOTIPEXTRAS") == nil,
             "model: the client's proxy table is empty at dispatch time",
-            "got " .. tostring(rawget(proxy, "TACOTIPRANKS")))
+            "got " .. tostring(rawget(proxy, "TACOTIPEXTRAS")))
         check(type(published) == "function",
             "the published global survives the proxy wipe")
 
@@ -8264,17 +8316,12 @@ do
     end
 end
 
--- The debug snapshot must be reachable WITHOUT the client's slash registry,
--- for the same reason the leaderboard toggle is.
+-- The debug snapshot, published for TacoTip, and reached by /ex debug.
 --
--- The main add-on owns "/tt" and the client dispatches only the FIRST
--- whitespace-delimited token (ChatFrameEditBox.lua:222 on the Classic
--- branches, :779 on live -- strmatch(text, "^(/[^%s]+)")), so "/ttgsdebug"
--- arrives at the main add-on as the argument "gsdebug" and the Extras' own
--- single-token alias is never dispatched by the client. The Extras therefore
--- publishes the SAME function on a plain global; the identity check below is
--- the point -- it is not a copy that could drift, it IS the registered
--- handler.
+-- The main add-on owns its own /tt family and cannot read a handler out of the
+-- client's proxy registry, so the Extras publishes this on a plain global.
+-- The slash handler calls THAT global, so there is one implementation and no
+-- second copy to drift.
 do
     local published = REALG.TacoTipExtrasPrintDebugSnapshot
 
@@ -8282,33 +8329,32 @@ do
         "TacoTipExtrasPrintDebugSnapshot is published as a callable global",
         "type=" .. type(published))
 
-    check(type(REALG.SlashCmdList) == "table"
-        and type(REALG.SlashCmdList.TTEXTRASDEBUG) == "function"
-        and published == REALG.SlashCmdList.TTEXTRASDEBUG,
-        "the published debug global is the same function the slash handler invokes")
-
-    -- Model the client's proxy exactly: the handler lives in the metatable's
-    -- __index and the real table is empty, so a rawget at dispatch time finds
-    -- nothing while the published global is unaffected.
-    local debugProxy = setmetatable({}, { __index = {} })
-    if type(REALG.SlashCmdList) == "table" then
-        getmetatable(debugProxy).__index["TTEXTRASDEBUG"] =
-            REALG.SlashCmdList.TTEXTRASDEBUG
-    end
-    check(rawget(debugProxy, "TTEXTRASDEBUG") == nil,
-        "model: the client's proxy table is empty at dispatch time",
-        "got " .. tostring(rawget(debugProxy, "TTEXTRASDEBUG")))
-    check(type(published) == "function",
-        "the published debug global survives the proxy wipe")
-
     -- It must actually print the snapshot, not merely exist.
     local chatBefore = #CHAT
     local ok, err = pcall(published)
     check(ok, "calling the published debug global does not raise", tostring(err))
     local printed = table.concat(CHAT, "\n", chatBefore + 1)
-    check(printed:find("/ttgsdebug local snapshot", 1, true) ~= nil,
+    check(printed:find("/ex debug local snapshot", 1, true) ~= nil,
         "the published debug global prints the snapshot",
         "lines=" .. tostring(#CHAT - chatBefore))
+
+    -- /ex debug must go through the published global, not a private copy. If
+    -- the handler stops using it, this counter stays at 0.
+    local calls = 0
+    local realPublish = REALG.TacoTipExtrasPrintDebugSnapshot
+    REALG.TacoTipExtrasPrintDebugSnapshot = function()
+        calls = calls + 1
+    end
+    local handler = type(REALG.SlashCmdList) == "table"
+        and REALG.SlashCmdList.TACOTIPEXTRAS or nil
+    if type(handler) == "function" then
+        local handlerOK, handlerErr = pcall(handler, "debug")
+        check(handlerOK, "/ex debug does not raise", tostring(handlerErr))
+    end
+    REALG.TacoTipExtrasPrintDebugSnapshot = realPublish
+    check(calls == 1,
+        "/ex debug prints through the published global",
+        "calls=" .. tostring(calls))
 end
 
 -- ---------------------------------------------------------------------------
@@ -9172,18 +9218,18 @@ do
 end
 
 -- ---------------------------------------------------------------------------
--- Item 2 (cont.): the counter reaches /ttgsdebug
+-- Item 2 (cont.): the counter reaches /ex debug
 -- ---------------------------------------------------------------------------
 --
 -- A counter no user can see is a counter that cannot be acted on -- that is
 -- the whole reason the surfaces block exists.
 do
     local chatBefore = #CHAT
-    local ok = pcall(REALG.SlashCmdList.TTEXTRASDEBUG)
+    local ok = pcall(REALG.TacoTipExtrasPrintDebugSnapshot)
     local printed = table.concat(CHAT, "\n", chatBefore + 1)
-    check(ok == true, "/ttgsdebug still runs", "")
+    check(ok == true, "/ex debug still runs", "")
     check(printed:find("scanner-reevaluate-errors=", 1, true) ~= nil,
-        "/ttgsdebug prints the re-evaluation failure counter",
+        "/ex debug prints the re-evaluation failure counter",
         printed:sub(1, 300))
 end
 
@@ -9410,8 +9456,11 @@ do
         check(printed:find("RankBrowser.Toggle is missing", 1, true) ~= nil,
             "a missing leaderboard module produces a message naming the missing surface",
             printed:sub(1, 300))
-        check(printed:find("RankBrowser.StartScan is missing", 1, true) ~= nil,
-            "a missing scan module produces a message naming the missing surface",
+        -- The scan control is BLOCKED, so it no longer reaches for a module
+        -- and has nothing to name: the old "StartScan is missing" message is
+        -- retired with the working scan. The click must still be a safe no-op.
+        check(printed:find("RankBrowser.StartScan is missing", 1, true) == nil,
+            "the blocked scan button no longer reports a missing scan module",
             printed:sub(1, 300))
     end
 end
@@ -9631,10 +9680,10 @@ end
 --      four were the outliers, and they are the only calls in the path that
 --      can raise. They degrade now.
 --
---   3. The "Scan now" control promised a scan and delivered a scanner stuck
---      in "pending": it began a generation and never ran it, and it also
---      stole a scan that was already scheduled. It goes through the ONE home
---      for "start a scan" now.
+--   3. The rank "Scan now" control is BLOCKED: it was crashing the inspect
+--      engine, so StartScan reports false, no generation is bumped, and both
+--      surfaces are greyed out with the reason. The gear-inspection scanner
+--      that feeds the tooltip and the equipment summaries is NOT blocked.
 -- ---------------------------------------------------------------------------
 
 do
@@ -9696,15 +9745,15 @@ if type(inventoryReadyConsumer) == "function" and type(CoreX) == "table"
         printed = printed .. CHAT[index] .. "\n"
     end
     check(printed:find("inventory-ready-errors=", 1, true) ~= nil,
-        "/ttgsdebug PRINTS the consumer-failure counter",
+        "/ex debug PRINTS the consumer-failure counter",
         printed)
     local messageLine = printed:match("last%-inventory%-ready%-error=([^\n]*)")
     check(type(messageLine) == "string"
         and messageLine:find("injected scanner raise", 1, true) ~= nil,
-        "/ttgsdebug PRINTS the consumer-failure message",
+        "/ex debug PRINTS the consumer-failure message",
         printed)
     check(printed:find("inspect-ready-errors=", 1, true) ~= nil,
-        "/ttgsdebug PRINTS the ENGINE's own counter for the same boundary",
+        "/ex debug PRINTS the ENGINE's own counter for the same boundary",
         printed)
 end
 
@@ -9787,57 +9836,84 @@ do
 end
 
 -- -------------------------------------------------------------------------
--- 3. The "Scan now" control leaves the scanner in a state that COMPLETES,
---    and bumps the generation exactly once for that scan.
+-- 3. The rank scan control is BLOCKED: it reports no start, bumps no
+--    generation, and both surfaces are greyed out by ONE shared styler.
 -- -------------------------------------------------------------------------
 do
-    -- Clear any scan that is already pending, so the generation this control
-    -- bumps is the only one it bumps.
-    for _, frame in ipairs(FRAMES_BY_REGISTRATION) do
-        if type(frame) == "table" and type(frame.GetScript) == "function"
-            and type(frame:GetScript("OnUpdate")) == "function" then
-            pcall(frame:GetScript("OnUpdate"), frame)
-        end
-    end
+    check(BrowserX.IsScanAvailable() == false,
+        "RankBrowser reports the rank scan as unavailable", "")
 
     local progressBefore = ScannerX.GetProgress()
     local generationBefore = progressBefore and progressBefore.generation or 0
-    local started = false
+    local started = true
     local startOK, startErr = pcall(function()
         started = BrowserX.StartScan()
     end)
     check(startOK == true,
-        "the scan control does not raise",
+        "the blocked scan control does not raise",
         tostring(startErr))
-    check(started == true,
-        "the scan control reports that a scan was started",
+    check(started == false,
+        "the blocked scan control reports that no scan started",
         "started=" .. tostring(started))
 
     local progressAfter = ScannerX.GetProgress()
     local generationAfter = progressAfter and progressAfter.generation or 0
-    check(generationAfter == generationBefore + 1,
-        "the scan control bumps the generation EXACTLY ONCE for one scan",
-        "before=" .. tostring(generationBefore) .. " after=" .. tostring(generationAfter))
+    check(generationAfter == generationBefore,
+        "a blocked scan bumps NO generation",
+        "before=" .. tostring(generationBefore)
+            .. " after=" .. tostring(generationAfter))
 
-    -- Now run the scan the way the client does: the scan is deferred to the
-    -- event frame's next OnUpdate tick.
-    for _, frame in ipairs(FRAMES_BY_REGISTRATION) do
-        if type(frame) == "table" and type(frame.GetScript) == "function"
-            and type(frame:GetScript("OnUpdate")) == "function" then
-            pcall(frame:GetScript("OnUpdate"), frame)
-        end
+    -- The shared styler: label, disabled state, grey, and a click that cannot
+    -- start anything even if the disabled state is lost. A fake button keeps
+    -- the assertions independent of the harness mock (whose Disable is a noop).
+    local styled = { text = nil, disabled = false, alpha = nil, scripts = {} }
+    function styled:SetText(text) self.text = text end
+    function styled:Disable() self.disabled = true end
+    function styled:SetAlpha(value) self.alpha = value end
+    function styled:SetScript(name, fn) self.scripts[name] = fn end
+    local styleOK, styleErr = pcall(BrowserX.StyleScanButton, styled, false)
+    check(styleOK == true,
+        "the shared scan styler does not raise", tostring(styleErr))
+    check(type(styled.text) == "string"
+            and styled.text:lower():find("disabled", 1, true) ~= nil,
+        "the scan button says it is disabled", tostring(styled.text))
+    check(styled.disabled == true,
+        "the scan button is disabled", tostring(styled.disabled))
+    check(type(styled.alpha) == "number" and styled.alpha < 1,
+        "the scan button is greyed out (alpha below 1)", tostring(styled.alpha))
+    check(type(styled.scripts.OnClick) == "function",
+        "the scan button's click handler was replaced",
+        type(styled.scripts.OnClick))
+    if type(styled.scripts.OnClick) == "function" then
+        local clickOK, clickResult = pcall(styled.scripts.OnClick, styled)
+        check(clickOK and clickResult == false,
+            "clicking the disabled scan button does nothing",
+            tostring(clickResult))
     end
+    check(BrowserX.StyleScanButton(nil) == false,
+        "the shared scan styler refuses a missing button instead of raising")
 
-    local state = ScannerX.GetCurrent()
-    check(type(state) == "table" and state.status == "complete",
-        "the scan the control started REACHES a COMPLETE state, not a permanent 'pending'",
-        "status=" .. tostring(state and state.status)
-            .. " reason=" .. tostring(state and state.reason))
-    check(type(state) == "table" and state.generation == generationAfter,
-        "...on the generation the control bumped",
-        "state.generation=" .. tostring(state and state.generation)
-            .. " expected=" .. tostring(generationAfter))
+    -- Both surfaces are styled by that one helper: the Options page button and
+    -- the leaderboard footer's control must agree with it.
+    local optionsButton = RAWL.TacoTip_ExtrasScanNowButton
+    check(type(optionsButton) == "table",
+        "the Options page scan button was created by name",
+        type(optionsButton))
+    if type(optionsButton) == "table" then
+        check(optionsButton:GetText():lower():find("disabled", 1, true) ~= nil,
+            "the Options scan button carries the disabled label",
+            optionsButton:GetText())
+    end
+    local rankFrameX = RAWL.TacoTipRankFrame
+    if type(rankFrameX) == "table"
+        and type(rankFrameX.scanButton) == "table"
+        and type(rankFrameX.scanButton.GetText) == "function" then
+        check(rankFrameX.scanButton:GetText():lower():find("disabled", 1, true) ~= nil,
+            "the leaderboard scan button carries the disabled label",
+            rankFrameX.scanButton:GetText())
+    end
 end
+
 end
 
 out(("\n-------------------------------------------------------------\n"))

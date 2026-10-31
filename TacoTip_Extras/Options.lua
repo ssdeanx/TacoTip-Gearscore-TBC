@@ -52,7 +52,7 @@ Potential GS and Completion do not rate best-in-slot gear, recommend specific en
 -- So every call's RESULT is captured here. A failure is counted, the reason
 -- is kept, and the player is told in one plain chat line naming the problem
 -- -- the same shape as printOptionsLine and as the main add-on's counters.
--- The counter and the last reason are surfaced by /ttgsdebug (Core.lua's
+-- The counter and the last reason are surfaced by /ex debug (Core.lua's
 -- surfaces block).
 --
 -- The forward declaration of printOptionsLine lives here because the
@@ -127,7 +127,7 @@ local function runBrowserAction(methodName, reason)
     return false
 end
 
--- The diagnostic snapshot /ttgsdebug reads. Same shape as the other modules'
+-- The diagnostic snapshot /ex debug reads. Same shape as the other modules'
 -- GetDebugState accessors.
 function Options.GetDebugState()
     return {
@@ -240,7 +240,7 @@ local HELP = {
     openLeaderboard = {
         heading = "Open Server Leaderboard",
         lines = {
-            "Opens the TacoTip GearScore Server Leaderboard window (/tt ranks) to browse realm-wide standings.",
+            "Opens the TacoTip GearScore Server Leaderboard window (/ex ranks) to browse realm-wide standings.",
         },
     },
     scanNow = {
@@ -1757,36 +1757,30 @@ local function createPanel()
         "reset"
     )
 
-    -- Scan control, mirroring the leaderboard header's.
-    --
-    -- Placed on its own row below Restore/Reset rather than beside them: two
-    -- 210-wide buttons already span x=16..452 of a 590-wide page, so a third
-    -- would run off the edge. It calls the same RankBrowser.StartScan the
-    -- header does, so there is one implementation of "start a scan", not two
-    -- that can drift.
+    -- Scan control, BLOCKED (see RankBrowser.IsScanAvailable). The same shared
+    -- styling the leaderboard footer uses greys it out, so the two surfaces
+    -- cannot disagree about the label or the disabled state. The help text is
+    -- deliberately left alone: it describes what a scan would do, and it
+    -- returns with the feature.
     controls.scanNow = createActionButton(
         addonName .. "ScanNowButton",
-        "Disabled Temporarily",
+        "Scan disabled",
         16,
         function()
-            local browser = namespace.RankBrowser
-            if type(browser) == "table" and type(browser.StartScan) == "function" then
-                -- Disabled temporarily
-                return
-            end
-            -- The button was pressed and NOTHING happened. Say which module
-            -- is missing, so the click is not a dead end.
-            printOptionsLine(
-                "the scan is unavailable: RankBrowser.StartScan is missing.")
+            return false
         end,
         "scanNow",
         -384
     )
-    if controls.scanNow and type(controls.scanNow.Disable) == "function" then
-        controls.scanNow:Disable()
-    end
-    if controls.scanNow and type(controls.scanNow.SetText) == "function" then
-        controls.scanNow:SetText("Disabled Temporarily")
+    do
+        local browser = namespace.RankBrowser
+        if type(browser) == "table"
+            and type(browser.StyleScanButton) == "function" then
+            pcall(browser.StyleScanButton, controls.scanNow, false)
+        elseif controls.scanNow
+            and type(controls.scanNow.Disable) == "function" then
+            pcall(controls.scanNow.Disable, controls.scanNow)
+        end
     end
 
     -- Progress rail for the same scan. Both surfaces read
@@ -1818,6 +1812,17 @@ local function createPanel()
             return
         end
         scanAccum = 0
+        -- The rank scan is blocked: never paint this rail from the
+        -- gear-inspection scanner's progress. That scanner still runs for the
+        -- character and inspect summaries, and a moving bar under a
+        -- "Scan disabled" button reads as a scan that is working.
+        local browser = namespace.RankBrowser
+        if type(browser) == "table"
+            and type(browser.IsScanAvailable) == "function"
+            and not browser.IsScanAvailable() then
+            scanBar:Hide()
+            return
+        end
         local scanner = namespace.Scanner
         if type(scanner) ~= "table" or type(scanner.GetProgress) ~= "function" then
             scanBar:Hide()
@@ -1940,21 +1945,97 @@ local function createPanel()
     panel:Hide()
 end
 
+-- The Extras' ONE slash command: /ex, with /extras and /tte as aliases.
+--
+-- The /tt family belongs to TacoTip itself (root options.lua registers /tt,
+-- /tacotip, /tip, /gs, /gearscore and /taco). The Extras used to add /ttgs and
+-- /ttrank(s) on top of that prefix, and /tt lb never worked at all: the client
+-- dispatches only the FIRST whitespace-delimited token, and TacoTip has no
+-- `ranks` branch. One add-on, one prefix -- so the Extras owns /ex and the
+-- leaderboard rides an argument:
+--
+--   /ex                open the Extras settings
+--   /ex ranks | lb     toggle the server leaderboard
+--   /ex debug          print the diagnostic snapshot
+--   /ex help           list these commands
+--
+-- SLASH_<NAME>n and SlashCmdList.<NAME> are ONE declaration: Blizzard pairs
+-- them by name, so both halves must be written or neither fires. Both are
+-- written through _G so the aliases and the registration cannot drift.
+local function slashWord(message)
+    local text = type(message) == "string" and message or ""
+    local trimmed = text:gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed == "" then
+        return ""
+    end
+    return (trimmed:match("^(%S+)") or ""):lower()
+end
+
+local function openLeaderboard()
+    local toggle = _G.TacoTipExtrasToggleLeaderboard
+    if type(toggle) ~= "function" then
+        local browser = namespace.RankBrowser
+        if type(browser) == "table" and type(browser.Toggle) == "function" then
+            toggle = browser.Toggle
+        end
+    end
+    if type(toggle) ~= "function" then
+        printOptionsLine(
+            "the leaderboard is unavailable: RankBrowser.Toggle is missing.")
+        return false
+    end
+    local ok, result = pcall(toggle)
+    if not ok then
+        printOptionsLine("the leaderboard could not open: " .. tostring(result))
+        return false
+    end
+    return result ~= false
+end
+
+local function printSlashHelp()
+    printOptionsLine("/ex - open TacoTip Extras settings")
+    printOptionsLine("/ex ranks - open the server leaderboard")
+    printOptionsLine("/ex debug - print the Extras diagnostic snapshot")
+    printOptionsLine("/ex help - show this list")
+end
+
 local function registerSlashCommand()
     if type(_G.SlashCmdList) ~= "table" then
         return false
     end
     if not slashHandler then
-        slashHandler = function()
-            Options.Open()
+        slashHandler = function(message)
+            local word = slashWord(message)
+            if word == "" or word == "options" or word == "config"
+                or word == "settings" then
+                Options.Open()
+                return
+            end
+            if word == "ranks" or word == "rank" or word == "lb"
+                or word == "leaderboard" or word == "browser" then
+                openLeaderboard()
+                return
+            end
+            if word == "debug" or word == "diag" or word == "diagnostics" then
+                local debugPrint = _G.TacoTipExtrasPrintDebugSnapshot
+                if type(debugPrint) ~= "function" then
+                    printOptionsLine("the debug snapshot is unavailable.")
+                    return
+                end
+                local ok, err = pcall(debugPrint)
+                if not ok then
+                    printOptionsLine(
+                        "the debug snapshot failed: " .. tostring(err))
+                end
+                return
+            end
+            printSlashHelp()
         end
     end
-    -- SLASH_<NAME>1 and SlashCmdList.<NAME> are one pair. Write both through
-    -- _G so the declaration and the registration cannot drift apart -- Core.lua
-    -- used to spell this differently for the /ttgsdebug pair, with a bare
-    -- global on one side.
-    _G.SLASH_TTEXTRAS1 = "/ttgs"
-    _G.SlashCmdList.TTEXTRAS = slashHandler
+    _G.SLASH_TACOTIPEXTRAS1 = "/ex"
+    _G.SLASH_TACOTIPEXTRAS2 = "/extras"
+    _G.SLASH_TACOTIPEXTRAS3 = "/tte"
+    _G.SlashCmdList.TACOTIPEXTRAS = slashHandler
     return true
 end
 
@@ -2029,7 +2110,7 @@ end
 -- InterfaceOptions_AddCategory, which nests it.
 --
 -- The equipment page is parented to THIS add-on's main page rather than to
--- TacoTip's root, which is what makes /ttgs open straight to the main category
+-- TacoTip's root, which is what makes /ex open straight to the main category
 -- while Esc still shows "Equipment Windows" indented one level under it.
 local function registerLegacyCategory()
     local add = _G.InterfaceOptions_AddCategory

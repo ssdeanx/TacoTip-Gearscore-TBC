@@ -115,7 +115,7 @@ local L = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "서버 순위표 열기",
     ["HELP_OPENLEADERBOARD_1"] =
-    "TacoTip GearScore 서버 순위표 창(/tt ranks)을 열어 영역 전체 순위를 확인합니다.",
+    "TacoTip GearScore 서버 순위표 창(/ex ranks)을 열어 영역 전체 순위를 확인합니다.",
 
     ["HELP_RESTORE_HEADING"] = "TacoTip 설정 복원",
     ["HELP_RESTORE_1"] =

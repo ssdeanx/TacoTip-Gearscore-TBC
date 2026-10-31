@@ -115,7 +115,7 @@ local L = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "開啟伺服器排行榜",
     ["HELP_OPENLEADERBOARD_1"] =
-    "開啟 TacoTip 裝備分數伺服器排行榜視窗（/tt ranks），瀏覽整個伺服器範圍的排名。",
+    "開啟 TacoTip 裝備分數伺服器排行榜視窗（/ex ranks），瀏覽整個伺服器範圍的排名。",
 
     ["HELP_RESTORE_HEADING"] = "還原 TacoTip 設定",
     ["HELP_RESTORE_1"] =

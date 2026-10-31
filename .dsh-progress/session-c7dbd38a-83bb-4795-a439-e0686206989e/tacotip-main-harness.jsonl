@@ -1,0 +1,7 @@
+{"v":1,"task":"tacotip-main-harness","state":"running","msg":"started: bash Tests/harness/run_all.sh","at":1793382741974}
+{"v":1,"task":"tacotip-main-harness","msg":"ok    options_test CLASSIC_ERA","at":1793382742979}
+{"v":1,"task":"tacotip-main-harness","msg":"ok    settings_test TBC_ANNIV settings nopawn","at":1793382743981}
+{"v":1,"task":"tacotip-main-harness","msg":"ok    settings_test FOREVER nosettings pawn","at":1793382744986}
+{"v":1,"task":"tacotip-main-harness","msg":"ok    taint_test FOREVER","at":1793382745990}
+{"v":1,"task":"tacotip-main-harness","msg":"-------------------------------------------------------------","at":1793382746026}
+{"v":1,"task":"tacotip-main-harness","state":"done","pct":100,"msg":"finished","at":1793382746026}

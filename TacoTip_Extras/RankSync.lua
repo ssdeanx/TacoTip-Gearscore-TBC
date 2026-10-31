@@ -54,7 +54,7 @@ local PROBE_RECHECK_SECONDS = 120
 local PROBE_MAX_THROTTLE_STRIKES = 3
 local probeCounter = 0
 
--- Outcome counters, surfaced through /ttgsdebug (audit §6.2 Stage 1 item 3).
+-- Outcome counters, surfaced through /ex debug (audit §6.2 Stage 1 item 3).
 -- Lazy keys: every bucket starts empty and only appears once it fires.
 local outcomes = {}
 
@@ -249,7 +249,7 @@ function RankSync.DeserializeRecord(payload)
     if parts[2] ~= WIRE_VERSION then
         -- Old unversioned strides (pre-diet 10- and 11-field) and any unknown
         -- future version: refused cleanly, never raised, counted for
-        -- /ttgsdebug. The wire is pre-release, so there are no compat shims.
+        -- /ex debug. The wire is pre-release, so there are no compat shims.
         countOutcome("versionReject")
         return nil
     end
@@ -760,7 +760,7 @@ end
 -- The door is a fixed window over the inbound rate: at most
 -- INBOUND_WINDOW_MAX queries are honoured per INBOUND_WINDOW_SECONDS. A
 -- payload past the door is REFUSED before any timer is scheduled, and the
--- refusal is COUNTED, so it is visible in /ttgsdebug rather than silent.
+-- refusal is COUNTED, so it is visible in /ex debug rather than silent.
 --
 -- The window is measured on the client's UPTIME clock (GetTime), the same
 -- clock the respond interval uses. A client with no clock has no measurable
@@ -780,7 +780,7 @@ local inboundWindowCount = 0
 -- Is there room in the inbound window for one more query?
 --
 -- True when the payload may proceed, false when it is refused. A refusal is
--- counted in the outcome buckets, which /ttgsdebug publishes, so a flood is
+-- counted in the outcome buckets, which /ex debug publishes, so a flood is
 -- visible rather than silent.
 local function inboundWindowAllows()
     local now = getClock()
@@ -1460,7 +1460,7 @@ end
 RankSync.SyncNow = syncNow
 RankSync.SYNC_THROTTLE_SECONDS = SYNC_THROTTLE_SECONDS
 
--- /ttgsdebug reads this (Core.lua), per audit §6.2 Stage 1 item 3: sends
+-- /ex debug reads this (Core.lua), per audit §6.2 Stage 1 item 3: sends
 -- bucketed by client-declared outcome, queue pressure, the channel machine,
 -- and the counted-skip buckets (dead-transport answers, version rejects).
 -- It is a snapshot copy, not a live reference.

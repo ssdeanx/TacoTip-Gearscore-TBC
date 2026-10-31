@@ -115,7 +115,7 @@ local L = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "Ouvrir le classement du serveur",
     ["HELP_OPENLEADERBOARD_1"] =
-    "Ouvre la fenêtre du classement GearScore de TacoTip (/tt ranks) pour consulter les classements de tout le royaume.",
+    "Ouvre la fenêtre du classement GearScore de TacoTip (/ex ranks) pour consulter les classements de tout le royaume.",
 
     ["HELP_RESTORE_HEADING"] = "Restaurer les réglages de TacoTip",
     ["HELP_RESTORE_1"] =

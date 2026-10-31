@@ -1142,8 +1142,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "0.8.8",
-        "0.8.8: TacoTip.toc declares version 0.8.8 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "0.8.9",
+        "0.8.9: TacoTip.toc declares version 0.8.9 (got " .. tostring(tocVer) .. ")" }
 
     -- Pin 5: Active unit context formatting and distance yardage
     if type(TT.PrintDiagnostics) == "function" then
@@ -1579,7 +1579,7 @@ do
         local text7 = table.concat(lines7, "\n")
         check("0.8.8: collection failure still prints the minimal facts",
             okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
-            and text7:find("version: 0.8.8", 1, true) ~= nil
+            and text7:find("version: 0.8.9", 1, true) ~= nil
             and text7:find("load OK:", 1, true) ~= nil
             and text7:find("client family:", 1, true) ~= nil
             and text7:find("interface:", 1, true) ~= nil,

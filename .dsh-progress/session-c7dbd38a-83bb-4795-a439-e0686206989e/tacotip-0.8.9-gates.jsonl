@@ -1,0 +1,4 @@
+{"v":1,"task":"tacotip-0.8.9-gates","state":"running","msg":"started: bash -c cd /home/sam/TacoTip-Gearscore-TBC && bash Tests/harness/run_all.sh | tail -3 && LUA=lua5.4 bash Tests/harness/run_all.sh | tail -3 && LUA=luajit bash T","at":1793387361557}
+{"v":1,"task":"tacotip-0.8.9-gates","msg":"failed: load_test RETAIL without GameTooltip_SetDefaultAnchor","at":1793387366581}
+{"v":1,"task":"tacotip-0.8.9-gates","msg":"verify_release: PASS","at":1793387375850}
+{"v":1,"task":"tacotip-0.8.9-gates","state":"done","pct":100,"msg":"finished","at":1793387375850}

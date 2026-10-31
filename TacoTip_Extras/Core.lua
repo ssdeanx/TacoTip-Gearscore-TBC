@@ -930,7 +930,7 @@ end
 --
 -- So the call is guarded. The failure is COUNTED with its message kept, one
 -- chat line goes out so it is never silent, and the counter is printed by
--- /ttgsdebug (see printDebugSnapshot).
+-- /ex debug (see printDebugSnapshot).
 local consumerErrors = 0
 local lastConsumerError = nil
 local announcedConsumerErrors = {}
@@ -945,7 +945,7 @@ local function recordConsumerError(err)
             and type(_G.DEFAULT_CHAT_FRAME.AddMessage) == "function" then
             pcall(_G.DEFAULT_CHAT_FRAME.AddMessage, _G.DEFAULT_CHAT_FRAME,
                 "|cffff5555TacoTip Extras:|r the scan callback failed: " .. message
-                .. " (the inspect engine keeps running; the count is in /ttgsdebug)")
+                .. " (the inspect engine keeps running; the count is in /ex debug)")
         end
     end
 end
@@ -1152,7 +1152,7 @@ local function printDebugSnapshot()
     local pendingCount = type(state.pendingItemCount) == "number"
         and state.pendingItemCount or 0
 
-    addChatLine("/ttgsdebug local snapshot")
+    addChatLine("/ex debug local snapshot")
     -- The family split the PvP wire rule depends on. It is printed because it
     -- is otherwise invisible: `Core.UsesModernPvPSurface` decides from the
     -- library's project identity, and a client whose identity cannot be read
@@ -1202,7 +1202,7 @@ local function printDebugSnapshot()
     if rankSync and type(rankSync.GetDebugState) == "function" then
         syncState = rankSync.GetDebugState()
         counts = syncState.outcomes
-        addChatLine("/ttgsdebug rank sync")
+        addChatLine("/ex debug rank sync")
         addChatLine("channel=" .. tostring(syncState.channelState)
             .. "(" .. tostring(syncState.channelId) .. ")"
             .. " channel-failures=" .. tostring(syncState.channelFailures)
@@ -1258,7 +1258,7 @@ local function printDebugSnapshot()
     local optionsDebug = (options and type(options.GetDebugState) == "function")
         and options.GetDebugState() or nil
 
-    addChatLine("/ttgsdebug surfaces")
+    addChatLine("/ex debug surfaces")
     addChatLine("driver mode=" .. tostring(driver and driver.mode)
         .. " renders=" .. tostring(driver and driver.renders)
         .. " rows=" .. tostring(driver and driver.rows)
@@ -1329,52 +1329,28 @@ local function printDebugSnapshot()
         .. " last-options-action-failure=" .. tostring(optionsDebug and optionsDebug.lastActionFailure))
 end
 
--- Blizzard pairs SLASH_<NAME>1 with SlashCmdList.<NAME>; the two are one
--- declaration. This used to write SLASH_TTGSEDEBUG1 as a bare global while
--- Options.lua wrote _G.SLASH_TTGSE1 for the other command, so the same pair was
--- spelled two different ways in two files. Both are written through _G now.
+-- The debug snapshot, published on a plain global.
 --
--- The debug snapshot is ALSO published on a plain global, the way
--- RankBrowser.lua publishes TacoTipExtrasToggleLeaderboard.
+-- Slash commands have ONE home now: Options.lua's registerSlashCommand owns
+-- /ex, /extras and /tte, and the `debug` argument runs this publisher. This
+-- file used to declare SLASH_TTEXTRASDEBUG1 = "/ttgsdebug" as well -- that
+-- went with the /tt prefix, so there is no second registration to drift.
 --
--- WHY it has to be: the client WIPES the real SlashCmdList table immediately
--- before it dispatches a slash command. ChatFrameSetup.lua:3-11 proxies the
--- table (setmetatable(list, { __index = {} }) at :4, applied to _G.SlashCmdList
--- at :11), ChatFrameUtil.lua's ImportListToHash moves every registered handler
--- into getmetatable(list).__index (:732 on the Classic branches, :809 on
--- forever/live) and then wipes the real table (tWipe at :735 / :812), and
--- ChatFrameEditBox.lua imports and dispatches in that order (import at :245 on
--- the Classic branches, :253/:247 on forever/live; dispatch at :257-259 /
--- :265-267 / :259-261). So a rawget(SlashCmdList, "TTEXTRASDEBUG") at dispatch
--- time is ALWAYS nil -- on classic_era, classic_anniversary, classic_titan,
--- forever and live alike.
+-- WHY a plain global is still needed: the main add-on CANNOT read a handler
+-- back out of SlashCmdList. The client's SlashCmdList is a PROXY table --
+-- ChatFrameSetup.lua:3-11 proxies it, ChatFrameUtil.lua's ImportListToHash
+-- moves every handler into getmetatable(list).__index and then WIPES the real
+-- table (:732/:735 on the Classic branches, :809/:812 on forever/live) --
+-- which happens immediately BEFORE the handler is dispatched
+-- (ChatFrameEditBox.lua:245, 257, 259). So a rawget at dispatch time is ALWAYS
+-- nil on all five clients. TacoTip calls this global directly instead.
 --
--- That matters because the main add-on owns "/tt" and the client dispatches
--- only the FIRST whitespace-delimited token (ChatFrameEditBox.lua:222 on the
--- Classic branches, :779 on live: strmatch(text, "^(/[^%s]+)")). So
--- "/ttgsdebug" reaches the main add-on's handler with the argument "gsdebug"
--- and is never dispatched as the Extras' own command: the Extras' only
--- user-facing diagnostic surface would be unreachable. The main add-on calls
--- this global directly instead of reaching into the client's slash registry.
---
--- It is the SAME function object the slash handler invokes -- identity, not a
--- copy -- so the two can never drift apart. The global is published ONCE, on
--- the first registration, and the slash entry below is left alone when it is
--- already taken (the existing guard): a second load of this file therefore
--- cannot end up with a new global pointing at a new closure while the slash
--- entry still points at the old one. The global is published BEFORE that
--- guard, so it is there even on a client where SlashCmdList is not a table
--- yet at this point.
-local function registerDebugCommand()
-    local slashList = _G.SlashCmdList
+-- The global is published ONCE, and only when it is not already a function; a
+-- second load of this file therefore cannot repoint it at a new closure.
+local function publishDebugSnapshot()
     if type(rawget(_G, "TacoTipExtrasPrintDebugSnapshot")) ~= "function" then
         rawset(_G, "TacoTipExtrasPrintDebugSnapshot", printDebugSnapshot)
     end
-    if type(slashList) ~= "table" or slashList.TTEXTRASDEBUG ~= nil then
-        return
-    end
-    _G.SLASH_TTEXTRASDEBUG1 = "/ttgsdebug"
-    slashList.TTEXTRASDEBUG = printDebugSnapshot
 end
 
 local function runScheduledScan(self)
@@ -1478,14 +1454,14 @@ function Core.GetInitializeFailures()
     return initializeFailures
 end
 
--- The same list with the reason attached, for /ttgsdebug.
+-- The same list with the reason attached, for /ex debug.
 function Core.GetInitializeFailureDetails()
     return initializeFailureDetails
 end
 
 -- The library-callback failure ledger (the guarded consumer above).
 --
--- Read by /ttgsdebug. The count is the only trace of a raise that was
+-- Read by /ex debug. The count is the only trace of a raise that was
 -- PREVENTED rather than fixed, so it has to exist and it has to be printed.
 function Core.GetConsumerErrors()
     return consumerErrors
@@ -1543,7 +1519,7 @@ local function initialize(self)
             onInventoryReady
         ) == true
     end
-    guarded("SlashCommand", registerDebugCommand)
+    guarded("DebugSnapshot", publishDebugSnapshot)
     guarded("EventRegistration", function()
         self:RegisterEvent("PLAYER_ENTERING_WORLD")
         self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")

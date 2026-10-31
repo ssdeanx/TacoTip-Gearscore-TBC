@@ -54,7 +54,7 @@ required external dependency. `TacoTip_Extras.toc` declares
 `## Dependencies: TacoTip`, so TacoTip loads first and nothing in TacoTip
 Extras works without it.
 
-**Version.** TacoTip Extras **1.2.3** enforces a **minimum TacoTip version of
+**Version.** TacoTip Extras **1.2.4** enforces a **minimum TacoTip version of
 0.8.0** — the constant `MINIMUM_TACOTIP_VERSION = { 0, 8, 0 }` at
 `TacoTip_Extras/TacoTipAdapter.lua:44` — and then probes the capabilities it
 actually calls. It deliberately does **not** compare the inspector's version:

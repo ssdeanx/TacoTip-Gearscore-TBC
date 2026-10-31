@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.2.3
+version: 1.2.4
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE
@@ -23,7 +23,7 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
 status: released
-updated: 2026-10-20
+updated: 2026-10-30
 ```
 
 
@@ -34,7 +34,7 @@ updated: 2026-10-20
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing. It is not a fork of TacoTip, and it implies no endorsement by either.
 
-**Version:** 1.2.3
+**Version:** 1.2.4
 **Author:** AcidBomb (Pilsung)
 
 ## Requirements
@@ -58,15 +58,15 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 ## Features
 
 - Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with dedicated background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
-- Interactive Leaderboard window (`/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`) covering the **whole realm**, opening centred on your own rank, with class and guild filtering, live search, a sortable level column, `▲ Top` / `▼ My Rank` navigation, keyboard navigation, a Comfortable-rows density option, and personal rank standing.
-- A shared scan button on the leaderboard header and the Options page drives one scan, with a progress rail fed by `Scanner.GetProgress()`.
+- Interactive Leaderboard window (`/ex ranks`, also `/ex lb`, `/ex rank`, `/ex leaderboard`) covering the **whole realm**, opening centred on your own rank, with class and guild filtering, live search, a sortable level column, `▲ Top` / `▼ My Rank` navigation, keyboard navigation, a Comfortable-rows density option, and personal rank standing.
+- The leaderboard header and the Options page carry the shared **Scan disabled** control. The realm scan is blocked until the crash it caused in the inspect engine is fixed; the button is greyed out and explains itself on hover. Gear inspection, the inspect-frame summary and tooltip scores are unaffected.
 - Automatic tooltip rank display (`GS Rank: #14 [#2 Warrior]`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
 - One shared equipment-summary mode with separately saved Character and Inspect positions.
 - Locked-by-default movement using a small handle that appears only while positions are unlocked.
 - Local, friendly remote, and permitted enemy remote player support with fail-closed non-player rejection.
-- Native Options integration, `/ttgs`, a movable minimap shortcut (left-click: leaderboard, right-click: settings), an **eleven-locale** leaderboard window, Options page, tooltip and equipment-summary UI following TacoTip's language setting, and reversible TacoTip coexistence. The window's labels, column headers, sort dropdown, row tooltips, empty and scan states, the footer's standing line, the class names and the time-ago strings are translated, as are the Options page's control labels, help headings and help text, the mode names and the tooltip's metric labels. A few status and diagnostic strings are still English only — see **Known limitations**.
+- Native Options integration, `/ex` (aliases `/extras`, `/tte`), a movable minimap shortcut (left-click: leaderboard, right-click: settings), an **eleven-locale** leaderboard window, Options page, tooltip and equipment-summary UI following TacoTip's language setting, and reversible TacoTip coexistence. The window's labels, column headers, sort dropdown, row tooltips, empty and scan states, the footer's standing line, the class names and the time-ago strings are translated, as are the Options page's control labels, help headings and help text, the mode names and the tooltip's metric labels. A few status and diagnostic strings are still English only — see **Known limitations**.
 
 ## Metrics
 
@@ -97,7 +97,7 @@ enhancer settings** to go back to the defaults.
 
 TacoTip Extras features a decentralized, HonorSpy-style peer-to-peer sync engine that continuously aggregates player GearScores across your realm:
 
-- **Interactive Leaderboard Window:** Access via `/tt lb`, `/ttrank`, `/ttranks`, `/ttleaderboard`, `/tt rank`, `/tt ranks`, `/tt leaderboard`, or via the **Open Server Leaderboard** button in Options.
+- **Interactive Leaderboard Window:** Access via `/ex ranks` (`/ex lb`, `/ex rank`, `/ex leaderboard` also work), or via the **Open Server Leaderboard** button in Options.
   - Ranks the **whole realm**. There is no Alliance/Horde split — a faction filter would only hide the players you want to compare yourself against.
   - **Shows sixteen players at once**, in a window wide enough for the name and spec columns to be read without crowding. The window's content is a clean vertical stack — title, filter row, summary strip, sort readout, column headers, table, progress rail, footer — and every part of it has its own space, so nothing is drawn on top of anything else.
   - **Opens on your own rank.** The window scrolls to your position and centres you on the middle visible row every time it opens, honouring the active filters and search.
@@ -107,7 +107,7 @@ TacoTip Extras features a decentralized, HonorSpy-style peer-to-peer sync engine
   - **Escape closes the browser**, on every supported client.
   - Filter by class from the **class dropdown**, by guild substring from the guild box, or type a name fragment into the search box for live filtering.
   - A muted strip reports pool size, top GearScore and realm-average GearScore; rows first seen this session carry a fresh tick.
-  - A scan button on the header (mirrored on the Options page) drives one shared scan with a progress rail. `Up`/`Down` moves an entry-anchored focus ring, `Enter` opens that row's gear. A `Comfortable rows` checkbox rebuilds the list at 32px rows (default 26px).
+  - The footer's `Scan disabled` control is mirrored on the Options page; both are greyed out while the realm scan is blocked. `Up`/`Down` moves an entry-anchored focus ring, `Enter` opens that row's gear. A `Comfortable rows` checkbox rebuilds the list at 32px rows (default 26px).
   - Your own row carries a **highlight and a `YOU` marker**, so you can see at a glance which row is you.
   - **Click any row** to open a **gear panel** for that player: their 17 equipped slots, each rendered as a real item link so the game supplies quality colour and hover tooltips. The panel has its own dark background and border, so it stays readable over whatever is behind it. Slot labels use Blizzard's own `INVTYPE_*` strings, so the panel is translated in every language the client ships. A fresh session entry renders live links; otherwise persisted IDs render dimmed with a last-synced note; only when neither exists does the plain explanation appear rather than blank rows.
   - Top players get percentile-coloured rank numbers: `#1` is the top band because it *is* the highest GearScore. The class-rank number in the tooltip line uses the same scale against the class pool.
@@ -159,13 +159,13 @@ While Basic or Detailed is active and the exact TacoTip object contract is valid
 
 Open the settings through any of these routes:
 
-- `/ttgs` (always opens the main category; it never closes Settings)
+- `/ex` (also `/extras`, `/tte`; always opens the main category and never closes Settings)
 - right-click the minimap button (toggles settings)
 - Esc → Options → Add-Ons → TacoTip Extras
 
-Open the leaderboard via `/tt lb` (or any rank slash), the **Open Server Leaderboard** button, or left-click on the minimap button.
+Open the leaderboard via `/ex ranks` (or `/ex lb`), the **Open Server Leaderboard** button, or left-click on the minimap button.
 
-The main category retains tooltip, scoring-policy, minimap, class-colour, restore, and reset controls. Its **Equipment Windows** child category contains the shared summary mode, the optional Detailed Unenhanced comparison, the lock/unlock control, and **Reset summary positions**. `/ttgs` and right-click open the main category; left-click toggles the leaderboard.
+The main category retains tooltip, scoring-policy, minimap, class-colour, restore, and reset controls. Its **Equipment Windows** child category contains the shared summary mode, the optional Detailed Unenhanced comparison, the lock/unlock control, and **Reset summary positions**. `/ex` and right-click open the main category; left-click toggles the leaderboard.
 
 The category is registered through `Settings.RegisterCanvasLayoutCategory` with
 `Equipment Windows` as a `RegisterCanvasLayoutSubcategory` beneath it. When
@@ -175,9 +175,9 @@ category name for the main page and to this add-on's main page for the equipment
 page, so the nesting is the same on both APIs. The main page is therefore a
 child of TacoTip's category rather than a second top-level entry.
 
-The minimap button can be dragged around the minimap. Right-click toggles the add-on category, closing it when that exact category is active, or switching to it from another Settings category. Left-click toggles the leaderboard. `/ttgs` always opens; it never closes Settings.
+The minimap button can be dragged around the minimap. Right-click toggles the add-on category, closing it when that exact category is active, or switching to it from another Settings category. Left-click toggles the leaderboard. `/ex` always opens; it never closes Settings.
 
-**The diagnostic snapshot is published for TacoTip.** `/ttgsdebug` prints the add-on's live counters — scan state, metric values, sync buckets, listener errors and initialization failures — to the chat frame, and it works on its own. The client's slash-command table is a proxy that is emptied before a command is dispatched, so another add-on cannot read this handler back out of it; the Extras therefore publishes the same function on the plain global `_G.TacoTipExtrasPrintDebugSnapshot`, which TacoTip calls directly. It is the same function object the `/ttgsdebug` command invokes, and the printed content is unchanged.
+**The diagnostic snapshot is published for TacoTip.** `/ex debug` prints the add-on's live counters — scan state, metric values, sync buckets, listener errors and initialization failures — to the chat frame, and it works on its own. The client's slash-command table is a proxy that is emptied before a command is dispatched, so another add-on cannot read this handler back out of it; the Extras therefore publishes the same function on the plain global `_G.TacoTipExtrasPrintDebugSnapshot`, which TacoTip calls directly. The slash handler and TacoTip both call that one global, so there is a single implementation and the printed content is unchanged.
 
 **Enable add-on** is the master output switch. Disabling it retains child preferences, hides add-on output, and releases every active TacoTip lease. **Restore TacoTip settings** remains a tooltip-only action: it disables and releases only the player-tooltip takeover and its `show_gs_player` recovery record. It does not change or suspend the equipment summary, its mode, or its positions.
 
@@ -199,7 +199,7 @@ Per-slot equipment detail renders live while a fresh scanner revision exists; pe
 
 ## Known limitations
 
-- **Already listed on CurseForge.** The CurseForge listing exists and serves **1.2.2**. Version **1.2.3** ships alongside TacoTip 0.8.4.
+- **Release status.** Version **1.2.4** is the current build in this repository; the CurseForge listing is the published distribution channel for the add-on.
 - **The Options page's integration and enhancement status lines, and the gear panel's "Last synced" note, are still English only.** The three status lines under the Options page — "TacoTip integration: …", "Remote enhancement analysis: …" and "Remote enhancement blocker: Slot …" — and the forty-seven sentences they can expand into (the compatible / incompatible / not-loaded reasons and the remote complete / unavailable / pending / suppressed / not-observed reasons) are written in English in the source, as are the **Reset summary positions** button label, the **How these scores work** heading, the equipment windows' **Drag** handle label and the gear panel's **Last synced …** and **Synced gear (item IDs only)** notes. Everything else on those surfaces is translated. Localizing them is a separate translation pass, not a code change: the strings are hardcoded English today, and the locale keys that once existed for them were never read by any code path, so they have been removed rather than left as dead weight.
 - **The level-70 restriction is a display rule.** While **Restrict Potential, Completion, and warnings to level 70** is on (the default), Potential GS, Delta, and Completion are not shown for a character below level 70 and the related warnings are held back; Current GS, Unenhanced GS, and Average iLvl still show. Turning the setting off shows the same three values at any level. On Classic Era, TBC Anniversary, and Titanforge those three metrics stay unavailable regardless of the setting, because the client does not expose the socket data they need (see the `GetItemStats` note below).
 - **The socket count comes from the documented API, and a count that contradicts the item's own gems is withheld rather than published.** On Retail and WoW Forever the number of socket slots is read from `C_Item.GetItemNumSockets` — the socket-count API Blizzard's own character frame uses, which passes the raw item link straight into it (`PaperDollFrame.lua:2775`, fed by `GetInventoryItemLink` at `:1728`; documented at `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua:854` on `origin/live`, `:876` on `origin/forever`). The add-on still cross-checks that count against the item's own gem list, parsed from the item link, and now in **both** directions: a count that is too small for the item's gems and a count that is too large for them both leave the socket-based metrics **unavailable rather than guessed** on that item.

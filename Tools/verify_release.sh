@@ -201,6 +201,51 @@ else
   done <<< "$unexpected"
 fi
 
+# 4. Version consistency. A release bump touches the TOC, both Lua fallbacks
+# (used when GetAddOnMetadata is unavailable) and the README frontmatter; if
+# they drift, the package advertises two versions.
+toc_version="$(sed -n 's/^## Version:[[:space:]]*//p' "$tree/TacoTip.toc" | tr -d '\r' | head -1)"
+if [ -n "$toc_version" ] \
+  && grep -Fq "\"$toc_version\"" "$tree/main.lua" \
+  && grep -Fq "\"$toc_version\"" "$tree/options.lua" \
+  && grep -Fxq "version: $toc_version" "$tree/README.md"; then
+  pass "version $toc_version is consistent (TOC, main.lua, options.lua, README)"
+else
+  fail "version drift (TOC='$toc_version'; check main.lua/options.lua fallbacks and README 'version:')"
+fi
+
+# 5. Interfaces. The five supported client builds are load-bearing: a missing or
+# stale value is an "out of date" add-on on that client.
+interfaces_line="$(grep -m1 '^## Interface:' "$tree/TacoTip.toc" | tr -d '\r')"
+missing_iface=""
+for iface in 11509 20506 38002 16001 120105; do
+  case "$interfaces_line" in
+    *"$iface"*) ;;
+    *) missing_iface="$missing_iface $iface" ;;
+  esac
+done
+if [ -z "$missing_iface" ]; then
+  pass "TOC advertises all five interfaces (11509, 20506, 38002, 16001, 120105)"
+else
+  fail "TOC is missing interface(s):$missing_iface"
+fi
+
+# 6. SavedVariables name, so a rename cannot ship silently.
+if grep -Eq '^## SavedVariables:.*TacoTipConfig' "$tree/TacoTip.toc"; then
+  pass "SavedVariables declares TacoTipConfig"
+else
+  fail "TOC does not declare TacoTipConfig in ## SavedVariables"
+fi
+
+# 7. The icon target exists in the package.
+icon_rel="$(grep -m1 '^## IconTexture:' "$tree/TacoTip.toc" | sed 's/^## IconTexture:[[:space:]]*//' | tr -d '\r' | tr '\\\\' '/')"
+icon_rel="${icon_rel#Interface/AddOns/TacoTip/}"
+if [ -n "$icon_rel" ] && [ -f "$tree/$icon_rel" ]; then
+  pass "icon target exists ($icon_rel)"
+else
+  fail "icon target missing from the package: '$icon_rel'"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then
   echo "verify_release: PASS"

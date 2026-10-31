@@ -55,7 +55,7 @@ local secureHooks = {}
 -- character pane or a broken inspect pane -- and the add-on has no idea why.
 --
 -- So every registered callback is bounded: the raise is caught HERE, counted,
--- and named. The counter and the last message are surfaced by /ttgsdebug
+-- and named. The counter and the last message are surfaced by /ex debug
 -- (Core.lua's surfaces block), so a broken surface is diagnosable instead of
 -- merely broken.
 --
@@ -84,7 +84,7 @@ local lastHookFailure = nil
 --- whole bind, and the equipment window is left unbound with nothing but a
 --- line in the initialization ledger to say so.
 ---
---- Every skip and every failure is counted, so /ttgsdebug can say what was
+--- Every skip and every failure is counted, so /ex debug can say what was
 --- not hooked instead of leaving it silent.
 local function hookIfDeclared(frame, scriptName, handler, label)
     if (type(frame) ~= "table" or type(frame.HasScript) ~= "function"
@@ -133,7 +133,7 @@ local function boundedCallback(label, fn)
     end
 end
 
--- The diagnostic snapshot /ttgsdebug reads. Same shape as the other modules'
+-- The diagnostic snapshot /ex debug reads. Same shape as the other modules'
 -- GetDebugState accessors.
 function Frames.GetDebugState()
     return {

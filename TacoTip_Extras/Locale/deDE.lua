@@ -115,7 +115,7 @@ local L = {
 
     ["HELP_OPENLEADERBOARD_HEADING"] = "Serverrangliste öffnen",
     ["HELP_OPENLEADERBOARD_1"] =
-    "Öffnet das Fenster der TacoTip-GearScore-Serverrangliste (/tt ranks), um die realmweiten Platzierungen zu durchsehen.",
+    "Öffnet das Fenster der TacoTip-GearScore-Serverrangliste (/ex ranks), um die realmweiten Platzierungen zu durchsehen.",
 
     ["HELP_RESTORE_HEADING"] = "TacoTip-Einstellungen wiederherstellen",
     ["HELP_RESTORE_1"] =
