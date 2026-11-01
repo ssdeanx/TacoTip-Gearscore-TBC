@@ -5181,6 +5181,58 @@ do
                     renderBackoffUnit()
                     check("GS memo: a new gear table re-scores",
                         calls == 2, "calls=" .. tostring(calls))
+
+                    -- Pawn positive-score memo: shares the same items-table
+                    -- invalidation key and active talent group.
+                    if (REALG.TT_PAWN and type(REALG.TT_PAWN.GetScore) == "function") then
+                        local savedPawnGetScore = REALG.TT_PAWN.GetScore
+                        local pawnCalls = 0
+                        REALG.TT_PAWN.GetScore = function()
+                            pawnCalls = pawnCalls + 1
+                            return 42.5, "Arms", "|cffffffff"
+                        end
+                        REALG.TacoTipConfig.show_pawn_player = true
+                        TT._gsMemo = nil
+                        TT._gsMemoCount = nil
+                        memoCI.cache[guid] = { items = {}, time = 3 }
+                        renderBackoffUnit()
+                        check("Pawn memo: the first render scores Pawn",
+                            pawnCalls == 1, "pawnCalls=" .. tostring(pawnCalls))
+                        renderBackoffUnit()
+                        check("Pawn memo: a second render with the same gear table reuses the Pawn score",
+                            pawnCalls == 1, "pawnCalls=" .. tostring(pawnCalls))
+                        memoCI.cache[guid] = { items = {}, time = 4 }
+                        renderBackoffUnit()
+                        check("Pawn memo: a new gear table re-scores Pawn",
+                            pawnCalls == 2, "pawnCalls=" .. tostring(pawnCalls))
+                        REALG.TT_PAWN.GetScore = savedPawnGetScore
+                        REALG.TacoTipConfig.show_pawn_player = false
+                    end
+
+                    -- UnitFrame_UpdateTooltip owner refresh: when the tooltip
+                    -- is owned by a Blizzard UnitFrame whose UpdateTooltip is
+                    -- UnitFrame_UpdateTooltip, async completions re-drive
+                    -- through UnitFrame_UpdateTooltip(owner) so post-SetUnit
+                    -- instruction lines on Retail/Forever do not blink off.
+                    do
+                        local ownerCalls = 0
+                        local savedUnitUpdater = REALG.UnitFrame_UpdateTooltip
+                        local savedGetOwner = GT.GetOwner
+                        local mockOwner = { unit = "mouseover" }
+                        REALG.UnitFrame_UpdateTooltip = function(frame)
+                            if (frame == mockOwner) then
+                                ownerCalls = ownerCalls + 1
+                            end
+                        end
+                        mockOwner.UpdateTooltip = REALG.UnitFrame_UpdateTooltip
+                        GT.GetOwner = function() return mockOwner end
+                        pcall(_G.TacoTip_GSCallback, guid)
+                        check("UnitFrame refresh: GSCallback drives UnitFrame_UpdateTooltip when owner matches",
+                            ownerCalls == 1, "ownerCalls=" .. tostring(ownerCalls))
+                        GT.GetOwner = savedGetOwner
+                        REALG.UnitFrame_UpdateTooltip = savedUnitUpdater
+                    end
+
                     TT._gsMemo = nil
                     TT._gsMemoCount = nil
                     if (savedRecord ~= nil) then

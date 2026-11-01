@@ -2784,19 +2784,20 @@ do
         -- end
 
         -- B. The hovered unit is dispatched BEFORE a scan candidate that was
-        --    queued after it...
-        -- do
-        --     local ci, requests, advance, tick, hover = build(project, iface, { trip = SLOW_TRIP })
-        --     ci:SetScanEnabled(true)
-        --     ci:DoInspect("other")      -- another unit takes the slot
-        --     hover("h1")                -- the hovered unit has to wait for it
-        --     ci.ScanNearby()            -- the scan queues a candidate AFTER the hover
-        --     advance(SLOW_TRIP)         -- "other" answers; the slot frees
-        --     tick()                     -- the tick dispatches what is next
-        --     check(name .. ": the hovered unit is dispatched before a queued scan candidate",
-        --         (#requests >= 2) and (requests[2] == "mouseover"),
-        --         "requests=" .. table.concat(requests, ","))
-        -- end
+        --    queued after it (the queue is drained newest-first, so the hover used
+        --    to wait behind it).
+        do
+            local ci, requests, advance, tick, hover = build(project, iface, { trip = SLOW_TRIP })
+            ci:SetScanEnabled(true)
+            ci:DoInspect("other")      -- another unit takes the slot
+            hover("h1")                -- the hovered unit has to wait for it
+            ci.ScanNearby()            -- the scan queues a candidate AFTER the hover
+            advance(SLOW_TRIP)         -- "other" answers; the slot frees
+            tick()                     -- the tick dispatches what is next
+            check(name .. ": the hovered unit is dispatched before a queued scan candidate",
+                (#requests >= 2) and (requests[2] == "mouseover"),
+                "requests=" .. table.concat(requests, ","))
+        end
 
         -- C. The hovered unit is not held back by a pacing window that
         --    ANOTHER unit's request opened...
@@ -2840,6 +2841,14 @@ do
                     and (ci.cache["Player-n1"] ~= nil),
                 "requests=" .. table.concat(requests, ",")
                     .. " cached=" .. tostring(ci.cache["Player-n1"] ~= nil))
+
+            if (ci.talents_table) then
+                local icon1 = ci:GetSpecializationIcon("WARRIOR", 1)
+                local icon2 = ci:GetSpecializationIcon("WARRIOR", 1)
+                check(name .. ": GetSpecializationIcon returns a consistent memoized icon",
+                    icon1 ~= nil and icon1 == icon2,
+                    "icon1=" .. tostring(icon1) .. " icon2=" .. tostring(icon2))
+            end
         end
     end
 end

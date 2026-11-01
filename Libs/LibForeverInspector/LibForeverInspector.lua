@@ -3048,6 +3048,8 @@ function lib:GetTalentInfoByClass(class, tabIndex, talentIndex)
     return talent.name, talent.texture, talent.tier, talent.column, 0, talent.maxRank, talent.isExceptional,
         talent.available, talent.id
 end
+local defaultGetTalentInfoByClass = lib.GetTalentInfoByClass
+local specIconByClassTab = {}
 
 local function getPlayerGUID(arg)
     if (not arg) then return nil end
@@ -5095,13 +5097,25 @@ function lib:DoInspect(unitorguid)
                 if (type(item) == "table" and unit) then
                     item.unit = unit
                 end
+                if (unit == "mouseover" and i < #queue) then
+                    table.remove(queue, i)
+                    table.insert(queue, item)
+                end
                 return true
             end
         end
         if (#queue >= 25) then
             table.remove(queue, 1)
         end
-        table.insert(queue, { guid = guid, unit = unit })
+        local newEntry = { guid = guid, unit = unit }
+        if (unit ~= "mouseover" and #queue > 0) then
+            local top = queue[#queue]
+            if (type(top) == "table" and top.unit == "mouseover") then
+                table.insert(queue, #queue, newEntry)
+                return true
+            end
+        end
+        table.insert(queue, newEntry)
         return true
     end
 end
@@ -5546,6 +5560,16 @@ function lib:GetSpecializationIcon(class, specIndex)
         end
     end
     if (lib.GetTalentInfoByClass) then
+        local useMemo = (lib.GetTalentInfoByClass == defaultGetTalentInfoByClass)
+        if (useMemo) then
+            local classMemo = specIconByClassTab[class]
+            if (classMemo) then
+                local cachedIcon = classMemo[specIndex]
+                if (cachedIcon ~= nil) then
+                    return cachedIcon or nil
+                end
+            end
+        end
         local bestTexture, bestTier = nil, -1
         for talentIndex = 1, 40 do
             local ok, name, iconTexture, tier, _, _, _, isExceptional = pcall(lib.GetTalentInfoByClass, lib, class,
@@ -5553,13 +5577,22 @@ function lib:GetSpecializationIcon(class, specIndex)
             if (not ok) then break end
             if (name and iconTexture) then
                 if (isExceptional) then
-                    return iconTexture
+                    bestTexture = iconTexture
+                    break
                 end
                 if ((tier or 0) >= bestTier) then
                     bestTexture = iconTexture
                     bestTier = tier or 0
                 end
             end
+        end
+        if (useMemo) then
+            local classMemo = specIconByClassTab[class]
+            if (not classMemo) then
+                classMemo = {}
+                specIconByClassTab[class] = classMemo
+            end
+            classMemo[specIndex] = bestTexture or false
         end
         if (bestTexture) then
             return bestTexture

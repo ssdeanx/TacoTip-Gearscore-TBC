@@ -1381,7 +1381,7 @@ local function getGearScoreMemo(guid, items)
     end
     local memo = TT._gsMemo
     local entry = memo and memo[guid]
-    if (entry and entry.items == items) then
+    if (entry and entry.items == items and entry.score) then
         return entry.score, entry.ilvl
     end
     return nil
@@ -1402,10 +1402,59 @@ local function setGearScoreMemo(guid, items, score, ilvl)
         TT._gsMemo = memo
         TT._gsMemoCount = 0
     end
-    if (not memo[guid]) then
+    local entry = memo[guid]
+    if (not entry) then
         TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
+        entry = { items = items }
+        memo[guid] = entry
+    elseif (entry.items ~= items) then
+        entry = { items = items }
+        memo[guid] = entry
     end
-    memo[guid] = { items = items, score = score, ilvl = ilvl }
+    entry.score = score
+    entry.ilvl = ilvl
+end
+
+local function getPawnScoreMemo(guid, items, activeGroup)
+    if (not guid or not items) then
+        return nil
+    end
+    local memo = TT._gsMemo
+    local entry = memo and memo[guid]
+    if (entry and entry.items == items and entry.pawnGroup == activeGroup and entry.pawnScore) then
+        return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
+    end
+    return nil
+end
+
+local function setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+    if (not guid or not items or type(pawnScore) ~= "number" or pawnScore <= 0) then
+        return
+    end
+    local memo = TT._gsMemo
+    if (not memo) then
+        memo = {}
+        TT._gsMemo = memo
+        TT._gsMemoCount = 0
+    end
+    if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
+        memo = {}
+        TT._gsMemo = memo
+        TT._gsMemoCount = 0
+    end
+    local entry = memo[guid]
+    if (not entry) then
+        TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
+        entry = { items = items }
+        memo[guid] = entry
+    elseif (entry.items ~= items) then
+        entry = { items = items }
+        memo[guid] = entry
+    end
+    entry.pawnGroup = activeGroup
+    entry.pawnScore = pawnScore
+    entry.pawnSpecName = specName
+    entry.pawnSpecColor = specColor
 end
 
 local function clearGearScoreMemo(guid)
@@ -1414,6 +1463,25 @@ local function clearGearScoreMemo(guid)
         memo[guid] = nil
         TT._gsMemoCount = math.max((TT._gsMemoCount or 0) - 1, 0)
     end
+end
+
+-- When the tooltip's owner is a Blizzard UnitFrame (PlayerFrame, TargetFrame,
+-- FocusFrame, PartyMemberFrame, CompactUnitFrame), refreshing via
+-- UnitFrame_UpdateTooltip(owner) preserves the post-SetUnit lines Blizzard
+-- appends on Retail and WoW Forever (blank line + UNIT_POPUP_RIGHT_CLICK in
+-- Blizzard_UnitFrame/Mainline/UnitFrame.lua:392-395) so an asynchronous
+-- inspect or item-load completion does not make the tooltip jump by two lines
+-- until the next 0.2s GameTooltip_OnUpdate tick.
+local function refreshUnitTooltip(ttUnit, useTooltipUpdater)
+    local owner = (GameTooltip and type(GameTooltip.GetOwner) == "function") and GameTooltip:GetOwner() or nil
+    local unitUpdater = _G.UnitFrame_UpdateTooltip
+    if (owner and owner.unit == ttUnit and type(unitUpdater) == "function" and owner.UpdateTooltip == unitUpdater) then
+        return unitUpdater(owner)
+    end
+    if (useTooltipUpdater and GameTooltip.UpdateTooltip) then
+        return GameTooltip:UpdateTooltip()
+    end
+    return GameTooltip:SetUnit(ttUnit)
 end
 
 -- Re-entrancy guard for the GearScore completion callback.
@@ -1461,12 +1529,7 @@ function TacoTip_GSCallback(guid)
     -- callback reached from the item-load path, and a throw here would either
     -- leave the guard latched (silently killing every later callback) or
     -- surface as an unrelated error from deep inside a load handler.
-    local ok, err
-    if (GameTooltip.UpdateTooltip) then
-        ok, err = pcall(GameTooltip.UpdateTooltip, GameTooltip)
-    else
-        ok, err = pcall(GameTooltip.SetUnit, GameTooltip, ttUnit)
-    end
+    local ok, err = pcall(refreshUnitTooltip, ttUnit, true)
     if (not ok and err) then
         TT:RecordError("GSCallback", err)
     end
@@ -2341,15 +2404,22 @@ local function onTooltipSetUnit(tooltip, data)
                 end
             end
             local miniText = ""
-            if (TacoTipConfig.show_gs_player) then
-                local gearscore, avg_ilvl
-                local scoreData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
-                local items = scoreData and scoreData.items or nil
-                gearscore, avg_ilvl = getGearScoreMemo(guid, items)
+            local needGsScore = TacoTipConfig.show_gs_player and true or false
+            local needPawnScore = (isPawnLoaded and TT_PAWN and TT_PAWN.GetScore and TacoTipConfig.show_pawn_player)
+                and true or false
+            local scoreData, items, scoreNow, retryDue
+            local retryNoted = false
+            if (needGsScore or needPawnScore) then
+                scoreData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
+                items = scoreData and scoreData.items or nil
+                scoreNow = (type(GetTime) == "function") and GetTime() or 0
+                retryDue = gearScoreRetryDue(guid, scoreNow)
+            end
+            if (needGsScore) then
+                local gearscore, avg_ilvl = getGearScoreMemo(guid, items)
                 if (not gearscore) then
                     gearscore, avg_ilvl = 0, 0
-                    local now = (type(GetTime) == "function") and GetTime() or 0
-                    if (gearScoreRetryDue(guid, now)) then
+                    if (retryDue) then
                         gearscore, avg_ilvl = GearScore:GetScore(guid, true)
                         if (gearscore > 0) then
                             clearGearScoreRetry(guid)
@@ -2361,7 +2431,8 @@ local function onTooltipSetUnit(tooltip, data)
                             -- uncached slot; ask for the data too, then let the
                             -- callback re-drive this render. The gate above keeps a
                             -- stationary hover from re-registering on every render.
-                            noteGearScoreRetry(guid, now)
+                            noteGearScoreRetry(guid, scoreNow)
+                            retryNoted = true
                             TT:WarmGearItemData(guid)
                         end
                     end
@@ -2386,9 +2457,27 @@ local function onTooltipSetUnit(tooltip, data)
                     end
                 end
             end
-            if (isPawnLoaded and TT_PAWN and TT_PAWN.GetScore and TacoTipConfig.show_pawn_player) then
-                local pawnScore, specName, specColor = TT_PAWN:GetScore(guid, not TacoTipConfig.show_gs_player)
-                if (pawnScore > 0) then
+            if (needPawnScore) then
+                local activeGroup = (CI and CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
+                local pawnScore, specName, specColor = getPawnScoreMemo(guid, items, activeGroup)
+                if (not pawnScore) then
+                    pawnScore, specName, specColor = 0, nil, nil
+                    if (retryDue) then
+                        pawnScore, specName, specColor = TT_PAWN:GetScore(guid, not needGsScore)
+                        if (pawnScore and pawnScore > 0) then
+                            if (not needGsScore) then
+                                clearGearScoreRetry(guid)
+                            end
+                            if (guid ~= UnitGUID("player")) then
+                                setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+                            end
+                        elseif (not retryNoted) then
+                            noteGearScoreRetry(guid, scoreNow)
+                            TT:WarmGearItemData(guid)
+                        end
+                    end
+                end
+                if (pawnScore and pawnScore > 0) then
                     if (wide_style) then
                         addLineDouble(string.format("Pawn: %s%.2f|r", specColor, pawnScore),
                             string.format("%s(%s)|r", specColor,
@@ -4054,10 +4143,10 @@ local function collectTooltipSection()
         end
     end
     diagRow(s, "anchor mode", anchorMode, "info")
-    if (cfg and type(cfg.custom_pos) == "table") then
-        local p = cfg.custom_pos
+    local customPos = cfg and cfg.custom_pos
+    if (type(customPos) == "table") then
         diagRow(s, "custom pos", string.format("[%s, rel=%s, x=%s, y=%s]",
-            tostring(p[1]), tostring(p[2]), tostring(p[3]), tostring(p[4])), "info")
+            tostring(customPos[1]), tostring(customPos[2]), tostring(customPos[3]), tostring(customPos[4])), "info")
         diagRow(s, "custom anchor", tostring(cfg.custom_anchor or "TOPLEFT"), "info")
     end
     local ev = TT.ev or {}
@@ -4372,7 +4461,7 @@ local function onEvent(self, event, ...)
                 and (TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4)) then
             local unit = resolveTooltipUnit(GameTooltip)
             if (unit and UnitIsPlayer(unit)) then
-                GameTooltip:SetUnit(unit)
+                refreshUnitTooltip(unit)
             end
         end
     elseif (event == "UNIT_TARGET") then
@@ -4381,7 +4470,7 @@ local function onEvent(self, event, ...)
             if (unit) then
                 local ttUnit = resolveTooltipUnit(GameTooltip)
                 if (ttUnit and UnitExists(unit) and UnitIsUnit(unit, ttUnit)) then
-                    GameTooltip:SetUnit(unit)
+                    refreshUnitTooltip(unit)
                 end
             end
         end
@@ -4413,9 +4502,9 @@ local function onEvent(self, event, ...)
             -- could have stored {nil, nil, nil, nil} which passes the
             -- "table is not nil" check below but has nil entries that
             -- crash SetPoint.  Clear it if any entry is invalid.
-            if (TacoTipConfig.custom_pos) then
-                local p = TacoTipConfig.custom_pos
-                if (type(p[1]) ~= "string" or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
+            local p = TacoTipConfig.custom_pos
+            if (p) then
+                if (type(p) ~= "table" or type(p[1]) ~= "string" or type(p[3]) ~= "number" or type(p[4]) ~= "number") then
                     TacoTipConfig.custom_pos = nil
                 end
             end
@@ -4502,7 +4591,7 @@ local function onEvent(self, event, ...)
                 if (not duplicate) then
                     st.inspectRenderGUID = guid
                     st.inspectRenderTime = now
-                    GameTooltip:SetUnit(ttUnit)
+                    refreshUnitTooltip(ttUnit)
                 end
             end
             if (event == "INVENTORY_READY") then
