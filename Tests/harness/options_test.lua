@@ -1110,6 +1110,29 @@ do
     -- 5. /tacotip diag reports all of it.
     -- NOTE: Reverted on 2026-10-23. Diag reporting of unmerged panel open and mover save failure counters.
     -- ...
+
+    -- 6. Leaderboard slash forwarding to TacoTip Extras.
+    local lbToggled = 0
+    rawset(REALG, "TacoTipExtrasToggleLeaderboard", function()
+        lbToggled = lbToggled + 1
+    end)
+    if (type(handler) == "function") then
+        pcall(handler, "lb")
+        pcall(handler, "rank")
+        pcall(handler, "ranks")
+        pcall(handler, "leaderboard")
+    end
+    check("/tt lb, rank, ranks, leaderboard invokes TacoTipExtrasToggleLeaderboard",
+        lbToggled == 4, "lbToggled=" .. tostring(lbToggled))
+    rawset(REALG, "TacoTipExtrasToggleLeaderboard", nil)
+    local fromLbFallback = #printed + 1
+    if (type(handler) == "function") then
+        pcall(handler, "lb")
+    end
+    local lbFallbackMsg = printed[fromLbFallback] or ""
+    check("/tt lb prints unavailable message when TacoTip Extras is not loaded",
+        lbFallbackMsg:find("not available", 1, true) ~= nil,
+        "msg=" .. tostring(lbFallbackMsg))
 end
 
 --------------------------------------------------------------------------

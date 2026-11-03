@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.9"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.0"
 
 
 
@@ -132,8 +132,17 @@ local isPawnLoaded = (pawnClassicVer and pawnClassicVer >= 2.0538) or (pawnRetai
 
 local HORDE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-HORDE:16:16:-2:0:64:64:0:38:0:38|t"
 local ALLIANCE_ICON = "|TInterface\\TargetingFrame\\UI-PVP-ALLIANCE:16:16:-2:0:64:64:0:38:0:38|t"
+local HORDE_ICON_SPACED = " " .. HORDE_ICON
+local ALLIANCE_ICON_SPACED = " " .. ALLIANCE_ICON
 local PVP_FLAG_ICON = "|TInterface\\GossipFrame\\BattleMasterGossipIcon:0|t"
+local PVP_FLAG_ICON_SPACED = " " .. PVP_FLAG_ICON
 local ACHIEVEMENT_ICON = "|TInterface\\AchievementFrame\\UI-Achievement-TinyShield:18:18:0:0:20:20:0:12.5:0:12.5|t"
+local ROLE_ICONS = {
+    TANK = " |TInterface\\GroupFrame\\UI-Group-TankIcon:18:18:0:0:16:16:0:16:0:16|t",
+    HEALER = " |TInterface\\GroupFrame\\UI-Group-HealerIcon:18:18:0:0:16:16:0:16:0:16|t",
+    DAMAGER = " |TInterface\\GroupFrame\\UI-Group-DPSIcon:18:18:0:0:16:16:0:16:0:16|t",
+    DPS = " |TInterface\\GroupFrame\\UI-Group-DPSIcon:18:18:0:0:16:16:0:16:0:16|t",
+}
 local GetClassAtlas = _G.GetClassAtlas
 
 local POWERBAR_UPDATE_RATE = 0.2
@@ -399,9 +408,22 @@ end
 
 local specializationIconCache = {}
 
+local colorCodeCache = {}
 local function makeColorCode(r, g, b)
     local floor = math.floor
-    return string.format("|cFF%02x%02x%02x", floor((r or 1) * 255), floor((g or 1) * 255), floor((b or 1) * 255))
+    local ir = floor((r or 1) * 255)
+    if (ir < 0) then ir = 0 elseif (ir > 255) then ir = 255 end
+    local ig = floor((g or 1) * 255)
+    if (ig < 0) then ig = 0 elseif (ig > 255) then ig = 255 end
+    local ib = floor((b or 1) * 255)
+    if (ib < 0) then ib = 0 elseif (ib > 255) then ib = 255 end
+    local key = ir * 65536 + ig * 256 + ib
+    local cached = colorCodeCache[key]
+    if (not cached) then
+        cached = string.format("|cFF%02x%02x%02x", ir, ig, ib)
+        colorCodeCache[key] = cached
+    end
+    return cached
 end
 
 local function colorizeText(text, r, g, b)
@@ -411,19 +433,35 @@ local function colorizeText(text, r, g, b)
     return string.format("%s%s|r", makeColorCode(r, g, b), text)
 end
 
+local classIconMarkupCache = {}
 local function getClassIconMarkup(class)
     if (not class or not GetClassAtlas) then
         return ""
     end
+    local size = (TacoTipConfig and TacoTipConfig.class_icon_size) or 20
+    local sizeCache = classIconMarkupCache[size]
+    if (not sizeCache) then
+        sizeCache = {}
+        classIconMarkupCache[size] = sizeCache
+    end
+    local cached = sizeCache[class]
+    if (cached ~= nil) then
+        return cached
+    end
     local atlas = GetClassAtlas(class)
     if (atlas and atlas ~= "") then
-        local size = TacoTipConfig.class_icon_size or 20
-        return string.format("|A:%s:%d:%d|a", atlas, size, size)
+        local markup = string.format("|A:%s:%d:%d|a", atlas, size, size)
+        sizeCache[class] = markup
+        return markup
     end
+    sizeCache[class] = ""
     return ""
 end
 
 TT.GetClassIconMarkup = function(self, class)
+    if (class == nil and type(self) == "string") then
+        class = self
+    end
     return getClassIconMarkup(class)
 end
 
@@ -520,6 +558,8 @@ local function getTooltipPlayerClassColor(tooltip, unit)
     return 1, 1, 1, false
 end
 
+local questDifficultyColorCache = {}
+local lastPlayerLevel = nil
 local function getHostileDifficultyColor(unit)
     local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
     if (not unit or type(GetQuestDifficultyColor) ~= "function") then
@@ -530,12 +570,20 @@ local function getHostileDifficultyColor(unit)
         return nil
     end
 
-    local level = UnitLevel(unit)
-    if (level and level > 0) then
-        return GetQuestDifficultyColor(level)
+    local playerLvl = (type(UnitLevel) == "function" and UnitLevel("player")) or 1
+    if (playerLvl ~= lastPlayerLevel) then
+        questDifficultyColorCache = {}
+        lastPlayerLevel = playerLvl
     end
 
-    return GetQuestDifficultyColor((UnitLevel("player") or 1) + 10)
+    local level = UnitLevel(unit)
+    local targetLevel = (level and level > 0) and level or (playerLvl + 10)
+    local cachedColor = questDifficultyColorCache[targetLevel]
+    if (cachedColor == nil) then
+        cachedColor = GetQuestDifficultyColor(targetLevel) or false
+        questDifficultyColorCache[targetLevel] = cachedColor
+    end
+    return (cachedColor ~= false and cachedColor) or nil
 end
 
 local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
@@ -2245,7 +2293,7 @@ local function onTooltipSetUnit(tooltip, data)
         end
         local nameLineIcons = ""
         if (TacoTipConfig.show_pvp_icon and UnitIsPlayer(tooltipUnit) and UnitIsPVP(tooltipUnit)) then
-            nameLineIcons = nameLineIcons .. " " .. PVP_FLAG_ICON
+            nameLineIcons = nameLineIcons .. PVP_FLAG_ICON_SPACED
             for i = 2, numLines do
                 if (text[i]) then
                     text[i] = string.gsub(text[i], "PvP", "", 1)
@@ -2253,27 +2301,27 @@ local function onTooltipSetUnit(tooltip, data)
             end
         end
         if (TacoTipConfig.show_team) then
-            nameLineIcons = nameLineIcons ..
-                " " .. (UnitFactionGroup(tooltipUnit) == "Horde" and HORDE_ICON or ALLIANCE_ICON)
+            local faction = UnitFactionGroup(tooltipUnit)
+            if (faction == "Horde") then
+                nameLineIcons = nameLineIcons .. HORDE_ICON_SPACED
+            elseif (faction == "Alliance") then
+                nameLineIcons = nameLineIcons .. ALLIANCE_ICON_SPACED
+            end
         end
         if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
             local _, classFile = UnitClass(tooltipUnit)
             if (classFile) then
-                nameLineIcons = nameLineIcons .. " " .. getClassIconMarkup(classFile)
+                local iconMarkup = getClassIconMarkup(classFile)
+                if (iconMarkup and iconMarkup ~= "") then
+                    nameLineIcons = nameLineIcons .. " " .. iconMarkup
+                end
             end
         end
         if (TacoTipConfig.show_role_icon and UnitIsPlayer(tooltipUnit) and type(IsInGroup) == "function" and IsInGroup()) then
             local role = UnitGroupRolesAssigned(tooltipUnit)
             if (role and role ~= "NONE") then
-                local roleIcon
-                if (role == "TANK") then
-                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-TankIcon:18:18:0:0:16:16:0:16:0:16|t"
-                elseif (role == "HEALER") then
-                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-HealerIcon:18:18:0:0:16:16:0:16:0:16|t"
-                else
-                    roleIcon = "|TInterface\\GroupFrame\\UI-Group-DPSIcon:18:18:0:0:16:16:0:16:0:16|t"
-                end
-                nameLineIcons = nameLineIcons .. " " .. roleIcon
+                local roleIcon = ROLE_ICONS[role] or ROLE_ICONS.DPS
+                nameLineIcons = nameLineIcons .. roleIcon
             end
         end
         if (nameLineIcons ~= "") then
@@ -2662,7 +2710,7 @@ local function onTooltipSetUnit(tooltip, data)
             -- The anchors only move when the HP bar's own presence flips, so the
             -- offset is remembered on the bar and compared, the same shape as
             -- the tooltip's own anchors a few lines below.
-            local barOffsetY = (TacoTipConfig.show_hp_bar and 9) or -1
+            local barOffsetY = (TacoTipConfig.show_hp_bar and -9) or -1
             if (TacoTipPowerBar._tacoTipAnchorY ~= barOffsetY) then
                 TacoTipPowerBar:SetPoint("TOPLEFT", GameTooltip, "BOTTOMLEFT", 2, barOffsetY)
                 TacoTipPowerBar:SetPoint("TOPRIGHT", GameTooltip, "BOTTOMRIGHT", -2, barOffsetY)
@@ -2707,9 +2755,9 @@ local function onTooltipSetUnit(tooltip, data)
 
     -- Unconditional in the old code: not even a capability check, let alone a
     -- value comparison, on a path that runs at the end of every render.
-    if (tooltip.SetClampRectInsets) then
+    if (tooltip.SetClampRectInsets and not (type(InCombatLockdown) == "function" and InCombatLockdown())) then
         if (tooltip._tacoTipClampBottom ~= 15) then
-            tooltip:SetClampRectInsets(0, 0, 15, 15)
+            pcall(tooltip.SetClampRectInsets, tooltip, 0, 0, 15, 15)
             tooltip._tacoTipClampBottom = 15
         end
     end

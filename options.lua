@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.8.9"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.0"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -435,6 +435,12 @@ local function registerSlashCommands()
                 print("|cff59f0dcTacoTip:|r " .. L["Custom position anchor set"] .. ": 'CENTER'")
             else
                 print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_ANCHOR"])
+            end
+        elseif (cmd == "lb" or cmd == "rank" or cmd == "ranks" or cmd == "leaderboard") then
+            if (type(_G.TacoTipExtrasToggleLeaderboard) == "function") then
+                _G.TacoTipExtrasToggleLeaderboard()
+            else
+                print("|cff59f0dcTacoTip:|r TacoTip Extras leaderboard is not available.")
             end
         elseif (cmd == "diag" or cmd == "diagnostics") then
             -- Load report. Exists because the mover and the tooltip pipeline are

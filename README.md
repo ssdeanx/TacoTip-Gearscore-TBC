@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.8.9
+version: 0.9.0
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,7 +22,7 @@ interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: pending in-game verification
-updated: 2026-10-31
+updated: 2026-11-03
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -43,6 +43,15 @@ updated: 2026-10-31
 > addon, continued — your existing configuration carries over, and the GearScore
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.0</span>
+
+- **<span style="color:#59f0dc">Tooltip Render Optimization & Markup Caching:</span>** Class icon atlas markups, pre-spaced faction and PVP badges, and group role icons are now memoized and pre-formatted. Integer color hashing eliminates repetitive color code formatting, and hostility difficulty colors are cached by level, significantly reducing string allocations and garbage collection during high-frequency tooltip hover renders.
+- **<span style="color:#59f0dc">Power-Bar Anchor Alignment:</span>** Corrected a layout bug where the power bar's vertical offset was inverted when the health bar was enabled, causing it to render inside the tooltip body over the text lines. The power bar now docks cleanly at `-9` below the health bar and `-1` when standalone.
+- **<span style="color:#59f0dc">Leaderboard Slash Forwarding:</span>** Intercepts `/tt lb`, `/tt rank`, `/tt ranks`, and `/tt leaderboard` in the main options handler and forwards them to TacoTip Extras' server leaderboard (`TacoTipExtrasToggleLeaderboard`) instead of opening the configuration menu.
+- **<span style="color:#59f0dc">Protected API Resilience:</span>** `SetClampRectInsets` is now wrapped with safe error containment and bypasses execution during combat lockdown, safeguarding against protected function taint exceptions.
 
 ---
 

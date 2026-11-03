@@ -2221,8 +2221,21 @@ do
         check("turning off the HP bar re-anchors the power bar",
             ((bar and bar.__setPointCalls) or 0) > hpBase,
             "SetPoint calls " .. tostring(hpBase) .. " -> " .. tostring(bar and bar.__setPointCalls))
+        check("power bar anchors at -1 when HP bar is disabled",
+            bar and bar._tacoTipAnchorY == -1,
+            "anchorY=" .. tostring(bar and bar._tacoTipAnchorY))
         CFG.show_hp_bar = prevHP
         settlePair(PAIR)
+        check("power bar anchors at -9 beneath the health bar when HP bar is enabled",
+            bar and bar._tacoTipAnchorY == -9,
+            "anchorY=" .. tostring(bar and bar._tacoTipAnchorY))
+
+        local expectedMarkup = string.format("|A:classicon-warrior:%d:%d|a", CFG.class_icon_size or 20, CFG.class_icon_size or 20)
+        check("TT:GetClassIconMarkup returns cached atlas markup",
+            TT:GetClassIconMarkup("WARRIOR") == expectedMarkup,
+            "markup=" .. tostring(TT:GetClassIconMarkup("WARRIOR")))
+        check("TT.GetClassIconMarkup dot call also works",
+            TT.GetClassIconMarkup("WARRIOR") == expectedMarkup)
 
         -- (d) The wide-style continuation line. This branch only runs when
         -- tip_style makes wide_style true, and the rest of this file pins
