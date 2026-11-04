@@ -1555,7 +1555,7 @@ end
 do
     local CLIENTS = {
         { "Classic Era",     P.WOW_PROJECT_CLASSIC,                 11509, true },
-        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, false },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, true },
         { "Titanforge",      P.WOW_PROJECT_WRATH_CLASSIC,           38002, false },
         { "WoW Forever",     P.WOW_PROJECT_MAINLINE,                16001, false },
         { "Retail",          P.WOW_PROJECT_MAINLINE,               120105, false },
@@ -1748,7 +1748,7 @@ do
         -- move out of the pre-filter so the tick cannot open a new one: the
         -- pass-through assertions below must not be measured against an open
         -- attribution window.
-        yards = 30
+        yards = 50
         testClock = testClock + 5
         if (queueTick) then queueTick() end
 

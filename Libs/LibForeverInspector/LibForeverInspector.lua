@@ -4184,7 +4184,7 @@ function lib:CanInspect(unit)
     -- re-introduced the very bug this branch exists to prevent: the unit walks
     -- out of range and the grace lets it through anyway. Boundary flicker now
     -- costs a skipped inspect, not a message.
-    if (isClassic) then
+    if (isClassic or isTBC) then
         if (hasCheckDist) then
             distAllowed = probeInteractDistance(unit)
             if (not distAllowed) then
@@ -4533,7 +4533,7 @@ local function requestInspectImpl(unit)
     -- mirror either way, so it must not be asked about a unit a cheaper check has
     -- already rejected. The other four clients keep the order they shipped with.
     local canOk, canAllowed = true, nil
-    if (isClassic) then
+    if (isClassic or isTBC) then
         if (type(_G.CheckInteractDistance) == "function") then
             if (not probeInteractDistance(unit)) then
                 noteInspectRejected(unit, nil)
@@ -4931,7 +4931,7 @@ local function installInspectErrorSuppressor()
     -- problem is and nowhere else, and the other four clients keep their exact
     -- previous behaviour. If a future client build shows the same refusal-as-
     -- message behaviour, this is the single condition to widen.
-    if (not isClassic) then return false end
+    if (not (isClassic or isTBC)) then return false end
     if (type(Detours) ~= "table" or type(Detours.DetourHook) ~= "function") then return false end
     local errors = rawget(_G, "UIErrorsFrame")
     if (type(errors) ~= "table" or type(errors.AddMessage) ~= "function") then return false end

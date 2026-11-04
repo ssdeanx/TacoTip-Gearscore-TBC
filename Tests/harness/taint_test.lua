@@ -496,12 +496,12 @@ check("taint prevention: _G.PlaySound global is never hooked or detoured",
 -- do not install the suppressor.
 do
     local CI = REALG.LibStub and REALG.LibStub("LibForeverInspector", true)
-    if (projectId == REALG.WOW_PROJECT_CLASSIC) then
-        check("Classic Era: inspect error suppressor is installed",
+    if (projectId == REALG.WOW_PROJECT_CLASSIC or projectId == REALG.WOW_PROJECT_BURNING_CRUSADE_CLASSIC) then
+        check("Classic Era / TBC: inspect error suppressor is installed",
             CI and CI.inspectSuppressorInstalled == true,
             "installed=" .. tostring(CI and CI.inspectSuppressorInstalled))
     else
-        check("non-Classic: inspect error suppressor is NOT installed",
+        check("non-Classic/TBC: inspect error suppressor is NOT installed",
             CI and CI.inspectSuppressorInstalled ~= true,
             "installed=" .. tostring(CI and CI.inspectSuppressorInstalled))
     end

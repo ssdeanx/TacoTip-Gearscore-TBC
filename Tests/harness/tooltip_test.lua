@@ -2163,28 +2163,24 @@ do
         check("the power bar IS anchored",
             bar ~= nil and (bar.__setPointCalls or 0) >= 2,
             "SetPoint calls=" .. tostring(bar and bar.__setPointCalls))
-        check("the tooltip padding WAS set",
-            GT.__padding ~= nil and (GT.__padding[2] or 0) == 10,
+        check("the tooltip padding is not inflated",
+            GT.__padding == nil or (GT.__padding[2] or 0) == 0,
             "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
         check("the clamp insets WERE set",
             GT.__clampInsets ~= nil and (GT.__clampInsets[3] or 0) == 15,
             "insets=" .. tostring(GT.__clampInsets and table.concat(GT.__clampInsets, ",")))
 
-        -- Power-bar lifecycle: padding is a bar property, so a teardown must
-        -- drop it and the next render must put it back; hiding the bar while
-        -- the tooltip stays up must drop it too; and the unit events must be
-        -- registered once per unit rather than on every render.
-        local padCalls = GT.__paddingCalls or 0
+        -- Power-bar lifecycle: the power bar is positioned outside the tooltip
+        -- at offset -9 (under the health bar) or -1 (standalone), so interior
+        -- padding is cleared and not added.
         TT.clearTooltipVisuals(GT, nil, nil, "powerbar-test")
-        check("power-bar teardown clears the tooltip padding",
-            GT.__padding == nil,
+        check("power-bar teardown keeps padding cleared",
+            GT.__padding == nil or (GT.__padding[2] or 0) == 0,
             "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
         settleUnitRender("player")
-        check("...and the next render re-applies it",
-            GT.__padding ~= nil and (GT.__padding[2] or 0) == 10
-            and (GT.__paddingCalls or 0) > padCalls,
-            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ","))
-            .. " calls=" .. tostring(GT.__paddingCalls))
+        check("...and the next render keeps padding clean",
+            GT.__padding == nil or (GT.__padding[2] or 0) == 0,
+            "padding=" .. tostring(GT.__padding and table.concat(GT.__padding, ",")))
 
         CFG.show_power_bar = false
         settleUnitRender("player")

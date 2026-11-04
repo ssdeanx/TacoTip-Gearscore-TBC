@@ -990,6 +990,13 @@ local function applyTooltipBackdrop(tooltip)
 end
 
 local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, borderB)
+    local alpha = TacoTipConfig.tooltip_border_alpha or 0.85
+    if (tooltip and tooltip.NineSlice and type(tooltip.NineSlice.SetBorderColor) == "function") then
+        tooltip.NineSlice:SetBorderColor(borderR, borderG, borderB, alpha)
+    elseif (tooltip and type(tooltip.SetBackdropBorderColor) == "function") then
+        tooltip:SetBackdropBorderColor(borderR, borderG, borderB, alpha)
+    end
+
     local backdrop = tooltip and tooltip.TacoTipBackdropFrame
     if (not backdrop or not backdrop.SetBackdropBorderColor) then
         return
@@ -1004,7 +1011,7 @@ local function applyTooltipBorderOverlay(tooltip, unit, borderR, borderG, border
         return
     end
 
-    backdrop:SetBackdropBorderColor(borderR, borderG, borderB, TacoTipConfig.tooltip_border_alpha or 0.85)
+    backdrop:SetBackdropBorderColor(borderR, borderG, borderB, alpha)
 end
 
 -- Reset the tooltip border to the user's configured base (non-class) color.
@@ -1021,15 +1028,21 @@ local function resetTooltipBorderToDefault(tooltip)
         return
     end
 
+    local r = TacoTipConfig.tooltip_border_color_r or 1
+    local g = TacoTipConfig.tooltip_border_color_g or 1
+    local b = TacoTipConfig.tooltip_border_color_b or 1
+    local a = TacoTipConfig.tooltip_border_alpha or 0.85
+
+    if (tooltip.NineSlice and type(tooltip.NineSlice.SetBorderColor) == "function") then
+        tooltip.NineSlice:SetBorderColor(r, g, b, a)
+    elseif (type(tooltip.SetBackdropBorderColor) == "function") then
+        tooltip:SetBackdropBorderColor(r, g, b, a)
+    end
+
     local backdrop = tooltip and tooltip.TacoTipBackdropFrame
     if (backdrop) then
         if (backdrop.SetBackdropBorderColor) then
-            backdrop:SetBackdropBorderColor(
-                TacoTipConfig.tooltip_border_color_r or 1,
-                TacoTipConfig.tooltip_border_color_g or 1,
-                TacoTipConfig.tooltip_border_color_b or 1,
-                TacoTipConfig.tooltip_border_alpha or 0.85
-            )
+            backdrop:SetBackdropBorderColor(r, g, b, a)
         end
         if (backdrop.SetBackdropColor and not backdrop.isBorderOnly) then
             backdrop:SetBackdropColor(
@@ -2731,17 +2744,7 @@ local function onTooltipSetUnit(tooltip, data)
                 end
                 TacoTipPowerBar._tacoTipUnit = tooltipUnit
             end
-            -- SetPadding re-lays out the tooltip, and this ran on every render
-            -- with only `tooltip.SetPadding` as a guard -- i.e. never skipped.
-            -- The value is constant, so comparing it costs nothing and the
-            -- layout pass happens once per session instead of once per hover.
-            if (tooltip.SetPadding) then
-                if (tooltip._tacoTipPadding ~= 10) then
-                    tooltip:SetPadding(0, 10, 0, 0)
-                    tooltip._tacoTipPadding = 10
-                end
-                tooltip._tacoTipPaddingSet = true
-            end
+            clearPowerBarPadding(tooltip)
         else
             TacoTipPowerBar:Hide()
             stopPowerBarTicker()
