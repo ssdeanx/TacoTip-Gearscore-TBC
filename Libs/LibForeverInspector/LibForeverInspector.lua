@@ -418,6 +418,13 @@ lib.inspectStats = lib.inspectStats or {
     suppressed = 0,
     suppressedVoice = 0,
     suppressedSound = 0,
+    -- Drop counters for the queue's two shedding points (0.9.1, additive
+    -- observability only): queueOverflowDrops counts the cap-25 discard of the
+    -- oldest entry; queueDrainedDrops counts drain-loop entries that came off
+    -- the queue without getting an inspect (failed re-validation or refused
+    -- request). No gate, throttle, or timing behavior reads them.
+    queueOverflowDrops = 0,
+    queueDrainedDrops = 0,
 }
 
 function lib:GetInspectStats()
@@ -3246,24 +3253,50 @@ local function getModernSpecData(unit, groupIndex)
     -- takes just a unit and therefore cannot tell group 1 from group 2, which is
     -- why inspecting a dual-spec'd player used to report the same spec for both.
     local activeSpecID
+    local activeSpecIndex
     local specOk, specId = pcall(C_SpecializationInfo.GetSpecialization, not isSelf, false, groupIndex, 1)
-    if (specOk) then activeSpecID = specId end
+    if (specOk) then
+        if (isForever) then
+            -- Forever returns a 1-based specialization INDEX here. Blizzard
+            -- passes it straight to GetSpecializationInfo, which takes an index
+            -- (Blizzard_Collections/Mainline/Blizzard_HeirloomCollection.lua:
+            -- 29-33; AzeriteUtil.lua:60 does the same). Reading it as a specID
+            -- left every unit on spec 1.
+            if (type(specId) == "number" and specId >= 1) then
+                activeSpecIndex = specId
+            end
+        else
+            activeSpecID = specId
+        end
+    end
 
     -- Fallbacks for clients where the group-aware call returns nothing.
-    if ((type(activeSpecID) ~= "number" or activeSpecID <= 0) and isSelf) then
+    -- Forever is excluded: its group-aware call answers with an index, while
+    -- both legacy fallbacks answer with an ID.
+    if (not isForever and (type(activeSpecID) ~= "number" or activeSpecID <= 0) and isSelf) then
         if (_G.GetSpecialization) then
             local gOk, gId = pcall(_G.GetSpecialization, false, nil, groupIndex)
             if (gOk and type(gId) == "number" and gId > 0) then activeSpecID = gId end
         end
     end
-    if ((type(activeSpecID) ~= "number" or activeSpecID <= 0)
+    if (not isForever and (type(activeSpecID) ~= "number" or activeSpecID <= 0)
             and C_SpecializationInfo.GetInspectSpecialization) then
         -- Secret-restricted on Retail (SecretWhenUnitIdentityRestricted), which
         -- is why this has always been pcall'd.
         local iOk, iId = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
         if (iOk and type(iId) == "number" and iId > 0) then activeSpecID = iId end
     end
-    if (type(activeSpecID) ~= "number" or activeSpecID <= 0) then
+    if (isForever and not activeSpecIndex
+            and (type(activeSpecID) ~= "number" or activeSpecID <= 0)
+            and C_SpecializationInfo.GetInspectSpecialization) then
+        local iOk, iId = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
+        if (iOk and type(iId) == "number" and iId > 0) then activeSpecID = iId end
+    end
+    if (isForever) then
+        if (not activeSpecIndex and (type(activeSpecID) ~= "number" or activeSpecID <= 0)) then
+            return nil
+        end
+    elseif (type(activeSpecID) ~= "number" or activeSpecID <= 0) then
         return nil
     end
 
@@ -3271,9 +3304,16 @@ local function getModernSpecData(unit, groupIndex)
     -- rather than parsing a class token, so no client-version-specific class
     -- token table is needed.
     local classID
-    if (C_SpecializationInfo.GetClassIDFromSpecID) then
+    if (type(activeSpecID) == "number" and activeSpecID > 0 and C_SpecializationInfo.GetClassIDFromSpecID) then
         local ok, id = pcall(C_SpecializationInfo.GetClassIDFromSpecID, activeSpecID)
         if (ok) then classID = id end
+    end
+    if (isForever and not classID and type(_G.UnitClass) == "function") then
+        ---@diagnostic disable-next-line: redundant-parameter
+        local _, _, unitClassID = _G.UnitClass(unit)
+        if (type(unitClassID) == "number") then
+            classID = unitClassID
+        end
     end
 
     local specCount = 3
@@ -3292,7 +3332,14 @@ local function getModernSpecData(unit, groupIndex)
             groupIndex, classID)
         if (info) then
             points[i] = info.points
-            if (info.specID == activeSpecID) then
+            if (isForever and activeSpecIndex) then
+                if (i == activeSpecIndex) then
+                    specIndex = i
+                    specName = info.name
+                    specIcon = info.icon
+                    activeSpecID = info.specID
+                end
+            elseif (info.specID == activeSpecID) then
                 specIndex = i
                 specName = info.name
                 specIcon = info.icon
@@ -3320,6 +3367,9 @@ local function getModernSpecData(unit, groupIndex)
             groupIndex, classID)
         specName = info and info.name
         specIcon = info and info.icon
+        if (isForever and info and info.specID) then
+            activeSpecID = info.specID
+        end
     end
 
     return {
@@ -3780,6 +3830,18 @@ local function cacheUnitData(unit, guid, isRetry)
     end
 
     local retriesExhausted = (data.retryCount or 0) >= CACHE_RETRY_LIMIT
+    -- Forever: an all-empty read is not a complete snapshot. The client can
+    -- answer INSPECT_READY before any link (and any icon) is populated; without
+    -- this, that empty table is committed with a fresh .time and both scorers
+    -- read 0 from it for the whole cache window. Empty stays incomplete and
+    -- follows the same retry ladder as a texture-without-link slot.
+    if (isForever and not anyMissingEquipped) then
+        local stagedCount = 0
+        for _ in pairs(staged) do stagedCount = stagedCount + 1 end
+        if (stagedCount == 0) then
+            anyMissingEquipped = true
+        end
+    end
     if (not anyMissingEquipped) then
         data.items = staged
         data.time = now
@@ -3851,8 +3913,22 @@ local function cacheUnitData(unit, guid, isRetry)
             data.specIcon = modern.specIcon
             data.specIndex = modern.specIndex
             -- Cached per group: talentPoints[group][tabIndex].
-            data.talentPoints = buildGroupTalentPoints(true, unit)
-            data.specIndexByGroup = buildSpecIndexByGroup(unit)
+            if (isForever) then
+                -- Forever has one specialization and no talent tabs. The
+                -- Classic tab helper returns 0/0/0 there, which used to leave
+                -- specIndexByGroup at 1 and made Pawn score the wrong spec.
+                data.talentPoints = {
+                    [1] = {
+                        modern.points[1] or 0,
+                        modern.points[2] or 0,
+                        modern.points[3] or 0,
+                    },
+                }
+                data.specIndexByGroup = { [1] = modern.specIndex }
+            else
+                data.talentPoints = buildGroupTalentPoints(true, unit)
+                data.specIndexByGroup = buildSpecIndexByGroup(unit)
+            end
             data.activeGroup = GetActiveSpecGroupFor(true)
         end
     elseif (getNumTalentTabs() or _G.GetNumTalents) then
@@ -4633,12 +4709,11 @@ requestInspect = requestInspectImpl
 -- session teaches the limit; `/tacotip diag` prints it as `learned max range`,
 -- and from then on far units are refused before any engine call is made.
 --
--- INSTALLED ON CLASSIC ERA ONLY, deliberately, and only there. The
--- refusal-as-UI-error behaviour is Classic Era's (WOW_PROJECT_CLASSIC = 2), and
--- the symptom is reported on no other client; TBC Anniversary (5), WotLK
--- Titanforge (11), WoW Forever and Retail keep their exact previous behaviour.
--- See the installer for the full reasoning and for the one condition that would
--- widen it.
+-- INSTALLED ON CLASSIC ERA AND TBC ANNIVERSARY, deliberately, and only there.
+-- Those are the two shipped installations -- WOW_PROJECT_CLASSIC (2) and the
+-- TBC Anniversary `isTBC` gate; WotLK Titanforge (11), WoW Forever and Retail
+-- keep their exact previous behaviour. See the installer for the full reasoning
+-- and for the one condition that would widen it.
 --
 -- Matching is needed only for the ASYNCHRONOUS case -- a server answer to our
 -- request, rather than a synchronous answer to our query. GetGameMessageInfo's
@@ -4919,18 +4994,18 @@ end
 
 local function installInspectErrorSuppressor()
     if (lib.inspectSuppressorInstalled) then return true end
-    -- CLASSIC ERA ONLY -- WOW_PROJECT_CLASSIC (2), the `classicEra` family key.
+    -- CLASSIC ERA AND TBC ANNIVERSARY -- WOW_PROJECT_CLASSIC (2), the
+    -- `classicEra` family key, and the TBC Anniversary project matched by
+    -- `isTBC` (the `tbc` family key).
     --
-    -- The out-of-range popup is reported on Classic Era and on no other client:
-    -- not TBC Anniversary (WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 5), not WotLK
-    -- Titanforge (WOW_PROJECT_WRATH_CLASSIC, 11), not WoW Forever and not Retail.
-    -- The three classic clients share this file's code but not their engine
-    -- builds (1.15.9 / 2.5.x / 3.80.x), and the difference that matters -- the
-    -- inspect limit and whether a refused query speaks -- lives in the engine,
-    -- not in any Lua the mirror can show. So the guard is installed where the
-    -- problem is and nowhere else, and the other four clients keep their exact
-    -- previous behaviour. If a future client build shows the same refusal-as-
-    -- message behaviour, this is the single condition to widen.
+    -- The guard is installed on Classic Era and TBC Anniversary only: WotLK
+    -- Titanforge (WOW_PROJECT_WRATH_CLASSIC, 11), WoW Forever and Retail do not
+    -- install it and keep their exact previous behaviour. The classic clients
+    -- share this file's code but not their engine builds (1.15.9 / 2.5.x /
+    -- 3.80.x), and the difference that matters -- the inspect limit and whether
+    -- a refused query speaks -- lives in the engine, not in any Lua the mirror
+    -- can show. If another client build shows the same refusal-as-message
+    -- behaviour, this is the single condition to widen.
     if (not (isClassic or isTBC)) then return false end
     if (type(Detours) ~= "table" or type(Detours.DetourHook) ~= "function") then return false end
     local errors = rawget(_G, "UIErrorsFrame")
@@ -5105,6 +5180,9 @@ function lib:DoInspect(unitorguid)
             end
         end
         if (#queue >= 25) then
+            if (lib.inspectStats) then
+                lib.inspectStats.queueOverflowDrops = (lib.inspectStats.queueOverflowDrops or 0) + 1
+            end
             table.remove(queue, 1)
         end
         local newEntry = { guid = guid, unit = unit }
@@ -5186,6 +5264,12 @@ inspectQueueTick = function()
                 if (requestInspect(unit)) then
                     return
                 end
+            end
+            -- The entry came off the queue and was not served (stale re-lookup,
+            -- failed validation, or a refused request): count the shed. The
+            -- counter is additive observability; nothing reads it for behavior.
+            if (lib.inspectStats) then
+                lib.inspectStats.queueDrainedDrops = (lib.inspectStats.queueDrainedDrops or 0) + 1
             end
         end
     end

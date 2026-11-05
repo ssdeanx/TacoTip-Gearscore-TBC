@@ -156,6 +156,9 @@ run "tooltip_test TITANFORGE"   Tests/harness/tooltip_test.lua 11 38002 TITANFOR
 run "tooltip_test FOREVER"      Tests/harness/tooltip_test.lua 1  16001 FOREVER   pipeline
 run "tooltip_test RETAIL"       Tests/harness/tooltip_test.lua 1  120105 RETAIL    pipeline
 
+echo "== Forever unit-tooltip acceptance (0.9.2) =="
+run "forever_tooltip_test" Tests/harness/forever_tooltip_test.lua
+
 echo "== GameMenu quit-block taint pins =="
 run "taint_test CLASSIC_ERA"  Tests/harness/taint_test.lua 2  11509 CLASSIC_ERA
 run "taint_test TBC_ANNIV"    Tests/harness/taint_test.lua 5  20506 TBC_ANNIV

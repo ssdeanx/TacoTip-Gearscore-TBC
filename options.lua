@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.0"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.3"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -1830,6 +1830,9 @@ local function buildRootPage()
         "Choose how much detail TacoTip shows by default.",
         modernStyleOptions, function(value)
             TacoTipConfig.tip_style = value
+            if (TT and TT.RefreshOpenUnitTooltip) then
+                TT:RefreshOpenUnitTooltip()
+            end
             if (TT and TT.RefreshOptionsUI) then
                 TT:RefreshOptionsUI()
             end
@@ -2036,6 +2039,9 @@ local function buildTooltipsPage()
         L["OPTIONS_TOOLTIP_STYLE_DESC"] or "Choose how much detail TacoTip shows by default.",
         modernStyleOptions, function(value)
             TacoTipConfig.tip_style = value
+            if (TT and TT.RefreshOpenUnitTooltip) then
+                TT:RefreshOpenUnitTooltip()
+            end
         end)
     builder.y = builder.y - layoutDropdownControl(content, controls.styleChoice, builder.y, 12)
 

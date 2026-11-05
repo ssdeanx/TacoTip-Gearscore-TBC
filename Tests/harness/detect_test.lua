@@ -299,6 +299,57 @@ do
     end
 end
 
+-- CANINSPECT ENGINE-DISCIPLINE PIN (0.9.1).
+-- The invariant: the ADDON asks the ENGINE global `CanInspect` with EXACTLY
+-- ONE argument. The engine's second parameter (`showError`) is what makes the
+-- client draw a message and speak; that display is the popup 0.8.3 removed.
+-- The plain mocks above, and the ones in batch4/batch8, answer every shape
+-- silently, so a second argument could slip back into a call site without
+-- anything failing. This mock refuses: it RAISES when select("#", ...) ~= 1.
+-- The raise is contained inside probeCanInspect's pcall (a refused call
+-- degrades to "no answer", which is exactly how the client behaves with an
+-- error popup), so the assertions pin the observable consequences of the
+-- contract being honoured:
+--   * the strict mock WAS reached, exactly once, through the real gate path;
+--   * the driver's answer EQUALS the mock's answer -- a two-argument caller
+--     trips the raise, the pcall swallows it, and the answer flips.
+-- Client truth: CanInspect is documented with a single argument on every
+-- branch (LibForeverInspector.lua:4182-4187); Blizzard's own two-argument
+-- `CanInspect(unit, true)` lives in InspectFrame_Show, outside this addon.
+do
+    local strictClients = {
+        { "Classic Era", P.WOW_PROJECT_CLASSIC, 11509 },
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506 },
+        { "WoW Forever", P.WOW_PROJECT_MAINLINE, 16001 },
+        { "Retail", P.WOW_PROJECT_MAINLINE, 120105 },
+    }
+    for _, c in ipairs(strictClients) do
+        local ci = run(c[2], c[3], "slot4", CONSTS)
+        local calls, answered, raised = 0, true, "(never)"
+        _G.CanInspect = function(...)
+            local n = select("#", ...)
+            if (n ~= 1) then
+                raised = "-> " .. tostring(n) .. " arguments"
+                error("CanInspect contract violation: " .. n .. " arguments, expected exactly 1", 2)
+            end
+            calls = calls + 1
+            answered = true
+            return true
+        end
+        _G.UnitExists = function() return true end
+        _G.UnitIsConnected = function() return true end
+        _G.UnitIsDeadOrGhost = function() return false end
+        _G.UnitIsPlayer = function() return true end
+        _G.UnitIsUnit = function() return false end
+        _G.CheckInteractDistance = function() return true end
+        local gateOk = ci:CanInspect("mouseover")
+        check("CanInspect " .. c[1] .. ": engine called with exactly ONE argument",
+            gateOk == answered and calls == 1 and raised == "(never)",
+            "answer=" .. tostring(gateOk) .. " calls=" .. tostring(calls)
+                .. " raised=" .. tostring(raised))
+    end
+end
+
 -- World proximity scan + telemetry (new in 0.8.3).
 -- Every one of the five shipped clients is exercised here, not just Classic:
 -- the scan itself is family-agnostic but the DISTANCE POLICY it applies is not
@@ -806,6 +857,168 @@ do
     check("...and the in-flight unit's own data resolved",
         type(ciC.cache["Player-n2"]) == "table",
         "n2 cached=" .. tostring(ciC.cache["Player-n2"] ~= nil))
+
+    -- QUEUE MECHANICS PINS (0.9.1). The drain DIRECTION, the cap-25 drop, the
+    -- hover priority and both shedding counters were previously enforced by no
+    -- test at all: a mutation of any of them would have shipped green. Each pin
+    -- observes the queue only through its public surfaces -- the sequence of
+    -- units a counting NotifyInspect mock receives, GetInspectStats()
+    -- .queueLength, and the drop counters -- because the queue is file-local.
+    --
+    -- What makes these observations sound:
+    --   * requestInspect sets the pending slot and re-arms nextInspectTime, so
+    --     the first DoInspect issues as a direct request and every later call
+    --     queues behind it -- the same path a burst of hovers takes;
+    --   * the queue drains TAIL-FIRST (`for i = #queue, 1, -1`,
+    --     LibForeverInspector.lua:5183), so the unit the next tick serves is
+    --     the queue's tail: the served sequence IS the drain order.
+    --
+    -- NOT re-pinned here, on purpose: the watchdog window (documented 3s,
+    -- strict `>`, timeouts == 1) and the throttle ordering are already
+    -- asserted by the ciB scenario above, and duplicating them would be a
+    -- second pin on one behaviour without one new fact.
+    --
+    -- Family coverage: the queue code is family-agnostic (no isClassic/isTBC
+    -- branch reads queue state, the cap, or the drain order), so only the two
+    -- clients whose load order and INSPECT_DELAY differ in kind -- TBC
+    -- Anniversary (the operator's target) and Classic Era -- are exercised.
+    for _, cl in ipairs({
+        { "TBC Anniversary", P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506 },
+        { "Classic Era", P.WOW_PROJECT_CLASSIC, 11509 },
+    }) do
+        local name = cl[1]
+        local wideExists = {
+            UnitExists = function(u)
+                return u ~= nil and (u == "player" or u == "mouseover"
+                    or (type(u) == "string" and u:match("^n%d+$") ~= nil))
+            end,
+        }
+
+        -- (a) The cap-25 overflow drops the OLDEST entry, once. 26 entries are
+        --     enqueued behind one pending request; on the 26th the cap removes
+        --     queue[1] (the oldest) and increments queueOverflowDrops. A drop
+        --     of the newest entry instead (the mutation that consumed the
+        --     sweeping user's hovered names) flips the whole drain order.
+        local ciD, tickD = build(wideExists)
+        local servedD = {}
+        _G.NotifyInspect = function(u) servedD[#servedD + 1] = u return true end
+        local d = ciD:DoInspect("n0")
+        for k = 1, 26 do ciD:DoInspect("n" .. k) end
+        local dstats = ciD:GetInspectStats()
+        check(name .. ": queue cap: overflow counted ONCE at the 26th enqueue",
+            d and dstats.queueOverflowDrops == 1 and dstats.queueLength == 25
+                and dstats.notifies == 1,
+            "overflow=" .. tostring(dstats.queueOverflowDrops)
+                .. " len=" .. tostring(dstats.queueLength)
+                .. " notifies=" .. tostring(dstats.notifies))
+        clock = clock + 4
+        tickD.cb()
+        clock = clock + 4
+        tickD.cb()
+        check(name .. ": queue cap: the cap dropped the OLDEST, not the newest",
+            servedD[1] == "n0" and servedD[2] == "n26" and servedD[3] == "n25",
+            "order=" .. table.concat(servedD, ","))
+        check(name .. ": queue cap: served entries do not count as shed",
+            (ciD:GetInspectStats().queueDrainedDrops or 0) == 0,
+            "drained=" .. tostring(ciD:GetInspectStats().queueDrainedDrops or 0))
+
+        -- (b) A mouseover at the queue tail keeps priority for the LIFO drain
+        --     while later non-hover requests slip in BEFORE it
+        --     (LibForeverInspector.lua:5121-5127). Without that insertion rule
+        --     the first enqueue pushes the hover towards the head, and the
+        --     drain serves the later requests first.
+        local ciE, tickE = build(wideExists)
+        local servedE = {}
+        _G.NotifyInspect = function(u) servedE[#servedE + 1] = u return true end
+        ciE:DoInspect("n0")
+        ciE:DoInspect("mouseover")
+        ciE:DoInspect("n1")
+        ciE:DoInspect("n2")
+        clock = clock + 4
+        tickE.cb()
+        clock = clock + 4
+        tickE.cb()
+        clock = clock + 4
+        tickE.cb()
+        check(name .. ": queue hover priority: mouseover keeps the tail "
+                .. "through later requests",
+            servedE[1] == "n0" and servedE[2] == "mouseover"
+                and servedE[3] == "n2" and servedE[4] == "n1",
+            "order=" .. table.concat(servedE, ","))
+
+        -- (c) Re-hovering a player whose OWN entry still sits in the queue
+        --     bumps MOUSEOVER entries to the tail (LibForeverInspector.lua
+        --     :5107-5110) so the CURRENT hover is served first by the LIFO
+        --     drain. Sequence: A hovered (entry guid-hoverA), then B appended
+        --     behind it (guid-hoverB), then the mouse moves back to A -- the
+        --     bump queue becomes [B, A]. When the pending slot frees, A is
+        --     served FIRST, straight from the mouseover hint; B's guid no
+        --     longer rides that token and resolves only through the fallback
+        --     focus token, so the served unit sequence distinguishes the two
+        --     orders. With the bump removed, B is served first.
+        local ciF, tickF = build({
+            UnitExists = function(u)
+                return u ~= nil and (u == "player" or u == "n0"
+                    or u == "mouseover" or u == "focus")
+            end,
+        })
+        local servedF = {}
+        _G.NotifyInspect = function(u) servedF[#servedF + 1] = u return true end
+        local hoverGUID = "Player-hoverA"
+        _G.UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            if (u == "mouseover") then return hoverGUID end
+            if (u == "focus") then return "Player-hoverB" end
+            return "Player-" .. tostring(u)
+        end
+        ciF:DoInspect("n0")            -- pending request occupies the slot
+        ciF:DoInspect("mouseover")     -- hover A queues
+        hoverGUID = "Player-hoverB"
+        ciF:DoInspect("mouseover")     -- hover B: new guid, appends behind A
+        hoverGUID = "Player-hoverA"
+        ciF:DoInspect("mouseover")     -- mouse back to A: bump A to the tail
+        clock = clock + 4
+        tickF.cb()
+        clock = clock + 4
+        tickF.cb()
+        clock = clock + 4
+        tickF.cb()
+        check(name .. ": queue re-hover bumps the current hover to the tail",
+            servedF[1] == "n0" and #servedF == 3 and servedF[2] == "mouseover"
+                and servedF[3] == "focus",
+            "order=" .. table.concat(servedF, ","))
+
+        -- (d) A queued entry whose unit has LEFT (the hint no longer exists
+        --     and the guid resolves to no token) is SHED off the queue and
+        --     counted once in queueDrainedDrops; it is never asked for, and
+        --     the next entry still drains. Shedding the entry in place would
+        --     stall the count and the queue together.
+        local ciG, tickG = build({
+            UnitExists = function(u)
+                return u ~= nil and (u == "player" or u == "n0"
+                    or u == "NA" or u == "NB")
+            end,
+        })
+        local servedG = {}
+        _G.NotifyInspect = function(u) servedG[#servedG + 1] = u return true end
+        ciG:DoInspect("n0")
+        ciG:DoInspect("NA")
+        ciG:DoInspect("NB")
+        _G.UnitExists = function(u)     -- NB despawns between hover and tick
+            return u == "player" or u == "n0" or u == "NA"
+        end
+        clock = clock + 4
+        tickG.cb()
+        local gstats = ciG:GetInspectStats()
+        check(name .. ": queue shed: the departed unit is dropped and counted",
+            (gstats.queueDrainedDrops or 0) == 1 and #servedG == 2
+                and servedG[1] == "n0" and servedG[2] == "NA"
+                and gstats.queueLength == 0 and gstats.notifies == 2,
+            "drained=" .. tostring(gstats.queueDrainedDrops or 0)
+                .. " order=" .. table.concat(servedG, ",")
+                .. " len=" .. tostring(gstats.queueLength)
+                .. " notifies=" .. tostring(gstats.notifies))
+    end
 end
 
 -- ==========================================================================

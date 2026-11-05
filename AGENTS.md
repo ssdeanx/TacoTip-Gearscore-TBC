@@ -5,8 +5,8 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v0.9.0) and **TacoTip Extras**
-(`TacoTip_Extras/`, v1.2.3), for five client families (era 11509, tbc
+two addons, one repo: **TacoTip** (root, v0.9.1) and **TacoTip Extras**
+(`TacoTip_Extras/`, v1.2.4), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
 
@@ -47,6 +47,11 @@ are probably not shipping.
 
 ## do not
 
+- never change anything the player can see — bars, frames, anchors, colors,
+  sizes, text — unless the request names it.
+- a second symptom gets one line in the report, never an edit.
+- under time pressure, report state instead of finishing the job: what changed,
+  what didn't, and what was not run.
 - no state-changing git — nothing is staged or committed by design; the two
   verifiers are the only permitted git use.
 - no browsing from a lane. no hash-based verification — read the code and run

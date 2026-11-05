@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-11-04T21:28:52Z",
+  "run_id": "release-0.9.1",
+  "agent_name": "release-0.9.1",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 5
+  },
+  "patterns": {
+    "what_worked": "Read the live install gate (LibForeverInspector.lua:4940) and its taint pin (taint_test.lua:497-507) before rewriting the two stale comments; the shipped truth was Classic Era + TBC Anniversary, not the audit's Classic-Era-only claim.",
+    "what_was_hard": "The residual 0.9.0 grep needed judgement: historical changelog/README sections, historical feature-label prefixes in checks, and a TacoTip Extras 0.8.0-fingerprint mock fixture are not current-version claims.",
+    "skill_gap": "No new pin was required this lane (comment-only and same-bytes constant), so the red-on-copy discipline was carried by the previous lane's B2-B4 proofs."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": null
+  }
+}

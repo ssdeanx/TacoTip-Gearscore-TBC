@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.0
+version: 0.9.2
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,7 +22,7 @@ interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: pending in-game verification
-updated: 2026-11-03
+updated: 2026-11-05
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -47,6 +47,23 @@ updated: 2026-11-03
 > that the identical build now also works on WoW Forever and Retail.
 ---
 > 🎉 **<span style="color:#2ecc71">130,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed **130,000 downloads** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.2</span>
+
+- 🎯 **<span style="color:#59f0dc">WoW Forever Tooltip Parity (Talents Off):</span>** The Forever unit tooltip now matches the Classic reference — name/class color, level line, Target line, guild behavior, GearScore, iLvl, Pawn, portrait, borders — with the sole exception of Talents, which never render on Forever (no Talents line, spec text, or spec icon). The stale extra score row is gone, Pawn persists after item data when the score is positive, empty snapshots are never cached as fresh, and the Tooltip Style dropdowns apply to the open tooltip immediately. No other client family changes.
+- 🧪 **<span style="color:#59f0dc">New Forever Acceptance Pins:</span>** A dedicated Forever harness file (71 pins: talents absent, Target, owned iLvl, all four styles, stale-row removal, Pawn persistence, empty-to-full recovery, spec index, guildless, NPC, own-tooltip, realm/inline/portrait/separator variants, render purity) proven red on the old code and green on the new, on all three interpreters. Pinned in the harness; in-game observation is the final word.
+- 🏷️ **<span style="color:#59f0dc">Version Bump:</span>** `TacoTip.toc` and the harness version pins move to `0.9.2`; the extra first-login line prints once on upgrade and the saved configuration is carried over as before.
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.1</span>
+
+- 🔎 **<span style="color:#59f0dc">New Inspect-Queue Diagnostics:</span>** `/tt diag` now reports two additional additive counters — queue-overflow drops and queue-drain drops — so a diagnostic session can show how often the automatic inspect queue shed a request. Observability only: no gate, throttle, or timing behavior changes.
+- 🧪 **<span style="color:#59f0dc">New Regression Pins:</span>** The test harness now pins the one-argument `CanInspect` call contract; the inspect-queue mechanics (the 25-entry cap sheds the *oldest* queued entry and counts it, `mouseover` keeps the tail through later requests, a re-hover bumps the current hover to the tail, and an unserved queued entry is counted as a drain-shed); and the saved-variable migration/sanitize behavior for the tooltip mover position (an upgrade clears the exact legacy `{TOPLEFT,TOPLEFT,0,0}` dot and bumps `conf_version`, a same-version load does not re-clear it, and per-load sanitize drops nil-offset/non-table shapes while a valid position survives). Pinned in the harness; not yet observed in game.
+- 🔤 **<span style="color:#59f0dc">Internal Hygiene:</span>** One tooltip separator literal used at two render sites in `main.lua` is hoisted into a single pre-formatted constant (byte-identical output), and two in-source comments in `Libs/LibForeverInspector` now state the actual shipped inspect-error-suppressor coverage (Classic Era **and** TBC Anniversary, not the other three families). Zero behavioral changes.
+- 🏷️ **<span style="color:#59f0dc">Version Bump:</span>** `TacoTip.toc` and the harness version pins move to `0.9.1`; the extra first-login line prints once on upgrade and the saved configuration is carried over as before.
 
 ---
 

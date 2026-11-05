@@ -1679,6 +1679,120 @@ end
 --]]
 
 --------------------------------------------------------------------------
+-- ADDON-LOADED MIGRATION + SANITIZE PINS (0.9.1).
+--
+-- The custom_pos hygiene lives ONLY in the live ADDON_LOADED handler
+-- (main.lua:4530-4566): the version-mismatch first-login clears the exact
+-- legacy {TOPLEFT,TOPLEFT,0,0} default dot and bumps conf_version, and the
+-- per-load sanitize clears any custom_pos whose saved shape cannot be
+-- handed to SetPoint (non-table, non-string point 1, or non-number
+-- offsets). ApplyConfigDefaults deliberately does NEITHER (it backfills
+-- missing keys only), so a pin that drives it instead of the handler pins
+-- nothing. The commented-out 2026-10-23 revert block above asserts the
+-- reverted behaviour and stays commented out for exactly that reason.
+--
+-- Driver: the REAL handler, reached as TT.frame:GetScript("OnEvent") and
+-- pcall'd as handler(frame, "ADDON_LOADED", "TacoTip_Forever" ) -- the same
+-- invocation pattern taint_test.lua uses. For the duration of the call
+-- TacoTipConfig is swapped for a literal SavedVariables-shaped table and
+-- restored afterwards, which is exactly the SavedVariables-sequence a real
+-- client performs.
+--
+-- The suite never defines a global GetAddOnMetadata, so main.lua resolved
+-- its own addOnVersion through the C_AddOns mock; the pins derive
+-- "conf_version" FROM that same mock instead of asserting the literal, so a
+-- future bump of the mock cannot quietly change what these pins mean.
+do
+    local TTv = REALG.C_AddOns.GetAddOnMetadata("TacoTip_Forever", "Version")
+    check("config migration: the suite's version mock is what main.lua resolves",
+        type(TTv) == "string" and rawget(REALG, "GetAddOnMetadata") == nil,
+        tostring(TTv))
+
+    local function driveLoadedHandler(scenario)
+        local handler = TT.frame.GetScript and TT.frame:GetScript("OnEvent")
+        check(scenario .. ": the ADDON_LOADED handler is reachable from the harness",
+            type(handler) == "function")
+        if (type(handler) ~= "function") then return false end
+        local errorsBefore = #ERRORS
+        local ok, err = pcall(handler, TT.frame, "ADDON_LOADED", "TacoTip_Forever")
+        -- safeCall logs a raise into ERRORS, so "ran clean" is checked as a
+        -- DELTA, not as the pcall's truth alone.
+        check(scenario .. ": ...and the handler runs clean",
+            ok and #ERRORS == errorsBefore,
+            "ok=" .. tostring(ok) .. " err=" .. tostring(err)
+                .. " newErrors=" .. tostring(#ERRORS - errorsBefore))
+        return ok
+    end
+
+    local savedConfig = REALG.TacoTipConfig
+
+    -- (a-1) Version UPGRADE + the exact legacy default dot: cleared, and
+    --     conf_version is bumped. This is the migration that moves the green
+    --     default dot to the new default corner.
+    REALG.TacoTipConfig = { custom_pos = { "TOPLEFT", "TOPLEFT", 0, 0 },
+        conf_version = "0.0.0" }
+    if (driveLoadedHandler("config migration upgrade")) then
+        check("config migration upgrade: the legacy default dot is cleared",
+            REALG.TacoTipConfig.custom_pos == nil,
+            tostring(REALG.TacoTipConfig.custom_pos))
+        check("config migration upgrade: conf_version is bumped to the addon's version",
+            REALG.TacoTipConfig.conf_version == TTv,
+            tostring(REALG.TacoTipConfig.conf_version) .. " / " .. tostring(TTv))
+    end
+
+    -- (a-2) Version UPGRADE + a real saved position: it SURVIVES. The
+    --     migration must never wipe a user's own dragged position -- without
+    --     this positive control, (a-1) could pass while every shape including
+    --     a legitimate one is cleared.
+    REALG.TacoTipConfig = { custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 120, 240 },
+        conf_version = "0.0.0" }
+    if (driveLoadedHandler("config migration control")) then
+        check("config migration control: a real saved position survives the upgrade",
+            type(REALG.TacoTipConfig.custom_pos) == "table"
+                and REALG.TacoTipConfig.custom_pos[1] == "BOTTOMLEFT"
+                and REALG.TacoTipConfig.custom_pos[4] == 240,
+            tostring(REALG.TacoTipConfig.custom_pos))
+    end
+
+    -- (a-3) The SAME version reload: the exact legacy dot is NOT re-cleared.
+    --     The migration is gated on conf_version ~= addOnVersion, so a same
+    --     version /reload is a no-op even for the legacy shape.
+    REALG.TacoTipConfig = { custom_pos = { "TOPLEFT", "TOPLEFT", 0, 0 },
+        conf_version = TTv }
+    if (driveLoadedHandler("config migration same-version")) then
+        check("config migration same-version: the legacy dot is NOT re-cleared",
+            type(REALG.TacoTipConfig.custom_pos) == "table",
+            tostring(REALG.TacoTipConfig.custom_pos))
+    end
+
+    -- (b) Per-load sanitize (fires on EVERY load, same version too): shapes
+    --     SetPoint cannot consume are cleared; a valid position survives.
+    REALG.TacoTipConfig = { custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", nil, nil },
+        conf_version = TTv }
+    if (driveLoadedHandler("config sanitize nil-offsets")) then
+        check("config sanitize nil-offsets: nil offsets (old GetPoint bug) are cleared",
+            REALG.TacoTipConfig.custom_pos == nil,
+            tostring(REALG.TacoTipConfig.custom_pos))
+    end
+    REALG.TacoTipConfig = { custom_pos = "BOTTOMRIGHT", conf_version = TTv }
+    if (driveLoadedHandler("config sanitize non-table")) then
+        check("config sanitize non-table: a non-table custom_pos is cleared",
+            REALG.TacoTipConfig.custom_pos == nil,
+            tostring(REALG.TacoTipConfig.custom_pos))
+    end
+    REALG.TacoTipConfig = { custom_pos = { "BOTTOMLEFT", "BOTTOMLEFT", 100, 200 },
+        conf_version = TTv }
+    if (driveLoadedHandler("config sanitize control")) then
+        check("config sanitize control: a valid saved position survives every load",
+            type(REALG.TacoTipConfig.custom_pos) == "table"
+                and REALG.TacoTipConfig.custom_pos[3] == 100,
+            tostring(REALG.TacoTipConfig.custom_pos))
+    end
+
+    REALG.TacoTipConfig = savedConfig
+end
+
+--------------------------------------------------------------------------
 -- Registration shape
 --------------------------------------------------------------------------
 local openOk, openErr = pcall(function() TT:OpenOptionsPanel() end)

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.0"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.3"
 
 
 
@@ -9,6 +9,55 @@ assert(LibStub:GetLibrary("LibForeverInspector", true), "TacoTip requires LibFor
 assert(LibStub:GetLibrary("LibDetours-1.0", true), "TacoTip requires LibDetours-1.0")
 
 local CI = LibStub("LibForeverInspector")
+-- Resolved once: every Forever-only branch below reads this, so a client
+-- family can never be re-derived inside the render.
+local isForever = (CI and CI.IsForever and CI:IsForever()) and true or false
+
+-- FojjiCore's tooltip module appends its own score row to GameTooltip AFTER
+-- this addon has rebuilt the unit tooltip, so the render-time drop can never
+-- see it. WoW offers no per-line delete and no caller attribution (the debug
+-- library is stripped), so the only deterministic block is the choke point:
+-- refuse the row before it is added. The literals "Gear score" + "item level"
+-- are FojjiCore's; nothing TacoTip or the client writes contains both.
+local function isForeignScoreRow(text)
+    if (type(text) ~= "string" or text == "") then
+        return false
+    end
+    local lowered = string.lower(text)
+    return string.find(lowered, "gear score", 1, true) ~= nil
+        and string.find(lowered, "item level", 1, true) ~= nil
+end
+
+local function blockForeignScoreRows(tooltip)
+    if (not tooltip or tooltip._tacoTipForeignScoreBlock) then
+        return
+    end
+    local addLine = tooltip.AddLine
+    local addDoubleLine = tooltip.AddDoubleLine
+    if (type(addLine) ~= "function") then
+        return
+    end
+    tooltip.AddLine = function(self, text, ...)
+        if (isForeignScoreRow(text)) then
+            return
+        end
+        return addLine(self, text, ...)
+    end
+    if (type(addDoubleLine) == "function") then
+        tooltip.AddDoubleLine = function(self, left, right, ...)
+            if (isForeignScoreRow(left) or isForeignScoreRow(right)) then
+                return
+            end
+            return addDoubleLine(self, left, right, ...)
+        end
+    end
+    tooltip._tacoTipForeignScoreBlock = true
+end
+
+if (isForever) then
+    blockForeignScoreRows(GameTooltip)
+end
+
 local Detours = LibStub("LibDetours-1.0")
 local GearScore = _G.TT_GS
 local L = _G.TACOTIP_LOCALE
@@ -137,6 +186,7 @@ local ALLIANCE_ICON_SPACED = " " .. ALLIANCE_ICON
 local PVP_FLAG_ICON = "|TInterface\\GossipFrame\\BattleMasterGossipIcon:0|t"
 local PVP_FLAG_ICON_SPACED = " " .. PVP_FLAG_ICON
 local ACHIEVEMENT_ICON = "|TInterface\\AchievementFrame\\UI-Achievement-TinyShield:18:18:0:0:20:20:0:12.5:0:12.5|t"
+local SEPARATOR_LINE = "|cFF444444" .. string.rep("-", 30) .. "|r"
 local ROLE_ICONS = {
     TANK = " |TInterface\\GroupFrame\\UI-Group-TankIcon:18:18:0:0:16:16:0:16:0:16|t",
     HEALER = " |TInterface\\GroupFrame\\UI-Group-HealerIcon:18:18:0:0:16:16:0:16:0:16|t",
@@ -1542,6 +1592,11 @@ local function refreshUnitTooltip(ttUnit, useTooltipUpdater)
     if (useTooltipUpdater and GameTooltip.UpdateTooltip) then
         return GameTooltip:UpdateTooltip()
     end
+    -- Fallthrough: no owner unit-frame updater and no engine updater. A full
+    -- SetUnit is the re-drive that clears the client's own rows before the
+    -- renderer rebuilds them. (Forever shares this path: its stale-row fix
+    -- lives in the unit handler's header drop, which runs on every delivery,
+    -- so no family needs its own re-drive shape here.)
     return GameTooltip:SetUnit(ttUnit)
 end
 
@@ -1600,6 +1655,36 @@ function TacoTip_GSCallback(guid)
     if (pending and pending ~= guid) then
         TacoTip_GSCallback(pending)
     end
+end
+
+-- Re-drives the unit tooltip that is on screen right now. Used by the Tooltip
+-- Style dropdowns so a selection applies to the open tooltip immediately.
+--
+-- Forever-only: other families keep their existing behaviour (the option is
+-- persisted and applied on the next render, exactly as before). Returns true
+-- only when a Forever unit tooltip was actually rebuilt.
+function TT:RefreshOpenUnitTooltip()
+    if (not isForever) then
+        return false
+    end
+    if (not (GameTooltip and GameTooltip.IsShown and GameTooltip:IsShown())) then
+        return false
+    end
+    local unit = resolveTooltipUnit(GameTooltip)
+    if (not unit) then
+        local ok, _, retUnit = pcall(GameTooltip.GetUnit, GameTooltip)
+        if (ok) then
+            unit = retUnit
+        end
+    end
+    if (not unit or type(UnitExists) ~= "function" or not UnitExists(unit)) then
+        return false
+    end
+    local ok, err = pcall(refreshUnitTooltip, unit, true)
+    if (not ok and err) then
+        TT:RecordError("RefreshOpenUnitTooltip", err)
+    end
+    return ok
 end
 
 local function cancelDelayedTooltip(tooltip)
@@ -2085,6 +2170,28 @@ local function onTooltipSetUnit(tooltip, data)
     end
     text[levelLineIndex] = colorizeUnitLevelLine(tooltip, tooltipUnit, text[levelLineIndex], levelLineIndex)
 
+    -- FojjiCore's score row is refused at GameTooltip.AddLine (see
+    -- blockForeignScoreRows at the top of this file), so it never reaches the
+    -- preserved set; the write-back below cannot re-emit what was never added.
+
+    if (isForever and UnitIsPlayer(tooltipUnit)) then
+        -- Forever owns the final player tooltip. The client contributes the
+        -- name / guild / level header, which was captured above and is
+        -- rewritten in place (keeping its client-set colour). Every row past
+        -- the header is dropped here so a row the addon did not write in this
+        -- render can never be re-emitted through the write-back below.
+        --
+        -- Players only. Creature tooltips carry the client's own rows past the
+        -- level line -- titles, quest markers, trainer/repair tags -- and
+        -- nothing in this addon re-emits them, so dropping them here emptied
+        -- NPC data. The FojjiCore score row is already refused at AddLine.
+        if (numLines > levelLineIndex) then
+            for i = levelLineIndex + 1, numLines do
+                text[i] = nil
+            end
+        end
+    end
+
     if (TacoTipConfig.show_target and UnitIsConnected(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
         local unitTarget = tooltipUnit .. "target"
         local targetName = UnitName(unitTarget)
@@ -2340,17 +2447,22 @@ local function onTooltipSetUnit(tooltip, data)
         if (nameLineIcons ~= "") then
             text[1] = text[1] .. nameLineIcons
         end
+        if (isForever) then
+            -- Talents are not rendered on Forever. Clear any overlay an older
+            -- build may have left behind so no icon survives either.
+            applySpecializationIcon(tooltip, nil)
+        end
         if (not TacoTipConfig.hide_in_combat or not InCombatLockdown()) then
             if (TacoTipConfig.show_separators) then
                 if (wide_style) then
                     addLineDouble(" ", " ", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r,
                         GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
                 else
-                    addLineSingle("|cFF444444" .. string.rep("-", 30) .. "|r", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g,
+                    addLineSingle(SEPARATOR_LINE, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g,
                         GRAY_FONT_COLOR.b)
                 end
             end
-            if (TacoTipConfig.show_talents) then
+            if (TacoTipConfig.show_talents and not isForever) then
                 -- Clear the overlay icon FIRST, so any path through this block
                 -- that does not end up setting a real icon leaves it hidden.
                 --
@@ -2460,7 +2572,7 @@ local function onTooltipSetUnit(tooltip, data)
                     addLineDouble(" ", " ", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r,
                         GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
                 else
-                    addLineSingle("|cFF444444" .. string.rep("-", 30) .. "|r", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g,
+                    addLineSingle(SEPARATOR_LINE, GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g,
                         GRAY_FONT_COLOR.b)
                 end
             end
@@ -4264,6 +4376,8 @@ local function collectInspectSection()
     diagRow(s, "requests / timeouts", string.format("notifies=%s, ready=%s, timeouts=%s, rejected=%s",
         tostring(st.notifies or 0), tostring(st.ready or 0), tostring(timeouts),
         tostring(st.rejected or 0)), timeouts > 0 and "warn" or "info")
+    diagRow(s, "queue overflow drops", st.queueOverflowDrops or 0, "info")
+    diagRow(s, "queue drain drops", st.queueDrainedDrops or 0, "info")
     if (st.lastRejectedUnit) then
         diagRow(s, "last refusal", string.format("unit='%s', yards=%s, reason='%s'",
             tostring(st.lastRejectedUnit),

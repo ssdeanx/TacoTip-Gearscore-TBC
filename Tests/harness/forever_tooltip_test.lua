@@ -1,0 +1,1374 @@
+-- Forever-only unit-tooltip acceptance pins (0.9.2).
+--
+-- WoW Forever (interface 16001) must render the unit tooltip like the Classic
+-- reference -- name/class color, level line, target line, guild line behavior,
+-- GearScore line, iLvl line, Pawn line, portrait, borders -- with the SOLE
+-- exception that NO Talents line, spec text, or spec icon renders. Every pin
+-- here is Forever-scoped; the other families are covered by the shared suites
+-- (tooltip_test CLASSIC_ERA/TBC_ANNIV/TITANFORGE/RETAIL), which this file never
+-- touches.
+--
+-- Usage: lua5.1 Tests/harness/forever_tooltip_test.lua
+--
+-- Env overrides (red/green proof only; never used in gates):
+--   TACOTIP_MAIN_OVERRIDE=/tmp/main_old.lua  load a throwaway main.lua copy
+--   TACOTIP_LIB_OVERRIDE=/tmp/lib_old.lua    load a throwaway inspector copy
+-- Each new pin was shown RED on a `git show HEAD:`-derived throwaway copy
+-- (the pre-fix production code) and GREEN on the working tree.
+
+local _hp = ((arg and arg[0]) or "Tests/harness/forever_tooltip_test.lua"):gsub("\\", "/")
+local _hd = _hp:match("^(.*)/[^/]*$") or "."
+local ROOT = dofile(_hd .. "/root.lua") .. "/"
+
+local REALG = _G
+local unpack = unpack or table.unpack
+
+local STD = {
+    os = os,
+    string = string,
+    pairs = pairs,
+    ipairs = ipairs,
+    type = type,
+    pcall = pcall,
+    tonumber = tonumber,
+    tostring = tostring,
+    select = select,
+    rawget = rawget,
+    rawset = rawset,
+    setmetatable = setmetatable,
+    getmetatable = getmetatable,
+    unpack = unpack,
+    assert = assert,
+    error = error,
+    math = math,
+    table = table,
+    loadfile = loadfile,
+    print = print,
+    io = io,
+    getenv = os.getenv,
+    xpcall = function(f, handler, ...)
+        local args = { ... }
+        local n = select("#", ...)
+        local function trampoline() return f(unpack(args, 1, n)) end
+        local ok, err = pcall(trampoline)
+        if (not ok) then
+            if (type(handler) == "function") then
+                local hOk = pcall(handler, err)
+                if (not hOk) then error(err, 0) end
+            else
+                error(err, 0)
+            end
+        end
+        return ok
+    end,
+    next = next,
+    rawequal = rawequal,
+    rawlen = function(t) return #t end,
+    collectgarbage = collectgarbage,
+}
+
+local baseTable = table
+local baseNext = next
+STD.table = setmetatable({
+    wipe = baseTable.wipe or function(t)
+        for k in baseNext, t do t[k] = nil end
+        return t
+    end,
+}, { __index = baseTable })
+
+--------------------------------------------------------------------------
+-- Widget factory (line-pool model: ClearLines keeps the FontStrings, exactly
+-- like the client).
+--------------------------------------------------------------------------
+-- Forward: what the client itself contributes per unit token (assigned below,
+-- after the frames exist). Local so the harness adds no new globals.
+local CLIENT_SEED
+local function makeWidget(kind, name, parent, template, depth)
+    depth = depth or 0
+    local w = { __kind = kind, __name = name, __parent = parent, __text = nil, __shown = true }
+    w.__lines, w.__hooks, w.__events = {}, {}, {}
+    w.__scripts = {
+        OnLoad = true, OnShow = true, OnHide = true, OnEvent = true,
+        OnUpdate = true, OnSizeChanged = true, OnEnter = true, OnLeave = true,
+        OnTooltipCleared = true,
+    }
+    local MT = {}
+    MT.__index = function(t, k)
+        local absent = rawget(w, "__absent")
+        if (absent and absent[k]) then return nil end
+        local f = rawget(w, k)
+        if f then return f end
+        return nil
+    end
+    w.GetName = function() return name end
+    w.GetParent = function() return parent end
+    w.GetObjectType = function() return kind end
+    w.SetScript = function(_, s, fn) w.__scripts[s] = fn end
+    w.GetScript = function(_, s) return w.__scripts[s] end
+    w.__scripts_declared = nil
+    w.HasScript = function(self, n) return self.__scripts[n] == true end
+    w.HookScript = function(_, s, fn)
+        if (_.HasScript and not _:HasScript(s)) then
+            error("bad argument #2 to 'HookScript' (Usage: self:HookScript(scriptTypeName, script))", 2)
+        end
+        w.__hooks[s] = fn
+    end
+    w.RegisterEvent = function(_, e) w.__events[#w.__events + 1] = e end
+    w.UnregisterEvent = function() end
+    w.Show = function() w.__shown = true end
+    w.Hide = function() w.__shown = false end
+    w.IsShown = function() return w.__shown end
+    w.SetShown = function(_, v) w.__shown = v and true or false end
+    w.__points = {}
+    w.SetPoint = function(_, p, rel, rp, ox, oy)
+        local relName = rel
+        if (type(rel) == "table" or type(rel) == "userdata") then
+            relName = (rel.GetName and rel:GetName()) or nil
+        end
+        w.__points[#w.__points + 1] = { p, relName, rp, ox or 0, oy or 0 }
+    end
+    w.ClearAllPoints = function() w.__points = {} end
+    w.SetAllPoints = function() w.__points = {} end
+    w.SetSize = function(_, a, b) w.__w, w.__h = a, b end
+    w.SetWidth = function(_, a) w.__w = a end
+    w.SetHeight = function(_, a) w.__h = a end
+    w.GetWidth = function() return w.__w or 0 end
+    w.GetHeight = function() return w.__h or 0 end
+    w.GetLeft = function() return 0 end
+    w.GetRight = function() return 0 end
+    w.GetAlpha = function(self) return self.__alpha end
+    w.__alpha = 1
+    w.SetAlpha = function(self, a) self.__alpha = a end
+    w.SetBackdropColor = function() end
+    w.SetBackdropBorderColor = function(_, r, g, b, a) w.__borderColor = { r, g, b, a } end
+    w.SetClampedToScreen = function() end
+    w.SetHitRectInsets = function() end
+    w.SetClampRectInsets = function() end
+    w.EnableMouse = function() end
+    w.EnableMouseWheel = function() end
+    w.SetMovable = function() end
+    w.SetUserPlaced = function() end
+    w.SetText = function(_, t) w.__text = t end
+    w.GetText = function() return w.__text end
+    w.SetFontObject = function() end
+    w.SetFont = function() end
+    w.SetJustifyH = function() end
+    w.SetJustifyV = function() end
+    w.SetWordWrap = function() end
+    w.SetNonSpaceWrap = function() end
+    w.SetMaxLetters = function() end
+    w.SetShadowOffset = function() end
+    w.SetShadowColor = function() end
+    w.SetTextColor = function() end
+    w.GetStringHeight = function() return 12 end
+    w.SetVertexColor = function() end
+    w.SetTexture = function(_, t) w.__texture = t end
+    w.SetColorTexture = function() end
+    w.SetTexCoord = function() end
+    w.SetDesaturated = function() end
+    w.SetDrawLayer = function() end
+    w.SetStatusBarTexture = function() end
+    w.SetStatusBarColor = function(_, r, g, b) w.__statusR, w.__statusG, w.__statusB = r, g, b end
+    w.SetMinMaxValues = function(_, a, b) w.__min, w.__max = a, b end
+    w.SetValue = function(_, v) w.__value = v end
+    w.SetValueStep = function() end
+    w.SetObeyStepOnDrag = function() end
+    w.SetChecked = function(_, v) w.__checked = v and true or false end
+    w.GetChecked = function() return w.__checked end
+    w.SetEnabled = function(_, v) w.__enabled = v ~= false end
+    w.IsEnabled = function() return w.__enabled ~= false end
+    w.SetScrollChild = function(_, c) w.__scrollChild = c end
+    w.SetVerticalScroll = function() end
+    w.GetVerticalScroll = function() return 0 end
+    w.SetPortraitTexture = function(_, t) w.__portrait = t end
+    w.SetPortraitZoom = function() end
+    w.SetModelScale = function() end
+    w.SetCamera = function() end
+    w.SetPosition = function() end
+    w.SetFacing = function() end
+    -- NOTE: SetUnit is a plain record; UpdateTooltip below is engine-faithful
+    -- (it re-drives the unit post-call for the tooltip's current unit, which
+    -- is what the engine method does on every client -- the operator's symptom
+    -- proves the GSCallback re-drive re-invokes the handler in game). The
+    -- unit post-call table is installed later; until then this is a no-op.
+    w.SetUnit = function(self, u)
+        w.__unit = u
+        -- Engine-faithful: on every client, SetUnit on a unit tooltip clears
+        -- the frame, the CLIENT repopulates its own name/guild/level rows, and
+        -- only then do the TooltipDataProcessor post-calls (the addon's render
+        -- entry) run. Without the repopulation the handler would read the
+        -- addon's own previous output -- including lines clearTooltipVisuals
+        -- just blanked by the ownership proof -- and bail at the empty-header
+        -- guard. CLIENT_SEED is what the client itself contributes per token.
+        if (self and self == REALG.GameTooltip and POSTCALLS and POSTCALLS.unit) then
+            self:ClearLines()
+            local seed = CLIENT_SEED and CLIENT_SEED[u]
+            if (seed) then
+                for _, line in STD.ipairs(seed) do self:AddLine(line) end
+            end
+            local guid = REALG.UnitGUID and REALG.UnitGUID(u) or nil
+            POSTCALLS.unit(self, { guid = guid })
+        end
+    end
+    w.ClearModel = function() end
+    w.Refresh = function() end
+    w.FadeOut = function() end
+    w.UpdateTooltip = function(self)
+        -- main.lua calls this as GameTooltip.UpdateTooltip() (dot, no self),
+        -- so fall back to the shared tooltip when no receiver arrived. Like
+        -- SetUnit, an engine refresh repopulates the client's own rows first.
+        local tt = (type(self) == "table" and self.__unit) and self or REALG.GameTooltip
+        if (tt and tt.__unit and POSTCALLS and POSTCALLS.unit) then
+            tt:ClearLines()
+            local seed = CLIENT_SEED and CLIENT_SEED[tt.__unit]
+            if (seed) then
+                for _, line in STD.ipairs(seed) do tt:AddLine(line) end
+            end
+            local guid = REALG.UnitGUID and REALG.UnitGUID(tt.__unit) or nil
+            POSTCALLS.unit(tt, { guid = guid })
+        end
+    end
+    w.SetOwner = function() end
+    w.GetOwner = function() return nil end
+    w.GetMinimumWidth = function() return 0 end
+    w.SetMinimumWidth = function() end
+    w.GetAnchorType = function() return 1 end
+    w.SetPadding = function() end
+    w.ClearPadding = function() end
+    w.SetBackdrop = function() end
+    w.IsUnit = function(_, u) return w.__unit == u end
+    w.GetItem = function() return "n", "item:12345" end
+    w.GetSpell = function() return "n", 1 end
+    w.__absent = {}
+    if (kind == "Texture" or kind == "FontString") then
+        for _, m in ipairs({ "SetFrameLevel", "GetFrameLevel",
+            "SetFrameStrata", "GetFrameStrata" }) do
+            w[m] = nil
+            w.__absent[m] = true
+        end
+    end
+    -- GameTooltip line pool.
+    w.__linePool = {}
+    w.__linePoolR = {}
+    w.ClearLines = function()
+        for i = #w.__lines, 1, -1 do
+            local e = w.__lines[i]
+            if (e and e.__fs) then e.__fs.__text = nil end
+            if (e and e.__fsr) then e.__fsr.__text = nil end
+        end
+        w.__lines = {}
+    end
+    w.NumLines = function() return #w.__lines end
+    w.AddLine = function(_, txt, r, g, b)
+        ADDLINE_CALLS = (ADDLINE_CALLS or 0) + 1
+        local n = #w.__lines + 1
+        local e = { left = txt, r = r, g = g, b = b, __fs = w.__linePool[n] }
+        if (e.__fs) then e.__fs.__text = txt end
+        w.__lines[n] = e
+    end
+    w.AddDoubleLine = function(_, l, rt)
+        ADDLINE_CALLS = (ADDLINE_CALLS or 0) + 1
+        local n = #w.__lines + 1
+        local e = { left = l, right = rt, __fs = w.__linePool[n], __fsr = w.__linePoolR[n] }
+        if (e.__fs) then e.__fs.__text = l end
+        if (e.__fsr) then e.__fsr.__text = rt end
+        w.__lines[n] = e
+    end
+    w.GetLeftLine = function(_, i)
+        local e = w.__lines[i]
+        if (not e) then return nil end
+        local fs = e.__fs
+        if (not fs) then
+            fs = makeWidget("FontString", (name or "TT") .. "TextLeft" .. i, w, nil, depth + 1)
+            if (e.left ~= nil) then fs.__text = e.left end
+            w.__linePool[i] = fs
+            e.__fs = fs
+        end
+        return fs
+    end
+    w.GetRightLine = function(_, i)
+        local e = w.__lines[i]
+        if (not e or not e.right) then return nil end
+        local fs = e.__fsr
+        if (not fs) then
+            fs = makeWidget("FontString", (name or "TT") .. "TextRight" .. i, w, nil, depth + 1)
+            fs.__text = e.right
+            w.__linePoolR[i] = fs
+            e.__fsr = fs
+        end
+        return fs
+    end
+    w.CreateFontString = function(_, n, sub, tmpl)
+        local c = makeWidget("FontString", n or (name and name .. "FS"), w, tmpl, depth + 1)
+        if (n) then rawset(REALG, n, c) end
+        return c
+    end
+    w.CreateTexture = function(_, n, sub, tmpl)
+        local c = makeWidget("Texture", n or (name and name .. "T"), w, tmpl, depth + 1)
+        if (n) then rawset(REALG, n, c) end
+        return c
+    end
+    return setmetatable(w, MT)
+end
+
+--------------------------------------------------------------------------
+-- Sandbox: the whole global table is replaced, then rebuilt from STD plus
+-- the mocked Forever client.
+--------------------------------------------------------------------------
+for k in STD.pairs(REALG) do REALG[k] = nil end
+for k, v in STD.pairs(STD) do REALG[k] = v end
+REALG._G = REALG
+REALG.time = STD.os.time
+REALG.print = function(s) STD.io.write(tostring(s) .. "\n") end
+REALG.geterrorhandler = function()
+    return function(e)
+        ERRORS[#ERRORS + 1] = tostring(e)
+    end
+end
+ERRORS = {}
+TIMERS = {}
+
+local VALID_FRAME_TYPES = {    Frame = true, Button = true, CheckButton = true, EditBox = true,
+    ScrollFrame = true, Slider = true, StatusBar = true, GameTooltip = true,
+    PlayerModel = true, NumberEditBox = true, SelectionGroup = true,
+    ColorPicker = true, MessageFrame = true, Model = true, Movie = true,
+    OffScreenFrame = true, SideDock = true, ArenaSpectatorFrame = true,
+}
+local ALL_FRAMES = {}
+REALG.CreateFrame = function(kind, name, parent, template)
+    if (type(kind) ~= 'string' or not VALID_FRAME_TYPES[kind]) then
+        error("CreateFrame: Unknown frame type '" .. tostring(kind) .. "'", 2)
+    end
+    local w = makeWidget(kind or "Frame", name, parent, template)
+    ALL_FRAMES[#ALL_FRAMES + 1] = w
+    return w
+end
+REALG.GetLocale = function() return "enUS" end
+REALG.GetCVar = function() return "" end
+REALG.SetCVar = function() end
+REALG.InCombatLockdown = function() return false end
+REALG.securecall = function(fn, ...) return fn(...) end
+REALG.LoadAddOn = function() return true end
+REALG.GameTooltip_SetDefaultAnchor = function() end
+local SECURE_HOOKS = {}
+REALG.hooksecurefunc = function(a, b, c)
+    if (type(a) == "string") then
+        local name, fn = a, b
+        local prev = SECURE_HOOKS[name]
+        SECURE_HOOKS[name] = function(...)
+            if (prev) then prev(...) end
+            return fn(...)
+        end
+    elseif (type(a) == "table" and type(b) == "string") then
+        local t, name, fn = a, b, c
+        local prev = t[name]
+        t[name] = function(...)
+            if (prev) then prev(...) end
+            return fn(...)
+        end
+    end
+end
+REALG.tinsert = table.insert
+REALG.tremove = table.remove
+REALG.strlower = string.lower
+REALG.strfind = string.find
+REALG.strrep = string.rep
+REALG.strsub = string.sub
+REALG.wipe = table.wipe
+REALG.SlashCmdList = {}
+REALG.StaticPopupDialogs = {}
+REALG.StaticPopup_Show = function() end
+REALG.UISpecialFrames = {}
+REALG.TacoTipConfig = {}
+REALG.TACO_TIP_DEBUG = true
+-- Forever family identity: MAINLINE project, 16001 in the 4th slot.
+REALG.GetBuildInfo = function() return "10.2.7", "1", "d", 16001, "us", "rel" end
+REALG.WOW_PROJECT_MAINLINE = 1
+REALG.WOW_PROJECT_CLASSIC = 2
+REALG.WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5
+REALG.WOW_PROJECT_WRATH_CLASSIC = 11
+REALG.WOW_PROJECT_CATACLYSM_CLASSIC = 14
+REALG.WOW_PROJECT_MISTS_CLASSIC = 19
+REALG.WOW_PROJECT_ID = 1
+REALG.C_AddOns = {
+    GetAddOnMetadata = function(_, k)
+        if k == "Version" then
+            local f = STD.io.open(ROOT .. "TacoTip.toc", "r")
+            if (f) then
+                local content = f:read("*a")
+                f:close()
+                local ver = content:match("## Version: ([^\r\n]+)")
+                if (ver) then return ver end
+            end
+            return "0.9.2"
+        end
+        if k == "Title" then return "TacoTip Forever" end
+    end,
+    IsAddOnLoaded = function() return false end,
+}
+REALG.C_Item = {}
+REALG.C_PlayerInfo = {
+    GUIDIsPlayer = function(g)
+        return type(g) == "string" and string.find(g, "Player%-", 1) == 1
+    end,
+}
+REALG.C_Map = { GetBestMapForUnit = function() return nil end }
+for _, f in ipairs({ "GameFontNormal", "GameFontHighlight", "GameFontNormalSmall",
+    "GameFontHighlightSmall", "GameFontDisable", "GameFontDisableSmall",
+    "GameFontNormalLarge", "NumberFontNormal", "ChatFontNormal" }) do REALG[f] = f end
+REALG.NORMAL_FONT_COLOR = { r = 1, g = 1, b = 1 }
+REALG.GRAY_FONT_COLOR = { r = .5, g = .5, b = .5 }
+REALG.HIGHLIGHT_FONT_COLOR = { r = 1, g = .82, b = 0 }
+REALG.RAID_CLASS_COLORS = {
+    WARRIOR = { r = 1, g = .8, b = .5 },
+    MAGE = { r = .41, g = .8, b = .94 },
+}
+REALG.CUSTOM_CLASS_COLORS = nil
+REALG.PowerBarColor = { [0] = { r = .3, g = .3, b = .8 } }
+REALG.CONTAINER_OFFSET_X, REALG.CONTAINER_OFFSET_Y = 0, 0
+REALG.PVP_FLAG_ICON = "Interface\\Icons\\pvp_icon"
+REALG.HORDE_ICON = "Interface\\Icons\\inv_misc_note_01"
+REALG.ALLIANCE_ICON = "Interface\\Icons\\inv_misc_note_02"
+REALG.FACTION_BAR_TEXTURE = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
+REALG.UIParent = makeWidget("Frame", "UIParent")
+REALG.WorldFrame = makeWidget("Frame", "WorldFrame")
+REALG.PaperDollFrame = makeWidget("Frame", "PaperDollFrame")
+REALG.InspectFrame = makeWidget("Frame", "InspectFrame")
+REALG.InspectPaperDollFrame = makeWidget("Frame", "InspectPaperDollFrame")
+REALG.InspectModelFrame = makeWidget("Frame", "InspectModelFrame")
+REALG.CharacterModelFrame = nil -- modern pair has none
+REALG.GameTooltip = makeWidget("GameTooltip", "GameTooltip")
+REALG.GameTooltipStatusBar = makeWidget("StatusBar", "GameTooltipStatusBar")
+REALG.ItemRefTooltip = makeWidget("GameTooltip", "ItemRefTooltip")
+REALG.ShoppingTooltip1 = makeWidget("GameTooltip", "ShoppingTooltip1")
+REALG.ShoppingTooltip2 = makeWidget("GameTooltip", "ShoppingTooltip2")
+REALG.ItemRefShoppingTooltip1 = makeWidget("GameTooltip", "ItemRefShoppingTooltip1")
+REALG.ItemRefShoppingTooltip2 = makeWidget("GameTooltip", "ItemRefShoppingTooltip2")
+
+CLIENT_SEED = {
+    player = { "Testplayer", "<Testguild>", "Level 60 Human" },
+    mouseover = { "Enemyplayer", "<Testguild>", "Level 59 Mage" },
+    target = { "Hated Squirrel", "Level 42 Beast", "QUEST_MARKER_LINE" },
+}
+local UNITS = {
+    player = {
+        guid = "Player-1-000001", name = "Testplayer", level = 60,
+        race = "Human", class = "WARRIOR", className = "Warrior", classID = 1,
+        isPlayer = true, pvp = false,
+    },
+    mouseover = {
+        guid = "Player-2-000002", name = "Enemyplayer", level = 59,
+        race = "Orc", class = "MAGE", className = "Mage", classID = 8,
+        isPlayer = true, pvp = true,
+    },
+    -- The mouseover's target: another player, so the class-colored
+    -- "Target: <name> (Player)" branch is reachable. Never hovered directly.
+    mouseovertarget = {
+        guid = "Player-5-000005", name = "Targetplayer", level = 60,
+        race = "Human", class = "PRIEST", className = "Priest", classID = 5,
+        isPlayer = true, pvp = false,
+    },
+    target = {
+        guid = "Creature-3-000003", name = "Hated Squirrel", level = 42,
+        race = "Beast", class = nil, className = nil, classID = nil,
+        isPlayer = false, pvp = false,
+    },
+}
+local currentUnit = "player"
+REALG.UnitExists = function(u) return UNITS[u] ~= nil end
+REALG.UnitGUID = function(u) return UNITS[u] and UNITS[u].guid or nil end
+REALG.UnitName = function(u) return UNITS[u] and UNITS[u].name or nil, "Testrealm" end
+REALG.__testClock = 1000
+REALG.GetTime = function() return REALG.__testClock end
+REALG.UnitLevel = function(u) return UNITS[u] and UNITS[u].level or 1 end
+REALG.UnitRace = function(u) return UNITS[u] and UNITS[u].race or "" end
+-- Modern UnitClass: THREE values (name, token, classID).
+REALG.UnitClass = function(u)
+    local c = UNITS[u]
+    if (not c or not c.class) then return nil, nil end
+    return c.className, c.class, c.classID
+end
+REALG.UnitIsPlayer = function(u) return UNITS[u] and UNITS[u].isPlayer or false end
+REALG.UnitIsUnit = function(a, b)
+    if (a == b) then return true end
+    -- The engine CAN report the hovered unit's target as the player even
+    -- though the token differs ("mouseovertarget" vs "player"). Model that
+    -- alias so the Target: You/Player branch is reachable in-harness.
+    if (a == "mouseovertarget" and b == "player") then return true end
+    return false
+end
+REALG.C_PaperDollInfo = { GetInspectGuildInfo = function() return 0, 0, nil, nil end }
+REALG.UnitIsPVP = function(u) return UNITS[u] and UNITS[u].pvp or false end
+REALG.UnitPVPName = function() return "Test" end
+REALG.UnitFactionGroup = function() return "Alliance" end
+REALG.UnitGroupRolesAssigned = function() return "NONE" end
+REALG.UnitIsConnected = function() return true end
+REALG.UnitIsSameServer = function() return true end
+REALG.UnitCanAttack = function() return false end
+REALG.UnitInParty = function() return false end
+REALG.UnitInRaid = function() return false end
+REALG.IsInGroup = function() return false end
+REALG.IsInRaid = function() return false end
+REALG.UnitPower = function() return 50 end
+REALG.UnitPowerMax = function() return 100 end
+REALG.UnitPowerType = function() return 0 end
+REALG.GetGuildInfo = function() return "Testguild", "Testrealm" end
+REALG.GetPlayerInfoByGUID = function(guid)
+    for _, c in STD.pairs(UNITS) do
+        if (c.guid == guid and c.class) then return true, c.class end
+    end
+    return true, nil
+end
+REALG.UnitIsOtherPlayersPet = function() return false end
+REALG.UnitIsVisible = function() return true end
+REALG.UnitIsDeadOrGhost = function() return false end
+REALG.UnitHealthMax = function() return 100 end
+REALG.GetNamePlates = function() return {} end
+REALG.CanInspect = function() return true end
+REALG.CheckInteractDistance = function() return true end
+REALG.NotifyInspect = function() return true end
+REALG.UnitDistanceSquared = function() return 100, true end
+REALG.__clearInspectPlayerCalls = 0
+REALG.ClearInspectPlayer = function()
+    REALG.__clearInspectPlayerCalls = (REALG.__clearInspectPlayerCalls or 0) + 1
+end
+REALG.GetComparisonAchievementPoints = function() return 0 end
+REALG.GetTotalAchievementPoints = function() return 0 end
+REALG.GetQuestDifficultyColor = function() return { r = 1, g = .5, b = 0 } end
+-- Deferred bodies: C_Timer.After records instead of running, so the retry
+-- ladder cannot recurse synchronously (the parked test clock would otherwise
+-- spin the drain loop forever). pumpTimers() drives them by hand, bounded.
+REALG.C_Timer = {
+    After = function(_, fn)
+        if fn then TIMERS[#TIMERS + 1] = { func = fn } end
+    end,
+    NewTimer = function(...)
+        local a = { ... }; local fn = a[#a]
+        local h = { Cancel = function() end, func = fn }; TIMERS[#TIMERS + 1] = h; return h
+    end,
+    NewTicker = function(...)
+        local a = { ... }; local fn = a[#a]
+        local h = { Cancel = function() end, func = fn }; TIMERS[#TIMERS + 1] = h; return h
+    end,
+}
+local function pumpTimers()
+    local guard = 0
+    while (#TIMERS > 0 and guard < 50) do
+        guard = guard + 1
+        local pending = TIMERS
+        TIMERS = {}
+        REALG.TIMERS = TIMERS
+        for _, h in STD.ipairs(pending) do
+            if (h and h.func) then h.func() end
+        end
+    end
+end
+REALG.GetMouseFoci = function() return {} end
+REALG.GetMouseFocus = function() return nil end
+REALG.GetCursorPosition = function() return 0, 0 end
+REALG.GetScreenWidth = function() return 1920 end
+REALG.GetClassAtlas = function() return "classicon-warrior" end
+REALG.IsModifierKeyDown = function() return false end
+REALG.IsShiftKeyDown = function() return false end
+REALG.InterfaceOptions_AddCategory = function() end
+REALG.InterfaceOptionsFrame_OpenToCategory = function() end
+REALG.InterfaceOptionsFrame_Show = function() end
+REALG.BackdropTemplateMixin = {}
+REALG.Item = { CreateFromItemLink = function() error("FOREVER_PIN_NO_ITEM_API") end }
+REALG.Settings = nil
+REALG.ColorPickerFrame = nil
+REALG.Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
+
+--------------------------------------------------------------------------
+-- Gear model. GEAR_MODE flips what the client reports for inspected units:
+-- "full" stages a complete 17-slot set, "empty" reports nothing equipped.
+--------------------------------------------------------------------------
+local GEAR_LINK = "item:12345"
+local GEAR_MODE = "full"
+REALG.GetInventoryItemLink = function(unit, slot)
+    if (GEAR_MODE == "full" and slot ~= 4) then return GEAR_LINK end
+    return nil
+end
+REALG.GetInventoryItemTexture = function(unit, slot)
+    if (GEAR_MODE == "full" and slot ~= 4) then return "tex" end
+    return nil
+end
+REALG.C_Item.GetInventoryItemLink = REALG.GetInventoryItemLink
+REALG.GetItemInfo = function(link)
+    if (link == GEAR_LINK) then
+        return "Test Helm", link, 4, 88, 1, "Armor", "Plate", 1,
+            "INVTYPE_HEAD", "icon", 0
+    end
+    return nil
+end
+REALG.C_Item.GetItemInfo = REALG.GetItemInfo
+REALG.GetItemInfoInstant = function() return 12345 end
+REALG.C_Item.GetItemInfoInstant = function() return 12345 end
+REALG.C_Item.IsEquippableItem = function() return true end
+REALG.IsEquippableItem = REALG.C_Item.IsEquippableItem
+REALG.__rawItemRequests = 0
+REALG.__rawItemRequestIDs = {}
+REALG.C_Item.RequestLoadItemDataByID = function(id)
+    REALG.__rawItemRequests = REALG.__rawItemRequests + 1
+    REALG.__rawItemRequestIDs[#REALG.__rawItemRequestIDs + 1] = id
+end
+REALG.C_Item.ContinueWithCancelOnItemLoad = function(_, fn) return function() end end
+REALG.C_Item.GetItemLinkByID = function() return GEAR_LINK end
+REALG.C_Item.GetItemLinkByGUID = function() return nil end
+
+--------------------------------------------------------------------------
+-- Modern specialization model. Per the generated API docs on origin/forever,
+-- C_SpecializationInfo.GetSpecialization answers a 1-based specialization
+-- INDEX (SpecializationInfoDocumentation.lua: GetSpecialization ->
+-- specializationIndex), while GetInspectSpecialization answers a specID.
+-- The mock reproduces that split: a mock that answered an ID here hid the
+-- defect this file pins (every unit scored on spec 1).
+--------------------------------------------------------------------------
+local SPECS = {
+    [1] = { id = 71, name = "Arms", icon = 1100001 },
+    [2] = { id = 72, name = "Fury", icon = 1100002 },
+    [3] = { id = 73, name = "Protection", icon = 1100003 },
+}
+local GROUP_SPEC_INDEX = { [1] = 2 } -- group 1's active spec is index 2, NOT 1
+local GROUP_POINTS = { [1] = { [1] = 0, [2] = 21, [3] = 0 } }
+REALG.C_SpecializationInfo = {}
+REALG.C_SpecializationInfo.GetSpecializationInfo = function(specIndex, isInspect, isPet,
+        inspectTarget, sex, groupIndex, classID)
+    local s = SPECS[specIndex]
+    if (not s) then return 0 end
+    local group = groupIndex or 1
+    local pts = (GROUP_POINTS[group] or {})[specIndex] or 0
+    return s.id, s.name, "desc", s.icon, "DPS", 4, pts, nil, 0, true
+end
+REALG.C_SpecializationInfo.GetSpecialization = function(isInspect, isPet, groupIndex)
+    return GROUP_SPEC_INDEX[groupIndex or 1]
+end
+REALG.C_SpecializationInfo.GetInspectSpecialization = function(unit)
+    if (UNITS[unit] and UNITS[unit].isPlayer) then return SPECS[2].id end
+    return nil
+end
+REALG.C_SpecializationInfo.GetActiveSpecGroup = function() return 1 end
+REALG.C_SpecializationInfo.GetClassIDFromSpecID = function(specID)
+    for _, s in STD.pairs(SPECS) do
+        if (s.id == specID) then return 1 end
+    end
+    return 0
+end
+REALG.C_SpecializationInfo.GetNumSpecializationsForClassID = function() return 3 end
+REALG.C_SpecializationInfo.GetTalentInfo = function() return nil end
+REALG.GetSpecializationInfoByID = function(specID)
+    for _, s in STD.pairs(SPECS) do
+        if (s.id == specID) then
+            return s.id, s.name, "desc", s.icon, "DPS", "WARRIOR", "Warrior"
+        end
+    end
+    return nil, nil, nil, nil, nil, nil, nil
+end
+REALG.UnitSex = function() return 2 end
+-- No talent tabs on the modern pair: the Classic tab helper must find nothing.
+REALG.GetNumTalentTabs = nil
+REALG.GetNumTalents = nil
+REALG.GetSpecialization = nil
+REALG.GetNumTalentGroups = function() return 1 end
+REALG.GetActiveTalentGroup = function() return 1 end
+REALG.GetTalentTabInfo = nil
+
+--------------------------------------------------------------------------
+-- Pawn present with one MrRobot scale for WARRIOR spec 2.
+--------------------------------------------------------------------------
+REALG.PawnLastUpdatedVersion = 2.1
+REALG.PawnCommon = { Scales = {
+    ['"MrRobot":WARRIOR2'] = { Color = "ff9d9d9d" },
+    ['"MrRobot":MAGE2'] = { Color = "ff9d9d9d" },
+} }
+REALG.PawnScaleProviders = { MrRobot = true }
+REALG.PawnGetItemData = function(link) return { link = link } end
+REALG.PawnGetSingleValueFromItem = function(item, scaleName) return nil, 15.5 end
+REALG.PawnGetScaleColor = function(scaleName, ...) return "|cffff9d9d9d" end
+
+--------------------------------------------------------------------------
+-- Pipeline delivery: the modern tooltip has no OnTooltipSetUnit script, so the
+-- addon registers a TooltipDataProcessor post-call. The mock records it; the
+-- drive helper below fires it the way the engine would on SetUnit/UpdateTooltip.
+--------------------------------------------------------------------------
+POSTCALLS = {}
+REALG.TooltipDataProcessor = {
+    AddTooltipPostCall = function(typ, fn)
+        POSTCALLS[#POSTCALLS + 1] = { typ = typ, fn = fn }
+        if (typ == REALG.Enum.TooltipDataType.Unit) then POSTCALLS.unit = fn end
+    end,
+}
+REALG.TooltipUtil = {
+    GetDisplayedUnit = function() return "n", currentUnit, UNITS[currentUnit].guid end,
+    GetDisplayedItem = function() return "n", GEAR_LINK end,
+}
+REALG.GameTooltip.IsTooltipType = function() return true end
+REALG.GameTooltip.GetPrimaryTooltipData = function() return nil end
+REALG.GameTooltip.GetUnit = function() return "n", currentUnit end
+REALG.GameTooltip.GetItem = function() return "n", GEAR_LINK end
+-- Script set WITHOUT OnTooltipSetUnit/OnTooltipSetItem/OnTooltipSetSpell.
+do
+    local modern = {
+        OnLoad = true, OnShow = true, OnHide = true, OnEvent = true,
+        OnUpdate = true, OnTooltipCleared = true, OnSizeChanged = true,
+        OnEnter = true, OnLeave = true,
+    }
+    for _, nm in ipairs({ "GameTooltip", "ItemRefTooltip", "ShoppingTooltip1",
+        "ShoppingTooltip2", "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2" }) do
+        local f = REALG[nm]
+        if (f and rawget(f, "__scripts") ~= nil) then rawset(f, "__scripts", modern) end
+    end
+end
+
+--------------------------------------------------------------------------
+-- Load the real addon. TACOTIP_MAIN_OVERRIDE / TACOTIP_LIB_OVERRIDE point at
+-- throwaway copies for the red/green proof; gates always load the tree.
+--------------------------------------------------------------------------
+local MAIN_PATH = STD.getenv("TACOTIP_MAIN_OVERRIDE") or (ROOT .. "main.lua")
+local LIB_PATH = STD.getenv("TACOTIP_LIB_OVERRIDE")
+    or (ROOT .. "Libs/LibForeverInspector/LibForeverInspector.lua")
+local order = {
+    "Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
+    "Libs/LibDetours-1.0/LibDetours-1.0.lua", "__LIB__",
+    "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",
+    "Locale/itIT.lua", "Locale/koKR.lua", "Locale/ptBR.lua",
+    "Locale/ruRU.lua", "Locale/zhCN.lua", "Locale/zhTW.lua", "Locale/enUS.lua",
+    "gearscore.lua", "pawn.lua", "textures.lua", "options.lua", "__MAIN__",
+}
+local loadFail
+for _, rel in STD.ipairs(order) do
+    local path = rel
+    if (rel == "__LIB__") then path = LIB_PATH
+    elseif (rel == "__MAIN__") then path = MAIN_PATH
+    else path = ROOT .. rel end
+    local chunk, err = STD.loadfile(path)
+    if (not chunk) then loadFail = rel .. " -> " .. tostring(err); break end
+    local ok, errs = STD.pcall(chunk, "TacoTip_Forever")
+    if (not ok) then loadFail = rel .. " -> " .. tostring(errs); break end
+end
+if (loadFail) then
+    STD.io.write("FOREVER load FAIL " .. tostring(loadFail) .. "\n")
+    STD.os.exit(1)
+end
+
+local TT = REALG.TacoTip_Forever
+local GT = REALG.GameTooltip
+local CI = REALG.LibStub and REALG.LibStub("LibForeverInspector", true) or nil
+
+local checks = {}
+local function check(name, cond, detail)
+    checks[#checks + 1] = { name, cond and true or false, detail }
+end
+
+-- Every completed render must be free of doubled color codes. A re-render
+-- over the addon's own previous output (no client refresh in between) would
+-- wrap an already-wrapped line: "|cFFxxxxxx|cFFxxxxxx". Direct "|c...|c"
+-- adjacency never occurs in legitimate output -- real neighbors are always
+-- separated by "|r", text, or an icon escape -- so this is a precise purity
+-- pin, not a substring guess. Lowercase %x: uppercase %X means NON-hex and
+-- would never fire on real color codes.
+local DOUBLED_COLOR_PAT = "|c%x%x%x%x%x%x%x%x|c"
+local function checkCleanRender(text, where)
+    check("render is free of doubled color codes (" .. where .. ")",
+        not STD.string.find(text, DOUBLED_COLOR_PAT),
+        STD.string.gsub(text, "\n", " | "))
+end
+
+-- The detector above is itself pinned: it must fire on a synthetic doubled
+-- string and pass a clean one. If the pattern ever regresses (e.g. %x back
+-- to %X), these two go red first.
+do
+    local bad = "|cFF68ccef|cFF68ccefEnemyplayer|r"
+    local good = "|cFF68ccefEnemyplayer|r"
+    check("meta: doubled-color detector fires on doubled input",
+        STD.string.find(bad, DOUBLED_COLOR_PAT) ~= nil)
+    check("meta: doubled-color detector passes clean input",
+        STD.string.find(good, DOUBLED_COLOR_PAT) == nil)
+end
+
+check("addon loads: TT namespace present", type(TT) == "table")
+check("addon loads: inspector present", CI ~= nil)
+check("client family is Forever", CI and CI:IsForever() == true,
+    "IsForever=" .. tostring(CI and CI:IsForever()))
+check("unit tooltip delivered by post-call (no OnTooltipSetUnit on modern)",
+    GT.__hooks.OnTooltipSetUnit == nil and POSTCALLS.unit ~= nil,
+    "hooked=" .. tostring(GT.__hooks.OnTooltipSetUnit ~= nil))
+
+--------------------------------------------------------------------------
+-- Config: talents explicitly ON (the gate must hold anyway), scores on.
+--------------------------------------------------------------------------
+local C = REALG.TacoTipConfig
+if (TT.ApplyConfigDefaults) then STD.pcall(TT.ApplyConfigDefaults, TT, C) end
+C.show_gs_player = true
+C.show_avg_ilvl = true
+C.show_ilvl_inline = false
+C.show_talents = true
+C.show_guild_name = true
+C.show_guild_rank = true
+C.show_target = true
+C.color_class = true
+C.show_pawn_player = true
+C.show_item_level = true
+C.show_gs_items = true
+C.show_separators = true
+C.show_realm = true
+C.tooltip_border_use_class = true
+C.tooltip_portrait = true
+C.tooltip_portrait_3d = false
+C.hide_in_combat = false
+C.tip_style = 2
+
+local function seedPlayer()
+    GT:ClearLines()
+    GT:AddLine("Enemyplayer")
+    GT:AddLine("<Testguild>")
+    GT:AddLine("Level 59 Mage")
+end
+
+local function seedNPC()
+    GT:ClearLines()
+    GT:AddLine("Hated Squirrel")
+    GT:AddLine("Level 42 Beast")
+    GT:AddLine("QUEST_MARKER_LINE")
+end
+
+local function allText()
+    local out = {}
+    local n = GT:NumLines()
+    for i = 1, n do
+        local l = GT:GetLeftLine(i)
+        local r = GT:GetRightLine(i)
+        local lt = l and l:GetText()
+        local rt = r and r:GetText()
+        if (lt ~= nil and lt ~= "") then out[#out + 1] = tostring(lt) end
+        if (rt ~= nil and rt ~= "") then out[#out + 1] = tostring(rt) end
+    end
+    return STD.table.concat(out, "\n")
+end
+
+local function drive(unitToken)
+    currentUnit = unitToken
+    GT.__unit = unitToken
+    GT.__shown = true
+    if (POSTCALLS.unit) then
+        POSTCALLS.unit(GT, { guid = UNITS[unitToken].guid })
+    end
+    return allText()
+end
+
+-- Fire every OnEvent script the addon and the library installed, the way the
+-- engine fires INSPECT_READY. Only the inspector answers it; the addon's own
+-- frame ignores that event. Frames are tracked at creation because both the
+-- library and the addon hold theirs in locals, not globals.
+local function fireInspectReady(guid)
+    local nHandlers = 0
+    for _, w in STD.ipairs(ALL_FRAMES) do
+        if (type(w) == "table" and w.__scripts
+                and type(w.__scripts.OnEvent) == "function") then
+            nHandlers = nHandlers + 1
+            local ok, err = STD.pcall(w.__scripts.OnEvent, w, "INSPECT_READY", guid)
+            if (not ok) then
+                return false, tostring(err)
+            end
+        end
+    end
+    return true
+end
+
+local function primeInspect(unitToken, mode)
+    GEAR_MODE = mode or "full"
+    currentUnit = unitToken
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", unitToken, UNITS[unitToken].guid
+    end
+    GT.GetUnit = function() return "n", unitToken end
+    GT.__unit = unitToken
+    local ok, err = fireInspectReady(UNITS[unitToken].guid)
+    if (ok) then pumpTimers() end
+    return ok, err
+end
+
+--------------------------------------------------------------------------
+-- P1: no Talents line, spec text, or spec icon on Forever -- with
+-- show_talents explicitly ON. The defect path is post-cache: prime a full
+-- inspect first, then render.
+--------------------------------------------------------------------------
+do
+    local okFire, fireErr = primeInspect("mouseover", "full")
+    check("P1 setup: INSPECT_READY primes the mouseover cache", okFire == true,
+        tostring(fireErr or ""))
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    seedPlayer()
+    local ptxt = drive("mouseover")
+    check("talents: no Talents line on Forever",
+        not STD.string.find(ptxt, "Talents", 1, true), STD.string.gsub(ptxt, "\n", " | "))
+    check("talents: no spec text on Forever",
+        not STD.string.find(ptxt, "Fury", 1, true)
+        and not STD.string.find(ptxt, "Arms", 1, true),
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("talents: no inlined spec icon on Forever",
+        -- A fileID icon inlines as |T<digits>: -- texture-path icons (|TInterface
+        -- ...) belong to faction/PVP badges and are expected here.
+        not STD.string.find(ptxt, "|T1", 1, true),
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("talents: no spec overlay frame survives",
+        GT.TacoTipSpecIcon == nil
+        or (GT.TacoTipSpecIcon.IsShown and not GT.TacoTipSpecIcon:IsShown()),
+        "overlay=" .. tostring(GT.TacoTipSpecIcon ~= nil))
+    check("target: Target line present as in the reference",
+        STD.string.find(ptxt, "Target:", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("ilvl: TacoTip-owned color-coded iLvl line present",
+        STD.string.find(ptxt, "iLvl: |c", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    checkCleanRender(ptxt, "post-cache player render")
+end
+
+--------------------------------------------------------------------------
+-- P2: style selection changes the Forever layout. FULL (1) renders the wide
+-- double-line GearScore; MINI (5) renders the single-line mini group.
+--------------------------------------------------------------------------
+do
+    local wideRow, miniRow
+    C.tip_style = 1
+    seedPlayer()
+    wideRow = drive("mouseover")
+    C.tip_style = 5
+    seedPlayer()
+    miniRow = drive("mouseover")
+    check("style: FULL renders the wide GearScore double line",
+        STD.string.find(wideRow, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(wideRow, "\n", " | "))
+    check("style: MINI renders the mini group, not the wide line",
+        STD.string.find(miniRow, "GS:", 1, true) ~= nil
+        and STD.string.find(miniRow, "GearScore:", 1, true) == nil,
+        STD.string.gsub(miniRow, "\n", " | "))
+    check("style: selection actually switches the layout",
+        wideRow ~= miniRow, "identical output under tip_style 1 and 5")
+    check("style: MINI group carries the Pawn score",
+        STD.string.find(miniRow, "P:", 1, true) ~= nil,
+        STD.string.gsub(miniRow, "\n", " | "))
+    checkCleanRender(wideRow, "FULL render")
+    checkCleanRender(miniRow, "MINI render")
+    -- COMPACT (2) and style 3 render the full single-line score rows without
+    -- shift. MINI/FULL (4) is mini without shift by construction
+    -- (mini_style includes tip_style == 4; only shift flips it to FULL) --
+    -- identical on every client, so the pin asserts the shared semantic.
+    for _, style in STD.ipairs({ 2, 3 }) do
+        C.tip_style = style
+        seedPlayer()
+        local row = drive("mouseover")
+        check("style: tip_style " .. style .. " renders full score rows",
+            STD.string.find(row, "GearScore:", 1, true) ~= nil
+            and STD.string.find(row, "GS:", 1, true) == nil,
+            STD.string.gsub(row, "\n", " | "))
+    end
+    do
+        C.tip_style = 4
+        seedPlayer()
+        local row4 = drive("mouseover")
+        check("style: tip_style 4 is mini without shift",
+            STD.string.find(row4, "GS:", 1, true) ~= nil
+            and STD.string.find(row4, "GearScore:", 1, true) == nil,
+            STD.string.gsub(row4, "\n", " | "))
+    end
+    C.tip_style = 2
+end
+
+--------------------------------------------------------------------------
+-- P3: the style dropdown path re-renders the open Forever tooltip.
+--------------------------------------------------------------------------
+do
+    check("style: RefreshOpenUnitTooltip exists (Forever re-render entry)",
+        TT and type(TT.RefreshOpenUnitTooltip) == "function")
+    if (TT and type(TT.RefreshOpenUnitTooltip) == "function") then
+        currentUnit = "mouseover"
+        GT.__unit = "mouseover"
+        GT.__shown = true
+        C.tip_style = 1
+        local fires = 0
+        local prevUnit = POSTCALLS.unit
+        POSTCALLS.unit = function(...)
+            fires = fires + 1
+            return prevUnit(...)
+        end
+        local rebuilt = TT:RefreshOpenUnitTooltip()
+        POSTCALLS.unit = prevUnit
+        local afterWide = allText()
+        C.tip_style = 5
+        local rebuilt2 = TT:RefreshOpenUnitTooltip()
+        local afterMini = allText()
+        checkCleanRender(afterWide, "style refresh FULL")
+        checkCleanRender(afterMini, "style refresh MINI")
+        check("style: open tooltip rebuilds on selection (FULL)",
+            rebuilt == true and STD.string.find(afterWide, "GearScore:", 1, true) ~= nil,
+            "rebuilt=" .. tostring(rebuilt))
+        check("style: open tooltip rebuilds on selection (MINI)",
+            rebuilt2 == true and STD.string.find(afterMini, "GS:", 1, true) ~= nil,
+            "rebuilt=" .. tostring(rebuilt2))
+        GT.__shown = false
+        local hidden = TT:RefreshOpenUnitTooltip()
+        check("style: hidden tooltip is not rebuilt", hidden == false,
+            "returned " .. tostring(hidden))
+        GT.__shown = true
+        C.tip_style = 2
+    end
+end
+
+--------------------------------------------------------------------------
+-- P4: the stale extra score row does not survive. Seed the exact broken
+-- shape (a foreign score row plus a previous-render Pawn row), prime the
+-- cache, re-render, and require both gone.
+--------------------------------------------------------------------------
+do
+    primeInspect("mouseover", "full")
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    seedPlayer()
+    GT:AddLine("STALE_CLIENT_SCORE_ROW")
+    GT:AddLine("STALE_PAWN_ROW")
+    local ptxt = drive("mouseover")
+    check("stale: foreign score row is removed",
+        not STD.string.find(ptxt, "STALE_CLIENT_SCORE_ROW", 1, true),
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("stale: previous-render Pawn row is not re-emitted",
+        not STD.string.find(ptxt, "STALE_PAWN_ROW", 1, true),
+        STD.string.gsub(ptxt, "\n", " | "))
+    checkCleanRender(ptxt, "stale-row removal render")
+end
+
+--------------------------------------------------------------------------
+-- P5: Pawn persists after item data when the score is positive. Drive the
+-- real completion path (TacoTip_GSCallback, as itemcacheCB fires it), not a
+-- direct render, so the memo + re-drive chain is what is pinned.
+--------------------------------------------------------------------------
+do
+    primeInspect("mouseover", "full")
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    GT.__unit = "mouseover"
+    GT.__shown = true
+    seedPlayer()
+    local specName = (CI and CI.GetSpecializationName
+        and CI:GetSpecializationName("MAGE", 2, true)) or "Fire"
+    local cb = REALG.TacoTip_GSCallback
+    check("pawn: GSCallback present", type(cb) == "function")
+    if (type(cb) == "function") then
+        cb(UNITS.mouseover.guid)
+        local ptxt = allText()
+        check("pawn: Pawn line present after item data",
+            STD.string.find(ptxt, "Pawn:", 1, true) ~= nil, STD.string.gsub(ptxt, "\n", " | "))
+        check("pawn: Pawn line carries the resolved spec name",
+            STD.string.find(ptxt, tostring(specName), 1, true) ~= nil,
+            "want " .. tostring(specName) .. " :: " .. STD.string.gsub(ptxt, "\n", " | "))
+        -- Second completion for the same guid: the memoized score must still
+        -- render, proving the line persists across re-drives.
+        seedPlayer()
+        cb(UNITS.mouseover.guid)
+        local ptxt2 = allText()
+        check("pawn: Pawn line persists across completions",
+            STD.string.find(ptxt2, "Pawn:", 1, true) ~= nil,
+            STD.string.gsub(ptxt2, "\n", " | "))
+        checkCleanRender(ptxt2, "Pawn completion render")
+        -- Completion safety on the Forever paths: an unresolvable tooltip at
+        -- completion time is a counted miss, not a raise; a completion for
+        -- another unit counts wrong-unit, not a resolution failure.
+        local savedTU, savedGU, savedU = REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit, GT.__unit
+        GT.__shown = false
+        GT.__unit = nil
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", nil, nil end
+        GT.GetUnit = function() return "n", nil end
+        local nMiss = (TT.ev and TT.ev.gsCallbackNoUnit) or 0
+        local okMiss = STD.pcall(cb, UNITS.mouseover.guid)
+        check("pawn: unresolvable completion is a counted miss, not a raise",
+            okMiss and ((TT.ev and TT.ev.gsCallbackNoUnit) or 0) == nMiss + 1,
+            "misses=" .. tostring((TT.ev and TT.ev.gsCallbackNoUnit) or 0))
+        REALG.TooltipUtil.GetDisplayedUnit, GT.GetUnit, GT.__unit = savedTU, savedGU, savedU
+        GT.__shown = true
+        local nWrong = (TT.ev and TT.ev.gsCallbackWrongUnit) or 0
+        local okWrong = STD.pcall(cb, UNITS.player.guid)
+        check("pawn: other-unit completion counts wrong-unit, not failure",
+            okWrong and ((TT.ev and TT.ev.gsCallbackWrongUnit) or 0) == nWrong + 1,
+            "wrong=" .. tostring((TT.ev and TT.ev.gsCallbackWrongUnit) or 0))
+    end
+end
+
+--------------------------------------------------------------------------
+-- P6: an empty/partial snapshot is never committed fresh on Forever. With
+-- the client reporting no links and no icons, INSPECT_READY must leave the
+-- record incomplete with no .time -- both scorers then read "no data", not
+-- "fresh zero".
+--------------------------------------------------------------------------
+do
+    -- Evict any earlier record so the observed state comes from this read.
+    -- The inspected stranger is the mouseover unit itself: INSPECT_READY
+    -- resolves through the pending unit / target / mouseover fallbacks, so the
+    -- empty read must arrive for a unit the handler can resolve, exactly as a
+    -- fresh in-game inspect does (the server answers for the hovered player
+    -- before any link is populated).
+    if (CI and CI.cache) then CI.cache[UNITS.mouseover.guid] = nil end
+    if (TT) then TT._gsMemo = nil end
+    local okFire, fireErr = primeInspect("mouseover", "empty")
+    check("P6 setup: INSPECT_READY fires with empty gear", okFire == true,
+        tostring(fireErr or ""))
+    local rec = CI and CI:GetUnitData(UNITS.mouseover.guid) or nil
+
+    check("empty: no .time stamped on an empty read",
+        not (rec and rec.time), "time=" .. tostring(rec and rec.time))
+    check("empty: record stays incomplete",
+        rec and rec.incomplete == true, "incomplete=" .. tostring(rec and rec.incomplete))
+    local _, invTime = CI:GetLastCacheTime(UNITS.mouseover.guid)
+    check("empty: cache reads as missing, not fresh",
+        invTime == 0, "invTime=" .. tostring(invTime))
+    GEAR_MODE = "full"
+end
+
+--------------------------------------------------------------------------
+-- P7: the modern spec index is read as an index. Group 1's active spec is
+-- index 2 (Fury); the old code read the answer as a specID and parked every
+-- unit on spec 1, which made Pawn score the wrong spec.
+--------------------------------------------------------------------------
+do
+    primeInspect("mouseover", "full")
+    local idx = CI:GetSpecialization(UNITS.mouseover.guid, 1)
+    check("spec: active spec resolves to index 2, not 1", idx == 2,
+        "got " .. tostring(idx))
+    local lname = CI:GetLocalizedSpecName(UNITS.mouseover.guid, 1)
+    check("spec: localized name follows the index", lname == "Fury",
+        "got " .. tostring(lname))
+end
+
+--------------------------------------------------------------------------
+-- P10: empty-to-full recovery -- the operator's exact symptom arc. After an
+-- empty read (no scores, correctly), a full re-inspect must bring GearScore
+-- and Pawn back. Render the empty state first, then re-prime full and drive
+-- the completion path.
+--------------------------------------------------------------------------
+do
+    -- Self-contained: evict, prime empty, and prove the empty state first --
+    -- earlier blocks leave a full cache behind, so inheriting state here
+    -- would assert against the wrong setup.
+    if (CI and CI.cache) then CI.cache[UNITS.mouseover.guid] = nil end
+    if (TT) then TT._gsMemo = nil end
+    primeInspect("mouseover", "empty")
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    GT.__unit = "mouseover"
+    GT.__shown = true
+    seedPlayer()
+    local emptyTxt = drive("mouseover")
+    check("recovery: empty state shows neither score line",
+        STD.string.find(emptyTxt, "GearScore:", 1, true) == nil
+        and STD.string.find(emptyTxt, "Pawn:", 1, true) == nil,
+        STD.string.gsub(emptyTxt, "\n", " | "))
+    GEAR_MODE = "full"
+    primeInspect("mouseover", "full")
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    GT.__unit = "mouseover"
+    GT.__shown = true
+    seedPlayer()
+    local cb = REALG.TacoTip_GSCallback
+    if (type(cb) == "function") then cb(UNITS.mouseover.guid) end
+    local fullTxt = allText()
+    check("recovery: GearScore returns after a full re-inspect",
+        STD.string.find(fullTxt, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(fullTxt, "\n", " | "))
+    check("recovery: Pawn returns after a full re-inspect",
+        STD.string.find(fullTxt, "Pawn:", 1, true) ~= nil,
+        STD.string.gsub(fullTxt, "\n", " | "))
+    checkCleanRender(fullTxt, "recovery render")
+end
+
+--------------------------------------------------------------------------
+-- P11: target variants, iLvl placement, realm, portrait, separators.
+--------------------------------------------------------------------------
+do
+    -- A player target renders class-colored with the (Player) suffix.
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    seedPlayer()
+    local ptxt = drive("mouseover")
+    check("target: player target renders the You line",
+        STD.string.find(ptxt, "Target:", 1, true) ~= nil
+        and STD.string.find(ptxt, "You", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    -- Refresh stability: the engine repopulates the client rows before every
+    -- render, so an identical entry must render byte-identical output. (A
+    -- re-render with NO client refresh reads the ownership-blanked lines and
+    -- returns early by design -- that state never occurs in game, where
+    -- SetUnit/UpdateTooltip always repopulate first.)
+    seedPlayer()
+    local ptxt2 = drive("mouseover")
+    check("refresh stability: identical entry renders byte-identical",
+        ptxt == ptxt2, "lengths " .. tostring(#ptxt) .. " vs " .. tostring(#ptxt2))
+    -- iLvl inline variant: the score moves onto the name line.
+    C.show_ilvl_inline = true
+    seedPlayer()
+    local inlineTxt = drive("mouseover")
+    check("ilvl: inline variant appends [ilvl] to the name line",
+        STD.string.find(inlineTxt, "[88]", 1, true) ~= nil,
+        STD.string.gsub(inlineTxt, "\n", " | "))
+    C.show_ilvl_inline = false
+    -- Realm variant: a cross-realm unit gains its Realm line.
+    local savedSame = REALG.UnitIsSameServer
+    REALG.UnitIsSameServer = function() return false end
+    seedPlayer()
+    local realmTxt = drive("mouseover")
+    check("realm: cross-realm unit gains a Realm line",
+        STD.string.find(realmTxt, "Realm:", 1, true) ~= nil,
+        STD.string.gsub(realmTxt, "\n", " | "))
+    REALG.UnitIsSameServer = savedSame
+    -- Separators: the style-2 player tooltip carries both of them. Counted
+    -- per line with a 10+ dash run: the faction icon carries only short
+    -- dashes ("UI-PVP-ALLIANCE", "-2"), so it can never collide.
+    local sepLines = 0
+    local sepRun = STD.string.rep("-", 10)
+    for line in STD.string.gmatch(ptxt .. "\n", "(.-)\n") do
+        if (STD.string.find(line, sepRun, 1, true)) then sepLines = sepLines + 1 end
+    end
+    check("separators: both separator rows render", sepLines == 2, "count=" .. tostring(sepLines))
+    -- Portrait: the 2D portrait frame exists and is shown for the player unit.
+    check("portrait: portrait frame exists",
+        GT.TacoTipPortrait ~= nil or GT.TacoTipPortrait3D ~= nil)
+    local portrait = GT.TacoTipPortrait3D or GT.TacoTipPortrait
+    check("portrait: portrait is shown",
+        portrait ~= nil and portrait.IsShown and portrait:IsShown() or false)
+    checkCleanRender(ptxt, "variant renders")
+end
+
+--------------------------------------------------------------------------
+-- P12: a player with NO guild. No guild line anywhere, the level line sits
+-- at row 2, and GearScore/Pawn still render. The mock guild is temporarily
+-- removed and the seed carries no guild row -- the level-line detection and
+-- the no-guild rebuild must hold without them.
+--------------------------------------------------------------------------
+do
+    local savedGI = REALG.GetGuildInfo
+    REALG.GetGuildInfo = function() return nil end
+    GT:ClearLines()
+    GT:AddLine("Enemyplayer")
+    GT:AddLine("Level 59 Mage")
+    local ptxt = drive("mouseover")
+    check("guildless: no guild line rendered",
+        not STD.string.find(ptxt, "<", 1, true),
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("guildless: level line still renders",
+        STD.string.find(ptxt, "Level", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("guildless: GearScore still renders",
+        STD.string.find(ptxt, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("guildless: Pawn still renders",
+        STD.string.find(ptxt, "Pawn:", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    checkCleanRender(ptxt, "guildless render")
+    REALG.GetGuildInfo = savedGI
+end
+
+--------------------------------------------------------------------------
+-- P8: NPC tooltips keep rendering on Forever. The tooltip still builds
+-- cleanly -- header lines, target line, no invented score rows. NPC row
+-- handling beyond that is the client's own business, not this lane's.
+--------------------------------------------------------------------------
+do
+    currentUnit = "target"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "target", UNITS.target.guid
+    end
+    GT.GetUnit = function() return "n", "target" end
+    seedNPC()
+    local ptxt = drive("target")
+    check("npc: header lines render on non-player tooltips",
+        STD.string.find(ptxt, "Hated Squirrel", 1, true) ~= nil
+        and STD.string.find(ptxt, "Level", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("npc: no score rows invented for creatures",
+        STD.string.find(ptxt, "GearScore:", 1, true) == nil
+        and STD.string.find(ptxt, "Pawn:", 1, true) == nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("npc: targetless creature renders the None target line",
+        STD.string.find(ptxt, "Target:", 1, true) ~= nil
+        and STD.string.find(ptxt, "None", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    checkCleanRender(ptxt, "NPC render")
+end
+
+--------------------------------------------------------------------------
+-- P13: the player's own tooltip. No Target line and no inspect, but the
+-- live-read scores still render.
+--------------------------------------------------------------------------
+do
+    currentUnit = "player"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "player", UNITS.player.guid
+    end
+    GT.GetUnit = function() return "n", "player" end
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("<Testguild>")
+    GT:AddLine("Level 60 Human")
+    local ptxt = drive("player")
+    check("self: own tooltip carries no Target line",
+        STD.string.find(ptxt, "Target:", 1, true) == nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("self: own GearScore renders from the live read",
+        STD.string.find(ptxt, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    checkCleanRender(ptxt, "own tooltip render")
+end
+
+--------------------------------------------------------------------------
+-- P9: coloring is preserved -- class-colored name, green guild tag, level line.
+--------------------------------------------------------------------------
+do
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    C.tip_style = 2
+    seedPlayer()
+    local ptxt = drive("mouseover")
+    check("color: unit name carries a class color code",
+        STD.string.find(ptxt, "|cFF", 1, true) ~= nil
+        and STD.string.find(ptxt, "Enemyplayer", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("color: guild tag keeps the classic green",
+        STD.string.find(ptxt, "|cFF40FB40<Testguild>|r", 1, true) ~= nil,
+        STD.string.gsub(ptxt, "\n", " | "))
+    check("color: border request resolves a class color",
+        GT.__borderColor ~= nil, "border=" .. tostring(GT.__borderColor))
+end
+
+--------------------------------------------------------------------------
+-- Report.
+--------------------------------------------------------------------------
+local fails = 0
+for _, c in STD.ipairs(checks) do
+    if (not c[2]) then
+        fails = fails + 1
+        STD.io.write("  FAIL " .. tostring(c[1]) .. " :: " .. tostring(c[3] or "") .. "\n")
+    end
+end
+STD.io.write("FOREVER pins: " .. tostring(#checks - fails) .. "/" .. tostring(#checks) .. " passed\n")
+if (fails > 0) then STD.os.exit(1) end

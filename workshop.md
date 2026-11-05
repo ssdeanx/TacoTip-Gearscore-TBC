@@ -260,6 +260,12 @@ during the 0.8.4 release.
   on any client; `_G.UnitDistanceSquared(unit)` exists on modern clients and returns
   `(distSquared, checked)`. If `checked` is true, live yardage is `math.sqrt(distSquared)`.
   Access through `_G.UnitDistanceSquared` to maintain zero-warning luacheck on Classic Era.
+- **`C_SpecializationInfo.GetSpecialization` answers an INDEX on the modern pair.**
+  `origin/forever` and `origin/live` generated API docs return `specializationIndex`
+  (not a specID); Blizzard passes it straight to `GetSpecializationInfo` (e.g.
+  `Blizzard_HeirloomCollection.lua:29-33`). `GetInspectSpecialization` is the one
+  that answers a specID. Reading the group-aware answer as an ID parks every unit
+  on spec 1.
 - **`pcall` error suppression vs logging in event-driven UI:** In high-frequency
   render loops (tooltips, 3D model loading, inspect callbacks), raw `pcall` without
   capturing the error return blinds diagnostics and causes false "no problems detected"

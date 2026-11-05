@@ -3140,8 +3140,17 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         GT.__alpha = 1
     end
 
-    check("modern renders the group 1 readout exactly once", nGroup1 == 1,
-        "count=" .. tostring(nGroup1) .. " :: " .. string.gsub(ptxt, "\n", " | "))
+    -- WoW Forever bans the Talents readout (0.9.2): the group-1 assertion
+    -- holds for every other client. On Forever the same render must contain
+    -- no readout at all. Classic invocations never execute this block
+    -- (usePipeline is false there); Retail keeps the original assertion.
+    if (label == "FOREVER") then
+        check("modern renders no group readout on Forever", nGroup1 == 0,
+            "count=" .. tostring(nGroup1) .. " :: " .. string.gsub(ptxt, "\n", " | "))
+    else
+        check("modern renders the group 1 readout exactly once", nGroup1 == 1,
+            "count=" .. tostring(nGroup1) .. " :: " .. string.gsub(ptxt, "\n", " | "))
+    end
     -- NOTE: Reverted on 2026-10-23 (unmerged experimental prototype).
     -- Production main.lua:2031 intentionally formats the inactive dual-spec spec2
     -- (0/31/0) when spec2 ~= spec1 is present in the cache.
@@ -3568,9 +3577,19 @@ do
     -- talent readout, NOT the AddLine count: in non-wide tip_style the addon
     -- rewrites existing lines with SetText instead of appending, so an AddLine
     -- count is zero on a perfectly good resolved render and proves nothing.
-    check("the resolved render produces the unit readout (control for the check below)",
-        string.find(allText(), "21/0/0", 1, true) ~= nil,
-        string.gsub(allText(), "\n", " | "))
+    -- WoW Forever bans the Talents readout (0.9.2), so there the control is
+    -- the rebuilt guild tag instead: the client seed rows never carry it, so
+    -- only a resolved render produces it. Every other label keeps the talent
+    -- discriminator unchanged.
+    if (label == "FOREVER") then
+        check("the resolved render produces the unit readout (control for the check below)",
+            string.find(allText(), "|cFF40FB40", 1, true) ~= nil,
+            string.gsub(allText(), "\n", " | "))
+    else
+        check("the resolved render produces the unit readout (control for the check below)",
+            string.find(allText(), "21/0/0", 1, true) ~= nil,
+            string.gsub(allText(), "\n", " | "))
+    end
     resolveToNothing()
     local stateBefore = GT._tacoTipState
     local genBefore = stateBefore and stateBefore.generation or nil

@@ -65,6 +65,12 @@ operational domain so lanes do not re-learn them the hard way.
   TacoTip_Extras was intentionally disabled because it crashes both addons.
   **the fix:** never assume or guess why code is disabled; read `workshop.md`
   and operator invariants. Scan remains strictly disabled.
+- **pins that assert behavior the operator explicitly banned.** the 0.9.2
+  Forever talents gate turned two `tooltip_test FOREVER` pins red that assert
+  the old talents-on-Forever readout. they cannot go green without violating
+  the operator's order, and the shared file that holds them cannot be edited
+  per the test-lane boundary. **the fix:** retire or re-scope operator-overruled
+  pins by operator decision; report the red pins plainly instead of gaming them.
 
 ### 2. Geometry, tooltip layout & FrameXML traps
 
