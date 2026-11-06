@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.4"
 
 
 
@@ -12,50 +12,35 @@ local CI = LibStub("LibForeverInspector")
 -- Resolved once: every Forever-only branch below reads this, so a client
 -- family can never be re-derived inside the render.
 local isForever = (CI and CI.IsForever and CI:IsForever()) and true or false
+local isRetail = (CI and CI.IsRetail and CI:IsRetail()) and true or false
 
--- FojjiCore's tooltip module appends its own score row to GameTooltip AFTER
--- this addon has rebuilt the unit tooltip, so the render-time drop can never
--- see it. WoW offers no per-line delete and no caller attribution (the debug
--- library is stripped), so the only deterministic block is the choke point:
--- refuse the row before it is added. The literals "Gear score" + "item level"
--- are FojjiCore's; nothing TacoTip or the client writes contains both.
-local function isForeignScoreRow(text)
-    if (type(text) ~= "string" or text == "") then
-        return false
+-- FojjiCore appends its own gear-score / item-level row to GameTooltip after
+-- this addon has rendered the unit tooltip. Never override GameTooltip's
+-- AddLine/AddDoubleLine to stop it: that replaces methods on a shared, secure
+-- frame and taints the tooltip path for every addon on the client. FojjiCore
+-- publishes that row as an ordinary Tooltips option, so switch the option off
+-- at the source. Nothing but FojjiCore is touched.
+local function blockFojjiCoreScoreRow()
+    local ns = rawget(_G, "FojjiCoreNS")
+    local tooltips = (type(ns) == "table") and ns.Tooltips or nil
+    if (type(tooltips) == "table" and type(tooltips.Set) == "function") then
+        pcall(tooltips.Set, "bisGearScore", false)
     end
-    local lowered = string.lower(text)
-    return string.find(lowered, "gear score", 1, true) ~= nil
-        and string.find(lowered, "item level", 1, true) ~= nil
-end
-
-local function blockForeignScoreRows(tooltip)
-    if (not tooltip or tooltip._tacoTipForeignScoreBlock) then
-        return
-    end
-    local addLine = tooltip.AddLine
-    local addDoubleLine = tooltip.AddDoubleLine
-    if (type(addLine) ~= "function") then
-        return
-    end
-    tooltip.AddLine = function(self, text, ...)
-        if (isForeignScoreRow(text)) then
-            return
-        end
-        return addLine(self, text, ...)
-    end
-    if (type(addDoubleLine) == "function") then
-        tooltip.AddDoubleLine = function(self, left, right, ...)
-            if (isForeignScoreRow(left) or isForeignScoreRow(right)) then
-                return
-            end
-            return addDoubleLine(self, left, right, ...)
-        end
-    end
-    tooltip._tacoTipForeignScoreBlock = true
 end
 
 if (isForever) then
-    blockForeignScoreRows(GameTooltip)
+    blockFojjiCoreScoreRow()
+    if (type(CreateFrame) == "function") then
+        -- FojjiCore_BiS is a separate addon and can load before or after this
+        -- file; apply the option again when it finishes loading.
+        local watcher = CreateFrame("Frame")
+        watcher:RegisterEvent("ADDON_LOADED")
+        watcher:SetScript("OnEvent", function(self, _, name)
+            if (name == "FojjiCore" or name == "FojjiCore_BiS") then
+                blockFojjiCoreScoreRow()
+            end
+        end)
+    end
 end
 
 local Detours = LibStub("LibDetours-1.0")
@@ -1527,7 +1512,21 @@ local function setGearScoreMemo(guid, items, score, ilvl)
 end
 
 local function getPawnScoreMemo(guid, items, activeGroup)
-    if (not guid or not items) then
+    if (not guid) then
+        return nil
+    end
+    -- Self never has an inspect-cache record, so the items-keyed memo below can
+    -- never answer for the player. Keep the last live Pawn score under its own
+    -- key instead; without this the line was computed on one render and then
+    -- missing on the next (the blink).
+    if (guid == UnitGUID("player")) then
+        local selfMemo = TT._selfPawnMemo
+        if (selfMemo and selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore) then
+            return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
+        end
+        return nil
+    end
+    if (not items) then
         return nil
     end
     local memo = TT._gsMemo
@@ -1539,7 +1538,19 @@ local function getPawnScoreMemo(guid, items, activeGroup)
 end
 
 local function setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-    if (not guid or not items or type(pawnScore) ~= "number" or pawnScore <= 0) then
+    if (not guid or type(pawnScore) ~= "number" or pawnScore <= 0) then
+        return
+    end
+    if (guid == UnitGUID("player")) then
+        TT._selfPawnMemo = {
+            pawnGroup = activeGroup,
+            pawnScore = pawnScore,
+            pawnSpecName = specName,
+            pawnSpecColor = specColor,
+        }
+        return
+    end
+    if (not items) then
         return
     end
     local memo = TT._gsMemo
@@ -2108,6 +2119,12 @@ local function onTooltipSetUnit(tooltip, data)
     end
 
     local guid = (data and data.guid) or UnitGUID(tooltipUnit)
+    -- Self has no inspect-cache record: CI:GetUnitData("player") is nil, so the
+    -- score memo can never supply a value. The first render registers the
+    -- item-load callbacks and TacoTip_GSCallback then clears the retry gate;
+    -- without this flag the re-render skipped GetScore entirely and the self
+    -- tooltip stayed header-only. Self must always take the live path.
+    local isSelf = (guid ~= nil and guid == UnitGUID("player"))
     -- Resolve the guid BEFORE clearing, so the clear can tell "this unit changed"
     -- from "this is the same unit being re-rendered because a GearScore item load
     -- completed". Only the former may tear down the 3D portrait.
@@ -2170,10 +2187,6 @@ local function onTooltipSetUnit(tooltip, data)
     end
     text[levelLineIndex] = colorizeUnitLevelLine(tooltip, tooltipUnit, text[levelLineIndex], levelLineIndex)
 
-    -- FojjiCore's score row is refused at GameTooltip.AddLine (see
-    -- blockForeignScoreRows at the top of this file), so it never reaches the
-    -- preserved set; the write-back below cannot re-emit what was never added.
-
     if (isForever and UnitIsPlayer(tooltipUnit)) then
         -- Forever owns the final player tooltip. The client contributes the
         -- name / guild / level header, which was captured above and is
@@ -2184,7 +2197,7 @@ local function onTooltipSetUnit(tooltip, data)
         -- Players only. Creature tooltips carry the client's own rows past the
         -- level line -- titles, quest markers, trainer/repair tags -- and
         -- nothing in this addon re-emits them, so dropping them here emptied
-        -- NPC data. The FojjiCore score row is already refused at AddLine.
+        -- NPC data.
         if (numLines > levelLineIndex) then
             for i = levelLineIndex + 1, numLines do
                 text[i] = nil
@@ -2592,11 +2605,11 @@ local function onTooltipSetUnit(tooltip, data)
                 local gearscore, avg_ilvl = getGearScoreMemo(guid, items)
                 if (not gearscore) then
                     gearscore, avg_ilvl = 0, 0
-                    if (retryDue) then
-                        gearscore, avg_ilvl = GearScore:GetScore(guid, true)
+                    if (retryDue or isSelf) then
+                        gearscore, avg_ilvl = GearScore:GetScore(guid, retryDue)
                         if (gearscore > 0) then
                             clearGearScoreRetry(guid)
-                            if (guid ~= UnitGUID("player")) then
+                            if (not isSelf) then
                                 setGearScoreMemo(guid, items, gearscore, avg_ilvl)
                             end
                         else
@@ -2635,15 +2648,23 @@ local function onTooltipSetUnit(tooltip, data)
                 local pawnScore, specName, specColor = getPawnScoreMemo(guid, items, activeGroup)
                 if (not pawnScore) then
                     pawnScore, specName, specColor = 0, nil, nil
-                    if (retryDue) then
-                        pawnScore, specName, specColor = TT_PAWN:GetScore(guid, not needGsScore)
+                    if (retryDue or isSelf) then
+                        -- Pawn is an external addon. A throw here used to abort
+                        -- the whole render before the write-back, taking the
+                        -- already-queued GearScore/iLvl lines with it; isolate it.
+                        local pawnOk, pScore, pSpec, pColor = pcall(TT_PAWN.GetScore, TT_PAWN,
+                            guid, not needGsScore)
+                        if (pawnOk) then
+                            pawnScore, specName, specColor = pScore, pSpec, pColor
+                        else
+                            TT:RecordError("Pawn", pScore, "GetScore")
+                            pawnScore = 0
+                        end
                         if (pawnScore and pawnScore > 0) then
                             if (not needGsScore) then
                                 clearGearScoreRetry(guid)
                             end
-                            if (guid ~= UnitGUID("player")) then
-                                setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-                            end
+                            setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
                         elseif (not retryNoted) then
                             noteGearScoreRetry(guid, scoreNow)
                             TT:WarmGearItemData(guid)
@@ -4203,8 +4224,14 @@ local function collectActiveUnitSection()
         local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
         local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
         local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
-        local interactDist = (type(fnCheckInteractDistance) == "function")
-            and fnCheckInteractDistance(activeUnit, 1) or false
+        -- CheckInteractDistance is protected on the mainline clients. Calling it
+        -- from the tainted slash-command diagnostics path raises
+        -- ADDON_ACTION_BLOCKED ('UNKNOWN()'); report it as not applicable there
+        -- and only probe it on the Classic families.
+        local interactDist = "n/a (protected on this client)"
+        if (not (isForever or isRetail) and type(fnCheckInteractDistance) == "function") then
+            interactDist = fnCheckInteractDistance(activeUnit, 1)
+        end
         local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
         local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
         local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
@@ -4220,6 +4247,22 @@ local function collectActiveUnitSection()
             end
         end
         diagRow(s, "distance", distStr or "unknown", "info")
+        diagRow(s, "GearScore option",
+            (TacoTipConfig and TacoTipConfig.show_gs_player) and "on" or "off", "info")
+        -- Self has no inspect-cache record; the tooltip reads it live. Show the
+        -- same read here so a missing self line can be attributed to the score
+        -- (0 / no scored gear) instead of the render. useCallback=false keeps
+        -- the probe from registering completion callbacks; it may still ask the
+        -- client for uncached item data, which the hover path already does.
+        if (guid and guid == UnitGUID("player") and type(_G.TT_GS) == "table"
+                and type(_G.TT_GS.GetScore) == "function") then
+            local scoreOk, liveScore, liveIlvl = pcall(_G.TT_GS.GetScore, _G.TT_GS, guid, false)
+            local liveText = scoreOk
+                and string.format("%s (iLvl %s)", tostring(liveScore), tostring(liveIlvl))
+                or ("failed: " .. tostring(liveScore))
+            diagRow(s, "live self score", liveText,
+                (scoreOk and type(liveScore) == "number" and liveScore > 0) and "ok" or "warn")
+        end
         if (CI and type(CI.GetUnitData) == "function") then
             local cached = CI:GetUnitData(guid)
             if (cached) then
@@ -4612,6 +4655,9 @@ end
 
 local function onEvent(self, event, ...)
     if (event == "PLAYER_EQUIPMENT_CHANGED") then
+        -- Self Pawn is cached live (no inspect record); a gear change makes the
+        -- last score stale, so drop it before the next render.
+        TT._selfPawnMemo = nil
         if (PaperDollFrame and PaperDollFrame:IsShown()) then
             TT:RefreshCharacterFrame()
         end
@@ -4931,6 +4977,16 @@ function TacoTip_CustomPosEnable(show)
             return safeCall(onDragButtonHide, self, ...)
         end)
         rawset(TacoTipDragButton, "ShowExample", function(self)
+            -- Never replace a live unit-frame tooltip with the mover example.
+            -- UnitFrame_UpdateTooltip makes the frame the GameTooltip owner, and
+            -- the client re-drives it only while that owner is set. SetOwner
+            -- below would freeze the unit tooltip on the cached example rows --
+            -- the player/pet text the operator sees before Save.
+            local owner = (GameTooltip and type(GameTooltip.GetOwner) == "function")
+                and GameTooltip:GetOwner() or nil
+            if (owner and owner.unit and GameTooltip:IsShown()) then
+                return
+            end
             -- When custom_pos is set, the GameTooltip is already anchored
             -- to TacoTipDragButton (a UIParent child) via the hook at
             -- line 1244.  Calling GameTooltip_SetDefaultAnchor here to

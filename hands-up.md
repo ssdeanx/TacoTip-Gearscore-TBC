@@ -6,6 +6,17 @@ signals are JSON files: `desks/<name>/.signals/<timestamp>.json`. include an
 ISO 8601 UTC `timestamp`; the dashboard orders by it. `run_id` pairs a signal
 with a later outcome signal.
 
+## operator invariants (do not relitigate)
+
+- **the FojjiCore row block stays, and it is specific to FojjiCore.** the row
+  is switched off through FojjiCore's own published option
+  (`FojjiCoreNS.Tooltips.Set("bisGearScore", false)`) at load and on
+  `ADDON_LOADED` for `FojjiCore`/`FojjiCore_BiS`. never replace
+  `GameTooltip.AddLine`/`AddDoubleLine` to do it: that taints Blizzard's
+  secure aura pipeline. it is not a generic filter for every addon. the
+  UnitFrame mover text and the UnitAura secret taint are separate problems;
+  the block is not a lever for either.
+
 ## signal types
 
 | signal | fires when | `signal_type` / `subtype` |

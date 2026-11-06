@@ -391,6 +391,7 @@ REALG.WOW_PROJECT_CATACLYSM_CLASSIC = 14
 REALG.WOW_PROJECT_MISTS_CLASSIC = 19
 REALG.WOW_PROJECT_ID = 1
 REALG.C_AddOns = {
+    IsAddOnLoaded = function(name) return name == "FojjiCore" end,
     GetAddOnMetadata = function(_, k)
         if k == "Version" then
             local f = STD.io.open(ROOT .. "TacoTip.toc", "r")
@@ -404,7 +405,18 @@ REALG.C_AddOns = {
         end
         if k == "Title" then return "TacoTip Forever" end
     end,
-    IsAddOnLoaded = function() return false end,
+}
+-- FojjiCore's public namespace. The row is switched off through its own
+-- Tooltips option; TacoTip must never replace GameTooltip's methods.
+local fojjiScoreCalls = 0
+REALG.FojjiCoreNS = {
+    Tooltips = {
+        Set = function(key, on)
+            if (key == "bisGearScore" and on == false) then
+                fojjiScoreCalls = fojjiScoreCalls + 1
+            end
+        end,
+    },
 }
 REALG.C_Item = {}
 REALG.C_PlayerInfo = {
@@ -1334,6 +1346,25 @@ do
     check("self: own GearScore renders from the live read",
         STD.string.find(ptxt, "GearScore:", 1, true) ~= nil,
         STD.string.gsub(ptxt, "\n", " | "))
+    -- The blink: a later live Pawn read that comes back zero must not drop the
+    -- already-memoized self row. Self is memoized separately because the
+    -- inspect-items key is always nil for the player.
+    local savedPawnGetScore = REALG.TT_PAWN and REALG.TT_PAWN.GetScore
+    if (type(savedPawnGetScore) == "function") then
+        REALG.TT_PAWN.GetScore = function() return 0, nil, nil end
+        local memoText = drive("player")
+        check("self: Pawn memo keeps the row across a zero live read",
+            STD.string.find(memoText, "Pawn:", 1, true) ~= nil,
+            STD.string.gsub(memoText, "\n", " | "))
+        -- A Pawn throw must not abort the render before the GearScore write-back.
+        REALG.TT_PAWN.GetScore = function() error("PAWN_PIN_RAISE") end
+        TT._selfPawnMemo = nil
+        local throwText = drive("player")
+        check("self: a Pawn throw does not erase GearScore",
+            STD.string.find(throwText, "GearScore:", 1, true) ~= nil,
+            STD.string.gsub(throwText, "\n", " | "))
+        REALG.TT_PAWN.GetScore = savedPawnGetScore
+    end
     checkCleanRender(ptxt, "own tooltip render")
 end
 
@@ -1358,6 +1389,18 @@ do
         STD.string.gsub(ptxt, "\n", " | "))
     check("color: border request resolves a class color",
         GT.__borderColor ~= nil, "border=" .. tostring(GT.__borderColor))
+end
+
+--------------------------------------------------------------------------
+-- P13b: FojjiCore's row is switched off through its own option, and TacoTip
+-- never replaces GameTooltip's methods (no override, no secret predicate).
+--------------------------------------------------------------------------
+do
+    check("scope: FojjiCore's own score option is switched off",
+        fojjiScoreCalls >= 1, "calls=" .. tostring(fojjiScoreCalls))
+    check("scope: TacoTip never replaces GameTooltip.AddLine",
+        rawget(GT, "_tacoTipForeignScoreBlock") == nil,
+        "marker=" .. tostring(rawget(GT, "_tacoTipForeignScoreBlock")))
 end
 
 --------------------------------------------------------------------------

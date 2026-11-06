@@ -169,7 +169,7 @@ local function buildEnv()
     }
     env.UnitIsPlayer = function(u) return u == SELF_GUID or u == OTHER_GUID end
     env.UnitGUID = function(u) if u == "player" then return SELF_GUID end return nil end
-    env.GetPlayerInfoByGUID = function() return true, "Tester", "WARRIOR" end
+    env.GetPlayerInfoByGUID = function() return "Warrior", "WARRIOR" end
 
     -- LibStub / LibForeverInspector mocks. GetLastCacheTime MUST be non-zero or
     -- GetScore returns 0,0 for anyone but the player -- a mock returning 0
@@ -568,6 +568,28 @@ check("hunter ranged weapon scaled by 5.3224 (98 -> 521)",
 local hHeadScore = GS:GetItemHunterScore(HEAD)
 check("hunter non-weapon item unscaled (310)",
     hHeadScore == 310, "got " .. tostring(hHeadScore))
+
+-- A hunter's melee weapon is a stat stick only while a ranged weapon is
+-- actually equipped. Without one the 1H must count at full value; with one the
+-- max-level 0.3164 weight applies. This is the "green 1H reads 2 on the item
+-- but 0 on the character" case.
+local GREEN_1H = defItem(3, 3, "INVTYPE_WEAPONMAINHAND")
+local greenRaw = GS:GetItemScore(GREEN_1H)
+check("green 1H raw score is the reported 2", greenRaw == 2, "got " .. tostring(greenRaw))
+local savedInv, savedClass = INV, env.GetPlayerInfoByGUID
+env.GetPlayerInfoByGUID = function() return "Hunter", "HUNTER" end
+INV = { [16] = GREEN_1H }
+local noRangedTotal = totalOf(SELF_GUID)
+check("hunter 1H counts full when no ranged weapon is equipped",
+    noRangedTotal == greenRaw, "got " .. tostring(noRangedTotal)
+        .. " want " .. tostring(greenRaw))
+INV[18] = RANGED
+local withRangedTotal = totalOf(SELF_GUID)
+local wantRangedTotal = floor(greenRaw * 0.3164 + select(1, GS:GetItemScore(RANGED)) * 5.3224)
+check("hunter 1H is devalued once a ranged weapon is equipped",
+    withRangedTotal == wantRangedTotal, "got " .. tostring(withRangedTotal)
+        .. " want " .. tostring(wantRangedTotal))
+INV, env.GetPlayerInfoByGUID = savedInv, savedClass
 
 local nilScore = GS:GetItemScore(nil)
 check("GetItemScore(nil) returns 0 safely", nilScore == 0, "got " .. tostring(nilScore))

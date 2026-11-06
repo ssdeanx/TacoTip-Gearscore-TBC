@@ -9,7 +9,7 @@ environment. They need no game client and no WoWUnit.
 bash Tests/harness/run_all.sh
 ```
 
-70 invocations across fifteen harness files and all five clients. Exits non-zero on
+72 invocations across seventeen harness files and all five clients. Exits non-zero on
 the first failing harness, and prints the failing invocation names.
 
 The suite defaults to `lua5.1`, which is what WoW actually ships and therefore
@@ -20,8 +20,8 @@ second opinion — override the interpreter with `LUA`:
 LUA=lua5.4 bash Tests/harness/run_all.sh
 ```
 
-Measured 2026-10-20 on this tree: **71/71 under `lua5.1`, 71/71 under
-`lua5.4`, 71/71 under `luajit`.** Keep it that way — a 5.4 failure is either a real portability bug
+Measured 2026-11-06 on this tree: **72/72 under `lua5.1`, 72/72 under
+`lua5.4`, 72/72 under `luajit`.** Keep it that way — a 5.4 failure is either a real portability bug
 in the addon or a broken mock, and both are worth knowing about. What the 5.4
 run is *not* is a target: do not bend an assertion, an expected value, or a
 `pcall` to make a 5.1-correct suite green on 5.4.

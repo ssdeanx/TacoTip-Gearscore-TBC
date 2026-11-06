@@ -521,6 +521,13 @@ local order = {
     "gearscore.lua", "pawn.lua", "textures.lua", "options.lua", "main.lua",
 }
 
+-- Baseline for the "TacoTip never replaces a GameTooltip method" pin. rawget is
+-- the right probe: the harness surfaces undeclared members through __index as a
+-- fresh no-op per read, so function identity is not stable. A real assignment
+-- (the old row override) is an own field and rawget sees it.
+REALG.__gameTooltipAddLine = rawget(REALG.GameTooltip, "AddLine")
+REALG.__gameTooltipAddDoubleLine = rawget(REALG.GameTooltip, "AddDoubleLine")
+
 local failed = nil
 for _, rel in ipairs(order) do
     local ok, err = pcall(run, rel)
@@ -657,6 +664,15 @@ local checks = {
         "GameTooltip_SetDefaultAnchor hook guarded (missingGlobal="
             .. tostring(missingGlobal) .. ")" },
 }
+checks[#checks + 1] = {
+    rawget(REALG.GameTooltip, "AddLine") == REALG.__gameTooltipAddLine
+        and rawget(REALG.GameTooltip, "AddDoubleLine") == REALG.__gameTooltipAddDoubleLine,
+    "0.9.4: TacoTip never replaces GameTooltip.AddLine/AddDoubleLine (AddLine own-field="
+        .. tostring(rawget(REALG.GameTooltip, "AddLine"))
+        .. ", AddDoubleLine own-field="
+        .. tostring(rawget(REALG.GameTooltip, "AddDoubleLine")) .. ")",
+}
+
 
 -- Backdrop template contract.
 --
@@ -1142,8 +1158,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "0.9.2",
-        "0.9.2: TacoTip.toc declares version 0.9.2 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "0.9.4",
+        "0.9.4: TacoTip.toc declares version 0.9.4 (got " .. tostring(tocVer) .. ")" }
     checks[#checks + 1] = { type(TT.GetClassIconMarkup) == "function",
         "0.9.0: TT.GetClassIconMarkup is exposed" }
     checks[#checks + 1] = { TT:GetClassIconMarkup(nil) == "",
@@ -1583,7 +1599,7 @@ do
         local text7 = table.concat(lines7, "\n")
         check("0.8.8: collection failure still prints the minimal facts",
             okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
-            and text7:find("version: 0.9.2", 1, true) ~= nil
+            and text7:find("version: 0.9.4", 1, true) ~= nil
             and text7:find("load OK:", 1, true) ~= nil
             and text7:find("client family:", 1, true) ~= nil
             and text7:find("interface:", 1, true) ~= nil,
@@ -1871,6 +1887,7 @@ do
             .. (problem and (" -- " .. problem) or "") }
 end
 
+print("PROBE_MARKER_REACHED")
 local bad = 0
 for _, c in ipairs(checks) do
     if not c[1] then bad = bad + 1; STD.io.write("    FAIL " .. c[2] .. "\n") end

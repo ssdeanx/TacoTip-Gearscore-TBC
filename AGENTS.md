@@ -5,7 +5,7 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v0.9.1) and **TacoTip Extras**
+two addons, one repo: **TacoTip** (root, v0.9.4) and **TacoTip Extras**
 (`TacoTip_Extras/`, v1.2.4), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
@@ -36,7 +36,7 @@ the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
 
 ## commands
 
-    bash Tests/harness/run_all.sh                   # main, 71 × 3 interpreters
+    bash Tests/harness/run_all.sh                   # main, 72 invocations (repeat with LUA=lua5.4 / luajit)
     bash TacoTip_Extras/Tests/harness/run_all.sh    # extras, 42 × 3 interpreters
     luacheck .                                     # 0 warnings / 0 errors
     bash Tools/verify_release.sh --worktree         # tacoTip package, must PASS
@@ -58,4 +58,7 @@ are probably not shipping.
   the suites.
 - no new files unless asked. no locale key without a sourced translation.
 - do not edit `gearscore.lua` except to guard an existing call.
+- never remove, weaken, or rework the FojjiCore `GameTooltip` row block. it is
+  specific to FojjiCore, load-bearing, and an operator invariant — see
+  `workshop.md` and `hands-up.md`.
 - never report "done" with a red tree.

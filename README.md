@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.2
+version: 0.9.4
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,7 +22,7 @@ interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: pending in-game verification
-updated: 2026-11-05
+updated: 2026-11-06
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -46,7 +46,29 @@ updated: 2026-11-05
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
 ---
-> 🎉 **<span style="color:#2ecc71">130,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed **130,000 downloads** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+> 🎉 **<span style="color:#2ecc71">150,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed **150,000 downloads** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.4</span>
+
+- 🧨 **<span style="color:#59f0dc">Tooltip Taint Root Cause (WoW Forever):</span>** The Forever-only `GameTooltip.AddLine`/`AddDoubleLine` override is **removed**. Overriding a method on `GameTooltip` taints the frame; Blizzard's secure tooltip pipeline (`SetUnitAuraByAuraInstanceID` → `TooltipDataHandler:AddLineDataText`) then runs tainted and cannot test secret fields (`wrapText`, `leftColor`, `leftText`). That is the `attempt to perform boolean test on field 'wrapText'` error on buffs, and it is also why the player/pet unit tooltips stayed raw. The text guard was only a symptom patch; the override itself was the taint source.
+- 🎯 **<span style="color:#59f0dc">FojjiCore Row Still Blocked, at the Source:</span>** With the override gone, the row is switched off through FojjiCore's own published option — `FojjiCoreNS.Tooltips.Set("bisGearScore", false)` — applied at load and again when `FojjiCore`/`FojjiCore_BiS` finishes loading. Nothing but FojjiCore is touched, and no other addon's tooltip lines are filtered.
+- 🖱️ **<span style="color:#59f0dc">Mover No Longer Steals Unit-Frame Tooltips:</span>** `ShowExample` now returns while the tooltip's owner is a unit frame (`owner.unit`), so the player/pet/target frames keep their live tooltip and the client's 0.2 s re-drive. The cached player example is only drawn when the tooltip is hidden or the mover owns it; `custom_pos` and the saved position are untouched.
+- 🧮 **<span style="color:#59f0dc">Self GearScore / iLvl / Pawn Fixed:</span>** The player has no inspect-cache record, so `CI:GetUnitData("player")` is nil. The first render registered the item-load callbacks and `TacoTip_GSCallback` then cleared the retry gate, so the re-render skipped `GetScore` entirely and the player tooltip stayed header-only. Self now always takes the live path; Pawn gets its own live memo (cleared on `PLAYER_EQUIPMENT_CHANGED`), and the external Pawn call is `pcall`-isolated so a Pawn throw cannot erase the GearScore/iLvl lines.
+- ⚔️ **<span style="color:#59f0dc">Hunter 1H Finally Counts:</span>** The max-level hunter melee weight (×0.3164) is now applied only while a **ranged weapon is equipped**. A level-10 hunter whose green 1H raw-scores 2 but had no ranged weapon saw 2 × 0.3164 = 0.63 → floored to 0; the melee weapon now counts at full value. A positive total that still floors to 0 is clamped to 1 instead of hiding the line.
+- 🧪 **<span style="color:#59f0dc">No Method Override Remains:</span>** The text predicate and row block are gone with the override. Pins assert `GameTooltip.AddLine`/`AddDoubleLine` are still the original functions, no `_tacoTipForeignScoreBlock` marker exists, and the FojjiCore option is the only row path.
+- 🩺 **<span style="color:#59f0dc">Diagnostics Hardening:</span>** `/tt diag` no longer calls the protected `CheckInteractDistance` directly on Forever/Retail — that raised `ADDON_ACTION_BLOCKED` from the slash-command path. It reports `n/a (protected)` and prints `GearScore option` plus a `live self score` row, so a missing self line can be attributed to the option, the score, or the render.
+- 🧷 **<span style="color:#e67e23">Known issues (deferred to 0.9.5):</span>** The 3D portrait can blink on unit-frame hover (portrait side-cache lifecycle, not the mover text fix). The `Right click for Frame Settings` row on player/target/pet/party hover is still under investigation. Both are separate from this release's fixes.
+- 🏷️ **<span style="color:#59f0dc">Version:</span>** **0.9.4** (release build). TOC, Lua fallbacks, README, CHANGELOG, AGENTS and the harness version pins move together.
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.3</span>
+
+- 🎯 **<span style="color:#59f0dc">Forever Player Tooltip Ownership:</span>** On Forever, every row past the name/guild/level header is dropped for **player** tooltips only, so a stale foreign score row or a previous render's row cannot be re-emitted through the write-back. Creature/NPC rows (titles, quest markers, trainer/repair tags) are preserved.
+- 🧪 **<span style="color:#59f0dc">Inspect-Queue Diagnostics:</span>** `/tt diag` adds queue-overflow and queue-drain drop counters. Observability only — no gate, throttle or timing change.
+- 🏷️ **<span style="color:#59f0dc">Version Bump:</span>** TOC and Lua fallbacks move to 0.9.3.
 
 ---
 

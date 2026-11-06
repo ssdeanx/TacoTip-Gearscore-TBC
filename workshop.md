@@ -67,6 +67,13 @@ not style choices. each one has a release behind it.
 - **scan is strictly disabled in TacoTip_Extras** — scan in `RankBrowser.lua` and
   `Options.lua` is deliberately disabled because scanning crashes both addons.
   Never touch, re-enable, or assume scan should run.
+- **the FojjiCore row block stays, and it is specific to FojjiCore.** the row
+  is switched off through FojjiCore's own published option
+  (`FojjiCoreNS.Tooltips.Set("bisGearScore", false)`), applied at load and on
+  `ADDON_LOADED` for `FojjiCore`/`FojjiCore_BiS`. never replace
+  `GameTooltip.AddLine`/`AddDoubleLine`: that taints Blizzard's secure aura
+  pipeline. never filter any other addon's lines — this is FojjiCore only, and
+  it is not a lever for the UnitFrame mover text or the UnitAura secret taint.
 - **diagnostic telemetry (`/tt diag`) in 0.8.8** — `/tt diag` is a structured
   artifact: `TT:CollectDiagnostics()` returns a plain table (verdict, ordered
   sections, `{label, value, status}` rows, problems) and `TT:PrintDiagnostics()`

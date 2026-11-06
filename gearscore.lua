@@ -416,6 +416,17 @@ function TT_GS:GetScore(unitorguid, useCallback)
         if (not ppOk) then
             PlayerEnglishClass = ""
         end
+        -- A hunter's melee weapon is a stat stick only while a ranged weapon is
+        -- actually equipped. Without one (low-level leveling) the melee weapon
+        -- IS the weapon: the 0.3164 max-level weight turned a green 1H's raw 2
+        -- into 0.63 and the character total floored to 0, hiding the line.
+        local hunterMeleeWeight = 1
+        if (PlayerEnglishClass == "HUNTER") then
+            local rangedItem = CI:GetInventoryItemMixin(guid, 18)
+            if (rangedItem) then
+                hunterMeleeWeight = 0.3164
+            end
+        end
         local GearScore = 0
         local ItemCount = 0
         local LevelTotal = 0
@@ -513,7 +524,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
         if (offHandLink) then
             local TempScore, ItemLevel = TT_GS:GetItemScore(offHandLink)
             if (PlayerEnglishClass == "HUNTER") then
-                TempScore = TempScore * 0.3164
+                TempScore = TempScore * hunterMeleeWeight
             end
             GearScore = GearScore + TempScore * OffHandTitanGrip
             ItemCount = ItemCount + 1
@@ -528,7 +539,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
                         local TempScore, ItemLevel = TT_GS:GetItemScore(item:GetItemLink())
                         if (PlayerEnglishClass == "HUNTER") then
                             if (i == 16) then
-                                TempScore = TempScore * 0.3164
+                                TempScore = TempScore * hunterMeleeWeight
                             elseif (i == 18) then
                                 TempScore = TempScore * 5.3224
                             end
@@ -568,7 +579,16 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
         if (IsReady and GearScore > 0 and ItemCount > 0) then
-            return floor(GearScore), floor(LevelTotal / ItemCount)
+            local shown = floor(GearScore)
+            -- A positive total that floors to 0 is still scored gear. Showing 0
+            -- hides the line entirely (the renderer gates on > 0) and reads as
+            -- "nothing equipped", which is what a low-level hunter with a green
+            -- melee weapon saw: the x0.3164 hunter weapon weight leaves the
+            -- total below 1. Keep the floor for every score of 1 or more.
+            if (shown < 1) then
+                shown = 1
+            end
+            return shown, floor(LevelTotal / ItemCount)
         end
     end
     return 0, 0
