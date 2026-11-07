@@ -72,5 +72,44 @@ local _, _ = scenario("enUS", nil)
 local cnt = 0; for _ in pairs(_G.TACOTIP_LOCALES) do cnt = cnt + 1 end
 results[#results+1] = string.format("%-34s registered_locales=%d %s", "registry", cnt, cnt==11 and "PASS" or "FAIL")
 if cnt ~= 11 then allok = false end
+-- Structural parity. TacoTipApplyLocale backfills a missing key from English,
+-- so the runtime probe above cannot see a translation that silently lost one.
+-- Compare the keyed sets and the format placeholders of every table against
+-- enUS directly.
+local base = _G.TACOTIP_LOCALES and _G.TACOTIP_LOCALES.enUS
+local missing, extra, placeholder = 0, 0, 0
+if (type(base) == "table") then
+  local function keyed(t)
+    local out = {}
+    for k, v in pairs(t) do if type(k) == "string" then out[k] = v end end
+    return out
+  end
+  local function signature(v)
+    local out = {}
+    for token in tostring(v):gmatch("%%%a") do out[#out + 1] = token end
+    return table.concat(out, ",")
+  end
+  local b = keyed(base)
+  for code, t in pairs(_G.TACOTIP_LOCALES) do
+    if (code ~= "enUS" and type(t) == "table") then
+      for k, v in pairs(b) do
+        if (t[k] == nil) then
+          missing = missing + 1
+        elseif (type(v) == "string" and type(t[k]) == "string"
+            and signature(v) ~= signature(t[k])) then
+          placeholder = placeholder + 1
+        end
+      end
+      for k in pairs(t) do
+        if (type(k) == "string" and b[k] == nil) then extra = extra + 1 end
+      end
+    end
+  end
+end
+results[#results+1] = string.format("%-34s missing=%d extra=%d placeholder=%d  %s",
+  "structural parity", missing, extra, placeholder,
+  (missing == 0 and extra == 0 and placeholder == 0) and "PASS" or "FAIL")
+if (missing + extra + placeholder) > 0 then allok = false end
 print(table.concat(results, "\n"))
 print("\n" .. (allok and "ALL PASS" or "FAILURES PRESENT"))
+if not allok then os.exit(1) end

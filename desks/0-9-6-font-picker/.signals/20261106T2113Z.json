@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-11-06T21:13:09Z",
+  "run_id": "tacotip-0.9.6-media-picker",
+  "agent_name": "0-9-6-font-picker",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Reading the template XML on origin/forever and the classic branches showed the activation is OnMouseDown on the modern pair and OnClick on the classic family; a mock that models exactly that turned both the double-open and the green-row bugs into red/green pins.",
+    "what_was_hard": "Separating the reported symptoms from the latent disabled-picker issue, and refusing the supplied flat-button rewrite without losing the user's intent.",
+    "skill_gap": "No in-game feedback loop; the operator's Forever observation is the final acceptance."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Run the WoW Forever in-game pass: font, bar, border and background dropdowns must each open one list; font rows must be readable text; texture previews must still render. The disabled-picker latent issue is a follow-up, not part of 0.9.6."
+  }
+}

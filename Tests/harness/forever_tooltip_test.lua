@@ -100,6 +100,10 @@ local function makeWidget(kind, name, parent, template, depth)
         if f then return f end
         return nil
     end
+    w.GetFrameLevel = function() return 1 end
+    w.SetFrameLevel = function() end
+    w.GetFrameStrata = function() return "MEDIUM" end
+    w.SetFrameStrata = function() end
     w.GetName = function() return name end
     w.GetParent = function() return parent end
     w.GetObjectType = function() return kind end
@@ -488,6 +492,7 @@ local UNITS = {
 }
 local currentUnit = "player"
 REALG.UnitExists = function(u) return UNITS[u] ~= nil end
+REALG.UnitFrame_UpdateTooltip = function() end
 REALG.UnitGUID = function(u) return UNITS[u] and UNITS[u].guid or nil end
 REALG.UnitName = function(u) return UNITS[u] and UNITS[u].name or nil, "Testrealm" end
 REALG.__testClock = 1000
@@ -1389,6 +1394,239 @@ do
         STD.string.gsub(ptxt, "\n", " | "))
     check("color: border request resolves a class color",
         GT.__borderColor ~= nil, "border=" .. tostring(GT.__borderColor))
+end
+
+--------------------------------------------------------------------------
+-- P15: modern unit-frame portrait stability (0.9.5).
+--
+-- UnitFrame_UpdateTooltip re-drives GameTooltip:SetUnit every 0.2s while the
+-- mouse sits on a unit frame. SetUnit clears the lines first, so OnTooltipCleared
+-- fires before the unit post-call on every tick. On Retail/Forever that is the
+-- only place the portrait can be torn down between two identical renders -- and
+-- UnitFrame_OnLeave nils UpdateTooltip BEFORE GameTooltip:FadeOut(), so a stale
+-- fade can fire OnHide after a quick re-hover re-showed the portrait.
+--------------------------------------------------------------------------
+do
+    local saved3D, savedPortrait = C.tooltip_portrait_3d, C.tooltip_portrait
+    C.tooltip_portrait = true
+    C.tooltip_portrait_3d = true
+
+    currentUnit = "player"
+    GT.__unit = "player"
+    GT.__shown = true
+    -- Unit reads: without these the previous block's mouseover closure would
+    -- resolve every P15 player render to the mouseover unit.
+    GT.GetUnit = function() return "n", "player" end
+    REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+    GT:ClearLines()
+    seedPlayer()
+    -- The unit frame the client re-drives from. GetOwner is nil by default in
+    -- the mock, which would make the guard untestable.
+    local owner = { unit = "player", UpdateTooltip = function() end }
+    GT.GetOwner = function() return owner end
+    if (POSTCALLS.unit) then POSTCALLS.unit(GT, { guid = UNITS.player.guid }) end
+    local model = GT.TacoTipPortrait3D
+    check("portrait: 3D model exists for the stability pin", model ~= nil)
+
+    if (model) then
+        local hidesBefore = (TT.ev.portraitHide or 0)
+        local modelHidesBefore = (TT.ev.portraitModelHidden or 0)
+        local destroysBefore = (TT.ev.portraitDestroy or 0)
+        for _ = 1, 5 do
+            GT:ClearLines()
+            seedPlayer()
+            -- Engine order: SetUnit -> ClearLines -> OnTooltipCleared ->
+            -- client rows -> unit post-call -> Show.
+            if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+            if (POSTCALLS.unit) then POSTCALLS.unit(GT, { guid = UNITS.player.guid }) end
+        end
+        check("portrait: five 0.2s unit-frame re-drives do not hide the model",
+            (TT.ev.portraitHide or 0) == hidesBefore
+                and (TT.ev.portraitModelHidden or 0) == modelHidesBefore,
+            "hide " .. tostring(hidesBefore) .. " -> " .. tostring(TT.ev.portraitHide or 0)
+                .. ", modelHidden " .. tostring(modelHidesBefore) .. " -> "
+                .. tostring(TT.ev.portraitModelHidden or 0))
+        check("portrait: five 0.2s unit-frame re-drives do not destroy the model",
+            (TT.ev.portraitDestroy or 0) == destroysBefore,
+            "destroy " .. tostring(destroysBefore) .. " -> " .. tostring(TT.ev.portraitDestroy or 0))
+        check("portrait: model is shown after the re-drives", model:IsShown())
+
+        -- UnitFrame_OnLeave nils UpdateTooltip before FadeOut(), and
+        -- UnitFrame_UpdateTooltip re-arms it only AFTER SetUnit returns. So the
+        -- first re-drive after a re-hover reaches ClearLines with no
+        -- UpdateTooltip; the owner still proves the same unit and the shown
+        -- tooltip must not tear the portrait down.
+        owner.UpdateTooltip = nil
+        local hidesBeforeLeave = (TT.ev.portraitHide or 0)
+        local modelHidesBeforeLeave = (TT.ev.portraitModelHidden or 0)
+        if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+        check("portrait: the first re-drive after OnLeave does not hide the same unit's model",
+            (TT.ev.portraitHide or 0) == hidesBeforeLeave
+                and (TT.ev.portraitModelHidden or 0) == modelHidesBeforeLeave,
+            "hide " .. tostring(hidesBeforeLeave) .. " -> " .. tostring(TT.ev.portraitHide or 0)
+                .. ", modelHidden " .. tostring(modelHidesBeforeLeave) .. " -> "
+                .. tostring(TT.ev.portraitModelHidden or 0))
+
+        -- The owner GUID is the sole identity proof when the pre-Show postcall
+        -- could not resolve a unit and currentUnitGUID was never written. This
+        -- is the real trigger the guard exists for; both halves are pinned so
+        -- deleting the owner proof cannot stay green.
+        local savedCurGUID = GT._tacoTipState.currentUnitGUID
+        local savedOwnerGUID = GT._tacoTipState.ownerUnitGUID
+        GT._tacoTipState.currentUnitGUID = nil
+        GT._tacoTipState.ownerUnitGUID = UNITS.player.guid
+        owner.unit = "player"
+        owner.UpdateTooltip = nil
+        GT.__shown = true
+        local hidesBeforeOwnerProof = (TT.ev.portraitHide or 0)
+        local modelHidesBeforeOwnerProof = (TT.ev.portraitModelHidden or 0)
+        if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+        check("portrait: the owner GUID alone proves same-unit when currentUnitGUID is missing",
+            (TT.ev.portraitHide or 0) == hidesBeforeOwnerProof
+                and (TT.ev.portraitModelHidden or 0) == modelHidesBeforeOwnerProof,
+            "hide " .. tostring(hidesBeforeOwnerProof) .. " -> " .. tostring(TT.ev.portraitHide or 0)
+                .. ", modelHidden " .. tostring(modelHidesBeforeOwnerProof) .. " -> "
+                .. tostring(TT.ev.portraitModelHidden or 0))
+        -- Negative: the owner's unit changed, so the noted owner GUID cannot
+        -- match the owner's current unit and the teardown path must run.
+        owner.unit = "target"
+        local modelHidesBeforeOwnerNeg = (TT.ev.portraitModelHidden or 0)
+        if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+        check("portrait: a changed owner unit hides the portrait even with a stale currentUnitGUID",
+            (TT.ev.portraitModelHidden or 0) > modelHidesBeforeOwnerNeg,
+            "modelHidden " .. tostring(modelHidesBeforeOwnerNeg) .. " -> "
+                .. tostring(TT.ev.portraitModelHidden or 0))
+        GT._tacoTipState.currentUnitGUID = savedCurGUID
+        GT._tacoTipState.ownerUnitGUID = savedOwnerGUID
+        owner.unit = "player"
+
+        -- SetUnit reports success with a boolean. A non-throwing false must not
+        -- be cached as the new unit, or the previous mesh stays under the new
+        -- tooltip and portraitSetFailed is unreachable.
+        local savedSetUnit = model.SetUnit
+        model.SetUnit = function() return false end
+        local failuresBefore = (TT.ev.portraitSetFailed or 0)
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "mouseover")
+        check("portrait: a non-throwing SetUnit(false) is not cached as success",
+            model.tacoTipModelKey == nil
+                and (TT.ev.portraitSetFailed or 0) > failuresBefore,
+            "key=" .. tostring(model.tacoTipModelKey)
+                .. " failed " .. tostring(failuresBefore) .. " -> " .. tostring(TT.ev.portraitSetFailed or 0))
+        model.SetUnit = savedSetUnit
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+
+        -- A proven different unit must still tear down, or the old mesh bleeds.
+        local otherOwner = { unit = "target", UpdateTooltip = function() end }
+        GT.GetOwner = function() return otherOwner end
+        local destroysBeforeChange = (TT.ev.portraitDestroy or 0)
+        local savedGetUnit = GT.GetUnit
+        local savedDisp = REALG.TooltipUtil.GetDisplayedUnit
+        GT.__unit = "target"
+        GT.GetUnit = function() return "n", "target" end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "target", UNITS.target.guid end
+        GT:ClearLines()
+        seedNPC()
+        if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+        STD.pcall(POSTCALLS.unit, GT, { guid = UNITS.target.guid })
+        check("portrait: a proven different unit still tears the model down",
+            (TT.ev.portraitDestroy or 0) > destroysBeforeChange,
+            "destroy " .. tostring(destroysBeforeChange) .. " -> " .. tostring(TT.ev.portraitDestroy or 0))
+        -- NPCs must render a portrait too. PlayerModel:SetUnit supports
+        -- creature models; the old UnitIsPlayer gate existed only for the 2D
+        -- fallback and was removed. The render above was the NPC target.
+        check("portrait: an NPC render creates and shows the 3D portrait",
+            GT.TacoTipPortrait3D ~= nil and GT.TacoTipPortrait3D:IsShown(),
+            "model=" .. tostring(GT.TacoTipPortrait3D ~= nil))
+        check("portrait: the NPC model is keyed on the creature GUID",
+            GT.TacoTipPortrait3D ~= nil
+                and GT.TacoTipPortrait3D.tacoTipModelKey == UNITS.target.guid,
+            "key=" .. tostring(GT.TacoTipPortrait3D and GT.TacoTipPortrait3D.tacoTipModelKey))
+        GT.GetUnit = savedGetUnit
+        REALG.TooltipUtil.GetDisplayedUnit = savedDisp
+        GT.GetOwner = function() return nil end
+    end
+
+    -- The 2D fallback must render an NPC portrait as well, and OnShow must
+    -- anchor the region actually on screen (a session that toggled 3D off still
+    -- has the hidden model frame attached to the tooltip).
+    C.tooltip_portrait_3d = false
+    local savedSetPortraitTexture = REALG.SetPortraitTexture
+    REALG.SetPortraitTexture = function(tex, u)
+        if (tex) then tex.__portrait = u end
+    end
+    currentUnit = "target"
+    GT.__unit = "target"
+    GT.GetOwner = function() return { unit = "target", UpdateTooltip = function() end } end
+    local savedGetUnit2D = GT.GetUnit
+    local savedDisp2D = REALG.TooltipUtil.GetDisplayedUnit
+    GT.GetUnit = function() return "n", "target" end
+    REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "target", UNITS.target.guid end
+    GT:ClearLines()
+    seedNPC()
+    if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+    STD.pcall(POSTCALLS.unit, GT, { guid = UNITS.target.guid })
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    check("portrait: the 2D fallback shows an NPC portrait",
+        GT.TacoTipPortrait ~= nil and GT.TacoTipPortrait:IsShown()
+            and GT.TacoTipPortrait.__portrait == "target",
+        "texture=" .. tostring(GT.TacoTipPortrait ~= nil)
+            .. " shown=" .. tostring(GT.TacoTipPortrait and GT.TacoTipPortrait:IsShown())
+            .. " tex=" .. tostring(GT.TacoTipPortrait and GT.TacoTipPortrait.__portrait))
+    check("portrait: the 3D model is hidden while the 2D fallback is active",
+        GT.TacoTipPortrait3D == nil or not GT.TacoTipPortrait3D:IsShown())
+    GT.GetUnit = savedGetUnit2D
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisp2D
+    REALG.SetPortraitTexture = savedSetPortraitTexture
+    GT.GetOwner = function() return nil end
+    -- Back to the 3D path for the OnShow anchor pin below.
+    C.tooltip_portrait_3d = true
+
+    -- OnShow re-anchors once from a laid-out frame. The mock's GetRight() is 0
+    -- for an unshown frame; a shown tooltip at the right edge must flip the
+    -- portrait to the tooltip's left and the visible frame must already use it
+    -- (no correction on the following 0.2s tick).
+    currentUnit = "player"
+    GT.__unit = "player"
+    GT.GetOwner = function() return { unit = "player" } end
+    local anchoredBefore = (TT.ev.portraitAnchor or 0)
+    local savedRight = GT.GetRight
+    local savedUiRight = REALG.UIParent.GetRight
+    GT.GetRight = function() return 1920 end
+    REALG.UIParent.GetRight = function() return 1920 end
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    local p = GT.TacoTipPortrait3D
+    local lastPoint = p and p.__points and p.__points[#p.__points]
+    check("portrait: OnShow re-anchors from the laid-out frame",
+        (TT.ev.portraitAnchor or 0) > anchoredBefore,
+        "anchors " .. tostring(anchoredBefore) .. " -> " .. tostring(TT.ev.portraitAnchor or 0))
+    check("portrait: OnShow puts the portrait on the left when the tooltip is at the right edge",
+        lastPoint ~= nil and lastPoint[1] == "TOPRIGHT",
+        "point=" .. tostring(lastPoint and lastPoint[1]))
+    GT.GetRight = savedRight
+    REALG.UIParent.GetRight = savedUiRight
+    GT.GetOwner = function() return nil end
+
+    -- Blizzard's "Right Click for Frame Settings" hint is appended AFTER
+    -- SetUnit returns; SetUnit's own Show() fires OnShow before the line
+    -- exists, and the later Show() is a no-op on an already-shown frame. The
+    -- secure post-hook on UnitFrame_UpdateTooltip is the mechanism; this is
+    -- the engine-faithful order.
+    local savedHint = REALG.UNIT_POPUP_RIGHT_CLICK
+    REALG.UNIT_POPUP_RIGHT_CLICK = "Right Click for Frame Settings"
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("Right Click for Frame Settings")
+    if (SECURE_HOOKS.UnitFrame_UpdateTooltip) then
+        SECURE_HOOKS.UnitFrame_UpdateTooltip({})
+    end
+    local hintRefresh = GT:GetLeftLine(2)
+    check("hint: the instruction line is blanked after UnitFrame_UpdateTooltip adds it",
+        hintRefresh ~= nil and (hintRefresh:GetText() == "" or hintRefresh:GetText() == nil),
+        "text=" .. tostring(hintRefresh and hintRefresh:GetText()))
+    REALG.UNIT_POPUP_RIGHT_CLICK = savedHint
+
+    C.tooltip_portrait_3d = saved3D
+    C.tooltip_portrait = savedPortrait
 end
 
 --------------------------------------------------------------------------

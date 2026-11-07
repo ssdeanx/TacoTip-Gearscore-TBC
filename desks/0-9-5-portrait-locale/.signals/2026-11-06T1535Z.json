@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-11-06T15:35:00Z",
+  "run_id": "tacotip-0.9.5-portrait-locale-r2",
+  "agent_name": "0-9-5-portrait-locale",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "Two independent read-only audits plus red/green mutation proofs caught a latched anchor, an unpinned owner proof, a dead OnShow hint path, and non-gating font/locale tests.",
+    "what_was_hard": "Separating a zero GetRight measurement from a laid-out frame; the fixture had to model a real rect.",
+    "skill_gap": "FadeOut/rect validity inside OnShow still needs live confirmation."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "In-game pass; then decide on the pre-existing right-edge portrait-width threshold."
+  }
+}

@@ -12,10 +12,8 @@ TT.builtinTooltipFonts = {
     { value = "Fonts\\2002.TTF",                text = "Blizzard - 2002" },
     { value = "Fonts\\2002B.TTF",               text = "Blizzard - 2002 Bold" },
     { value = "Fonts\\ARIALN.TTF",              text = "Blizzard - Arial Narrow" },
-    { value = "Fonts\\BLEI00D.TTF",             text = "Blizzard - Blei 00D" },
     { value = "Fonts\\FRIZQT__.TTF",            text = "Blizzard - Friz Quadrata TT" },
-    { value = "Fonts\\FRIZQT_.TTF",             text = "Blizzard - Friz Quadrata" },
-    { value = "Fonts\\K_Damage.TTF",            text = "Blizzard - Damage" },
+    { value = "Fonts\\FRIZQT___CYR.TTF",        text = "Blizzard - Friz Quadrata Cyrillic" },
     { value = "Fonts\\K_Pagetext.TTF",          text = "Blizzard - Page Text" },
     { value = "Fonts\\MORPHEUS.TTF",            text = "Blizzard - Morpheus" },
     { value = "Fonts\\SKURRI.TTF",              text = "Blizzard - Skurri" },
@@ -26,13 +24,9 @@ TT.builtinTooltipFonts = {
     { value = "Fonts\\FNT_Details_Outline.TTF", text = "Blizzard - Details Outline" },
     { value = "Fonts\\FNT_Details_Brush.TTF",   text = "Blizzard - Details Brush" },
     { value = "Fonts\\FNT_Details_Brush2.TTF",  text = "Blizzard - Details Brush 2" },
-    -- CJK fonts (available when client locale matches)
-    { value = "Fonts\\ZYHei.TTF",               text = "Blizzard - ZY Hei" },
-    { value = "Fonts\\ZYKai_Casual.TTF",        text = "Blizzard - ZY Kai Casual" },
-    { value = "Fonts\\ZYKai_T.TTF",             text = "Blizzard - ZY Kai T" },
-    { value = "Fonts\\ZYMing.TTF",              text = "Blizzard - ZY Ming" },
-    { value = "Fonts\\ZYMing_Casual.TTF",       text = "Blizzard - ZY Ming Casual" },
-    { value = "Fonts\\ZYKow_Casual.TTF",        text = "Blizzard - ZY Kow Casual" },
+    -- CJK tooltip faces used by the client itself (verified in Fonts.xml).
+    { value = "Fonts\\ARKai_T.ttf",             text = "Blizzard - ARKai (Simplified Chinese)" },
+    { value = "Fonts\\blei00d.TTF",             text = "Blizzard - Blei (Traditional Chinese)" },
 }
 
 -- ============================================================================
@@ -446,20 +440,64 @@ TT.builtinTooltipBorders = {
 -- neither is worth the regression risk in a correctness pass. They are left in
 -- place; SharedMedia users get a correct list either way because LibSharedMedia
 -- takes precedence when present.
-local function ttFilterFontList(list)
+-- Per-client script-bearing faces. A roman-only face on a non-roman client
+-- renders one missing-glyph box per non-Latin character, and the dropdown
+-- choice persists in SavedVariables -- one click would break every tooltip
+-- until the player found the font page again. Keep only faces that can draw the
+-- client's script. SharedMedia entries are appended later and cannot be judged
+-- here; that is the player's own addition.
+local SCRIPT_FONTS = {
+    ruRU = {
+        ["fonts\\frizqt___cyr.ttf"] = true,
+        -- LibSharedMedia's coverage table flags these as ruRU-capable and
+        -- Latin-capable: they are valid picks on a Russian client and must not
+        -- be filtered out.
+        ["fonts\\arialn.ttf"] = true,
+        ["fonts\\2002.ttf"] = true,
+        ["fonts\\2002b.ttf"] = true,
+        ["fonts\\k_pagetext.ttf"] = true,
+    },
+    koKR = {
+        ["fonts\\2002.ttf"] = true,
+        ["fonts\\2002b.ttf"] = true,
+        ["fonts\\k_pagetext.ttf"] = true,
+    },
+    zhCN = {
+        ["fonts\\arkai_t.ttf"] = true,
+        ["fonts\\arkai_c.ttf"] = true,
+    },
+    zhTW = {
+        ["fonts\\blei00d.ttf"] = true,
+    },
+}
+
+local function ttFilterFontList(list, displayLocale)
     if (type(list) ~= "table") then return list end
-    local locale = (type(GetLocale) == "function") and GetLocale() or "enUS"
+    local locale = displayLocale
+    if (type(locale) ~= "string") then
+        locale = (type(GetLocale) == "function") and GetLocale() or "enUS"
+    end
     local isCJK = (locale == "zhCN" or locale == "zhTW")
+    local scriptFonts = SCRIPT_FONTS[locale]
     local out = {}
     for _, entry in ipairs(list) do
         local value = entry.value or ""
-        local isCJKFont = (value:find("Fonts\\ZY", 1, true) ~= nil)
+        local lower = value:lower()
+        local isCJKFont = (lower:find("fonts\\zy", 1, true) ~= nil)
+            or (lower:find("arkai", 1, true) ~= nil)
+            or (lower:find("blei00d", 1, true) ~= nil)
         local isDetailsFont = (value:find("FNT_Details_", 1, true) ~= nil)
-        -- keep: everything that is not CJK-on-a-non-CJK-client, and not Details
+        -- keep: a face that can draw this client's script, and not Details
         local keep = true
-        if isCJKFont and not isCJK then
+        if (scriptFonts and not scriptFonts[lower]) then
             keep = false
-        elseif isDetailsFont then
+        elseif (not scriptFonts and isCJKFont and not isCJK) then
+            keep = false
+        elseif (not scriptFonts and lower:find("frizqt___cyr", 1, true)) then
+            -- FRIZQT___CYR has no é/ï/ö (LibSharedMedia's coverage table), so
+            -- it must not be offered on an accented-Latin client.
+            keep = false
+        elseif (isDetailsFont) then
             keep = false
         end
         if keep then
@@ -469,4 +507,8 @@ local function ttFilterFontList(list)
     return out
 end
 
-TT.builtinTooltipFonts = ttFilterFontList(TT.builtinTooltipFonts)
+-- Exposed, not applied at load: the filter needs the EFFECTIVE display
+-- language, which depends on TacoTipConfig.locale_override -- a SavedVariable
+-- that is still empty while addon files execute. options.lua filters the list
+-- at runtime through this function.
+TT.filterBuiltinTooltipFonts = ttFilterFontList

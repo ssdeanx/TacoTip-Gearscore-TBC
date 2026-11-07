@@ -1184,17 +1184,30 @@ local function RegisterTacoTipTests()
     function Client:FontListIsClientFiltered()
         local TTt = _G[addonName] or TT
         if (not (TTt and TTt.builtinTooltipFonts)) then return end
-        local isCJK = (GetLocale() == "zhCN" or GetLocale() == "zhTW")
+        -- The list is filtered at runtime on the EFFECTIVE display locale, not
+        -- at load on GetLocale(): SavedVariables (the language override) are
+        -- empty while addon files execute, and Titanforge pins zhCN.
+        local display = (TTt.GetDisplayLocale and TTt:GetDisplayLocale()) or GetLocale()
+        local list = TTt.builtinTooltipFonts
+        if (TTt.filterBuiltinTooltipFonts) then
+            list = TTt.filterBuiltinTooltipFonts(list, display)
+        end
+        local isCJK = (display == "zhCN" or display == "zhTW")
         local cjk, details = 0, 0
-        for _, e in ipairs(TTt.builtinTooltipFonts) do
-            if (e.value and e.value:find("Fonts\\ZY", 1, true)) then cjk = cjk + 1 end
+        for _, e in ipairs(list) do
+            local lower = (e.value or ""):lower()
+            if (lower:find("fonts\\zy", 1, true)
+                    or lower:find("arkai", 1, true)
+                    or lower:find("blei00d", 1, true)) then
+                cjk = cjk + 1
+            end
             if (e.value and e.value:find("FNT_Details_", 1, true)) then details = details + 1 end
         end
         IsTrue(details == 0, "no third-party Details fonts in the built-in list")
         if (isCJK) then
-            IsTrue(cjk > 0, "CJK fonts offered on a CJK client")
+            IsTrue(cjk > 0, "CJK fonts offered on a CJK display locale")
         else
-            IsTrue(cjk == 0, "CJK fonts hidden on a non-CJK client (got " .. cjk .. ")")
+            IsTrue(cjk == 0, "CJK fonts hidden on a non-CJK display locale (got " .. cjk .. ")")
         end
     end
 

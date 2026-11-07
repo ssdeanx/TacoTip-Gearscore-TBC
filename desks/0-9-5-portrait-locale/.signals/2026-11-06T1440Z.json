@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "checkpoint",
+  "timestamp": "2026-11-06T14:40:00Z",
+  "run_id": "tacotip-0.9.5-portrait-locale",
+  "agent_name": "0-9-5-portrait-locale",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 4,
+    "completeness": 3
+  },
+  "patterns": {
+    "what_worked": "Client-source tracing (UnitFrame_UpdateTooltip 0.2s, TooltipDataHandler post-call-before-Show, per-alphabet FontFamily table) produced a modern-only fix shape; each fix pin was red on HEAD.",
+    "what_was_hard": "Distinguishing the portrait hide from the side-cache reset; FadeOut has no Lua body, so its completion semantics remain unverified.",
+    "skill_gap": "No in-game feedback loop; live confirmation is the operator's step."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "Copy the 0.9.5 tree to the live Forever/Retail install and confirm portrait stability, non-Latin text, and the Frame Settings row."
+  }
+}

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.6"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -772,7 +772,13 @@ function TT:GetTooltipFontChoices()
     local seen = {}
     local choices = {}
 
-    for _, entry in ipairs(TT.builtinTooltipFonts) do
+    local displayLocale = (self.GetDisplayLocale and self:GetDisplayLocale())
+        or ((type(GetLocale) == "function") and GetLocale() or "enUS")
+    local builtins = TT.builtinTooltipFonts
+    if (TT.filterBuiltinTooltipFonts) then
+        builtins = TT.filterBuiltinTooltipFonts(builtins, displayLocale)
+    end
+    for _, entry in ipairs(builtins) do
         seen[entry.value] = true
         table.insert(choices, { value = entry.value, text = entry.text })
     end
@@ -938,11 +944,83 @@ function TT:InvalidateResolvedMediaCache()
     invalidateCachedChoiceLists()
 end
 
+-- The client swaps the FONT FILE per alphabet: FRIZQT__.TTF is the roman face,
+-- FRIZQT___CYR.TTF carries Cyrillic, 2002.TTF Korean, ARKai_T.ttf Simplified
+-- Chinese and blei00d.TTF Traditional Chinese (verified in the client source:
+-- Blizzard_Fonts_Shared/Mainline/GameFonts.xml and Shared/Fonts.xml, every
+-- FontFamily declares one <Member alphabet="..."> per file). Forcing the roman
+-- file on a translated client is exactly what renders a missing-glyph box per
+-- character -- the "I see squares sometime" report -- because SetFont with a
+-- raw path bypasses the client's alphabet fallback.
+local LOCALE_FONT_PATHS = {
+    ruRU = "Fonts\\FRIZQT___CYR.TTF",
+    koKR = "Fonts\\2002.TTF",
+    zhCN = "Fonts\\ARKai_T.ttf",
+    zhTW = "Fonts\\blei00d.TTF",
+}
+
+-- Font for the language actually being displayed.
+--
+-- applyTooltipFonts re-fonts the CLIENT's own lines too (name / race / level /
+-- guild), and those are in the client language. So the client's alphabet wins
+-- whenever it is non-roman: a zhCN client must keep its Chinese face even when
+-- the addon language is overridden to Russian. Only a roman client (which loses
+-- nothing, because the CYR/CJK faces also carry Latin) may follow a non-roman
+-- addon language.
+-- Accented Latin clients must not follow a Russian override onto the Cyrillic
+-- face: FRIZQT___CYR has no é/ï/ö (LibSharedMedia's coverage table), so every
+-- accented client line would be a box. FRIZQT is the safer face there; a
+-- player who wants the override can still pick a font explicitly.
+local ACCENTED_ROMAN_LOCALES = {
+    deDE = true, frFR = true, esES = true, esMX = true, itIT = true, ptBR = true,
+}
+-- Override faces that cannot carry accented Latin. FRIZQT___CYR has partial
+-- Latin (no é/ï/ö); bLEI00D does not cover the accented de/en/es/fr/it/pt set
+-- (the Latin column of LibSharedMedia's coverage table) though it has basic
+-- ASCII. 2002 (koKR) and ARKai (zhCN) do carry accented Latin, so those
+-- overrides are safe.
+local ACCENTED_UNSAFE_OVERRIDES = {
+    ruRU = true,
+    zhTW = true,
+}
+
+-- The locale whose script the picker and the default face must serve. The
+-- client wins when it has a non-roman alphabet; otherwise an addon-language
+-- override decides, except when the override face cannot carry accented Latin
+-- (ruRU/zhTW): the accented-Latin client keeps its own face.
+function TT:GetDisplayLocale()
+    local client = (type(GetLocale) == "function") and GetLocale() or "enUS"
+    if (LOCALE_FONT_PATHS[client]) then
+        return client
+    end
+    local active = _G.TACOTIP_ACTIVE_LOCALE
+    if (type(active) == "string" and LOCALE_FONT_PATHS[active]) then
+        if (ACCENTED_ROMAN_LOCALES[client] and ACCENTED_UNSAFE_OVERRIDES[active]) then
+            return client
+        end
+        return active
+    end
+    return client
+end
+
+function TT:GetLocaleFontPath()
+    local displayLocale = self:GetDisplayLocale()
+    return LOCALE_FONT_PATHS[displayLocale] or "Fonts\\FRIZQT__.TTF"
+end
+
 function TT:GetResolvedTooltipFont()
     if (not cachedResolvedFont) then
+        local localeFont = self:GetLocaleFontPath()
+        local configured = TacoTipConfig and TacoTipConfig.tooltip_font
+        -- The shipped default is the roman face. Treat it as "client default"
+        -- rather than as an explicit choice: on a Russian/Korean/Chinese
+        -- client every character outside Latin would otherwise be a box. Any
+        -- other saved selection is the player's explicit pick and is honoured.
+        if (configured == nil or configured == "" or configured == "Fonts\\FRIZQT__.TTF") then
+            configured = localeFont
+        end
         cachedResolvedFont = resolveConfiguredMediaValue(self:GetTooltipFontChoices(),
-            TacoTipConfig and TacoTipConfig.tooltip_font,
-            "Fonts\\FRIZQT__.TTF")
+            configured, localeFont)
     end
     return cachedResolvedFont
 end
@@ -1292,7 +1370,10 @@ local function toggleMediaPicker(dropDown)
         btn.check:SetShown(isSelected)
 
         local textureSet = false
-        if (type(val) == "string" and val:len() > 0) then
+        -- Texture preview is opt-in per dropdown. Font values are file paths
+        -- too; feeding one to Texture:SetTexture makes the client draw an
+        -- unloadable texture as a solid green block.
+        if (dropDown.isTexturePicker and type(val) == "string" and val:len() > 0) then
             if (val:find("\\") or val:find("/")) then
                 local isBorderChoice = (controls and dropDown == controls.tooltipBorderTextureChoice) or
                     (val:find("Border") or val:find("border") or val:find("Edge") or val:find("edge"))
@@ -1329,6 +1410,19 @@ local function toggleMediaPicker(dropDown)
             else
                 btn.bg:SetVertexColor(0.08, 0.08, 0.1, 0.6)
             end
+        end
+
+        if (dropDown.isFontPicker and type(val) == "string" and val ~= "") then
+            -- Preview each font in its own face. A refused path falls back to
+            -- the default row font instead of breaking the list.
+            local okCall, applied = pcall(btn.txt.SetFont, btn.txt, val, 12, "")
+            if (not okCall or applied == false) then
+                btn.txt:SetFontObject("GameFontHighlightSmall")
+            end
+        else
+            -- The row buttons are shared by every dropdown, so a font preview
+            -- must not leak into the next picker.
+            btn.txt:SetFontObject("GameFontHighlightSmall")
         end
 
         btn.txt:SetText(option.menuText or option.text or tostring(val or ""))
@@ -1398,9 +1492,21 @@ local function createOptionsDropdown(parent, globalName, label, description, val
     local btnName = globalName .. "Button"
     local arrowButton = _G[btnName]
     if (arrowButton) then
-        arrowButton:SetScript("OnClick", function()
+        local function openPicker()
             toggleMediaPicker(dropDown)
-        end)
+        end
+        -- The modern pair (Forever/Retail) activates the template arrow from
+        -- DropDownMenuButtonMixin:OnMouseDown; the classic family uses the XML
+        -- OnClick. Replace exactly the handler this client installed and clear
+        -- the other, or one click opens the stock menu and the custom picker.
+        local stockMouseDown = arrowButton.GetScript and arrowButton:GetScript("OnMouseDown")
+        if (stockMouseDown) then
+            arrowButton:SetScript("OnMouseDown", openPicker)
+            arrowButton:SetScript("OnClick", nil)
+        else
+            arrowButton:SetScript("OnClick", openPicker)
+            arrowButton:SetScript("OnMouseDown", nil)
+        end
     end
     dropDown:SetScript("OnMouseDown", function()
         toggleMediaPicker(dropDown)
@@ -1911,8 +2017,10 @@ local function buildRootPage()
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
-        local hasAchievements = CI and
-            ((CI.IsWotlk and CI:IsWotlk()) or (CI.IsRetail and CI:IsRetail()) or (CI.IsForever and CI:IsForever()))
+        -- Achievements are Retail-only for now. WotLK Titanforge and WoW
+        -- Forever also expose the APIs, but the operator wants the row there
+        -- kept off until that is settled.
+        local hasAchievements = CI and CI.IsRetail and CI:IsRetail() and true or false
         if (hasAchievements) then
             controls.rootShowAchievementPoints:SetChecked(TacoTipConfig.show_achievement_points)
             controls.rootShowAchievementPoints:SetDisabled(false)
@@ -2052,6 +2160,7 @@ local function buildTooltipsPage()
             TacoTipConfig.tooltip_font = value
             modernGetConfig()
         end)
+    controls.tooltipFontChoice.isFontPicker = true
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipFontChoice, builder.y, 12)
 
     controls.tooltipFontSize = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_FONT_SIZE"] or "Tooltip text size",
@@ -2265,6 +2374,7 @@ local function buildTooltipsPage()
             TacoTipConfig.tooltip_bar_texture = value
             modernGetConfig()
         end)
+    controls.tooltipBarTextureChoice.isTexturePicker = true
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipBarTextureChoice, builder.y, 14)
 
     -- ========================================================================
@@ -2434,6 +2544,7 @@ local function buildTooltipsPage()
             TacoTipConfig.tooltip_border_texture = value
             modernGetConfig()
         end)
+    controls.tooltipBorderTextureChoice.isTexturePicker = true
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipBorderTextureChoice, builder.y, 10)
 
     controls.tooltipBackgroundTextureChoice = createOptionsDropdown(content, nil,
@@ -2444,6 +2555,7 @@ local function buildTooltipsPage()
             TacoTipConfig.tooltip_background_texture = value
             modernGetConfig()
         end)
+    controls.tooltipBackgroundTextureChoice.isTexturePicker = true
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipBackgroundTextureChoice, builder.y, 14)
 
     builder:Finalize(64)

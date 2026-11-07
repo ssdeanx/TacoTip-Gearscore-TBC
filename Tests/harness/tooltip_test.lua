@@ -1160,6 +1160,7 @@ end
 
 local TT = REALG.TacoTip_Forever
 local GT = REALG.GameTooltip
+local TT_INSPECTOR = REALG.LibStub and REALG.LibStub("LibForeverInspector", true) or nil
 
 -- Seed the tooltip with stock Blizzard-style content so the addon has lines to
 -- read and rewrite, exactly as it would in game.
@@ -1407,6 +1408,41 @@ do
     end
 end
 
+-- Cross-client gate: the owner-identity waiver is modern-only. On Classic a
+-- clear with no owner.UpdateTooltip must still take the teardown path; on
+-- Retail/Forever the shown same-unit clear is the 0.2s tick and must not.
+do
+    REALG.TacoTipConfig.tooltip_portrait = true
+    REALG.TacoTipConfig.tooltip_portrait_3d = true
+    pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+    local m = GT.TacoTipPortrait3D
+    if (m) then
+        local guid = REALG.UnitGUID("player")
+        GT._tacoTipState = GT._tacoTipState or { generation = 0 }
+        GT._tacoTipState.currentUnitGUID = guid
+        GT._tacoTipState.ownerUnitGUID = guid
+        local owner = { unit = "player" } -- UpdateTooltip deliberately nil
+        local savedOwner = GT.GetOwner
+        GT.GetOwner = function() return owner end
+        GT.__shown = true
+        local before = (TT.ev and TT.ev.portraitModelHidden) or 0
+        if (GT.__hooks and GT.__hooks.OnTooltipCleared) then
+            pcall(GT.__hooks.OnTooltipCleared, GT)
+        end
+        local delta = ((TT.ev and TT.ev.portraitModelHidden) or 0) - before
+        if (usePipeline) then
+            check("modern: shown same-unit clear with no UpdateTooltip does not hide the portrait",
+                delta == 0, "portraitModelHidden +" .. tostring(delta))
+        else
+            check("classic: the same clear still runs the teardown path",
+                delta == 1, "portraitModelHidden +" .. tostring(delta))
+        end
+        GT.GetOwner = savedOwner
+    else
+        check("cross-client portrait gate: portrait exists", false, "no TacoTipPortrait3D")
+    end
+end
+
 -- NON-UNIT tooltips must tear the 3D portrait down, and a same-unit re-render
 -- must be a complete no-op for it.
 --
@@ -1603,6 +1639,83 @@ do
         else
             REALG.TacoTipConfig.tooltip_border_texture = value
         end
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+    end
+
+    -- ---- Locale font: the roman face is not a universal face --------------
+    --
+    -- The client ships one font file per alphabet (FRIZQT__.TTF roman,
+    -- FRIZQT___CYR.TTF Cyrillic, 2002.TTF Korean, ARKai_T.ttf zhCN,
+    -- blei00d.TTF zhTW). The shipped default is the roman path, so a translated
+    -- client used to get one missing-glyph box per non-Latin character. The
+    -- resolver must treat the historical default as "client default" and pick
+    -- the alphabet of the language actually being displayed, because the addon
+    -- language can be overridden independently of the client.
+    do
+        local savedActive = REALG.TACOTIP_ACTIVE_LOCALE
+        local savedFont = REALG.TacoTipConfig.tooltip_font
+        REALG.TacoTipConfig.tooltip_font = "Fonts\\FRIZQT__.TTF"
+        REALG.TACOTIP_ACTIVE_LOCALE = "ruRU"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local ruFont = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: a ruRU display resolves a Cyrillic face",
+            ruFont == "Fonts\\FRIZQT___CYR.TTF", "font=" .. tostring(ruFont))
+        REALG.TACOTIP_ACTIVE_LOCALE = "zhCN"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local cnFont = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: a zhCN display resolves a Chinese face",
+            cnFont == "Fonts\\ARKai_T.ttf", "font=" .. tostring(cnFont))
+        -- A non-roman CLIENT outranks a non-roman override: the same font path
+        -- also re-fonts Blizzard's own lines, which stay in the client language.
+        local savedGetLocale = REALG.GetLocale
+        REALG.GetLocale = function() return "zhCN" end
+        REALG.TACOTIP_ACTIVE_LOCALE = "ruRU"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local clientWins = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: a non-roman client keeps its face over a different-script override",
+            clientWins == "Fonts\\ARKai_T.ttf", "font=" .. tostring(clientWins))
+        REALG.GetLocale = savedGetLocale
+        REALG.TACOTIP_ACTIVE_LOCALE = "enUS"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        -- A roman client with a zhCN override must offer the override's face in
+        -- the picker: the filter runs at runtime on the EFFECTIVE locale, not
+        -- at file-load on GetLocale() before SavedVariables exist.
+        REALG.GetLocale = function() return "enUS" end
+        REALG.TACOTIP_ACTIVE_LOCALE = "zhCN"
+        REALG.TacoTipConfig.tooltip_font = "Fonts\\FRIZQT__.TTF"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local hasZhFace = false
+        for _, entry in ipairs(TT:GetTooltipFontChoices() or {}) do
+            if (entry.value == "Fonts\\ARKai_T.ttf") then hasZhFace = true end
+        end
+        check("locale font: the picker offers the override's script face on a roman client",
+            hasZhFace, "choices did not include ARKai")
+        -- Accented Latin + ruRU override: the client face must win, because
+        -- FRIZQT___CYR has no e-acute/i-diaeresis/o-diaeresis.
+        REALG.GetLocale = function() return "deDE" end
+        REALG.TACOTIP_ACTIVE_LOCALE = "ruRU"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local deFont = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: an accented Latin client keeps its face under a ruRU override",
+            deFont == "Fonts\\FRIZQT__.TTF", "font=" .. tostring(deFont))
+        local deDisplay = TT.GetDisplayLocale and TT:GetDisplayLocale()
+        check("locale font: the display locale follows the accented client",
+            deDisplay == "deDE", "display=" .. tostring(deDisplay))
+        -- zhTW's bLEI00D has no Latin coverage at all, so it is unsafe too;
+        -- zhCN/koKR faces carry accented Latin and stay allowed.
+        REALG.TACOTIP_ACTIVE_LOCALE = "zhTW"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local deTW = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: an accented Latin client keeps its face under a zhTW override",
+            deTW == "Fonts\\FRIZQT__.TTF", "font=" .. tostring(deTW))
+        REALG.GetLocale = savedGetLocale
+        REALG.TACOTIP_ACTIVE_LOCALE = "enUS"
+        if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+        local enFont = TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()
+        check("locale font: an enUS display keeps Friz Quadrata",
+            enFont == "Fonts\\FRIZQT__.TTF", "font=" .. tostring(enFont))
+        REALG.TACOTIP_ACTIVE_LOCALE = savedActive
+        REALG.TacoTipConfig.tooltip_font = savedFont
         if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
     end
 
@@ -1816,6 +1929,20 @@ do
         -- The guard must not be a one-way latch: a changed setting has to write
         -- through on the next render.
         local probe, prevFont = mediaProbe("font")
+        local patchedFilter
+        if (not probe) then
+            -- A script-filtered locale can expose a single built-in face
+            -- (Titanforge/zhCN, zhTW). Add a verified client face to the
+            -- filtered list for this one check, then restore the filter.
+            patchedFilter = TT.filterBuiltinTooltipFonts
+            TT.filterBuiltinTooltipFonts = function(list, locale)
+                local out = patchedFilter and patchedFilter(list, locale) or list
+                out[#out + 1] = { value = "Fonts\\ARKai_C.ttf", text = "Test face" }
+                return out
+            end
+            if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
+            probe, prevFont = mediaProbe("font")
+        end
         if (probe) then
             setMedia("font", probe)
             local probeBase = REALG.__fontCalls or 0
@@ -1827,11 +1954,12 @@ do
                 .. " line1 font=" .. tostring(l1 and l1.__font) .. " (wanted " .. tostring(probe) .. ")")
             setMedia("font", prevFont)
         else
-            -- Reported rather than counted as a pass: with one font in the list
-            -- there is no second value to switch to, and silently passing would
-            -- hide that the latch case is untested here.
             check("changing the font setting re-applies SetFont", false,
                 "no alternative font in the choice list to switch to")
+        end
+        if (patchedFilter) then
+            TT.filterBuiltinTooltipFonts = patchedFilter
+            if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
         end
         setMedia("font", REALG.TacoTipConfig.tooltip_font)
     end
@@ -2120,6 +2248,84 @@ do
         end
         CFG.tooltip_max_width = prevMax
         CFG.show_power_bar = prevPower
+    end
+
+    -- ---- 0.9.6: secret power values on Forever / Live -------------------
+    --
+    -- UnitPowerMax is SECRET when the unit's power is restricted on Forever
+    -- and Live (UnitDocumentation.lua: SecretWhenUnitPowerMaxRestricted =
+    -- true). The status bar's SetMinMaxValues/SetValue accept secret bar
+    -- values, but a comparison does not. The show gate must pass a secret max
+    -- through instead of testing it. A table sentinel makes any comparison
+    -- raise, which is the red/green proof; issecretvalue is the same global
+    -- the client exposes on all five branches.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevHP, prevPower = CFG.show_hp_bar, CFG.show_power_bar
+        local SECRET_MAX, SECRET_POWER = {}, {}
+        local savedMax, savedPower = REALG.UnitPowerMax, REALG.UnitPower
+        local savedSecret = REALG.issecretvalue
+        CFG.show_hp_bar = true
+        CFG.show_power_bar = true
+        REALG.UnitPowerMax = function() return SECRET_MAX end
+        REALG.UnitPower = function() return SECRET_POWER end
+        REALG.issecretvalue = function(v) return v == SECRET_MAX or v == SECRET_POWER end
+
+        local bar = REALG.TacoTipPowerBar
+        if (bar) then
+            bar:Hide()
+            bar.__min, bar.__max, bar.__value = nil, nil, nil
+        end
+        settleUnitRender("player")
+        check("power bar shows when UnitPowerMax is a secret value",
+            bar ~= nil and bar:IsShown() == true,
+            "bar=" .. tostring(bar ~= nil) .. " shown=" .. tostring(bar and bar:IsShown()))
+        check("secret power values are passed through to the status bar",
+            bar ~= nil and bar.__max == SECRET_MAX and bar.__value == SECRET_POWER,
+            "max=" .. tostring(bar and bar.__max) .. " value=" .. tostring(bar and bar.__value))
+
+        -- The ordinary "no power pool" gate must survive the secret branch.
+        REALG.issecretvalue = function() return false end
+        REALG.UnitPowerMax = function() return 0 end
+        REALG.UnitPower = function() return 0 end
+        settleUnitRender("player")
+        check("a non-secret zero power max still hides the power bar",
+            bar ~= nil and not bar:IsShown(),
+            "shown=" .. tostring(bar and bar:IsShown()))
+
+        REALG.UnitPowerMax, REALG.UnitPower = savedMax, savedPower
+        REALG.issecretvalue = savedSecret
+        CFG.show_hp_bar, CFG.show_power_bar = prevHP, prevPower
+        settleUnitRender("player")
+    end
+
+    -- ---- 0.9.6: achievement points are Retail-only -----------------------
+    --
+    -- The options toggle is disabled outside Retail, but a saved true value
+    -- must not render a row on a client that has no achievement readout for
+    -- this release. Retail must still render it, so this runs on every client
+    -- and changes only the expected result.
+    do
+        local CFG = REALG.TacoTipConfig
+        local saved = CFG.show_achievement_points
+        local savedCI = TT_INSPECTOR and TT_INSPECTOR.GetTotalAchievementPoints
+        CFG.show_achievement_points = true
+        if (TT_INSPECTOR) then
+            TT_INSPECTOR.GetTotalAchievementPoints = function() return 12345 end
+        end
+        settleUnitRender("player")
+        local text = allText()
+        local hasRow = STD.string.find(text, "UI-Achievement", 1, true) ~= nil
+        if (iface == 120105) then
+            check("achievements: Retail still renders the achievement row",
+                hasRow, STD.string.gsub(text, STD.string.char(10), " | "))
+        else
+            check("achievements: non-Retail renders no achievement row",
+                not hasRow, STD.string.gsub(text, STD.string.char(10), " | "))
+        end
+        CFG.show_achievement_points = saved
+        if (TT_INSPECTOR) then TT_INSPECTOR.GetTotalAchievementPoints = savedCI end
+        settleUnitRender("player")
     end
 
     -- ---- FIX 6: unconditional layout writes ------------------------------
@@ -3081,6 +3287,14 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         REALG.TacoTipConfig.tooltip_portrait_3d = true
 
         local anchorsBefore = (TT.ev and TT.ev.portraitAnchor) or 0
+        -- A laid-out tooltip, not the mock's default 0 right edge: a 0 edge is
+        -- the unlaid state the production guard now refuses to latch, so
+        -- leaving it at 0 would measure the guard rather than the re-render.
+        local savedGTRight = GT.__right
+        local savedUIRight = REALG.UIParent.__right
+        local screenW = (REALG.GetScreenWidth and REALG.GetScreenWidth()) or 1920
+        GT.__right = math.floor(screenW * 0.4)
+        REALG.UIParent.__right = screenW
         -- Establish the portrait before instrumenting, so creation-time cost is
         -- not counted: the claim under test is about RE-renders.
         GT:ClearLines()
@@ -3127,6 +3341,8 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
             local anchors = ((TT.ev and TT.ev.portraitAnchor) or 0) - anchorsBefore
             check("portrait is anchored once across 5 re-renders, not per render",
                 anchors <= 1, "anchored " .. tostring(anchors) .. " times across 5 renders")
+            GT.__right = savedGTRight
+            REALG.UIParent.__right = savedUIRight
             -- Asserted by instrumenting SetScript rather than by reading
             -- GetScript("OnUpdate") back. The mock's PlayerModel widget carries the
             -- parent tooltip's own script table, so GetScript reports Blizzard's

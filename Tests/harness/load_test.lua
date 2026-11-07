@@ -667,7 +667,7 @@ local checks = {
 checks[#checks + 1] = {
     rawget(REALG.GameTooltip, "AddLine") == REALG.__gameTooltipAddLine
         and rawget(REALG.GameTooltip, "AddDoubleLine") == REALG.__gameTooltipAddDoubleLine,
-    "0.9.4: TacoTip never replaces GameTooltip.AddLine/AddDoubleLine (AddLine own-field="
+    "0.9.5: TacoTip never replaces GameTooltip.AddLine/AddDoubleLine (AddLine own-field="
         .. tostring(rawget(REALG.GameTooltip, "AddLine"))
         .. ", AddDoubleLine own-field="
         .. tostring(rawget(REALG.GameTooltip, "AddDoubleLine")) .. ")",
@@ -1158,8 +1158,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "0.9.4",
-        "0.9.4: TacoTip.toc declares version 0.9.4 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "0.9.6",
+        "0.9.6: TacoTip.toc declares version 0.9.6 (got " .. tostring(tocVer) .. ")" }
     checks[#checks + 1] = { type(TT.GetClassIconMarkup) == "function",
         "0.9.0: TT.GetClassIconMarkup is exposed" }
     checks[#checks + 1] = { TT:GetClassIconMarkup(nil) == "",
@@ -1599,7 +1599,7 @@ do
         local text7 = table.concat(lines7, "\n")
         check("0.8.8: collection failure still prints the minimal facts",
             okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
-            and text7:find("version: 0.9.4", 1, true) ~= nil
+            and text7:find("version: 0.9.6", 1, true) ~= nil
             and text7:find("load OK:", 1, true) ~= nil
             and text7:find("client family:", 1, true) ~= nil
             and text7:find("interface:", 1, true) ~= nil,

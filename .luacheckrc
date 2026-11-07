@@ -110,6 +110,12 @@ read_globals = {
     -- client. Read, never written.
     "securecall",
     "InCombatLockdown",
+    -- Secret-value predicate, present on all five branches (generated
+    -- FrameScriptDocumentation.lua: Name = "issecretvalue"). Read-only: the
+    -- client owns it; the add-on never defines or replaces it. UnitPowerMax
+    -- and UnitPower can return secret values on Forever/Live when a unit's
+    -- power is restricted, and a secret value cannot be compared.
+    "issecretvalue",
     "InspectFrame",
     "InspectModelFrame",
     "InspectPaperDollFrame",

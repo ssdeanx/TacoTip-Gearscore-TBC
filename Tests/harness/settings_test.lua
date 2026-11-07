@@ -938,9 +938,10 @@ local function countReachable()
     return n
 end
 
--- Which clients have an achievement system at all. Classic Era and TBC do not,
--- so their achievement-points toggle is permanently disabled by design.
-local clientHasAchievements = (projectId == 11) or (projectId == 1)
+-- Achievements are Retail-only for now. The toggle is permanently disabled on
+-- Classic Era, TBC Anniversary, WotLK Titanforge and WoW Forever, even though
+-- the latter two expose the APIs; only interface 120105 keeps it enabled.
+local clientHasAchievements = (projectId == 1) and (iface == 120105)
 
 -- Round 0 is the default state: what the user actually sees on first open. Its
 -- enable states are the ones the per-client gating assertions are made against.
@@ -969,7 +970,7 @@ check("the dependency cascade converges (a further pass finds nothing new)",
 
 -- Client-gated controls: the control is always built, but in the DEFAULT state it
 -- must be disabled exactly where the feature does not exist. Achievement points
--- exist on Titanforge, Retail and Forever; not on Classic Era or TBC.
+-- are Retail-only for now; Titanforge and Forever are disabled too.
 check("achievement-points toggle exists", defaultWriter.show_achievement_points ~= nil)
 if (defaultWriter.show_achievement_points) then
     check("achievement-points toggle is enabled exactly where the feature exists",

@@ -7,6 +7,10 @@ local ROOT = dofile(_hd .. "/root.lua") .. "/"
 local MOCKC = dofile(_hd .. "/mock_contract.lua")
 
 local projectId, iface, label = tonumber(arg[1]), tonumber(arg[2]), arg[3]
+-- Project 1 is the modern pair (Forever and Retail); the classic family is
+-- 2 / 5 / 11. The dropdown template's arrow activation differs between them
+-- (see the makeWidget note below), so the mock has to model the right one.
+local isModernClient = (projectId == 1)
 MOCKC.setFamily(MOCKC.normaliseFamily(label))
 local usePipeline  = (arg[4] == "pipeline")
 local noSettings   = (arg[5] == "nosettings")
@@ -162,7 +166,13 @@ local function makeWidget(kind, name, parent, template, depth)
     w.GetText        = function() return w.__text end
     w.SetFontObject  = function(_, f) w.__fontObject = f end
     w.GetFontObject  = function() return w.__fontObject end
-    w.SetFont        = function() end
+    -- Record the actual font/texture, not just that the call happened: the
+    -- 0.9.6 pins must tell a font preview from a texture painted with the
+    -- font path (the client draws the latter as a solid green block).
+    w.SetFont        = function(_, font, size, flags)
+        w.__font, w.__fontSize, w.__fontFlags = font, size, flags
+    end
+    w.GetFont        = function() return w.__font, w.__fontSize, w.__fontFlags end
     w.SetJustifyH    = function() end
     w.SetJustifyV    = function() end
     w.SetWordWrap    = function() end
@@ -172,8 +182,8 @@ local function makeWidget(kind, name, parent, template, depth)
     w.SetShadowColor = function() end
     w.GetStringHeight = function() return 12 end
     w.SetVertexColor = function() end
-    w.SetTexture     = function() end
-    w.GetTexture     = function() return 1 end
+    w.SetTexture     = function(_, texture) w.__texture = texture end
+    w.GetTexture     = function() return w.__texture end
     w.SetColorTexture = function() end
     w.SetTexCoord    = function() end
     w.SetDesaturated = function() end
@@ -249,6 +259,31 @@ local function makeWidget(kind, name, parent, template, depth)
             if (not rawget(REALG, name .. suffix)) then
                 rawset(REALG, name .. suffix, makeWidget("FontString", name .. suffix, w, nil, depth + 1))
             end
+        end
+    end
+    -- The UIDropDownMenuTemplate arrow is a real child. Its stock activation
+    -- is client-family specific:
+    --   origin/forever + origin/live: DropDownToggleButton inheriting
+    --     UIDropDownMenuButtonScriptTemplate; DropDownMenuButtonMixin:OnMouseDown
+    --     (Blizzard_SharedXML/Mainline/UIDropDownMenuTemplates.xml:138-145,190;
+    --      UIDropDownMenuTemplates.lua:17-22).
+    --   classic_era / classic_anniversary / classic_titan: a plain Button with
+    --     an XML OnClick (Blizzard_SharedXML/Classic/UIDropDownMenuTemplates.xml:220+).
+    -- Model exactly one, as the client does, so a pin can tell "replaced the
+    -- stock handler" from "added the other one".
+    if (template == "UIDropDownMenuTemplate" and name and depth < 1) then
+        local arrowName = name .. "Button"
+        local arrow = makeWidget("Button", arrowName, w, nil, depth + 1)
+        rawset(REALG, arrowName, arrow)
+        local function stockMenu()
+            REALG.__stockDropDownMenuOpened = (REALG.__stockDropDownMenuOpened or 0) + 1
+        end
+        if (isModernClient) then
+            arrow.__stockActivation = "OnMouseDown"
+            arrow.__scripts.OnMouseDown = stockMenu
+        else
+            arrow.__stockActivation = "OnClick"
+            arrow.__scripts.OnClick = stockMenu
         end
     end
     return setmetatable(w, MT)
@@ -886,6 +921,127 @@ do
     end
     check("50 options refreshes rebuild no media choice list", #growth == 0,
         #growth > 0 and table.concat(growth, " ") or nil)
+end
+
+--------------------------------------------------------------------------
+-- 0.9.6 — the media picker must open once, and a font path is not a texture.
+--
+-- Client truth (read-only, origin/-qualified):
+--   origin/forever + origin/live — the template arrow is a DropDownToggleButton
+--     inheriting UIDropDownMenuButtonScriptTemplate; activation is
+--     DropDownMenuButtonMixin:OnMouseDown
+--     (Blizzard_SharedXML/Mainline/UIDropDownMenuTemplates.xml:138-145,190;
+--      UIDropDownMenuTemplates.lua:17-22), and the template has no OnClick.
+--   classic_era / classic_anniversary / classic_titan — the arrow is a plain
+--     Button with an XML OnClick and no OnMouseDown
+--     (Blizzard_SharedXML/Classic/UIDropDownMenuTemplates.xml:220+).
+-- 0.9.5 replaced only OnClick, so on the modern pair one click fired the stock
+-- menu (mouse-down) and the custom picker (click). The mock models exactly one
+-- stock handler for the running family; these pins fail when the addon adds the
+-- other handler instead of replacing the installed one.
+--------------------------------------------------------------------------
+do
+    local function findDropDown(labelKey)
+        local want = REALG.TACOTIP_LOCALE and REALG.TACOTIP_LOCALE[labelKey]
+        for _, w in ipairs(created) do
+            if (w.__template == "UIDropDownMenuTemplate" and w.label
+                    and w.label.GetText and w.label:GetText() == want) then
+                return w
+            end
+        end
+        return nil
+    end
+    local function findPicker()
+        for _, w in ipairs(created) do
+            if (w.__name == "TacoTipMediaPickerFrame") then return w end
+        end
+        return nil
+    end
+
+    local fontDrop = findDropDown("OPTIONS_TOOLTIP_FONT")
+    local barDrop = findDropDown("OPTIONS_STATUSBAR_TEXTURE")
+    check("0.9.6: the font dropdown is found", fontDrop ~= nil)
+    check("0.9.6: the font dropdown declares itself a font picker",
+        fontDrop ~= nil and fontDrop.isFontPicker == true)
+    check("0.9.6: the statusbar dropdown is found", barDrop ~= nil)
+    check("0.9.6: the statusbar dropdown declares itself a texture picker",
+        barDrop ~= nil and barDrop.isTexturePicker == true)
+
+    local picker = findPicker()
+    local function activationHandlers(drop)
+        local name = drop and drop:GetName()
+        local arrow = name and rawget(REALG, name .. "Button")
+        if (not arrow) then return 0, nil end
+        local down = arrow:GetScript("OnMouseDown")
+        local up = arrow:GetScript("OnClick")
+        return (down and 1 or 0) + (up and 1 or 0), arrow
+    end
+
+    local handlers, arrow = activationHandlers(fontDrop)
+    check("0.9.6: the dropdown arrow exposes exactly one activation handler",
+        handlers == 1, "handlers=" .. tostring(handlers))
+    if (arrow and fontDrop) then
+        REALG.__stockDropDownMenuOpened = 0
+        picker = picker or findPicker()
+        if (picker) then picker:Hide() end
+        local down = arrow:GetScript("OnMouseDown")
+        local up = arrow:GetScript("OnClick")
+        if (down) then down(arrow) end
+        if (up) then up(arrow) end
+        picker = picker or findPicker()
+        check("0.9.6: one arrow click opens no stock menu",
+            (REALG.__stockDropDownMenuOpened or 0) == 0,
+            "stockOpened=" .. tostring(REALG.__stockDropDownMenuOpened))
+        check("0.9.6: one arrow click opens the custom picker",
+            picker ~= nil and picker:IsShown(),
+            "shown=" .. tostring(picker and picker:IsShown()))
+    end
+
+    -- A font row must be text in its own face, never a texture. 0.9.5 passed
+    -- the font file path to Texture:SetTexture, which the client draws as a
+    -- solid green block.
+    picker = picker or findPicker()
+    if (fontDrop and picker) then
+        TT:RefreshOptionsUI()
+        picker:Hide()
+        local open = fontDrop:GetScript("OnMouseDown")
+        if (type(open) == "function") then open(fontDrop) end
+        local firstValue = fontDrop.values and fontDrop.values[1]
+        local row = picker.buttons and picker.buttons[1]
+        check("0.9.6: the font picker opened a row for its first choice",
+            row ~= nil and firstValue ~= nil)
+        if (row and firstValue) then
+            check("0.9.6: a font row is not painted as a texture",
+                row.bg.__texture ~= firstValue.value,
+                "texture=" .. tostring(row.bg.__texture))
+            check("0.9.6: a font row previews its own face",
+                row.txt.__font == firstValue.value,
+                "font=" .. tostring(row.txt.__font))
+        end
+    end
+
+    -- ...and a real texture dropdown must keep its preview.
+    picker = picker or findPicker()
+    if (barDrop and picker) then
+        local targetValue = nil
+        for _, opt in ipairs(barDrop.values or {}) do
+            if (opt.value == "Interface\\TargetingFrame\\UI-StatusBar") then targetValue = opt end
+        end
+        check("0.9.6: the statusbar texture row under test exists", targetValue ~= nil)
+        if (targetValue) then
+            local targetIndex
+            for i, opt in ipairs(barDrop.values) do
+                if (opt == targetValue) then targetIndex = i break end
+            end
+            picker:Hide()
+            local open = barDrop:GetScript("OnMouseDown")
+            if (type(open) == "function") then open(barDrop) end
+            local row = targetIndex and picker.buttons[targetIndex]
+            check("0.9.6: the statusbar picker paints a real texture row",
+                row ~= nil and row.bg.__texture == targetValue.value,
+                "texture=" .. tostring(row and row.bg.__texture))
+        end
+    end
 end
 
 --------------------------------------------------------------------------

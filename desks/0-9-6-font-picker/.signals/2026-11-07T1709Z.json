@@ -1,0 +1,23 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-11-07T17:09:00Z",
+  "run_id": "tacotip-0.9.6-powerbar-achievements",
+  "agent_name": "0-9-6-font-picker",
+  "self_assessment": {
+    "intent": 5,
+    "confidence": 4,
+    "accuracy": 5,
+    "completeness": 4
+  },
+  "patterns": {
+    "what_worked": "The generated API docs made the distinction explicit: UnitPower/UnitPowerMax are secret on Forever/Live, while StatusBar:SetValue/SetMinMaxValues accept secret bar values. The show gate was the only comparison. The achievement gate was a clean Retail-only predicate plus a render guard.",
+    "what_was_hard": "Keeping the non-secret power path byte-identical while adding a secret branch, and proving the achievement row is absent for the right reason rather than because the render path was not reached.",
+    "skill_gap": "No in-game feedback loop; the operator's Forever and Classic observations are the final acceptance."
+  },
+  "escalation": {
+    "reason": null,
+    "blocked_on": null,
+    "recommendation": "In-game pass: power bar on Forever (restricted unit) and one Classic client; achievement toggle disabled on Forever and enabled on Retail; no achievement row on Forever even with a saved true value. The disabled-dropdown body-click remains a recorded follow-up."
+  }
+}

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.6"
 
 
 
@@ -246,6 +246,27 @@ local function getTooltipState(tooltip)
         tooltip._tacoTipState = { generation = 0 }
     end
     return tooltip._tacoTipState
+end
+
+-- The owner frame's unit is the strongest identity a unit tooltip has. It is
+-- set by UnitFrame_UpdateTooltip before SetUnit and it survives every periodic
+-- re-drive, including the first one -- when the modern post-call runs before
+-- Show() and the tooltip cannot yet resolve a unit token. Remember it on every
+-- unit render so the clear hooks can prove "same unit frame, same unit" without
+-- depending on currentUnitGUID, which is only written after a successful
+-- resolve.
+local function noteOwnerUnitGUID(tooltip)
+    local state = getTooltipState(tooltip)
+    if (not state) then
+        return
+    end
+    local owner = tooltip.GetOwner and tooltip:GetOwner()
+    if (owner and owner.unit and type(UnitGUID) == "function"
+            and (not UnitExists or UnitExists(owner.unit))) then
+        state.ownerUnitGUID = UnitGUID(owner.unit)
+    else
+        state.ownerUnitGUID = nil
+    end
 end
 
 local function cancelTooltipTimer(tooltip, field)
@@ -872,8 +893,10 @@ local function applyTooltipFonts(tooltip)
     if (not tooltip) then
         return
     end
-    local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont()) or TacoTipConfig.tooltip_font or
-        "Fonts\\FRIZQT__.TTF"
+    local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont())
+        or (TT.GetLocaleFontPath and TT:GetLocaleFontPath())
+        or TacoTipConfig.tooltip_font
+        or "Fonts\\FRIZQT__.TTF"
     local fontSize = TacoTipConfig.tooltip_font_size or 12
     local nameSize = fontSize + TOOLTIP_NAME_FONT_SIZE_DELTA
     local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
@@ -895,14 +918,21 @@ local function applyTooltipFonts(tooltip)
         local lineSize = (i == 1) and nameSize or fontSize
         if (left) then
             if (left._tacoTipFont ~= fontPath or left._tacoTipFontSize ~= lineSize) then
-                callLabeled("applyTooltipFonts", left, "SetFont", fontPath, lineSize)
-                left._tacoTipFont, left._tacoTipFontSize = fontPath, lineSize
+                local okFont = callLabeled("applyTooltipFonts", left, "SetFont", fontPath, lineSize)
+                -- SetFont returns false when the path is not loaded (for
+                -- example a font the client does not ship). Do not cache that
+                -- as success or the line is never retried with a real face.
+                if (okFont ~= false) then
+                    left._tacoTipFont, left._tacoTipFontSize = fontPath, lineSize
+                end
             end
         end
         if (right) then
             if (right._tacoTipFont ~= fontPath or right._tacoTipFontSize ~= lineSize) then
-                callLabeled("applyTooltipFonts", right, "SetFont", fontPath, lineSize)
-                right._tacoTipFont, right._tacoTipFontSize = fontPath, lineSize
+                local okFont = callLabeled("applyTooltipFonts", right, "SetFont", fontPath, lineSize)
+                if (okFont ~= false) then
+                    right._tacoTipFont, right._tacoTipFontSize = fontPath, lineSize
+                end
             end
         end
     end
@@ -1185,6 +1215,75 @@ function TT:ApplyTooltipScale()
     applyFrameScale(_G["ItemRefShoppingTooltip2"], scale)
 end
 
+-- Anchors the tooltip portrait on the tooltip's free edge.
+--
+-- This is a function because of a modern-client ordering fact: on Retail and
+-- WoW Forever the unit post-call runs BEFORE GameTooltip:Show(), so the first
+-- render sees GetRight() == 0 and the side it picks is a guess. The next 0.2s
+-- tick used to re-anchor to the other edge, which is the visible jump on unit
+-- frames. OnShow runs before the frame is presented, so the recompute can land
+-- on the first visible frame instead of one tick later.
+--
+-- fromShow = true forces the recompute once per show; otherwise the side is
+-- cached and only a scale/invert change or an unanchored shown frame forces it.
+local function anchorTooltipPortrait(tooltip, portrait, fromShow)
+    if (not tooltip or not portrait) then
+        return
+    end
+    local state = getTooltipState(tooltip)
+    local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
+    -- 66 x 88 (was 72 x 96). Still exact 3:4, still exact integers at every
+    -- slider stop: 33x44, 66x88, 99x132, 132x176.
+    local portraitW = math.floor(66 * portraitScale)
+    local portraitH = math.floor(88 * portraitScale)
+    local shown = (not tooltip.IsShown) or tooltip:IsShown()
+    local invertSide = TacoTipConfig.tooltip_portrait_invert_side and true or false
+    local cachedSide = state.portraitSide
+    -- Invert is in the cache key for the same reason scale is: without it,
+    -- ticking the option does nothing until the next scale change.
+    local needsAnchor = (cachedSide == nil
+        or portrait._tacoTipScale ~= portraitScale
+        or portrait._tacoTipInvert ~= invertSide
+        or (shown and not state.portraitAnchored))
+    if (fromShow and shown) then
+        needsAnchor = true
+    end
+    if (not needsAnchor) then
+        return
+    end
+    local tooltipRight = tooltip:GetRight() or 0
+    local screenWidth = (UIParent and UIParent:GetRight())
+        or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
+    -- An unshown frame reports 0. 0 < screenWidth, so it resolves to the
+    -- right-hand side, which is the correct default for a tooltip anchored on
+    -- the left of the screen.
+    cachedSide = (tooltipRight > 0 and tooltipRight >= screenWidth) and "left" or "right"
+    -- Inverted before the side-to-anchor mapping below, so that mapping stays
+    -- in one place. Off by default, so nobody who never touches it sees change.
+    if invertSide then
+        cachedSide = (cachedSide == "left") and "right" or "left"
+    end
+    ---@diagnostic disable-next-line: inject-field
+    state.portraitSide = cachedSide
+    ---@diagnostic disable-next-line: inject-field
+    -- A zero right edge is not a layout, it is an unlaid frame. Anchor with
+    -- the provisional side so the model is not left at (0,0), but leave the
+    -- cache UNANCHORED so the next rendered tick re-measures instead of
+    -- freezing a guess for the whole hover.
+    state.portraitAnchored = shown and tooltipRight > 0
+    portrait._tacoTipScale = portraitScale
+    ---@diagnostic disable-next-line: inject-field
+    portrait._tacoTipInvert = invertSide
+    portrait:ClearAllPoints()
+    portrait:SetSize(portraitW, portraitH)
+    TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1
+    if (cachedSide == "left") then
+        portrait:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -8, 0)
+    else
+        portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
+    end
+end
+
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
         return
@@ -1260,11 +1359,6 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
     applyTooltipFonts(tooltip)
 
     local portrait = ensureTooltipPortrait(tooltip)
-    local portraitScale = TacoTipConfig.tooltip_portrait_scale or 1
-    -- 66 x 88 (was 72 x 96). Still exact 3:4, still exact integers at every
-    -- slider stop: 33x44, 66x88, 99x132, 132x176.
-    local portraitW = math.floor(66 * portraitScale)
-    local portraitH = math.floor(88 * portraitScale)
     if (portrait) then
         if (TacoTipConfig.tooltip_portrait and unit) then
             -- Anchor once per side, not once per render.
@@ -1283,43 +1377,8 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- change, or the tooltip actually being shown. Cached first, then
             -- recomputed once from a laid-out frame, so the first anchor of a
             -- tooltip is still correct.
-            local cachedSide = getTooltipState(tooltip).portraitSide
-            local shown = (not tooltip.IsShown) or tooltip:IsShown()
-            local invertSide = TacoTipConfig.tooltip_portrait_invert_side and true or false
-            -- Invert is in the cache key for the same reason scale is: without
-            -- it, ticking the option does nothing until the next scale change.
-            if (cachedSide == nil or portrait._tacoTipScale ~= portraitScale
-                    or portrait._tacoTipInvert ~= invertSide
-                    or (shown and not getTooltipState(tooltip).portraitAnchored)) then
-                local tooltipRight = tooltip:GetRight() or 0
-                local screenWidth = (UIParent and UIParent:GetRight())
-                    or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
-                -- An unshown frame reports 0. 0 < screenWidth, so it resolves to
-                -- the left-hand side, which is the correct default for a tooltip
-                -- anchored on the right of the screen.
-                cachedSide = (tooltipRight > 0 and tooltipRight >= screenWidth) and "left" or "right"
-                -- Inverted before the side-to-anchor mapping below, so that
-                -- mapping stays in one place. Off by default, so nobody who
-                -- never touches the option sees any change.
-                if invertSide then
-                    cachedSide = (cachedSide == "left") and "right" or "left"
-                end
-                ---@diagnostic disable-next-line: inject-field
-                getTooltipState(tooltip).portraitSide = cachedSide
-                ---@diagnostic disable-next-line: inject-field
-                getTooltipState(tooltip).portraitAnchored = shown
-                portrait._tacoTipScale = portraitScale
-                ---@diagnostic disable-next-line: inject-field
-                portrait._tacoTipInvert = invertSide
-                portrait:ClearAllPoints()
-                portrait:SetSize(portraitW, portraitH)
-                TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1
-                if (cachedSide == "left") then
-                    portrait:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -8, 0)
-                else
-                    portrait:SetPoint("TOPLEFT", tooltip, "TOPRIGHT", 8, 0)
-                end
-            end
+            anchorTooltipPortrait(tooltip, portrait, false)
+
             local is3D = TacoTipConfig.tooltip_portrait_3d
             -- 3D PlayerModel renders BOTH players and NPCs/enemies via SetUnit.
             -- The old UnitIsPlayer gate sent NPCs to SetPortraitTexture, which is
@@ -1348,20 +1407,31 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                     if (not okClear and errClear) then
                         TT:RecordError("Portrait", errClear, "ClearModel")
                     end
-                    local okSet, errSet = pcall(portrait.SetUnit, portrait, unit)
-                    if (okSet) then
+                    local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
+                    -- SetUnit reports success with a boolean, so a non-throwing
+                    -- false is still a failure. Caching it as the current unit
+                    -- would leave the previous character's mesh under the new
+                    -- tooltip and make the retry counter unreachable.
+                    if (okCall and setResult ~= false) then
                         portrait.tacoTipModelKey = modelKey
+                        -- SetUnit loads a fresh mesh and the camera returns to
+                        -- its default; re-apply the configured zoom after it.
+                        portrait._tacoTipZoom = nil
                     else
                         -- SetUnit failed: leave the cache empty so the next render
                         -- retries rather than believing a model is loaded.
                         portrait.tacoTipModelKey = nil
                         TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
-                        if (errSet) then
-                            TT:RecordError("Portrait", errSet, "SetUnit")
+                        if (not okCall and setResult) then
+                            TT:RecordError("Portrait", setResult, "SetUnit")
                         end
                     end
                 end
-                pcall(portrait.SetPortraitZoom, portrait, TacoTipConfig.tooltip_portrait_zoom or 0.7)
+                local zoom = TacoTipConfig.tooltip_portrait_zoom or 0.7
+                if (portrait._tacoTipZoom ~= zoom) then
+                    pcall(portrait.SetPortraitZoom, portrait, zoom)
+                    portrait._tacoTipZoom = zoom
+                end
             else
                 -- 2D fallback only when 3D model creation failed (portrait is a Texture).
                 pcall(_G.SetPortraitTexture, portrait, unit)
@@ -1374,10 +1444,12 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- unusable value and then walked back up by the poll, which is what
             -- read as the portrait dropping into frame. A frame that is not
             -- shown has no meaningful alpha to copy, so it is not copied.
-            if (portrait.SetAlpha) then
+            if (portrait.SetAlpha and (not portrait.GetAlpha or portrait:GetAlpha() ~= 1)) then
                 portrait:SetAlpha(1)
             end
-            portrait:Show()
+            if (not portrait.IsShown or not portrait:IsShown()) then
+                portrait:Show()
+            end
         else
             portrait:Hide()
         end
@@ -1401,6 +1473,22 @@ local function startPowerBarTicker()
             end
         end)
     end
+end
+
+-- Whether a unit's power pool should show the tooltip power bar.
+--
+-- On Forever and Live, UnitPowerMax is SECRET when the unit's power is
+-- restricted (UnitDocumentation.lua: SecretWhenUnitPowerMaxRestricted = true).
+-- A secret value cannot be compared, but the status bar's SetMinMaxValues and
+-- SetValue accept secret bar values (SecretArguments = "AllowedWhenTainted"
+-- with SecretAspect.BarValue), so the bar must be shown and the values passed
+-- through untouched. Non-secret clients keep the original "max > 0" gate.
+local function tooltipUnitHasVisiblePower(unit)
+    local maxPower = UnitPowerMax(unit)
+    if (type(issecretvalue) == "function" and issecretvalue(maxPower)) then
+        return true
+    end
+    return maxPower ~= nil and maxPower > 0
 end
 
 -- Bounded retry gate for GearScore item data.
@@ -2019,6 +2107,7 @@ end
 
 local function onTooltipSetUnit(tooltip, data)
     TT.ev.unitRender = (TT.ev.unitRender or 0) + 1
+    noteOwnerUnitGUID(tooltip)
     -- Guarded: on some clients this method is a Lua shim that dereferences a
     -- namespace which may not be loaded, and an unguarded call here throws
     -- before any of the enhancement runs. The safeCall wrapping this function
@@ -2686,7 +2775,10 @@ local function onTooltipSetUnit(tooltip, data)
             if (miniText ~= "") then
                 addLineSingle(miniText, 1, 1, 1)
             end
-            if (TacoTipConfig.show_achievement_points) then
+            -- Only Retail has achievement points for now. The options
+            -- toggle is disabled elsewhere, but a saved true value must not
+            -- leak a row onto a client that does not render it.
+            if (TacoTipConfig.show_achievement_points and isRetail) then
                 local achi_pts
                 if (CI and CI.GetTotalAchievementPoints) then
                     achi_pts = CI:GetTotalAchievementPoints(guid)
@@ -2851,7 +2943,7 @@ local function onTooltipSetUnit(tooltip, data)
                 end
             end)
         end
-        if (UnitPowerMax(tooltipUnit) > 0) then
+        if (tooltipUnitHasVisiblePower(tooltipUnit)) then
             -- Re-anchoring is two SetPoint calls, and this runs on every render.
             -- The anchors only move when the HP bar's own presence flips, so the
             -- offset is remembered on the bar and compared, the same shape as
@@ -3202,6 +3294,36 @@ TT.HookedTooltipScripts.Item = TT.HookedTooltipScripts.Item
 -- the same frame resets the border back to default gray.
 stage("item-hooks")
 
+-- Blizzard's UnitFrame_UpdateTooltip appends the localized UNIT_POPUP_RIGHT_CLICK
+-- hint ("Right Click for Frame Settings") AFTER SetUnit returns; SetUnit's own
+-- Show() fires OnShow before that, and the later Show() is a no-op on an
+-- already-shown frame. So an OnShow hook can never see the line -- the
+-- post-hook on UnitFrame_UpdateTooltip is the only place that does, and it
+-- covers every 0.2s refresh too. It runs before the frame is drawn. The client
+-- adds a blank spacer with the line and the tooltip API has no line-removal
+-- call, so one empty row remains.
+local function blankUnitFrameInstruction(tooltip)
+    if (not (isForever or isRetail)) then
+        return
+    end
+    tooltip = tooltip or GameTooltip
+    local instruction = _G.UNIT_POPUP_RIGHT_CLICK
+    if (not tooltip or not tooltip.NumLines or type(instruction) ~= "string"
+            or instruction == "") then
+        return
+    end
+    local numLines = tooltip:NumLines()
+    for i = numLines, math.max(1, numLines - 2), -1 do
+        local line = getTooltipLeftLine(tooltip, i)
+        if (line and line.GetText and line:GetText() == instruction) then
+            if (line.SetText) then
+                line:SetText("")
+            end
+            return
+        end
+    end
+end
+
 local function onTooltipShow(tooltip)
     local scale = (TacoTipConfig and TacoTipConfig.tooltip_scale) or 1
     applyFrameScale(tooltip, scale)
@@ -3236,6 +3358,26 @@ local function onTooltipShow(tooltip)
         -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
         clearTooltipVisuals(tooltip, preservePendingItem, nil, "show-no-class-cache", true)
         return
+    end
+
+    -- Modern clients: the unit post-call runs before Show(), so the portrait
+    -- side was decided on a frame whose GetRight() was still 0. OnShow is laid
+    -- out and still precedes presentation, so recompute here once per show --
+    -- no visible edge flip on the following 0.2s tick.
+    if ((isForever or isRetail) and TacoTipConfig.tooltip_portrait) then
+        -- Anchor the portrait the config actually renders. A session that
+        -- toggled 3D off still has the (hidden) model frame on the tooltip, so
+        -- `3D or texture` would anchor the wrong region.
+        local portrait
+        if (TacoTipConfig.tooltip_portrait_3d) then
+            portrait = tooltip.TacoTipPortrait3D
+        end
+        if (not portrait) then
+            portrait = tooltip.TacoTipPortrait or tooltip.TacoTipPortrait3D
+        end
+        if (portrait) then
+            anchorTooltipPortrait(tooltip, portrait, true)
+        end
     end
 
     if (not TacoTipConfig.tooltip_border_use_class and not TacoTipConfig.color_class) then
@@ -3282,7 +3424,17 @@ local function onTooltipShow(tooltip)
     end
 end
 
+-- Every 0.2s refresh goes through UnitFrame_UpdateTooltip AFTER the addon's
+-- post-call, so the OnShow blank above cannot see the re-added line on an
+-- already-shown frame. Guarded: the global is present on all five clients, but
+-- a missing one must not abort the rest of main.lua at file scope.
 stage("tooltip-hooks")
+if ((isForever or isRetail) and type(_G.UnitFrame_UpdateTooltip) == "function"
+        and type(hooksecurefunc) == "function") then
+    hooksecurefunc("UnitFrame_UpdateTooltip", function()
+        blankUnitFrameInstruction(GameTooltip)
+    end)
+end
 
 local function isUnitFramePeriodicUpdate(tooltip)
     if (not tooltip) then
@@ -3294,16 +3446,38 @@ local function isUnitFramePeriodicUpdate(tooltip)
     end
     local state = getTooltipState(tooltip)
     local curGUID = state and state.currentUnitGUID
-    if (not curGUID) then
+    local ownerUnitGUID = state and state.ownerUnitGUID
+    local unitGUID
+    if (owner.unit and UnitExists and UnitExists(owner.unit) and type(UnitGUID) == "function") then
+        unitGUID = UnitGUID(owner.unit)
+    end
+    -- Two proofs of "still the same unit": the rendered GUID (successful
+    -- resolve) and the owner's unit GUID (recorded before resolution ran).
+    -- The second exists because the modern post-call runs before Show(), when
+    -- the first tick can be unreadable -- and currentUnitGUID is then never
+    -- written, so the old check rejected every subsequent tick and tore the
+    -- portrait down five times a second while the mouse sat still on a unit
+    -- frame. That is the long-standing Retail/Forever blink.
+    -- The owner-GUID proof is modern-only: the pre-Show postcall resolution
+    -- failure it covers is a modern ordering fact. Classic keeps the old
+    -- currentUnitGUID-only test exactly.
+    local sameUnit = (unitGUID ~= nil and (unitGUID == curGUID
+        or ((isForever or isRetail) and unitGUID == ownerUnitGUID)))
+    if (not sameUnit) then
         return false
     end
-    if (owner.UpdateTooltip and owner.unit and UnitExists and UnitExists(owner.unit)) then
-        local uGUID = UnitGUID(owner.unit)
-        if (uGUID and uGUID == curGUID) then
-            return true
-        end
+    if (owner.UpdateTooltip) then
+        return true
     end
-    return false
+    -- UnitFrame_OnLeave nils UpdateTooltip before GameTooltip:FadeOut(), so the
+    -- first re-drive after a re-hover reaches ClearLines with no
+    -- UpdateTooltip even though the owner still proves the same unit. While
+    -- the tooltip is SHOWN that clear is the 0.2s tick and must not tear the
+    -- portrait down. A hidden OnHide keeps the normal cleanup path: the parent
+    -- already hides its children, so the portrait is not visible there, and
+    -- skipping the timer/power-bar cleanup on a real hide would be a different
+    -- behaviour change. Classic keeps the old guard exactly.
+    return (isForever or isRetail) and (not tooltip.IsShown or tooltip:IsShown()) and true or false
 end
 
 local function registerTooltipVisualClearing(tooltipFrame)
