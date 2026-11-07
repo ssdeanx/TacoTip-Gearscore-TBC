@@ -3383,6 +3383,274 @@ local function getModernSpecData(unit, groupIndex)
 end
 
 ---------------------------------------------------------------------------
+-- Forever / Camelot talents
+---------------------------------------------------------------------------
+-- Camelot ("WoW Forever", interface 16001) is not the Classic talent system
+-- and is not the Retail spec line either: one class-level specialization,
+-- three talent trees (trait node groups) and up to two spec groups
+-- (Primary/Secondary). The Client's own Camelot talent frame reads it from
+-- C_Traits, never from GetNumTalentTabs:
+--
+--   * tree name + icon: TraitGroupDisplayInfo.displayName / .icon, returned by
+--     C_Traits.GetGroupDisplayInfoByTreeID(treeID) (SharedTraitsDocumentation.lua).
+--   * per-tree points: the first currencyInfo's `spent`, which is exactly what
+--     the client puts in its tree header (Camelot/ClassTalents/
+--     Blizzard_ClassTalentsFrame.lua:337-340). `spentInTree` is the fallback.
+--   * player spec groups: GetNumSpecGroups() and
+--     C_SpecializationInfo.GetActiveSpecGroup(); the config for a group is
+--     C_SpecializationInfo.GetCombatConfigIDForSpecGroup(groupIndex)
+--     (Blizzard_ClassTalentsFrame.lua:112-124).
+--   * inspected player: the single config
+--     Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID (-1;
+--     TraitConstantsDocumentation.lua), which Blizzard loads at
+--     Blizzard_ClassTalentsFrame.lua:887. Camelot hides the Primary/Secondary
+--     tabs while inspecting (UpdateInspecting), so that config carries the
+--     inspected player's ACTIVE group; the inactive group is attempted through
+--     the documented inspect talent query and is never synthesized.
+--
+-- Every call is pcall'd and every API is presence-checked: this runs from the
+-- tooltip path and from INSPECT_READY, and a missing namespace must degrade to
+-- "no Talents line", never to a thrown error that aborts the render.
+local FOREVER_TALENT_MEMO_TTL = 2
+
+local function foreverTraitsAvailable()
+    return (type(C_Traits) == "table"
+        and type(C_Traits.GetConfigInfo) == "function"
+        and type(C_Traits.GetGroupDisplayInfoByTreeID) == "function"
+        and type(C_Traits.GetGroupCurrencyInfo) == "function")
+end
+
+-- One trait config -> the three trees with their names, icons and point
+-- totals. Returns nil when the config does not answer.
+local function readForeverConfig(configID)
+    if (not configID or not foreverTraitsAvailable()) then return nil end
+    local ok, info = pcall(C_Traits.GetConfigInfo, configID)
+    if (not ok or type(info) ~= "table") then return nil end
+    local treeIDs = info.treeIDs
+    local treeID = type(treeIDs) == "table" and treeIDs[1] or nil
+    if (type(treeID) ~= "number") then return nil end
+
+    local dOk, displayInfos = pcall(C_Traits.GetGroupDisplayInfoByTreeID, treeID)
+    if (not dOk or type(displayInfos) ~= "table") then return nil end
+
+    local ordered = {}
+    for i = 1, #displayInfos do ordered[i] = displayInfos[i] end
+    -- orderIndex is the order the client draws the trees in.
+    table.sort(ordered, function(a, b)
+        return (type(a) == "table" and a.orderIndex or 0) < (type(b) == "table" and b.orderIndex or 0)
+    end)
+
+    local groupIDs, trees = {}, {}
+    for i = 1, #ordered do
+        local d = ordered[i]
+        if (type(d) == "table" and type(d.groupID) == "number") then
+            groupIDs[#groupIDs + 1] = d.groupID
+            trees[#trees + 1] = {
+                groupID = d.groupID,
+                name = d.displayName,
+                icon = d.icon,
+            }
+        end
+    end
+    if (#trees == 0) then return nil end
+
+    local cOk, groupInfos = pcall(C_Traits.GetGroupCurrencyInfo, configID, groupIDs)
+    if (not cOk or type(groupInfos) ~= "table") then return nil end
+    local spentByGroup = {}
+    for _, gi in ipairs(groupInfos) do
+        if (type(gi) == "table" and type(gi.traitNodeGroupID) == "number") then
+            local ci = gi.currencyInfos and gi.currencyInfos[1]
+            local spent = ci and (tonumber(ci.spent) or tonumber(ci.spentInTree)) or 0
+            spentByGroup[gi.traitNodeGroupID] = spent
+        end
+    end
+    for i = 1, #trees do
+        trees[i].points = spentByGroup[trees[i].groupID] or 0
+    end
+    return trees
+end
+
+local MAX_FOREVER_TALENT_INDEX = 40
+local MAX_FOREVER_TALENT_TIERS = 7
+local MAX_FOREVER_TALENT_COLUMNS = 3
+
+-- Picks the tree with the most points (the Classic/TBC rule) and returns the
+-- three point totals in tree order. A character with no points yet resolves
+-- to the first tree and [0/0/0].
+local function buildForeverEntryFromPoints(trees, points, groupIndex)
+    if (not trees or #trees == 0) then return nil end
+    local count = math.min(#trees, 3)
+    local best, bestPts = 1, -1
+    for i = 1, count do
+        local p = (points and points[i]) or 0
+        if (p > bestPts) then
+            best, bestPts = i, p
+        end
+    end
+    return {
+        index = groupIndex,
+        name = trees[best] and trees[best].name or nil,
+        icon = trees[best] and trees[best].icon or nil,
+        p1 = (points and points[1]) or 0,
+        p2 = (points and points[2]) or 0,
+        p3 = (points and points[3]) or 0,
+    }
+end
+
+local function buildForeverGroupEntry(trees, groupIndex)
+    if (not trees or #trees == 0) then return nil end
+    local points = {}
+    for i = 1, #trees do points[i] = trees[i].points or 0 end
+    return buildForeverEntryFromPoints(trees, points, groupIndex)
+end
+
+-- The inspected player's ACTIVE group is the single trait config. The INACTIVE
+-- group is not in that config, so it is attempted through the documented
+-- inspect talent query and drawn only when the client answers for that same
+-- unit and group index -- never another player's data. Both query forms are
+-- probed once (the linear per-tab form first, the modern tier/column form
+-- second); a silent client returns nil and the caller draws no second line.
+local function readInspectGroupPoints(unit, groupIndex, treeCount)
+    if (not (C_SpecializationInfo and C_SpecializationInfo.GetTalentInfo)) then return nil end
+    if (not unit) then return nil end
+
+    local function query(q)
+        local ok, info = pcall(C_SpecializationInfo.GetTalentInfo, q)
+        if (not ok) then return nil end
+        return info
+    end
+
+    local linear = query({
+        specializationIndex = 1,
+        talentIndex = 1,
+        isInspect = true,
+        isPet = false,
+        groupIndex = groupIndex,
+        target = unit,
+    })
+    local grid = nil
+    if (not linear) then
+        grid = query({
+            specializationIndex = 1,
+            tier = 1,
+            column = 1,
+            isInspect = true,
+            isPet = false,
+            groupIndex = groupIndex,
+            target = unit,
+        })
+    end
+    if (not linear and not grid) then return nil end
+
+    local points, any = {}, false
+    for t = 1, math.min(treeCount, 3) do
+        local total = 0
+        local seen = false
+        if (linear) then
+            for i = 1, MAX_FOREVER_TALENT_INDEX do
+                local info = (i == 1 and t == 1) and linear or query({
+                    specializationIndex = t,
+                    talentIndex = i,
+                    isInspect = true,
+                    isPet = false,
+                    groupIndex = groupIndex,
+                    target = unit,
+                })
+                if (not info) then break end
+                seen = true
+                total = total + (tonumber(info.rank) or 0)
+            end
+        else
+            for tier = 1, MAX_FOREVER_TALENT_TIERS do
+                for column = 1, MAX_FOREVER_TALENT_COLUMNS do
+                    local info = query({
+                        specializationIndex = t,
+                        tier = tier,
+                        column = column,
+                        isInspect = true,
+                        isPet = false,
+                        groupIndex = groupIndex,
+                        target = unit,
+                    })
+                    if (info) then
+                        seen = true
+                        total = total + (tonumber(info.rank) or 0)
+                    end
+                end
+            end
+        end
+        if (seen) then any = true end
+        points[t] = total
+    end
+    if (not any) then return nil end
+    return points
+end
+
+-- The player's own groups. A second group is read only when the client says
+-- it exists; before level 40 GetNumSpecGroups() is 1 and no second line is
+-- fabricated.
+local function buildPlayerForeverTalents()
+    if (not isForever or not foreverTraitsAvailable()) then return nil end
+    local groups = 1
+    if (type(GetNumSpecGroups) == "function") then
+        local ok, n = pcall(GetNumSpecGroups)
+        if (ok and type(n) == "number" and n > 0) then
+            groups = math.min(n, 2)
+        end
+    end
+    local entries = {}
+    for g = 1, groups do
+        local configID
+        if (C_SpecializationInfo and C_SpecializationInfo.GetCombatConfigIDForSpecGroup) then
+            local ok, id = pcall(C_SpecializationInfo.GetCombatConfigIDForSpecGroup, g)
+            if (ok) then configID = id end
+        end
+        -- Never duplicate group 1 under the group-2 index: a group whose
+        -- config does not answer is simply absent, and the renderer draws
+        -- only the groups the client actually reported.
+        local trees = configID and readForeverConfig(configID) or nil
+        local entry = buildForeverGroupEntry(trees, g)
+        if (entry) then entries[#entries + 1] = entry end
+    end
+    if (#entries == 0) then return nil end
+    return { active = GetActiveSpecGroupFor(false), entries = entries }
+end
+
+-- An inspected player's active group, captured at INSPECT_READY so the data
+-- is tied to the GUID that fired the event and never to a later hover.
+local function buildInspectForeverTalents(unit)
+    if (not isForever or not foreverTraitsAvailable()) then return nil end
+    if (type(C_Traits.HasValidInspectData) == "function") then
+        local ok, valid = pcall(C_Traits.HasValidInspectData)
+        if (not ok or not valid) then return nil end
+    end
+    local inspectID = (type(Constants) == "table" and type(Constants.TraitConsts) == "table"
+        and Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID) or -1
+    local trees = readForeverConfig(inspectID)
+    if (not trees) then return nil end
+    local active = GetActiveSpecGroupFor(true)
+    local activeEntry = buildForeverGroupEntry(trees, active)
+    if (not activeEntry) then return nil end
+    local entries = { activeEntry }
+
+    -- Best effort, per the operator: if the client exposes the inactive group,
+    -- show it; if it does not answer, no second line is drawn at all.
+    if (type(GetNumSpecGroups) == "function") then
+        local ok, total = pcall(GetNumSpecGroups, true)
+        if (ok and type(total) == "number" and total > 1) then
+            for g = 1, math.min(total, 2) do
+                if (g ~= active) then
+                    local points = readInspectGroupPoints(unit, g, #trees)
+                    local entry = points and buildForeverEntryFromPoints(trees, points, g) or nil
+                    if (entry) then entries[#entries + 1] = entry end
+                end
+            end
+        end
+    end
+    return { active = active, entries = entries }
+end
+
+---------------------------------------------------------------------------
 -- Specialization icon
 ---------------------------------------------------------------------------
 -- C_SpecializationInfo.GetTalentInfo has an identical signature and an
@@ -3785,6 +4053,11 @@ local function cacheUnitData(unit, guid, isRetry)
     -- Age stamp for eviction, independent of .time: a record that never
     -- completed has no .time, and without this it could never be reclaimed.
     data.lastAttempt = now
+    -- The GUID the client's single inspect trait config belongs to right now.
+    -- GetForeverTalentData uses it to retry the talent read when the trait
+    -- data was not yet loaded at INSPECT_READY, without ever reading a
+    -- different unit's config.
+    lib.lastInspectGUID = guid
     -- Every call supersedes any retry scheduled by an older call. A timer
     -- cannot be cancelled on every client, so the closure checks this and
     -- no-ops instead of resurrecting an incomplete read over newer data.
@@ -3944,6 +4217,18 @@ local function cacheUnitData(unit, guid, isRetry)
         if (ok and pts and pts > 0) then
             data.achievements = pts
         end
+    end
+
+    -- Forever / Camelot: read the trait totals while the inspect config still
+    -- belongs to the GUID that fired this INSPECT_READY. The readout is tied
+    -- to the cache record, so a later hover on a different unit can never
+    -- inherit it. The player's own tooltip builds both groups live instead.
+    -- Fresh inspection: rebuild. Item-data retries keep the record already
+    -- produced by this inspection, so the inactive-group probe does not run
+    -- once per retry step.
+    if (isForever and guid ~= UnitGUID("player")
+            and ((not isRetry) or not data.foreverTalents)) then
+        data.foreverTalents = buildInspectForeverTalents(unit)
     end
 
     lib.cache[guid] = data
@@ -5743,6 +6028,50 @@ function lib:GetActiveTalentGroup(unitorguid)
         return g
     end
     return 1
+end
+
+-- Forever / Camelot tooltip readout. Returns nil unless the client is Forever
+-- and every Camelot API it needs answered, so a caller can gate the line on
+-- the data itself as well as on CI:IsForever().
+--
+-- The player's own tooltip reads both spec groups live (when the client says
+-- there are two). An inspected player's readout comes from the cache record
+-- built at INSPECT_READY and carries the active group only -- the single
+-- inspect trait config does not contain the inactive group.
+function lib:GetForeverTalentData(unitorguid)
+    if (not isForever) then return nil end
+    local guid = getPlayerGUID(unitorguid)
+    if (not guid) then return nil end
+    if (guid == UnitGUID("player")) then
+        local active = GetActiveSpecGroupFor(false)
+        local now = uptimeSeconds()
+        local memo = lib.foreverPlayerTalentMemo
+        if (memo and memo.active == active and (now - memo.time) < FOREVER_TALENT_MEMO_TTL) then
+            return memo.data
+        end
+        local data = buildPlayerForeverTalents()
+        lib.foreverPlayerTalentMemo = { time = now, active = active, data = data }
+        return data
+    end
+    local cached = lib.cache[guid]
+    if (cached and cached.foreverTalents) then
+        return cached.foreverTalents
+    end
+    -- The trait config can become valid a moment after INSPECT_READY. Only
+    -- retry when this GUID is the record the inspect config belongs to; a
+    -- stale GUID never reads another player's config.
+    if (lib.lastInspectGUID == guid) then
+        local unit = unitorguid
+        if (type(unit) ~= "string" or string.find(unit, "Player-", 1, true) == 1) then
+            unit = lib.PlayerGUIDToUnitToken and lib:PlayerGUIDToUnitToken(guid) or nil
+        end
+        local data = buildInspectForeverTalents(unit)
+        if (data and cached) then
+            cached.foreverTalents = data
+        end
+        return data
+    end
+    return nil
 end
 
 function lib:GetTotalAchievementPoints(unitorguid)

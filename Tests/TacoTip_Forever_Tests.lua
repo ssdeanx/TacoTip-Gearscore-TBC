@@ -730,6 +730,28 @@ local function RegisterTacoTipTests()
         IsTrue(active >= 1, "active talent group is valid: " .. tostring(active))
     end
 
+    function Stats:ForeverTalentDataSafe()
+        -- Forever / Camelot talent accessor. It must never throw, and when the
+        -- client answers it must be the shape the tooltip renderer consumes:
+        -- { active = <group index>, entries = { { index, name, icon, p1, p2, p3 } } }
+        local CI = LibStub and LibStub("LibForeverInspector", true)
+        Exists(CI, "LibForeverInspector loaded")
+        if (not CI) then return end
+        local ok, data = pc(CI.GetForeverTalentData, CI, "player")
+        IsTrue(ok, "CI:GetForeverTalentData(player) does not error")
+        if (data ~= nil) then
+            IsTrue(type(data) == "table", "Forever talent data is a table")
+            IsTrue(type(data.entries) == "table", "Forever talent data has entries")
+            IsTrue(type(data.active) == "number" and data.active >= 1, "active group is valid")
+            for _, entry in ipairs(data.entries) do
+                IsTrue(type(entry.index) == "number", "entry has a group index")
+                IsTrue(entry.name == nil or type(entry.name) == "string", "entry name is a string")
+                IsTrue(type(entry.p1) == "number" and type(entry.p2) == "number"
+                    and type(entry.p3) == "number", "entry points are numbers")
+            end
+        end
+    end
+
     function Stats:DualSpecDimRendering()
         -- Inactive dual-spec line: spec name renders in lowest GearScore
         -- quality grey (0.50, 0.50, 0.50 / GRAY_FONT_COLOR), while active

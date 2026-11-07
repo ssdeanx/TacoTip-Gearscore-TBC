@@ -5,10 +5,52 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v0.9.6) and **TacoTip Extras**
+two addons, one repo: **TacoTip** (root, v0.9.7) and **TacoTip Extras**
 (`TacoTip_Extras/`, v1.2.4), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
+
+## client families — classic vs forever (camelot)
+
+the five clients are two API worlds. never cross them.
+
+- **classic era 11509, tbc 20506, titanforge 38002** use the classic talent
+  API (`GetNumTalentTabs`, `GetTalentInfo`, `GetTalentTabInfo`,
+  `GetActiveTalentGroup`), installed by `Blizzard_DeprecatedSpecialization`
+  (`## AllowLoadGameType: classic, standard`). `LibForeverInspector`'s
+  `spec_table` / `talents_table` are this data. **the old tables are classic
+  clients and are not valid for forever.**
+- **forever 16001 is camelot.** `WOW_PROJECT_ID` is MAINLINE (1), like
+  retail; the split is the interface version, and the UI lives in the
+  `Camelot` folders (`Blizzard_PlayerSpells/Camelot/ClassTalents/…`,
+  `Blizzard_InspectUI/Camelot/…`). In a Blizzard TOC, `[Game]` resolves to
+  Camelot and `[Family]` resolves to the Mainline family.
+- **a forever specialization is class-level; a class has three talent
+  trees.** `C_SpecializationInfo.GetSpecializationInfo` answers the class
+  spec ("Shaman"), which is why a retail-style talents line printed
+  `Talents: Shaman`. The trees are trait node groups: names/icons come from
+  `C_Traits.GetGroupDisplayInfoByTreeID(treeID)` (the struct carries
+  `displayName` and `icon`); per-tree points come from
+  `C_Traits.GetGroupCurrencyInfo(configID, groupIDs)` → `spentInTree`, and
+  the inspected player's trait config is the documented constant
+  `Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID` (-1,
+  `TraitConstantsDocumentation.lua`), which Blizzard itself loads for the
+  inspect talent frame (`Blizzard_ClassTalentsFrame.lua:887`). That config is
+  the inspected player's ACTIVE group; the inactive group is attempted
+  through `C_SpecializationInfo.GetTalentInfo` with `isInspect = true`,
+  `target = <unit>`, `groupIndex = <g>` and is drawn only when the client
+  answers.
+  There are **primary and secondary spec groups** (dual spec at 40); the
+  number of groups is `GetNumSpecGroups()` and Blizzard gates the second tab
+  on `> 1` (`Blizzard_PlayerSpells/Camelot/ClassTalents/Blizzard_ClassTalentsFrame.lua:124`).
+  The classic talent globals are not loaded on camelot.
+- **if forever needs a spec icon or tree-name table, it must be a
+  camelot-only table** (or read from `C_Traits`), gated on `isForever`.
+  never build it from `lib.spec_table` / `lib.talents_table`.
+- **every forever change is gated on `isForever` / `CI:IsForever()`**; no
+  classic or retail path may shift. the old retail/classic talent block
+  keeps its `show_talents and not isForever` gate byte-identical; the camelot
+  readout is a separate `show_talents and isForever` branch.
 
 ## read these first
 

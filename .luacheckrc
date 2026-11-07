@@ -28,6 +28,16 @@ read_globals = {
     "C_PaperDollInfo",
     "C_PlayerInfo",
     "C_SpecializationInfo",
+    -- Camelot / WoW Forever talent API, read-only and origin/forever-qualified:
+    --   C_Traits            -- SharedTraitsDocumentation.lua
+    --   GetNumSpecGroups    -- engine spec-group count, called by Blizzard's own
+    --                          Camelot frame (Blizzard_PlayerSpells/Camelot/
+    --                          ClassTalents/Blizzard_ClassTalentsFrame.lua:124)
+    --   Constants           -- Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID
+    --                          (TraitConstantsDocumentation.lua:352)
+    "C_Traits",
+    "Constants",
+    "GetNumSpecGroups",
     "C_Timer",
     "Enum",
     "TooltipDataProcessor",

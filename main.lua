@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.6"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.7"
 
 
 
@@ -794,7 +794,7 @@ end
 -- unit's active specialization. On Retail and WoW Forever they are already
 -- localized, so they take priority over the library's built-in English
 -- spec_table; on the Classic family they are nil and the table is used.
-local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon)
+local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon, forcePoints)
     local specName
     if (engineName and engineName ~= "") then
         specName = engineName
@@ -838,15 +838,16 @@ local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engin
         coloredName = classColor and colorizeText(specName, classColor.r, classColor.g, classColor.b) or specName
     end
     local isClassicFamily = CI and CI.IsClassic and (CI:IsClassic() or CI:IsTBC() or CI:IsWotlk())
-    if (p1 and p2 and p3 and (p1 > 0 or p2 > 0 or p3 > 0 or isClassicFamily)) then
+    if (p1 and p2 and p3 and (p1 > 0 or p2 > 0 or p3 > 0 or isClassicFamily or forcePoints)) then
         return string.format("%s%s [%d/%d/%d]", iconText, coloredName, p1 or 0, p2 or 0, p3 or 0)
     else
         return string.format("%s%s", iconText, coloredName)
     end
 end
 
-TT.GetFormattedSpecializationText = function(self, class, specIndex, p1, p2, p3, dim, engineName, engineIcon)
-    return formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon)
+TT.GetFormattedSpecializationText = function(self, class, specIndex, p1, p2, p3, dim, engineName, engineIcon,
+        forcePoints)
+    return formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon, forcePoints)
 end
 
 local function ensureTooltipPortrait(tooltip)
@@ -2667,6 +2668,52 @@ local function onTooltipSetUnit(tooltip, data)
                     end
                 else
                     applySpecializationIcon(tooltip, nil)
+                end
+            end
+            if (TacoTipConfig.show_talents and isForever) then
+                -- Forever / Camelot: deliberately the TBC shape (the tree with
+                -- the most points plus [p1/p2/p3]), not the Retail spec name.
+                -- The data comes from the library's Camelot path; when it cannot
+                -- answer, no line is drawn and nothing else changes. The gate
+                -- above stays exactly as it was -- this is a separate branch.
+                local foreverTalents = CI and CI.GetForeverTalentData
+                    and CI:GetForeverTalentData(tooltipUnit) or nil
+                if (foreverTalents and foreverTalents.entries and #foreverTalents.entries > 0) then
+                    local activeGroup = foreverTalents.active or 1
+                    local ordered = {}
+                    for _, entry in ipairs(foreverTalents.entries) do
+                        if (entry.index == activeGroup) then
+                            ordered[#ordered + 1] = entry
+                        end
+                    end
+                    for _, entry in ipairs(foreverTalents.entries) do
+                        if (entry.index ~= activeGroup) then
+                            ordered[#ordered + 1] = entry
+                        end
+                    end
+                    for i, entry in ipairs(ordered) do
+                        -- forcePoints keeps the [0/0/0] template visible before
+                        -- the first point is spent, like the TBC reference.
+                        local specText = formatSpecializationText(class, entry.index, entry.p1, entry.p2,
+                            entry.p3, i > 1, entry.name, entry.icon, true)
+                        if (specText) then
+                            if (i > 1) then
+                                if (wide_style) then
+                                    addLineDouble(" ", specText, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
+                                        NORMAL_FONT_COLOR.b, 1, 1, 1)
+                                else
+                                    addLineSingle(string.format("|c00000000%s: |r%s", L["Talents"], specText), 1, 1, 1)
+                                end
+                            else
+                                if (wide_style) then
+                                    addLineDouble(L["Talents"] .. ":", specText, NORMAL_FONT_COLOR.r,
+                                        NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, 1, 1)
+                                else
+                                    addLineSingle(string.format("%s: %s", L["Talents"], specText), 1, 1, 1)
+                                end
+                            end
+                        end
+                    end
                 end
             end
             if (TacoTipConfig.show_separators) then

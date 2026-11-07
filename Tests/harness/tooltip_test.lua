@@ -3356,10 +3356,12 @@ if (usePipeline and POSTCALLS and #POSTCALLS >= 2) then
         GT.__alpha = 1
     end
 
-    -- WoW Forever bans the Talents readout (0.9.2): the group-1 assertion
-    -- holds for every other client. On Forever the same render must contain
-    -- no readout at all. Classic invocations never execute this block
-    -- (usePipeline is false there); Retail keeps the original assertion.
+    -- This shared harness does not model the Camelot C_Traits API, so the
+    -- Forever talent branch has no data to draw and renders no readout here.
+    -- The Forever talent readout itself is pinned in forever_tooltip_test.lua;
+    -- this invocation keeps asserting the nil-data fallback. Classic
+    -- invocations never execute this block (usePipeline is false there);
+    -- Retail keeps the original assertion.
     if (label == "FOREVER") then
         check("modern renders no group readout on Forever", nGroup1 == 0,
             "count=" .. tostring(nGroup1) .. " :: " .. string.gsub(ptxt, "\n", " | "))
@@ -3793,10 +3795,10 @@ do
     -- talent readout, NOT the AddLine count: in non-wide tip_style the addon
     -- rewrites existing lines with SetText instead of appending, so an AddLine
     -- count is zero on a perfectly good resolved render and proves nothing.
-    -- WoW Forever bans the Talents readout (0.9.2), so there the control is
-    -- the rebuilt guild tag instead: the client seed rows never carry it, so
-    -- only a resolved render produces it. Every other label keeps the talent
-    -- discriminator unchanged.
+    -- This shared harness does not model Camelot C_Traits, so on Forever the
+    -- talent line is absent and the control is the rebuilt guild tag instead:
+    -- the client seed rows never carry it, so only a resolved render produces
+    -- it. Every other label keeps the talent discriminator unchanged.
     if (label == "FOREVER") then
         check("the resolved render produces the unit readout (control for the check below)",
             string.find(allText(), "|cFF40FB40", 1, true) ~= nil,

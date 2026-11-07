@@ -1,12 +1,15 @@
--- Forever-only unit-tooltip acceptance pins (0.9.2).
+-- Forever-only unit-tooltip acceptance pins (0.9.2; Camelot talent readout 0.9.7).
 --
 -- WoW Forever (interface 16001) must render the unit tooltip like the Classic
 -- reference -- name/class color, level line, target line, guild line behavior,
--- GearScore line, iLvl line, Pawn line, portrait, borders -- with the SOLE
--- exception that NO Talents line, spec text, or spec icon renders. Every pin
--- here is Forever-scoped; the other families are covered by the shared suites
--- (tooltip_test CLASSIC_ERA/TBC_ANNIV/TITANFORGE/RETAIL), which this file never
--- touches.
+-- GearScore line, iLvl line, Pawn line, portrait, borders -- plus the
+-- Forever-specific Camelot talent readout: up to two lines (Primary/Secondary)
+-- in the TBC shape, `Talents: <icon> <tree> [p1/p2/p3]`, where the tree is the
+-- one with the most points. The readout is gated on the Camelot C_Traits data;
+-- when the client cannot answer, no line renders and nothing else changes.
+-- Every pin here is Forever-scoped; the other families are covered by the
+-- shared suites (tooltip_test CLASSIC_ERA/TBC_ANNIV/TITANFORGE/RETAIL), which
+-- this file never touches.
 --
 -- Usage: lua5.1 Tests/harness/forever_tooltip_test.lua
 --
@@ -672,7 +675,19 @@ REALG.C_SpecializationInfo.GetClassIDFromSpecID = function(specID)
     return 0
 end
 REALG.C_SpecializationInfo.GetNumSpecializationsForClassID = function() return 3 end
-REALG.C_SpecializationInfo.GetTalentInfo = function() return nil end
+REALG.C_SpecializationInfo.GetTalentInfo = function(query)
+    -- The best-effort inactive-group read: only the linear inspect form, for
+    -- the mouseover target's group 2, with real per-talent ranks.
+    if (query and query.isInspect and query.groupIndex == 2 and query.target == "mouseover"
+            and query.specializationIndex and query.talentIndex == 1) then
+        local ranks = { [1] = 33, [2] = 28 }
+        local rank = ranks[query.specializationIndex]
+        if (rank) then
+            return { name = "Talent", icon = 1, tier = 1, column = 1, rank = rank, maxRank = 5 }
+        end
+    end
+    return nil
+end
 REALG.GetSpecializationInfoByID = function(specID)
     for _, s in STD.pairs(SPECS) do
         if (s.id == specID) then
@@ -689,6 +704,52 @@ REALG.GetSpecialization = nil
 REALG.GetNumTalentGroups = function() return 1 end
 REALG.GetActiveTalentGroup = function() return 1 end
 REALG.GetTalentTabInfo = nil
+
+--------------------------------------------------------------------------
+-- Camelot talent model (WoW Forever). One class-level specialization, three
+-- talent trees (trait node groups) and up to two spec groups. The client reads
+-- it through C_Traits; the classic talent globals do not exist on Camelot.
+--   tree name/icon  <- GetGroupDisplayInfoByTreeID
+--   tree points     <- GetGroupCurrencyInfo(...).currencyInfos[1].spent
+--   spec group ids  <- GetCombatConfigIDForSpecGroup(g); -1 for an inspect
+--   inspect config  <- Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID
+--------------------------------------------------------------------------
+REALG.__foreverSpecGroups = 1
+REALG.__foreverInspectGroups = 1
+REALG.GetNumSpecGroups = function(isInspect)
+    if (isInspect) then return REALG.__foreverInspectGroups end
+    return REALG.__foreverSpecGroups
+end
+REALG.Constants = { TraitConsts = { INSPECT_TRAIT_CONFIG_ID = -1 } }
+local FOREVER_TREES = {
+    { groupID = 11, orderIndex = 1, displayName = "Arms", icon = 1100001 },
+    { groupID = 12, orderIndex = 2, displayName = "Fury", icon = 1100002 },
+    { groupID = 13, orderIndex = 3, displayName = "Protection", icon = 1100003 },
+}
+local FOREVER_POINTS = {
+    [-1] = { [11] = 0, [12] = 21, [13] = 0 },   -- inspected player's active group
+    [101] = { [11] = 0, [12] = 21, [13] = 0 },  -- player group 1
+    [102] = { [11] = 33, [12] = 28, [13] = 0 }, -- player group 2
+}
+REALG.C_Traits = {
+    HasValidInspectData = function() return REALG.__foreverInspectValid ~= false end,
+    GetConfigInfo = function(configID) return { ID = configID, treeIDs = { 9001 } } end,
+    GetGroupDisplayInfoByTreeID = function() return FOREVER_TREES end,
+    GetGroupCurrencyInfo = function(configID, groupIDs)
+        local pts = FOREVER_POINTS[configID] or {}
+        local out = {}
+        for _, groupID in STD.ipairs(groupIDs) do
+            out[#out + 1] = {
+                traitNodeGroupID = groupID,
+                currencyInfos = { { spent = pts[groupID] or 0 } },
+            }
+        end
+        return out
+    end,
+}
+REALG.C_SpecializationInfo.GetCombatConfigIDForSpecGroup = function(groupIndex)
+    return 100 + groupIndex
+end
 
 --------------------------------------------------------------------------
 -- Pawn present with one MrRobot scale for WARRIOR spec 2.
@@ -906,9 +967,10 @@ local function primeInspect(unitToken, mode)
 end
 
 --------------------------------------------------------------------------
--- P1: no Talents line, spec text, or spec icon on Forever -- with
--- show_talents explicitly ON. The defect path is post-cache: prime a full
--- inspect first, then render.
+-- P1: the Camelot talent readout renders on Forever -- with show_talents
+-- explicitly ON. The defect path is post-cache: prime a full inspect first,
+-- then render. The inspected player's single trait config carries the active
+-- group only; the tree with the most points is Fury, 0/21/0.
 --------------------------------------------------------------------------
 do
     local okFire, fireErr = primeInspect("mouseover", "full")
@@ -921,16 +983,14 @@ do
     GT.GetUnit = function() return "n", "mouseover" end
     seedPlayer()
     local ptxt = drive("mouseover")
-    check("talents: no Talents line on Forever",
-        not STD.string.find(ptxt, "Talents", 1, true), STD.string.gsub(ptxt, "\n", " | "))
-    check("talents: no spec text on Forever",
-        not STD.string.find(ptxt, "Fury", 1, true)
-        and not STD.string.find(ptxt, "Arms", 1, true),
+    local _, talentCount = STD.string.gsub(ptxt, "Talents:", "")
+    check("talents: one Talents line on Forever (inspect = active group only)",
+        talentCount == 1, STD.string.gsub(ptxt, "\n", " | "))
+    check("talents: inspected readout is the most-invested tree with [p1/p2/p3]",
+        STD.string.find(ptxt, "Fury|r [0/21/0]", 1, true) ~= nil,
         STD.string.gsub(ptxt, "\n", " | "))
-    check("talents: no inlined spec icon on Forever",
-        -- A fileID icon inlines as |T<digits>: -- texture-path icons (|TInterface
-        -- ...) belong to faction/PVP badges and are expected here.
-        not STD.string.find(ptxt, "|T1", 1, true),
+    check("talents: the tree icon is inlined",
+        STD.string.find(ptxt, "|T1100002:", 1, true) ~= nil,
         STD.string.gsub(ptxt, "\n", " | "))
     check("talents: no spec overlay frame survives",
         GT.TacoTipSpecIcon == nil
@@ -943,6 +1003,161 @@ do
         STD.string.find(ptxt, "iLvl: |c", 1, true) ~= nil,
         STD.string.gsub(ptxt, "\n", " | "))
     checkCleanRender(ptxt, "post-cache player render")
+end
+
+--------------------------------------------------------------------------
+-- P1b: the player's own readout -- one line without dual spec, two lines with
+-- it (active first, inactive dimmed). The second line must not appear before
+-- GetNumSpecGroups() says a second group exists.
+--------------------------------------------------------------------------
+do
+    local savedStyle = C.tip_style
+    -- Narrow (single-line) style, the shape of the operator's TBC reference:
+    -- both the active and the inactive line carry the "Talents:" label.
+    C.tip_style = 2
+    local function resolvePlayer()
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+        GT.GetUnit = function() return "n", "player" end
+    end
+    REALG.__foreverSpecGroups = 1
+    CI.foreverPlayerTalentMemo = nil
+    resolvePlayer()
+    seedPlayer()
+    local one = drive("player")
+    local _, oneCount = STD.string.gsub(one, "Talents:", "")
+    check("self: no dual spec renders exactly one Talents line", oneCount == 1,
+        STD.string.gsub(one, "\n", " | "))
+
+    REALG.__foreverSpecGroups = 2
+    CI.foreverPlayerTalentMemo = nil
+    resolvePlayer()
+    seedPlayer()
+    local two = drive("player")
+    local _, twoCount = STD.string.gsub(two, "Talents:", "")
+    check("self: dual spec renders exactly two Talents lines", twoCount == 2,
+        STD.string.gsub(two, "\n", " | "))
+    check("self: active group renders first (Fury [0/21/0])",
+        STD.string.find(two, "Fury|r [0/21/0]", 1, true) ~= nil,
+        STD.string.gsub(two, "\n", " | "))
+    check("self: inactive group renders second (Arms [33/28/0])",
+        STD.string.find(two, "Arms|r [33/28/0]", 1, true) ~= nil,
+        STD.string.gsub(two, "\n", " | "))
+    local furyAt = STD.string.find(two, "Fury|r [0/21/0]", 1, true)
+    local armsAt = STD.string.find(two, "Arms|r [33/28/0]", 1, true)
+    check("self: active line precedes the inactive line",
+        furyAt ~= nil and armsAt ~= nil and furyAt < armsAt,
+        STD.string.gsub(two, "\n", " | "))
+
+    REALG.__foreverSpecGroups = 1
+    CI.foreverPlayerTalentMemo = nil
+    C.tip_style = savedStyle
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+end
+
+--------------------------------------------------------------------------
+-- P1c: the Camelot APIs are optional at runtime. A client that answers none of
+-- them must render no Talents line and must not throw.
+--------------------------------------------------------------------------
+do
+    local saved = REALG.C_Traits
+    REALG.C_Traits = nil
+    CI.foreverPlayerTalentMemo = nil
+    REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+    GT.GetUnit = function() return "n", "player" end
+    seedPlayer()
+    local txt = drive("player")
+    check("talents: a missing C_Traits renders no line and does not error",
+        not STD.string.find(txt, "Talents", 1, true), STD.string.gsub(txt, "\n", " | "))
+    REALG.C_Traits = saved
+    CI.foreverPlayerTalentMemo = nil
+end
+
+--------------------------------------------------------------------------
+-- P1d: the inspect trait config can become valid a moment after INSPECT_READY.
+-- The GUID-matched retry must pick it up on a later render, and must never
+-- read the config for a different GUID.
+--------------------------------------------------------------------------
+do
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    local guid = UNITS.mouseover.guid
+    local record = CI.cache[guid]
+    check("P1d setup: the mouseover inspect record exists", record ~= nil)
+    record.foreverTalents = nil
+    CI.lastInspectGUID = guid
+    REALG.__foreverInspectValid = false
+    seedPlayer()
+    local before = drive("mouseover")
+    check("P1d: no Talents line while the trait config is not valid",
+        not STD.string.find(before, "Talents:", 1, true), STD.string.gsub(before, "\n", " | "))
+
+    REALG.__foreverInspectValid = true
+    seedPlayer()
+    local after = drive("mouseover")
+    check("P1d: a later render retries and draws the readout",
+        STD.string.find(after, "Fury|r [0/21/0]", 1, true) ~= nil,
+        STD.string.gsub(after, "\n", " | "))
+
+    -- A record belonging to a different inspect target must not read the
+    -- current unit's config.
+    record.foreverTalents = nil
+    CI.lastInspectGUID = "Player-Other-0000000001"
+    seedPlayer()
+    local wrong = drive("mouseover")
+    check("P1d: a non-matching inspect GUID never reads another unit's config",
+        not STD.string.find(wrong, "Talents:", 1, true), STD.string.gsub(wrong, "\n", " | "))
+
+    CI.lastInspectGUID = guid
+    REALG.__foreverInspectValid = nil
+end
+
+--------------------------------------------------------------------------
+-- P1e: the inspected player's inactive group is drawn when the client answers
+-- the inspect talent query, and omitted entirely when it does not.
+--------------------------------------------------------------------------
+do
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    local record = CI.cache[UNITS.mouseover.guid]
+
+    REALG.__foreverInspectGroups = 2
+    record.foreverTalents = nil
+    local okFire = primeInspect("mouseover", "full")
+    check("P1e setup: INSPECT_READY with a dual-spec inspect target", okFire == true)
+    seedPlayer()
+    local txt = drive("mouseover")
+    local _, count = STD.string.gsub(txt, "Talents:", "")
+    check("P1e: dual-spec inspect renders two Talents lines", count == 2,
+        STD.string.gsub(txt, "\n", " | "))
+    check("P1e: active line is Fury [0/21/0]",
+        STD.string.find(txt, "Fury|r [0/21/0]", 1, true) ~= nil,
+        STD.string.gsub(txt, "\n", " | "))
+    check("P1e: inactive line is Arms [33/28/0]",
+        STD.string.find(txt, "Arms|r [33/28/0]", 1, true) ~= nil,
+        STD.string.gsub(txt, "\n", " | "))
+
+    -- A client that does not answer the inactive query must draw no second
+    -- line and must not throw.
+    local savedQuery = REALG.C_SpecializationInfo.GetTalentInfo
+    REALG.C_SpecializationInfo.GetTalentInfo = function() return nil end
+    record.foreverTalents = nil
+    local okFire2 = primeInspect("mouseover", "full")
+    check("P1e setup: silent-client inspect", okFire2 == true)
+    seedPlayer()
+    local one = drive("mouseover")
+    local _, oneCount = STD.string.gsub(one, "Talents:", "")
+    check("P1e: a silent inactive query renders one line only", oneCount == 1,
+        STD.string.gsub(one, "\n", " | "))
+    REALG.C_SpecializationInfo.GetTalentInfo = savedQuery
+    REALG.__foreverInspectGroups = 1
+    record.foreverTalents = nil
 end
 
 --------------------------------------------------------------------------

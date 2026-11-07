@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.6
+version: 0.9.7
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -21,8 +21,8 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification
-updated: 2026-11-06
+status: in-game verified (2026-11-07)
+updated: 2026-11-07
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
@@ -47,6 +47,16 @@ updated: 2026-11-06
 > that the identical build now also works on WoW Forever and Retail.
 ---
 > 🎉 **<span style="color:#2ecc71">150,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed **150,000 downloads** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.7</span>
+
+- 🧠 **<span style="color:#59f0dc">Talents Are Back on WoW Forever:</span>** Forever is the Camelot client, and its talent system is not Retail's: one class-level specialization, three talent trees (trait node groups) and up to two spec groups (Primary/Secondary). The tooltip now reads the client's own data — tree names and icons from `C_Traits.GetGroupDisplayInfoByTreeID`, per-tree points from `C_Traits.GetGroupCurrencyInfo` — and renders the TBC shape: the tree with the most points plus `[p1/p2/p3]`, active group first and the inactive group dimmed. A character with no points yet shows the `[0/0/0]` template instead of disappearing.
+- 👥 **<span style="color:#59f0dc">Own vs Inspected:</span>** On your own character both spec groups are read (`GetNumSpecGroups`, `C_SpecializationInfo.GetCombatConfigIDForSpecGroup`), so a dual-spec character gets two lines. An inspected player's active group comes from the documented inspect trait config (`Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID`, `-1`); the inactive group is attempted through `C_SpecializationInfo.GetTalentInfo` and appears only if the client answers — no fabricated line.
+- 🧱 **<span style="color:#59f0dc">Nothing Else Moved:</span>** The old Retail/Classic talent block keeps its `show_talents and not isForever` gate byte-identical; the Forever readout is a separate `isForever` branch. No Classic or Retail behavior changed, and the Classic `spec_table`/`talents_table` data is not used for Forever.
+- 🧪 **<span style="color:#59f0dc">Pins:</span>** `forever_tooltip_test` is now **108/108**, covering one line without dual spec, two lines with it, `[0/0/0]`, a missing `C_Traits` namespace (no line, no error), late inspect data, wrong-GUID safety, and a silent inactive-group query (one line only).
+- 🏷️ **<span style="color:#59f0dc">Version:</span>** **0.9.7** (in-game verified 2026-11-07). TOC, Lua fallbacks, README, CHANGELOG, AGENTS and the harness version pins move together.
 
 ---
 
