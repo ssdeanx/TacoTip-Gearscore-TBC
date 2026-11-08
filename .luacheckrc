@@ -225,6 +225,11 @@ read_globals = {
     "unpack",
     "wipe",
     "WorldFrame",
+    -- The client's localized "Zone" label, read by Blizzard's FriendsFrame on
+    -- the Forever/Camelot branch (origin/forever FriendsFrame.lua:1135
+    -- `CreateRadio(ZONE, ...)`). Read-only: the add-on never defines or
+    -- replaces it, and uses it as the localized label for the Forever zone row.
+    "ZONE",
     "AchievementFrame",
     "AchievementFrameComparison",
     "AchievementFrameComparison_OnEvent",

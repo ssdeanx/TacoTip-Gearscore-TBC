@@ -1,0 +1,16 @@
+{"v":1,"task":"taco-harness-final","state":"running","msg":"started: bash -c bash Tests/harness/run_all.sh && LUA=lua5.4 bash Tests/harness/run_all.sh && LUA=luajit bash Tests/harness/run_all.sh","at":1794092128475}
+{"v":1,"task":"taco-harness-final","msg":"ok    load_test TITANFORGE   slot4","at":1794092129481}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test CLASSIC_ERA settings pawn","at":1794092130487}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test TITANFORGE settings pawn","at":1794092131491}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test FOREVER nosettings nopawn","at":1794092132496}
+{"v":1,"task":"taco-harness-final","msg":"ok    talent_check TBC_ANNIV","at":1794092133501}
+{"v":1,"task":"taco-harness-final","msg":"ok    load_test TITANFORGE   slot7","at":1794092134507}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test CLASSIC_ERA nosettings nopawn","at":1794092135512}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test FOREVER settings pawn","at":1794092136517}
+{"v":1,"task":"taco-harness-final","msg":"ok    tooltip_test TBC_ANNIV","at":1794092137522}
+{"v":1,"task":"taco-harness-final","msg":"ok    load_test RETAIL       slot4","at":1794092138527}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test CLASSIC_ERA nosettings nopawn","at":1794092139532}
+{"v":1,"task":"taco-harness-final","msg":"ok    settings_test FOREVER settings nopawn","at":1794092140537}
+{"v":1,"task":"taco-harness-final","msg":"ok    tooltip_test CLASSIC_ERA","at":1794092141543}
+{"v":1,"task":"taco-harness-final","msg":"-------------------------------------------------------------","at":1794092141848}
+{"v":1,"task":"taco-harness-final","state":"done","pct":100,"msg":"finished","at":1794092141849}

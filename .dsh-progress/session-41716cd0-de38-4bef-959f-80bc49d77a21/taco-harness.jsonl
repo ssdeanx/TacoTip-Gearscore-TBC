@@ -1,0 +1,8 @@
+{"v":1,"task":"taco-harness","state":"running","msg":"started: bash Tests/harness/run_all.sh","at":1794091969228}
+{"v":1,"task":"taco-harness","msg":"ok    load_test TBC_ANNIV    slot4","at":1794091970234}
+{"v":1,"task":"taco-harness","msg":"ok    settings_test CLASSIC_ERA settings pawn","at":1794091971239}
+{"v":1,"task":"taco-harness","msg":"ok    settings_test TBC_ANNIV nosettings nopawn","at":1794091972243}
+{"v":1,"task":"taco-harness","msg":"ok    settings_test FOREVER nosettings pawn","at":1794091973248}
+{"v":1,"task":"taco-harness","msg":"ok    tooltip_test TITANFORGE","at":1794091974253}
+{"v":1,"task":"taco-harness","msg":"-------------------------------------------------------------","at":1794091974437}
+{"v":1,"task":"taco-harness","state":"done","pct":100,"msg":"finished","at":1794091974437}

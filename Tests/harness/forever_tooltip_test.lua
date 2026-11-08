@@ -1,4 +1,5 @@
--- Forever-only unit-tooltip acceptance pins (0.9.2; Camelot talent readout 0.9.7).
+-- Forever-only tooltip acceptance pins (0.9.2; Camelot talent readout 0.9.7;
+-- zone row and native loot-window tooltip 0.9.8).
 --
 -- WoW Forever (interface 16001) must render the unit tooltip like the Classic
 -- reference -- name/class color, level line, target line, guild line behavior,
@@ -7,6 +8,10 @@
 -- in the TBC shape, `Talents: <icon> <tree> [p1/p2/p3]`, where the tree is the
 -- one with the most points. The readout is gated on the Camelot C_Traits data;
 -- when the client cannot answer, no line renders and nothing else changes.
+-- The zone row is gated on the client's own C_Map answer and on the four
+-- unit-frame families; the loot-window tooltip is deliberately left native
+-- (secret data rebuilt every frame), while a normal item tooltip keeps the
+-- Item Level / GearScore rows.
 -- Every pin here is Forever-scoped; the other families are covered by the
 -- shared suites (tooltip_test CLASSIC_ERA/TBC_ANNIV/TITANFORGE/RETAIL), which
 -- this file never touches.
@@ -431,7 +436,17 @@ REALG.C_PlayerInfo = {
         return type(g) == "string" and string.find(g, "Player%-", 1) == 1
     end,
 }
-REALG.C_Map = { GetBestMapForUnit = function() return nil end }
+REALG.C_Map = {
+    -- Mutable indirection: main.lua captures this function when it loads, so a
+    -- test that replaces the table field afterwards would not change what the
+    -- addon calls. The captured function reads the state table instead.
+    GetBestMapForUnit = function(u)
+        return REALG.__bestMapForUnit and REALG.__bestMapForUnit(u) or nil
+    end,
+    GetMapInfo = function(id)
+        return REALG.__mapInfo and REALG.__mapInfo(id) or nil
+    end,
+}
 for _, f in ipairs({ "GameFontNormal", "GameFontHighlight", "GameFontNormalSmall",
     "GameFontHighlightSmall", "GameFontDisable", "GameFontDisableSmall",
     "GameFontNormalLarge", "NumberFontNormal", "ChatFontNormal" }) do REALG[f] = f end
@@ -509,7 +524,12 @@ REALG.UnitClass = function(u)
     return c.className, c.class, c.classID
 end
 REALG.UnitIsPlayer = function(u) return UNITS[u] and UNITS[u].isPlayer or false end
+REALG.__unitIsUnit = nil
 REALG.UnitIsUnit = function(a, b)
+    -- Mutable override first: main.lua captures UnitIsUnit at load, so a test
+    -- that replaces the global afterwards is invisible to the addon. Tests
+    -- that need a different identity graph set this state function instead.
+    if (REALG.__unitIsUnit) then return REALG.__unitIsUnit(a, b) end
     if (a == b) then return true end
     -- The engine CAN report the hovered unit's target as the player even
     -- though the token differs ("mouseovertarget" vs "player"). Model that
@@ -1003,6 +1023,52 @@ do
         STD.string.find(ptxt, "iLvl: |c", 1, true) ~= nil,
         STD.string.gsub(ptxt, "\n", " | "))
     checkCleanRender(ptxt, "post-cache player render")
+end
+
+--------------------------------------------------------------------------
+-- P20: /tt diag reports the tooltip's own Forever talent source, so a missing
+-- Talents line can be attributed (no cache record vs no trait data) instead of
+-- guessed. The mouseover cache is primed by P1 above.
+--------------------------------------------------------------------------
+do
+    local diag = TT:CollectDiagnostics()
+    local value
+    for _, sec in STD.ipairs(diag.sections or {}) do
+        for _, row in STD.ipairs(sec.rows or {}) do
+            if (row.label == "forever talents") then value = row.value end
+        end
+    end
+    check("P20: /tt diag reports the hovered player's Forever talent data",
+        type(value) == "string" and STD.string.find(value, "yes", 1, true) == 1,
+        tostring(value))
+end
+
+--------------------------------------------------------------------------
+-- P19: the inspected readout does not REQUIRE GetNumSpecGroups(true).
+--
+-- 0.9.7 used the inspect-side group count only to decide whether to attempt
+-- the optional second line. Requiring that query to answer before drawing the
+-- first line hides talents on every inspected player on a client that does
+-- not answer it -- the 0.9.8 regression reported in game. With the query
+-- answering nothing, the active tree line must still render.
+--------------------------------------------------------------------------
+do
+    local savedInspectGroups = REALG.__foreverInspectGroups
+    REALG.__foreverInspectGroups = nil
+    local okFire, fireErr = primeInspect("mouseover", "full")
+    check("P19 setup: INSPECT_READY primes with no inspect group count", okFire == true,
+        tostring(fireErr or ""))
+    currentUnit = "mouseover"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "mouseover", UNITS.mouseover.guid
+    end
+    GT.GetUnit = function() return "n", "mouseover" end
+    seedPlayer()
+    local txt = drive("mouseover")
+    check("P19: inspected talents render without GetNumSpecGroups(true)",
+        STD.string.find(txt, "Fury|r [0/21/0]", 1, true) ~= nil,
+        STD.string.gsub(txt, "\n", " | "))
+    REALG.__foreverInspectGroups = savedInspectGroups
 end
 
 --------------------------------------------------------------------------
@@ -1842,6 +1908,450 @@ do
 
     C.tooltip_portrait_3d = saved3D
     C.tooltip_portrait = savedPortrait
+end
+
+--------------------------------------------------------------------------
+-- P16: the Forever zone row.
+--
+-- The row is the hovered player's zone under the Target row, drawn only for
+-- the four unit-frame families (player/target/party/raid) and only when the
+-- client answers C_Map.GetBestMapForUnit. origin/forever MapDocumentation.lua
+-- :49-60 documents that function as "Only works for the player and party
+-- members", so the mock answers for those tokens and returns nil elsewhere;
+-- a unit the client cannot place must produce no row rather than a guess.
+-- C_Map.GetMapInfo returns UiMapDetails (MapDocumentation.lua:696-706); the
+-- label comes from the client's own ZONE string (FriendsFrame.lua:1135).
+--------------------------------------------------------------------------
+do
+    UNITS.party1 = {
+        guid = "Player-6-000006", name = "Partymate", level = 60,
+        race = "Human", class = "MAGE", className = "Mage", classID = 8,
+        isPlayer = true, pvp = false,
+    }
+    UNITS.raid1 = {
+        guid = "Player-7-000007", name = "Raidmate", level = 60,
+        race = "Human", class = "PRIEST", className = "Priest", classID = 5,
+        isPlayer = true, pvp = false,
+    }
+    UNITS.party1target = {
+        guid = "Player-8-000008", name = "Opponent", level = 60,
+        race = "Orc", class = "WARRIOR", className = "Warrior", classID = 1,
+        isPlayer = true, pvp = true,
+    }
+    local ZONE_MAP = { player = 84, party1 = 84, raid1 = 84, target = 84 }
+    REALG.__bestMapForUnit = function(u) return ZONE_MAP[u] end
+    REALG.__mapInfo = function(mapID)
+        if (mapID == 84) then return { name = "Elwynn Forest" } end
+        return nil
+    end
+    local savedZone = REALG.ZONE
+    REALG.ZONE = "Zone"
+
+    local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
+    local savedDisplayedUnit = REALG.TooltipUtil.GetDisplayedUnit
+    local savedCurrent = currentUnit
+
+    local function orderedText()
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i)
+            local t = l and l:GetText()
+            if (t ~= nil and t ~= "") then out[#out + 1] = tostring(t) end
+        end
+        return out
+    end
+
+    local function render(unitToken, ownerUnit, seed)
+        currentUnit = unitToken
+        GT.__unit = unitToken
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", unitToken, UNITS[unitToken].guid
+        end
+        GT.GetOwner = function() return { unit = ownerUnit } end
+        GT:ClearLines()
+        for _, line in STD.ipairs(seed) do GT:AddLine(line) end
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = UNITS[unitToken].guid })
+        end
+        return orderedText()
+    end
+
+    local PLAYER_SEED = { "Testplayer", "<Testguild>", "Level 60 Human" }
+    local PARTY_SEED = { "Partymate", "<Testguild>", "Level 60 Human" }
+
+    local selfLines = render("player", "player", PLAYER_SEED)
+    local selfText = STD.table.concat(selfLines, "\n")
+    check("P16: the player's own frame shows the Zone row",
+        STD.string.find(selfText, "Zone: |cFFFFFFFFElwynn Forest|r", 1, true) ~= nil,
+        STD.table.concat(selfLines, " | "))
+
+    local partyLines = render("party1", "party1", PARTY_SEED)
+    local partyText = STD.table.concat(partyLines, "\n")
+    check("P16: a party frame shows the Zone row",
+        STD.string.find(partyText, "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(partyLines, " | "))
+
+    local raidLines = render("raid1", "raid1", { "Raidmate", "Level 60 Human" })
+    local raidText = STD.table.concat(raidLines, "\n")
+    check("P16: a raid frame shows the Zone row",
+        STD.string.find(raidText, "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(raidLines, " | "))
+
+    -- The real client shape: the tooltip's resolved unit is "mouseover", not
+    -- the frame's own token, and C_Map.GetBestMapForUnit does not answer for
+    -- "mouseover". The row must query the OWNER frame's unit (party1).
+    local resolvedLines = render("mouseover", "party1", { "Enemyplayer", "<Testguild>", "Level 59 Mage" })
+    check("P16: the Zone row asks the owner frame's unit, not the resolved mouseover token",
+        STD.string.find(STD.table.concat(resolvedLines, "\n"), "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(resolvedLines, " | "))
+
+    -- The row sits directly under Target when a Target row exists.
+    local targetLines = render("party1", "party1", PARTY_SEED)
+    local targetIndex, zoneIndex
+    for i, line in STD.ipairs(targetLines) do
+        if (STD.string.find(line, "Target:", 1, true) == 1) then targetIndex = i end
+        if (STD.string.find(line, "Zone:", 1, true) == 1) then zoneIndex = i end
+    end
+    check("P16: the Zone row is directly under the Target row",
+        targetIndex ~= nil and zoneIndex ~= nil and zoneIndex == targetIndex + 1,
+        "target=" .. STD.tostring(targetIndex) .. " zone=" .. STD.tostring(zoneIndex))
+
+    -- A player TARGET that is a group member must resolve through its own
+    -- party/raid token: C_Map.GetBestMapForUnit does not answer for "target".
+    UNITS.zoneTarget = {
+        guid = "Player-9-000009", name = "Targetguy", level = 60,
+        race = "Human", class = "PRIEST", className = "Priest", classID = 5,
+        isPlayer = true, pvp = false,
+    }
+    local savedInParty = REALG.UnitInParty
+    local savedInRaid = REALG.UnitInRaid
+    REALG.UnitInParty = function(u) return u == "zoneTarget" end
+    REALG.UnitInRaid = function() return false end
+    REALG.__unitIsUnit = function(a, b)
+        if (a == "zoneTarget" and b == "party1") then return true end
+        return a == b
+    end
+    REALG.__bestMapForUnit = function(u) return (u == "party1") and 84 or nil end
+
+    -- Out-of-scope frame families and non-player units must not add the row.
+    local groupTargetLines = render("zoneTarget", "target", { "Targetguy", "<Testguild>", "Level 60 Human" })
+    check("P16: a group-member target frame resolves through its party token",
+        STD.string.find(STD.table.concat(groupTargetLines, "\n"), "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(groupTargetLines, " | "))
+    REALG.UnitInParty = savedInParty
+    REALG.UnitInRaid = savedInRaid
+    REALG.__unitIsUnit = nil
+    REALG.__bestMapForUnit = function(u) return ZONE_MAP[u] end
+
+    local nameplateLines = render("mouseover", "nameplate1", { "Enemyplayer", "Level 59 Mage" })
+    check("P16: a nameplate hover does not get the Zone row",
+        STD.string.find(STD.table.concat(nameplateLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(nameplateLines, " | "))
+
+    local focusLines = render("mouseover", "focus", { "Enemyplayer", "Level 59 Mage" })
+    check("P16: a focus-frame hover does not get the Zone row",
+        STD.string.find(STD.table.concat(focusLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(focusLines, " | "))
+
+    local npcLines = render("target", "target", { "Hated Squirrel", "Level 42 Beast" })
+    check("P16: an NPC target frame does not get the Zone row (players only)",
+        STD.string.find(STD.table.concat(npcLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(npcLines, " | "))
+
+    -- The client cannot place a target that is not in the group: no row.
+    REALG.__bestMapForUnit = nil
+    local noMapLines = render("player", "player", PLAYER_SEED)
+    check("P16: no map answer means no Zone row",
+        STD.string.find(STD.table.concat(noMapLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(noMapLines, " | "))
+    REALG.__bestMapForUnit = function(u) return ZONE_MAP[u] end
+
+    -- The label is the client's localized ZONE string, not a hardcoded word.
+    REALG.ZONE = "Gebiet"
+    local localizedLines = render("player", "player", PLAYER_SEED)
+    check("P16: the Zone label comes from the client's ZONE string",
+        STD.string.find(STD.table.concat(localizedLines, "\n"), "Gebiet:", 1, true) ~= nil,
+        STD.table.concat(localizedLines, " | "))
+    REALG.ZONE = savedZone
+
+    currentUnit = savedCurrent
+    GT.GetOwner = savedOwner
+    GT.GetUnit = savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayedUnit
+    REALG.__bestMapForUnit = nil
+    REALG.__mapInfo = nil
+end
+
+--------------------------------------------------------------------------
+-- P16b: the map answer changes per unit AFTER main.lua has loaded.
+--
+-- main.lua captured C_Map.GetBestMapForUnit (and GetMapInfo) at load time as
+-- locals, so a test must NOT replace REALG.C_Map after load. Instead the
+-- captured function reads the mutable state table, and changing that table
+-- after load makes different units resolve to different zones. This pin
+-- proves the per-unit indirection works for both the player and a party
+-- member, and that a unit the client cannot place still gets no row.
+--------------------------------------------------------------------------
+do
+    UNITS.party1 = UNITS.party1 or {
+        guid = "Player-6-000006", name = "Partymate", level = 60,
+        race = "Human", class = "MAGE", className = "Mage", classID = 8,
+        isPlayer = true, pvp = false,
+    }
+    local ZONE_MAP = { player = 84, party1 = 85 }
+    REALG.__bestMapForUnit = function(u) return ZONE_MAP[u] end
+    REALG.__mapInfo = function(mapID)
+        if (mapID == 84) then return { name = "Elwynn Forest" } end
+        if (mapID == 85) then return { name = "Stormwind City" } end
+        return nil
+    end
+    local savedZone = REALG.ZONE
+    REALG.ZONE = "Zone"
+
+    local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
+    local savedDisplayedUnit = REALG.TooltipUtil.GetDisplayedUnit
+    local savedCurrent = currentUnit
+
+    local function orderedText()
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i)
+            local t = l and l:GetText()
+            if (t ~= nil and t ~= "") then out[#out + 1] = tostring(t) end
+        end
+        return out
+    end
+
+    local function render(unitToken, ownerUnit, seed)
+        currentUnit = unitToken
+        GT.__unit = unitToken
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", unitToken, UNITS[unitToken].guid
+        end
+        GT.GetOwner = function() return { unit = ownerUnit } end
+        GT:ClearLines()
+        for _, line in STD.ipairs(seed) do GT:AddLine(line) end
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = UNITS[unitToken].guid })
+        end
+        return orderedText()
+    end
+
+    local PLAYER_SEED = { "Testplayer", "<Testguild>", "Level 60 Human" }
+    local PARTY_SEED = { "Partymate", "<Testguild>", "Level 60 Human" }
+
+    -- Player resolves to its own map answer after load.
+    local playerLines = render("player", "player", PLAYER_SEED)
+    local playerText = STD.table.concat(playerLines, "\n")
+    check("P16b: player keeps its own (post-load) map answer",
+        STD.string.find(playerText, "Elwynn Forest", 1, true) ~= nil
+            and STD.string.find(playerText, "Stormwind City", 1, true) == nil,
+        STD.table.concat(playerLines, " | "))
+
+    -- Party member resolves to a different map answer after load.
+    local partyLines = render("party1", "party1", PARTY_SEED)
+    local partyText = STD.table.concat(partyLines, "\n")
+    check("P16b: a party member resolves a different (post-load) map answer",
+        STD.string.find(partyText, "Stormwind City", 1, true) ~= nil
+            and STD.string.find(partyText, "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(partyLines, " | "))
+
+    -- Changing the answer for one unit does not affect the already-rendered
+    -- other unit: re-render player, still Elwynn.
+    ZONE_MAP.party1 = 84
+    local playerAgain = render("player", "player", PLAYER_SEED)
+    local playerAgainText = STD.table.concat(playerAgain, "\n")
+    check("P16b: changing one unit's answer leaves the other unit's row intact",
+        STD.string.find(playerAgainText, "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(playerAgain, " | "))
+    ZONE_MAP.party1 = 85
+
+    -- A unit the client cannot place (no map answer) gets no row.
+    ZONE_MAP.target = nil
+    local npcLines = render("target", "target", { "Hated Squirrel", "Level 42 Beast" })
+    local npcText = STD.table.concat(npcLines, "\n")
+    check("P16b: a unit with no (post-load) map answer gets no Zone row",
+        STD.string.find(npcText, "Elwynn Forest", 1, true) == nil
+            and STD.string.find(npcText, "Stormwind City", 1, true) == nil,
+        STD.table.concat(npcLines, " | "))
+
+    currentUnit = savedCurrent
+    GT.GetOwner = savedOwner
+    GT.GetUnit = savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayedUnit
+    REALG.ZONE = savedZone
+    REALG.__bestMapForUnit = nil
+    REALG.__mapInfo = nil
+end
+
+--------------------------------------------------------------------------
+-- P17: the Forever loot-window tooltip is left exactly as the client builds
+-- it. It is secret tooltip data rebuilt every frame (LootFrame.lua:464-469,
+-- TooltipDataHandler.lua:495-517 and :537); the game's own warning is that
+-- taint plus secret line data can make the tooltip display no lines
+-- (GameTooltip.lua:994-1003). A normal item tooltip must keep TacoTip's rows.
+--------------------------------------------------------------------------
+do
+    local itemPost
+    for _, rec in STD.ipairs(POSTCALLS) do
+        if (rec.typ == REALG.Enum.TooltipDataType.Item) then itemPost = rec.fn end
+    end
+    local savedOwner = GT.GetOwner
+    local lootOwner = {
+        GetSlotIndex = function() return 1 end,
+        GetItemSlotType = function() return 1 end,
+    }
+
+    GT.GetOwner = function() return lootOwner end
+    GT:ClearLines()
+    GT:AddLine("Test Helm")
+    GT:AddLine("Item Level 88")
+    local before = GT:NumLines()
+    local okLoot = STD.pcall(itemPost, GT, { hyperlink = GEAR_LINK })
+    check("P17: the loot-window tooltip keeps the client's own line count",
+        okLoot and GT:NumLines() == before,
+        "lines " .. STD.tostring(before) .. " -> " .. STD.tostring(GT:NumLines())
+        .. " err=" .. STD.tostring(okLoot))
+    check("P17: no TacoTip item row is added to the loot-window tooltip",
+        STD.string.find(allText(), "GearScore", 1, true) == nil,
+        STD.string.gsub(allText(), "\n", " | "))
+
+    -- Control: the same item on a normal (non-loot) tooltip still gets the
+    -- rows, so the gate is the loot owner rather than the item path.
+    GT.GetOwner = function() return { unit = "player" } end
+    GT:ClearLines()
+    GT:AddLine("Test Helm")
+    GT:AddLine("Item Level 88")
+    local okItem = STD.pcall(itemPost, GT, { hyperlink = GEAR_LINK })
+    check("P17: a normal item tooltip still gets TacoTip's item rows",
+        okItem and GT:NumLines() > 2,
+        "lines=" .. STD.tostring(GT:NumLines()) .. " err=" .. STD.tostring(okItem))
+
+    -- OnShow must not read the loot tooltip's data either. Both GetItem and
+    -- GetDisplayedUnit (which goes through GetPrimaryTooltipData) are the
+    -- tooltip-info reads Blizzard warns about for secret tooltip data.
+    local reads = 0
+    local savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
+    REALG.TooltipUtil.GetDisplayedUnit = function(...)
+        reads = reads + 1
+        return savedDisplayed(...)
+    end
+    local savedGetItem = GT.GetItem
+    GT.GetItem = function(...)
+        reads = reads + 1
+        return savedGetItem(...)
+    end
+
+    GT.GetOwner = function() return lootOwner end
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    check("P17: OnShow reads no tooltip data for the loot-window tooltip",
+        reads == 0, "reads=" .. STD.tostring(reads))
+
+    GT.GetOwner = function() return { unit = "player" } end
+    local beforeReads = reads
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    check("P17: OnShow still resolves the unit for a normal tooltip",
+        reads > beforeReads, "reads=" .. STD.tostring(reads - beforeReads))
+
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayed
+    GT.GetItem = savedGetItem
+    GT.GetOwner = savedOwner
+end
+
+--------------------------------------------------------------------------
+-- P18: C_Map answers are read per unit after main.lua has loaded.
+--
+-- main.lua captures C_Map.GetBestMapForUnit into a local at load time, so a
+-- test cannot change the answer by replacing REALG.C_Map later. The mock
+-- above stores the live answer in REALG.__bestMapForUnit, which is called
+-- with the unit token; reassigning that state function changes the answer for
+-- one unit without touching the table field or any other unit.
+--------------------------------------------------------------------------
+do
+    local savedZone = REALG.ZONE
+    REALG.ZONE = "Zone"
+
+    local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
+    local savedDisplayedUnit = REALG.TooltipUtil.GetDisplayedUnit
+    local savedCurrent = currentUnit
+
+    local UNIT_MAP = { player = 84, party1 = 90 }
+    REALG.__bestMapForUnit = function(u) return UNIT_MAP[u] end
+    REALG.__mapInfo = function(mapID)
+        if (mapID == 84) then return { name = "Elwynn Forest" } end
+        if (mapID == 90) then return { name = "Stormwind City" } end
+        return nil
+    end
+
+    local function orderedText()
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i)
+            local t = l and l:GetText()
+            if (t ~= nil and t ~= "") then out[#out + 1] = tostring(t) end
+        end
+        return out
+    end
+
+    local function render(unitToken, ownerUnit, seed)
+        currentUnit = unitToken
+        GT.__unit = unitToken
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", unitToken, UNITS[unitToken] and UNITS[unitToken].guid
+        end
+        GT.GetOwner = function() return { unit = ownerUnit } end
+        GT:ClearLines()
+        for _, line in STD.ipairs(seed) do GT:AddLine(line) end
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = UNITS[unitToken] and UNITS[unitToken].guid })
+        end
+        return orderedText()
+    end
+
+    UNITS.player = UNITS.player or {
+        guid = "Player-1-000001", name = "Testplayer", level = 60,
+        race = "Human", class = "WARRIOR", className = "Warrior", classID = 1,
+        isPlayer = true, pvp = false,
+    }
+    UNITS.party1 = UNITS.party1 or {
+        guid = "Player-6-000006", name = "Partymate", level = 60,
+        race = "Human", class = "MAGE", className = "Mage", classID = 8,
+        isPlayer = true, pvp = false,
+    }
+
+    local playerLines = render("player", "player", { "Testplayer", "Level 60 Human" })
+    local playerText = STD.table.concat(playerLines, "\n")
+    check("P18: player gets its own map answer",
+        STD.string.find(playerText, "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(playerLines, " | "))
+
+    local partyLines = render("party1", "party1", { "Partymate", "Level 60 Human" })
+    local partyText = STD.table.concat(partyLines, "\n")
+    check("P18: a different unit gets a different map answer",
+        STD.string.find(partyText, "Stormwind City", 1, true) ~= nil,
+        STD.table.concat(partyLines, " | "))
+
+    -- Changing the state function after load changes the next render for that unit only.
+    UNIT_MAP.player = 90
+    local changedLines = render("player", "player", { "Testplayer", "Level 60 Human" })
+    local changedText = STD.table.concat(changedLines, "\n")
+    check("P18: reassigning the state function changes a later render",
+        STD.string.find(changedText, "Stormwind City", 1, true) ~= nil,
+        STD.table.concat(changedLines, " | "))
+
+    currentUnit = savedCurrent
+    GT.GetOwner = savedOwner
+    GT.GetUnit = savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayedUnit
+    REALG.__bestMapForUnit = nil
+    REALG.__mapInfo = nil
+    REALG.ZONE = savedZone
 end
 
 --------------------------------------------------------------------------

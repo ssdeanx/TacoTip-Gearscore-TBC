@@ -4,6 +4,7 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `0.9.8` | `2026-11-07` | **Forever zone line and native loot-window tooltips.** Hovering a player, target, party or raid frame on WoW Forever now adds a `Zone:` row under the `Target:` row: the unit's map comes from `C_Map.GetBestMapForUnit`, its localized name from `C_Map.GetMapInfo`, and the label from the client's own `ZONE` string; the row is players-only, Forever-only, and is omitted when the client cannot place the unit. The loot-window item tooltip is now left exactly as the client builds it: its data is secret and the loot element re-runs `SetLootItem` every frame, so TacoTip's item rows and restyle could drop the client's own armour-type (`Cloth` / `Mail` / `Plate`) row. Normal item tooltips keep Item Level and GearScore unchanged. Forever pins 134/134; cross-client zone pin red/green proven; in-game verification pending. |
 | `0.9.7` | `2026-11-07` | **Talents on WoW Forever (Camelot).** Forever's talent system is class-level: one specialization, three trait trees and up to two spec groups. The tooltip now reads the client's own data — `C_Traits.GetGroupDisplayInfoByTreeID` for tree name/icon and `C_Traits.GetGroupCurrencyInfo` (`spent`, fallback `spentInTree`) for per-tree points — and renders the TBC shape: the tree with the most points plus `[p1/p2/p3]`, active group first, inactive dimmed, `[0/0/0]` template before the first point. On the player's own tooltip both groups are read (`GetNumSpecGroups`, `C_SpecializationInfo.GetCombatConfigIDForSpecGroup`); an inspected player's active group comes from `Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID` (-1) and the inactive group is attempted through `C_SpecializationInfo.GetTalentInfo` (`isInspect`, `target`, `groupIndex`) and drawn only if the client answers. The old Retail/Classic talent block keeps its `show_talents and not isForever` gate unchanged; the Forever branch is separate, and the Classic `spec_table`/`talents_table` data is not used. Forever pins 108/108; operator in-game verified 2026-11-07. |
 | `0.9.6` | `2026-11-06` | **Media picker: one menu per click and readable font rows.** The custom picker is drawn over Blizzard's dropdown frame; on WoW Forever and Retail the template arrow activates from `DropDownMenuButtonMixin:OnMouseDown`, while the Classic family uses the XML `OnClick`. The previous code replaced only `OnClick`, so one click opened the stock menu and TacoTip's picker together. The picker now replaces whichever handler the client installed and clears the other. Font values are file paths, but the row preview treated every slash-bearing value as a texture, so the client painted each font row as a solid green block; texture preview is now opt-in for the bar/border/background lists, and font rows render in their own face. A disabled dropdown's body click remains a latent, unreported issue (recorded, not edited). On Forever/Live, a restricted unit's `UnitPowerMax` is secret and the old show gate compared it, so the power bar never appeared; the gate now passes secret values through to the status bar, which accepts them, while non-secret clients keep the old `> 0` behavior. Achievement points are now Retail-only: the toggle is disabled on Classic Era, TBC Anniversary, Titanforge and Forever, and a saved true value cannot render a row there. Pinned in `options_test` and `tooltip_test`; in-game verification pending. Version 0.9.6. |
 | `0.9.5` | `2026-11-06` | **Portrait stabilization on Retail / WoW Forever unit frames and non-Latin locale rendering.** The unit-frame 0.2 s re-drive (`UnitFrame_UpdateTooltip` → `SetUnit` → `ClearLines` → `OnTooltipCleared` → post-call → `Show`) can no longer tear the 3D portrait down: the clear hook proves "same unit frame, same unit" from the owner's own unit GUID, recorded before the unit token is resolved, and the OnLeave window is waived while the tooltip is on screen. The portrait side is recomputed once from the laid-out tooltip in `OnShow` (before presentation) instead of one tick later, removing the edge flip, and zoom/alpha/`Show()` are memoized. Non-Latin clients no longer render missing-glyph boxes: the roman default is treated as "client default" and resolved through the client's per-alphabet face (Cyrillic/Korean/Simplified/Traditional), the font picker only offers faces that can draw the client's script, and a refused `SetFont` is no longer cached as success. Blizzard's `UNIT_POPUP_RIGHT_CLICK` ("Right Click for Frame Settings") row is blanked on modern unit tooltips in `OnShow`; one spacer row remains because the tooltip API cannot remove lines. Version 0.9.5. |
@@ -25,6 +26,141 @@ All notable changes to TacoTip are documented in this file.
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+## [0.9.8] — 2026-11-07
+
+### Foreword
+
+This release is reported from the Forever (Camelot) client and touches only
+Forever code paths. Classic Era, TBC Anniversary, WotLK Titanforge and Retail
+keep their previous behaviour; every new branch is gated on `isForever`
+(`CI:IsForever()`), and the two release verifiers pass on the working tree.
+
+### Zone row on Forever player frames
+
+- **CONTEXT — the client owns the location data, and its scope is narrow.**
+  `C_Map.GetBestMapForUnit(unit)` is documented on `origin/forever`
+  (`MapDocumentation.lua:49-60`) as *"Only works for the player and party
+  members"*; `C_Map.GetMapInfo(mapID)` returns a `UiMapDetails` structure
+  (`MapDocumentation.lua:312-325`, struct at `:696-706`) whose `name` is the
+  localized zone. The label is the client's own `ZONE` global, which Blizzard's
+  FriendsFrame reads on the same branch (`FriendsFrame.lua:1135`), so no
+  locale key is invented and every client locale localizes it itself.
+- **SCOPE — the four frame families the operator named: player, target,
+  party, raid.** The owner frame's own `unit` token is what identifies them
+  (`UnitFrame_Initialize` stores it at `UnitFrame.lua:30`; party and raid
+  frames at `PartyMemberFrame.lua:148` and `CompactUnitFrame.lua:243`).
+  Nameplates, focus, pets and target-of-target hovers are deliberately
+  excluded even when their unit is a player. The row is players-only
+  (`UnitIsPlayer`), so a creature target never gets a `Zone:` row.
+- **THE TARGET FRAME — a group target resolves through its group token.** The
+  target frame's token is `target`, which `C_Map.GetBestMapForUnit` does not
+  answer. When the target is a group member, the row translates it to its own
+  `partyN`/`raidN` token first; a player target outside the group is not
+  placeable by the client at all, so that frame gets no row. Pinned: a target
+  frame for a party member renders the row, and the pre-fix copy that asked the
+  bare `target` token was shown red.
+- **WHICH UNIT TOKEN IS ASKED — the owner frame's, not the tooltip's.** The
+  unit tooltip's resolved token is frequently `mouseover`, and
+  `C_Map.GetBestMapForUnit` does not answer for it. The row therefore asks the
+  owner frame's own token (`player` / `target` / `partyN` / `raidN`) and only
+  falls back to the resolved token. This is pinned in both directions: the
+  owner-token shape renders the row, and the pre-fix copy that asked the
+  resolved token was shown red.
+- **PLACEMENT — directly under `Target:`.** The row is added immediately
+  after the target block, so when a Target row exists the two are adjacent
+  (pinned); on the player's own frame, or when the Target row is hidden, it
+  follows the level line at the same insertion point. Wide style uses the
+  existing double-line form, narrow style the single line.
+- **SILENT WHEN THE CLIENT CANNOT ANSWER.** An out-of-group target, a unit
+  the client cannot place, or an invalid map id produces **no row** rather
+  than a guessed zone. `C_Map.GetMapInfo` is `pcall`'d, and a map name the
+  client marks secret is dropped instead of being concatenated into a row.
+- **FOREVER ONLY.** The shared `tooltip_test` gains a pin that drives a
+  watched player frame with a client that would answer the map query: the row
+  renders on Forever and must not render on the other four families. The pin
+  was shown red on Classic Era by removing the `isForever` gate, then restored
+  (`cmp` verified).
+
+### Loot-window tooltip left native on Forever
+
+- **CONTEXT — the loot bag's item tooltip is a different construction.** The
+  loot frame calls `GameTooltip:SetLootItem(slot)`
+  (`origin/forever LootFrame.lua:620-630`), which is a secure tooltip-data
+  accessor delegate around `C_TooltipInfo.GetLootItem`
+  (`TooltipDataHandler.lua:495-517`, `SetLootItem = "GetLootItem"` at `:537`).
+  The loot element installs an `OnUpdate` on its item button that re-calls
+  `OnEnter` every frame while the tooltip is owned (`LootFrame.lua:464-469`),
+  so the tooltip is rebuilt every frame from the client's data.
+- **THE GAME'S OWN WARNING.** `GameTooltip.lua:994-1003` documents that taint
+  reaching `ProcessInfo` plus secret line data/text can make the tooltip
+  display **no lines**; Blizzard reads `GetPrimaryTooltipInfo` through
+  `securecallfunction` in `SetWorldCursor` for exactly that reason. The
+  reported symptom — the client's `Cloth` / `Mail` / `Plate` row missing only
+  from loot-bag tooltips — is consistent with modifying that secret tooltip.
+- **FIX — do not touch it, and do not read it.** `itemToolTipHook` now returns
+  before `clearTooltipVisuals` when the tooltip's owner is the loot element
+  (identified by the two slot mixin methods, not by reading the tooltip's
+  tooltip-data table), so no Item Level / GearScore row, font pass, width cap
+  or backdrop work is applied there. `onTooltipShow` skips **both** tooltip-info
+  reads for that tooltip (`GetItem` and `resolveTooltipUnit` →
+  `GetDisplayedUnit` → `GetPrimaryTooltipData`), which are the reads Blizzard
+  guards in `SetWorldCursor`, and still performs the normal visual recycle. Normal item tooltips (bags, character frame, chat links, shopping
+  and item-ref tooltips) are unchanged.
+- **TRADE-OFF, stated plainly.** The loot bag now shows the client's own
+  tooltip without TacoTip's extra rows or appearance pass. That is deliberate:
+  the client's secret row is the one the player needs while looting, and there
+  is no public API to re-apply a secret line's aspects after an addon appends
+  a raw line. A normal item tooltip keeps the Item Level and GearScore rows.
+- **PINS.** `forever_tooltip_test` gains loot checks: the loot-window tooltip
+  keeps its exact client line count and gains no TacoTip row; a normal item
+  tooltip with the same link still gets the rows; and `OnShow` performs zero
+  tooltip-data reads for the loot tooltip while still resolving a normal one.
+  The line-count pin was shown red on the pre-fix `main.lua` (2 lines became 4
+  and a `GearScore` row appeared); the read pin was shown red by re-enabling
+  the `resolveTooltipUnit` read (reads=1).
+
+### Tests, tooling and documentation
+
+- `Tests/harness/forever_tooltip_test.lua`: 108 → **134** pins. New: zone
+  pins (self/party/raid render; a resolved `mouseover` token still asks the
+  owner frame's unit; nameplate, focus and NPC hovers do not; no map answer
+  means no row; the row is directly under Target; the label follows the
+  client's `ZONE` string; per-unit answers are read after load), three loot
+  pins, and two inspected-talent pins (the active tree line renders when
+  `GetNumSpecGroups(true)` answers nothing). The `C_Map` mock in both harnesses
+  reads a state indirection, because `main.lua` captures the function at load
+  and replacing the table field after load would be invisible to the addon.
+- **`/tt diag` talent attribution.** The active-unit section gains a Forever-only `forever talents` row: it reports the tooltip's own data source (`yes (N group(s), active G)`, a cached record with no trait data, or no cache record), so a missing Talents line can be attributed without guessing. A second Forever-only row, `zone row`, reports the tooltip owner's unit token, whether it is in the player/target/party/raid set, and the map answer, so a missing Zone row is attributable the same way. Pinned in the Forever harness.
+- **Inspected-talent regression guard.** The inspected readout must not depend
+  on `GetNumSpecGroups(true)`: 0.9.7 used that query only to decide whether to
+  attempt the optional inactive-group line, and making it a precondition would
+  hide the active line on every inspected player when the client does not
+  answer. The pin was shown red against a lib copy carrying that precondition
+  and green on the shipped lib.
+- `Tests/harness/tooltip_test.lua`: one cross-client pin — the zone row renders
+  on Forever and is absent on the other four families.
+- `Tests/harness/load_test.lua`: version pins moved to 0.9.8.
+- `Tests/harness/run_all.sh`: the Forever acceptance label now names
+  `talents / zone 0.9.8`.
+- `.luacheckrc`: `ZONE` declared as a read-only client global with the
+  `FriendsFrame.lua:1135` citation (bare use, no `_G.ZONE`).
+- `README.md`: `version: 0.9.8`, `status: pending in-game verification`,
+  and a user-facing "What's New in v0.9.8" section.
+- `AGENTS.md`: root version 0.9.8 and the two new Forever client facts (the
+  zone API's player/party scope and the native loot-window rule).
+
+### Verification
+
+- `luacheck .` — 0 warnings / 0 errors in 88 files.
+- `bash Tests/harness/run_all.sh` — **72/72** invocations (lua5.1).
+- `lua5.4` / `luajit` re-runs of `run_all.sh` — 72/72.
+- `lua5.1 Tests/harness/forever_tooltip_test.lua` — **134/134**.
+- `bash Tools/verify_release.sh --worktree` — PASS (version 0.9.8 consistent,
+  five interfaces, SavedVariables, icon).
+- `bash Tools/verify_release_extras.sh --worktree` — PASS (Extras untouched).
+- In-game verification of the zone row and the loot-window tooltip is
+  **pending**; the release notes deliberately do not claim it.
 
 ## [0.9.7] — 2026-11-07
 

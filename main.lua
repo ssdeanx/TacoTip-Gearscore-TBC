@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.7"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.8"
 
 
 
@@ -194,6 +194,7 @@ local NewTicker = _G.C_Timer and _G.C_Timer.NewTicker
 local NewTimer = _G.C_Timer and _G.C_Timer.NewTimer
 local CAfter = _G.C_Timer and _G.C_Timer.After
 local GetBestMapForUnit = _G.C_Map and _G.C_Map.GetBestMapForUnit
+local GetMapInfo = _G.C_Map and _G.C_Map.GetMapInfo
 -- C_Item namespace and Blizzard ObjectAPI
 local Item = _G.Item
 -- Namespaced on purpose: there is no bare global RequestLoadItemDataByID on any
@@ -2106,6 +2107,122 @@ function TT:WarmGearItemData(guid)
     return requested > 0, requested
 end
 
+-- ---------------------------------------------------------------------------
+-- Forever / Camelot: unit-frame scope and the player's zone row
+-- ---------------------------------------------------------------------------
+-- C_Map.GetBestMapForUnit is documented as "Only works for the player and
+-- party members" (origin/forever MapDocumentation.lua:49-60), so the zone row
+-- is drawn only where the client can actually place the unit. A target that
+-- is not in the group, or any unit whose map the client cannot answer for,
+-- produces no row -- never a guessed zone.
+--
+-- Family scope is the four unit-frame families the operator named: player,
+-- target, party and raid. The owner frame's own `unit` token identifies
+-- them (UnitFrame_Initialize stores it at UnitFrame.lua:30; party and raid
+-- frames store it at PartyMemberFrame.lua:148 and CompactUnitFrame.lua:243),
+-- so nameplates, focus, pets and target-of-target hovers are excluded even
+-- when their unit is a player.
+local function isForeverWatchedFrameUnit(unit)
+    if (type(unit) ~= "string") then
+        return false
+    end
+    if (unit == "player" or unit == "target") then
+        return true
+    end
+    return string.match(unit, "^party%d+$") ~= nil or string.match(unit, "^raid%d+$") ~= nil
+end
+
+local function getTooltipOwnerUnit(tooltip)
+    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
+    if (not owner) then
+        return nil
+    end
+    local unit = owner.unit
+    if (not unit and type(owner.GetAttribute) == "function") then
+        unit = owner:GetAttribute("unit")
+    end
+    return unit
+end
+
+-- The target frame's token is "target"; C_Map.GetBestMapForUnit documents the
+-- player and party members, and does not answer for the "target" token. When
+-- the target is a group member, translate it to its own party/raid token so
+-- the documented query can answer. A target that is not in the group has no
+-- group token, and the client cannot place a non-group player anyway.
+local function resolveGroupTokenFor(unit)
+    if (not unit or type(UnitIsUnit) ~= "function") then
+        return nil
+    end
+    local inParty = (type(UnitInParty) == "function") and UnitInParty(unit)
+    local inRaid = (type(UnitInRaid) == "function") and UnitInRaid(unit)
+    if (not inParty and not inRaid) then
+        return nil
+    end
+    for i = 1, 4 do
+        local token = "party" .. i
+        if (UnitIsUnit(unit, token)) then
+            return token
+        end
+    end
+    for i = 1, 40 do
+        local token = "raid" .. i
+        if (UnitIsUnit(unit, token)) then
+            return token
+        end
+    end
+    return nil
+end
+
+local function getUnitZoneName(unit)
+    if (not unit or not GetBestMapForUnit or not GetMapInfo) then
+        return nil
+    end
+    local okMap, mapID = pcall(GetBestMapForUnit, unit)
+    if (not okMap or not mapID) then
+        return nil
+    end
+    local okInfo, mapInfo = pcall(GetMapInfo, mapID)
+    local name = okInfo and mapInfo and mapInfo.name
+    if (type(name) ~= "string" or name == "") then
+        return nil
+    end
+    -- A secret value cannot be concatenated into a row. If the client marks
+    -- the name secret, the row is omitted rather than risking a protected
+    -- string operation.
+    if (type(issecretvalue) == "function" and issecretvalue(name)) then
+        return nil
+    end
+    return name
+end
+
+-- Forever / Camelot: leave the loot-window tooltip exactly as the client
+-- builds it.
+--
+-- GameTooltip:SetLootItem is a secure tooltip-data accessor delegate around
+-- C_TooltipInfo.GetLootItem (origin/forever TooltipDataHandler.lua:495-517,
+-- `SetLootItem = "GetLootItem"` at :537). The loot item's data carries secret
+-- lines (the item has not been awarded yet), and the loot element re-runs its
+-- own OnEnter from the item button's OnUpdate while the tooltip is owned
+-- (LootFrame.lua:464-469), so that tooltip is rebuilt every frame. The game's
+-- own warning is explicit: taint reaching ProcessInfo plus secret line
+-- data/text can make the tooltip display no lines (GameTooltip.lua:994-1003).
+-- The reported symptom is exactly the armour-type row disappearing from the
+-- loot-window tooltip, so the addon must not touch that tooltip at all.
+--
+-- The owner is the loot element itself (LootFrameItemElementMixin:OnEnter
+-- calls SetOwner(self, ...)), identified by the two slot methods it mixes in
+-- rather than by reading the tooltip's tooltip-data table: that read is the
+-- one Blizzard guards with securecallfunction.
+local function isForeverLootTooltip(tooltip)
+    if (not isForever or not tooltip) then
+        return false
+    end
+    local owner = tooltip.GetOwner and tooltip:GetOwner()
+    return owner ~= nil
+        and type(owner.GetSlotIndex) == "function"
+        and type(owner.GetItemSlotType) == "function"
+end
+
 local function onTooltipSetUnit(tooltip, data)
     TT.ev.unitRender = (TT.ev.unitRender or 0) + 1
     noteOwnerUnitGUID(tooltip)
@@ -2385,6 +2502,35 @@ local function onTooltipSetUnit(tooltip, data)
         end
     end
 
+    -- Forever / Camelot: the hovered player's zone, one row below Target.
+    -- Gated on the four unit-frame families (see isForeverWatchedFrameUnit)
+    -- and on the client answering C_Map.GetBestMapForUnit; a unit the client
+    -- cannot place produces no row. The map query uses the OWNER frame's unit
+    -- token: the tooltip's resolved token is often "mouseover", which the
+    -- client does not answer for (C_Map.GetBestMapForUnit documents the player
+    -- and party members only, MapDocumentation.lua:49-60). The tooltip unit is
+    -- the fallback. The label is the client's own localized ZONE string, so no
+    -- locale key is invented here.
+    local zoneOwnerUnit = getTooltipOwnerUnit(tooltip)
+    if (isForever and UnitIsPlayer(tooltipUnit)
+            and isForeverWatchedFrameUnit(zoneOwnerUnit)) then
+        local zoneUnit = zoneOwnerUnit
+        if (zoneOwnerUnit == "target") then
+            zoneUnit = resolveGroupTokenFor(tooltipUnit) or zoneOwnerUnit
+        end
+        local zoneName = getUnitZoneName(zoneUnit) or getUnitZoneName(zoneOwnerUnit)
+            or getUnitZoneName(tooltipUnit)
+        if (zoneName) then
+            local zoneLabel = ZONE or "Zone"
+            if (wide_style) then
+                addLineDouble(zoneLabel .. ":", zoneName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
+                    NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
+                    HIGHLIGHT_FONT_COLOR.b)
+            else
+                addLineSingle(string.format("%s: |cFFFFFFFF%s|r", zoneLabel, zoneName), 1, 1, 1)
+            end
+        end
+    end
     if (UnitIsPlayer(tooltipUnit)) then
         local localizedClass, class = UnitClass(tooltipUnit)
         local localizedRace = UnitRace(tooltipUnit)
@@ -3173,6 +3319,15 @@ local function resolveTooltipItem(tooltip, data)
 end
 
 local function itemToolTipHook(self, data)
+    -- Forever / Camelot: the loot-window tooltip is secret tooltip data that
+    -- the client rebuilds every frame (see isForeverLootTooltip). Any addon
+    -- line or restyle applied there can drop the client's own secret rows, so
+    -- this hook must leave that tooltip byte-identical to what the client
+    -- built. Returning before clearTooltipVisuals also keeps the per-frame
+    -- work off a tooltip that is rebuilt many times per second.
+    if (isForeverLootTooltip(self)) then
+        return
+    end
     clearTooltipVisuals(self, nil, nil, "item")
 
     local itemLink = resolveTooltipItem(self, data)
@@ -3377,7 +3532,11 @@ local function onTooltipShow(tooltip)
 
     local state = getTooltipState(tooltip)
     local shownItemLink
-    if (tooltip and tooltip.GetItem) then
+    -- The loot-window tooltip is deliberately not read here: reading its
+    -- tooltip info from this tainted OnShow hook is the read Blizzard guards
+    -- with securecallfunction (GameTooltip.lua:994-1003), and the tooltip is
+    -- left untouched on Forever anyway (see isForeverLootTooltip).
+    if (not isForeverLootTooltip(tooltip) and tooltip and tooltip.GetItem) then
         local itemOk, _, itemLink = pcall(tooltip.GetItem, tooltip)
         shownItemLink = itemLink
         if (not itemOk) then
@@ -3387,15 +3546,25 @@ local function onTooltipShow(tooltip)
     -- If the same item re-shows (shopping tooltip compare), keep its pending
     -- item-load registration alive instead of tearing it down and re-requesting.
     local preservePendingItem = shownItemLink ~= nil and state.currentItemLink == shownItemLink
+    -- Forever loot-window tooltip: do not read its tooltip data at all. Both
+    -- resolveTooltipUnit (GetDisplayedUnit -> GetPrimaryTooltipData) and
+    -- GetItem are tooltip-info reads from this tainted hook, which is exactly
+    -- what Blizzard guards in SetWorldCursor (GameTooltip.lua:994-1003). The
+    -- client owns that tooltip's secret lines; the addon only clears the
+    -- previous hover's visual state below.
+    local lootTooltip = isForeverLootTooltip(tooltip)
     local isUnit = false
-    if (tooltip) then
-        if (tooltip.IsTooltipType and Enum and Enum.TooltipDataType and tooltip:IsTooltipType(Enum.TooltipDataType.Unit)) then
+    local unit
+    if (not lootTooltip) then
+        if (tooltip) then
+            if (tooltip.IsTooltipType and Enum and Enum.TooltipDataType and tooltip:IsTooltipType(Enum.TooltipDataType.Unit)) then
+                isUnit = true
+            end
+        end
+        unit = resolveTooltipUnit(tooltip)
+        if (unit and UnitExists and UnitExists(unit)) then
             isUnit = true
         end
-    end
-    local unit = resolveTooltipUnit(tooltip)
-    if (unit and UnitExists and UnitExists(unit)) then
-        isUnit = true
     end
 
     if (not isUnit) then
@@ -4553,6 +4722,42 @@ local function collectActiveUnitSection()
                 end
                 diagRow(s, "cached data", pending and "no (inspect in-flight)" or "no (not in cache)", "info")
             end
+        end
+        -- Forever: the tooltip's own talent source for this unit, so a missing
+        -- Talents line is attributable without guessing. No record means the
+        -- inspect never completed; a record with no entries means the client
+        -- did not answer the inspect trait config (or answered it before the
+        -- config was loaded, which the tooltip retries while the GUID matches).
+        if (isForever and CI and type(CI.GetForeverTalentData) == "function") then
+            local okT, talentData = pcall(CI.GetForeverTalentData, CI, activeUnit)
+            if (okT and talentData and talentData.entries and #talentData.entries > 0) then
+                diagRow(s, "forever talents", string.format("yes (%d group(s), active %s)",
+                    #talentData.entries, tostring(talentData.active)), "ok")
+            elseif (okT) then
+                local hasRecord = false
+                if (type(CI.GetUnitData) == "function") then
+                    local okRec, rec = pcall(CI.GetUnitData, CI, guid)
+                    hasRecord = okRec and rec ~= nil
+                end
+                diagRow(s, "forever talents",
+                    hasRecord and "no (cached record has no trait data)"
+                        or "no (no inspect cache record)", "warn")
+            else
+                diagRow(s, "forever talents", "read failed: " .. tostring(talentData), "error")
+            end
+        end
+        -- Forever: why the Zone row is or is not drawn for the current hover.
+        -- The gate is the tooltip owner's own unit token, so report that token
+        -- (not the resolved tooltip token) and the map answer it produced.
+        if (isForever) then
+            local owner = (GameTooltip and type(GameTooltip.GetOwner) == "function")
+                and GameTooltip:GetOwner() or nil
+            local ownerUnit = owner and owner.unit
+            local watched = isForeverWatchedFrameUnit(ownerUnit)
+            local zoneName = getUnitZoneName(ownerUnit) or getUnitZoneName(activeUnit)
+            diagRow(s, "zone row", string.format("owner unit=%s | watched=%s | zone=%s",
+                tostring(ownerUnit or "none"), tostring(watched), tostring(zoneName or "none")),
+                (watched and zoneName) and "ok" or "warn")
         end
     end
     return s

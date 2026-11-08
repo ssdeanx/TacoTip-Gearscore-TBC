@@ -5,7 +5,7 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v0.9.7) and **TacoTip Extras**
+two addons, one repo: **TacoTip** (root, v0.9.8) and **TacoTip Extras**
 (`TacoTip_Extras/`, v1.2.4), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
@@ -51,6 +51,23 @@ the five clients are two API worlds. never cross them.
   classic or retail path may shift. the old retail/classic talent block
   keeps its `show_talents and not isForever` gate byte-identical; the camelot
   readout is a separate `show_talents and isForever` branch.
+- **the forever zone row is a client-map read, not a zone scan.**
+  `C_Map.GetBestMapForUnit(unit)` is documented as *"Only works for the player
+  and party members"* (`MapDocumentation.lua:49-60`), so the row is drawn only
+  where the client answers; `C_Map.GetMapInfo(mapID).name` is the localized
+  zone (`MapDocumentation.lua:312-325`, `UiMapDetails` at `:696-706`) and the
+  label is the client's own `ZONE` string (`FriendsFrame.lua:1135`). scope is
+  the owner frame's `unit`: player/target/party/raid only — nameplates, focus,
+  pets and target-of-target are excluded even for players. a unit the client
+  cannot place gets no row; never guess one.
+- **the forever loot-window tooltip is native and must stay native.** it is
+  `GameTooltip:SetLootItem` through a secure tooltip-data delegate
+  (`TooltipDataHandler.lua:495-517,537`), the loot element rebuilds it every
+  frame from its item button's `OnUpdate` (`LootFrame.lua:464-469`), and its
+  data carries secret lines. blizzard documents that taint into `ProcessInfo`
+  plus secret line data/text can make the tooltip display no lines
+  (`GameTooltip.lua:994-1003`), so TacoTip must not add item rows, re-font,
+  cap or restyle that tooltip. normal item tooltips are unaffected.
 
 ## read these first
 

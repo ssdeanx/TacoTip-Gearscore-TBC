@@ -1,0 +1,10 @@
+{"v":1,"task":"taco-harness-multi","state":"running","msg":"started: bash -c LUA=lua5.4 bash Tests/harness/run_all.sh && LUA=luajit bash Tests/harness/run_all.sh","at":1794092003554}
+{"v":1,"task":"taco-harness-multi","msg":"ok    load_test CLASSIC_ERA   slot7","at":1794092004560}
+{"v":1,"task":"taco-harness-multi","msg":"ok    settings_test TBC_ANNIV settings pawn","at":1794092005564}
+{"v":1,"task":"taco-harness-multi","msg":"ok    settings_test FOREVER settings nopawn","at":1794092006569}
+{"v":1,"task":"taco-harness-multi","msg":"ok    taint_test FOREVER","at":1794092007574}
+{"v":1,"task":"taco-harness-multi","msg":"ok    load_test FOREVER      slot7","at":1794092008579}
+{"v":1,"task":"taco-harness-multi","msg":"ok    settings_test TBC_ANNIV settings pawn","at":1794092009584}
+{"v":1,"task":"taco-harness-multi","msg":"ok    settings_test FOREVER nosettings pawn","at":1794092010589}
+{"v":1,"task":"taco-harness-multi","msg":"-------------------------------------------------------------","at":1794092011489}
+{"v":1,"task":"taco-harness-multi","state":"done","pct":100,"msg":"finished","at":1794092011489}

@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.7
+version: 0.9.8
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -21,12 +21,13 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: in-game verified (2026-11-07)
+status: pending in-game verification (2026-11-07)
 updated: 2026-11-07
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
 
+- **<span style="color:#fffe23"><span style="text-decoration:underline">Discord</span></span>** <https://discord.gg/nnbN4Naad>
 - **<span style="color:#59f0dc"><span style="text-decoration:underline">CurseForge</span></span>**
 — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
 
@@ -46,7 +47,16 @@ updated: 2026-11-07
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
 ---
-> 🎉 **<span style="color:#2ecc71">150,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed **150,000 downloads** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+> 🎉 **<span style="color:#fffc11">200,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed ****200,000 downloads**** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.8</span>
+
+- 🧭 **<span style="color:#59f0dc">Zone Line on WoW Forever Player Frames:</span>** Hovering a player, target, party or raid frame now adds a `Zone:` row directly under the `Target:` row (or under the level line on your own frame). The zone comes from the client's own map data — `C_Map.GetBestMapForUnit` to find the unit's map, then `C_Map.GetMapInfo` for its localized name — and the label is the client's localized `ZONE` string, so no translation is invented. The row covers players only and appears only when the client can actually place the unit; a target outside your group, or any unit the client cannot locate, simply gets no row instead of a guessed zone. Forever only: Classic Era, TBC Anniversary, WotLK Titanforge and Retail are byte-identical.
+- 🛡️ **<span style="color:#59f0dc">Loot-Window Tooltips Left Native (WoW Forever):</span>** The item tooltip in the loot bag is built by `GameTooltip:SetLootItem` from secret tooltip data, and the loot window rebuilds it every frame. Modifying it from addon code is what drops the client's own armour-type row (`Cloth` / `Mail` / `Plate`), which was reported in-game. TacoTip now leaves that one tooltip exactly as the client builds it — no tooltip-data reads, no Item Level or GearScore rows, no font or backdrop pass — so the client renders its own armour-type row. Normal item tooltips (bags, character frame, chat links) keep the Item Level and GearScore rows unchanged, and no other client family is touched. This is the trade-off: the loot bag shows the client's tooltip, not TacoTip's extra rows.
+- 🧪 **<span style="color:#59f0dc">Pins:</span>** `forever_tooltip_test` is now **134/134**. Zone: player/party/raid frames show the row; a group-member target frame resolves through its own party/raid token; a resolved `mouseover` token still asks the owner frame's unit; nameplate, focus and NPC hovers do not; no map answer means no row; the row sits directly under Target; the label follows the client's `ZONE` string; and per-unit map answers are read after load. Loot: the loot tooltip keeps its exact line count, gains no TacoTip row, and a normal item tooltip still gets the rows; OnShow performs zero tooltip-data reads there. Talents: the inspected readout renders even when `GetNumSpecGroups(true)` answers nothing, and `/tt diag` reports the hovered player's own talent data. The shared `tooltip_test` gains a cross-client pin that the zone row is Forever-only (it turns red on Classic Era if the `isForever` gate is removed) and that it does render on Forever.
+- 🏷️ **<span style="color:#59f0dc">Version:</span>** **0.9.8** (in-game verification pending). TOC, Lua fallbacks, README, CHANGELOG, AGENTS and the harness version pins move together.
 
 ---
 

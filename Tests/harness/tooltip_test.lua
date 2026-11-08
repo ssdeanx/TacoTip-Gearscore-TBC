@@ -812,7 +812,17 @@ REALG.C_PlayerInfo = {
         return type(g) == "string" and string.find(g, "Player%-", 1) == 1
     end
 }
-REALG.C_Map = { GetBestMapForUnit = function() return nil end }
+REALG.C_Map = {
+    -- Mutable indirection: main.lua captures this function when it loads, so a
+    -- test that replaces the table field afterwards would not change what the
+    -- addon calls. The captured function reads the state table instead.
+    GetBestMapForUnit = function(u)
+        return REALG.__bestMapForUnit and REALG.__bestMapForUnit(u) or nil
+    end,
+    GetMapInfo = function(id)
+        return REALG.__mapInfo and REALG.__mapInfo(id) or nil
+    end,
+}
 -- Realistic Warrior specialization model, mirroring the Classic talent model:
 -- group 1 is active and holds Arms (tab 1, 21 points), group 2 holds Fury
 -- (tab 2, 31 points). Group 1 being active is what makes the second spec line
@@ -1329,6 +1339,42 @@ do
         check("3D portrait present for the model-teardown test", false,
             "no TacoTipPortrait3D on the tooltip")
     end
+end
+
+-- The Forever zone row is Forever-only. Drive a watched player frame with a
+-- client that would happily answer the map query: only the Forever branch may
+-- render the row, and the other four families must stay byte-identical.
+do
+    local isForeverClient = TT_INSPECTOR and TT_INSPECTOR.IsForever and TT_INSPECTOR:IsForever()
+    REALG.__bestMapForUnit = function() return 84 end
+    REALG.__mapInfo = function(mapID)
+        if (mapID == 84) then return { name = "Elwynn Forest" } end
+        return nil
+    end
+    local savedOwner = GT.GetOwner
+    GT.GetOwner = function() return { unit = "player" } end
+
+    seedTooltip()
+    if (usePipeline) then
+        if (POSTCALLS and POSTCALLS[1]) then
+            POSTCALLS[1].fn(GT, { guid = REALG.UnitGUID("player") })
+        end
+    elseif (GT.__hooks and GT.__hooks.OnTooltipSetUnit) then
+        GT.__hooks.OnTooltipSetUnit(GT, REALG.UnitGUID("player"))
+    end
+    if (isForeverClient) then
+        check("zone row renders on Forever",
+            string.find(allText(), "Elwynn Forest", 1, true) ~= nil,
+            string.gsub(allText(), "\n", " | "))
+    else
+        check("zone row is Forever-only (not rendered on this family)",
+            string.find(allText(), "Elwynn Forest", 1, true) == nil,
+            string.gsub(allText(), "\n", " | "))
+    end
+
+    GT.GetOwner = savedOwner
+    REALG.__bestMapForUnit = nil
+    REALG.__mapInfo = nil
 end
 
 -- The 3D portrait must not be reloaded on every render. This is the actual
