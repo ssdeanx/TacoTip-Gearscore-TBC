@@ -40,7 +40,7 @@ updated: 2026-11-07
 | **<span style="color:#2ecc71">The Burning Crusade Classic Anniversary</span>** | `20506` | <span style="color:#2ecc71">**Active**</span> |
 | **<span style="color:#3498db">WotLK Titanforge</span>** | `38002` | <span style="color:#2ecc71">**Active**</span> |
 | **<span style="color:#9b59b6">WoW Forever</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#e74c3c">Retail / Live (The War Within & Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> |
+| **<span style="color:#e74c3c">Retail / Live (Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> |
 
 > **<span style="color:#e67e23">This release replaces the previous Classic-only TacoTip.</span>** It is the same
 > addon, continued — your existing configuration carries over, and the GearScore
