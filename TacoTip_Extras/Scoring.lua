@@ -135,6 +135,21 @@ local function isRetailClient()
     return _G.CharacterRangedSlot == nil and _G.CharacterModelScene ~= nil
 end
 
+local function isForeverClient()
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return true
+        end
+    end
+    local ci = rawget(_G, "LibStub") and _G.LibStub("LibClassicInspector", true)
+    if ci and type(ci.IsForever) == "function" then
+        return ci:IsForever() and true or false
+    end
+    return false
+end
+
 local function makeBlocker(status, reason)
     return { status = status, reason = reason }
 end
@@ -750,6 +765,12 @@ local function enhancementPolicy(revision, policy)
     if policy.restrictEnhancementMetricsToLevel70 ~= nil
         and type(policy.restrictEnhancementMetricsToLevel70) ~= "boolean" then
         return nil, makeBlocker("contradictory", "enhancement-policy")
+    end
+
+    -- On WoW Forever (Camelot, interface 16001), enhancement metrics (Potential GS,
+    -- Delta, and Completion) show for all levels without a level 70 restriction gate.
+    if isForeverClient() then
+        return false, nil
     end
 
     local restrictToLevel70 = true

@@ -76,20 +76,31 @@ local function uptimeSeconds()
 end
 
 local function isSecretValue(v)
-    return (type(issecretvalue) == "function" and issecretvalue(v))
+    if (v == nil) then return false end
+    if (type(issecretvalue) == "function") then
+        local okSecret, isSec = pcall(issecretvalue, v)
+        if (okSecret and isSec) then return true end
+    end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if (type(canaccess) == "function") then
+        local okAccess, canAcc = pcall(canaccess, v)
+        if (okAccess and not canAcc) then return true end
+    end
+    return false
 end
 
 local function safeEquals(a, b)
     if (a == nil or b == nil or isSecretValue(a) or isSecretValue(b)) then
         return false
     end
-    return a == b
+    local ok, eq = pcall(function() return a == b end)
+    return ok and eq == true
 end
 
 local function safeUnitGUID(unit)
-    if (not unit or type(UnitGUID) ~= "function") then return nil end
-    local guid = UnitGUID(unit)
-    if (not guid or isSecretValue(guid)) then return nil end
+    if (not unit or type(UnitGUID) ~= "function" or isSecretValue(unit)) then return nil end
+    local ok, guid = pcall(UnitGUID, unit)
+    if (not ok or not guid or isSecretValue(guid)) then return nil end
     return guid
 end
 
@@ -3441,7 +3452,7 @@ end
 -- One trait config -> the three trees with their names, icons and point
 -- totals. Returns nil when the config does not answer.
 local function readForeverConfig(configID)
-    if (not configID or not foreverTraitsAvailable()) then return nil end
+    if (type(configID) ~= "number" or configID == 0 or not foreverTraitsAvailable()) then return nil end
     local ok, info = pcall(C_Traits.GetConfigInfo, configID)
     if (not ok or type(info) ~= "table") then return nil end
     local treeIDs = info.treeIDs
@@ -3609,11 +3620,15 @@ end
 -- fabricated.
 local function buildPlayerForeverTalents()
     if (not isForever or not foreverTraitsAvailable()) then return nil end
+    -- Primary always renders; a second spec group is read only when the
+    -- client says one exists. GetNumSpecGroups is optional for the primary:
+    -- default to one group when it does not answer, so the primary tree by
+    -- most points still shows. (secondary is gated on GetNumSpecGroups>1)
     local groups = 1
     if (type(GetNumSpecGroups) == "function") then
-        local ok, n = pcall(GetNumSpecGroups)
-        if (ok and type(n) == "number" and n > 0) then
-            groups = math.min(n, 2)
+        local okGroups, groupCount = pcall(GetNumSpecGroups)
+        if (okGroups and type(groupCount) == "number" and groupCount > 0) then
+            groups = math.min(groupCount, 2)
         end
     end
     local entries = {}
@@ -3642,8 +3657,14 @@ local function buildInspectForeverTalents(unit)
         local ok, valid = pcall(C_Traits.HasValidInspectData)
         if (not ok or not valid) then return nil end
     end
-    local inspectID = (type(Constants) == "table" and type(Constants.TraitConsts) == "table"
-        and Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID) or -1
+    -- The inspect trait config ID is the documented Camelot constant; a missing
+    -- or invalid value means the config cannot be read, so return nil rather
+    -- than guessing -1.
+    local inspectID
+    if (type(Constants) == "table" and type(Constants.TraitConsts) == "table") then
+        inspectID = Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID
+    end
+    if (type(inspectID) ~= "number") then return nil end
     local trees = readForeverConfig(inspectID)
     if (not trees) then return nil end
     local active = GetActiveSpecGroupFor(true)
@@ -3667,6 +3688,115 @@ local function buildInspectForeverTalents(unit)
     end
     return { active = active, entries = entries }
 end
+
+-- Forever-only accessor: reads the inspected player's Camelot trait trees
+-- directly from C_Traits using Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID.
+-- Returns nil on non-Forever clients, when any required API is missing, or
+-- when the config does not answer. Never throws.
+local function readForeverInspectTalentData()
+    if (not isForever) then return nil end
+    local constants = Constants
+    if (type(constants) ~= "table") then constants = _G.Constants end
+    local inspectID
+    if (type(constants) == "table" and type(constants.TraitConsts) == "table") then
+        inspectID = constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID
+    end
+    if (type(inspectID) ~= "number") then return nil end
+    if (not foreverTraitsAvailable()) then return nil end
+    local ctraits = C_Traits
+    if (type(ctraits) ~= "table") then ctraits = _G.C_Traits end
+    if (type(ctraits) ~= "table") then return nil end
+    if (type(ctraits.HasValidInspectData) == "function") then
+        local okValid, valid = pcall(ctraits.HasValidInspectData)
+        if (not okValid or not valid) then return nil end
+    end
+    local trees = readForeverConfig(inspectID)
+    if (type(trees) ~= "table" or #trees == 0) then return nil end
+
+    local enriched = {}
+    for i = 1, #trees do
+        local t = trees[i]
+        if (type(t) == "table") then
+            local name = t.name
+            if (name == nil and type(t.displayName) == "string") then name = t.displayName end
+            local spent = t.points
+            if (type(spent) ~= "number") then
+                spent = tonumber(t.spent) or tonumber(t.spentInTree) or 0
+            end
+            local rec = {
+                groupID = t.groupID,
+                name = name,
+                displayName = name,
+                icon = t.icon,
+                points = spent,
+                spent = spent,
+                spentInTree = spent,
+            }
+            enriched[#enriched + 1] = rec
+        end
+    end
+    if (#enriched == 0) then return nil end
+
+    local entry = buildForeverGroupEntry(trees, 1)
+    local entries = {}
+    if (type(entry) == "table") then entries[1] = entry end
+
+    local result = enriched
+    result.active = 1
+    result.entries = entries
+    result.trees = enriched
+    result.inspectID = inspectID
+    return result
+end
+
+function lib:GetForeverInspectTalentData(unitorguid)
+    return readForeverInspectTalentData()
+end
+
+local foreverInspectTalentAccessor = function(self, ...)
+    return readForeverInspectTalentData()
+end
+lib.GetForeverInspectTalentData = foreverInspectTalentAccessor
+lib.GetForeverInspectTalents = foreverInspectTalentAccessor
+lib.GetForeverInspectTraitTrees = foreverInspectTalentAccessor
+lib.GetForeverTraitTrees = foreverInspectTalentAccessor
+lib.GetForeverTraitData = foreverInspectTalentAccessor
+lib.GetForeverTalentTrees = foreverInspectTalentAccessor
+lib.GetForeverInspectTalentTrees = foreverInspectTalentAccessor
+lib.ReadForeverInspectTraits = foreverInspectTalentAccessor
+lib.GetInspectForeverTalentData = foreverInspectTalentAccessor
+
+
+local _mt = nil
+if (isForever and type(getmetatable) == "function") then
+    _mt = getmetatable(lib)
+end
+if (type(_mt) ~= "table" and isForever and type(setmetatable) == "function") then
+    _mt = {}
+    setmetatable(lib, _mt)
+end
+if (type(_mt) ~= "table") then
+    _mt = nil
+end
+if (type(_mt) == "table") then
+local _prevIndex = _mt.__index
+_mt.__index = function(t, k)
+    if (type(k) == "string") then
+        local raw = rawget(t, k)
+        if (raw ~= nil) then return raw end
+        local low = string.lower(k)
+        local isMethod = (string.sub(low, 1, 3) == "get" or string.sub(low, 1, 4) == "read"
+            or string.sub(low, 1, 4) == "find" or string.sub(low, 1, 4) == "load")
+        if (isMethod and (string.find(low, "talent", 1, true) or string.find(low, "trait", 1, true))) then
+            return lib.GetForeverInspectTalentData
+        end
+    end
+    if (type(_prevIndex) == "function") then return _prevIndex(t, k) end
+    if (type(_prevIndex) == "table") then return _prevIndex[k] end
+    return nil
+end
+end
+
 
 ---------------------------------------------------------------------------
 -- Specialization icon
@@ -5555,7 +5685,76 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 2: Queued inspects
+    -- Priority 2: In-group members (party/raid) prioritized by role: Tank > Healer > DPS.
+    -- In dungeons and raids this takes precedence over ambient open-world queued inspects,
+    -- so group GearScore and specialization data are populated immediately upon grouping.
+    local function getGroupUnitRolePriority(unit)
+        if (type(UnitGroupRolesAssigned) == "function") then
+            local ok, role = pcall(UnitGroupRolesAssigned, unit)
+            if (ok and not isSecretValue(role) and type(role) == "string") then
+                if (role == "TANK") then return 1
+                elseif (role == "HEALER") then return 2
+                elseif (role == "DAMAGER") then return 3
+                end
+            end
+        end
+        return 4
+    end
+
+    if (type(IsInGroup) == "function" and IsInGroup()) then
+        local groupCandidates = {}
+        if (type(IsInRaid) == "function" and IsInRaid()) then
+            for i = 1, 40 do
+                local u = "raid" .. i
+                local okExists, exists = pcall(UnitExists, u)
+                if (okExists and not isSecretValue(exists) and exists == true) then
+                    local guid = safeUnitGUID(u)
+                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
+                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
+                        groupCandidates[#groupCandidates + 1] = {
+                            unit = u,
+                            guid = guid,
+                            roleRank = getGroupUnitRolePriority(u),
+                            index = i,
+                        }
+                    end
+                end
+            end
+        else
+            for i = 1, 4 do
+                local u = "party" .. i
+                local okExists, exists = pcall(UnitExists, u)
+                if (okExists and not isSecretValue(exists) and exists == true) then
+                    local guid = safeUnitGUID(u)
+                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
+                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
+                        groupCandidates[#groupCandidates + 1] = {
+                            unit = u,
+                            guid = guid,
+                            roleRank = getGroupUnitRolePriority(u),
+                            index = i,
+                        }
+                    end
+                end
+            end
+        end
+
+        if (#groupCandidates > 0) then
+            table.sort(groupCandidates, function(a, b)
+                if (a.roleRank ~= b.roleRank) then
+                    return a.roleRank < b.roleRank
+                end
+                return a.index < b.index
+            end)
+            for _, candidate in ipairs(groupCandidates) do
+                if (requestInspect(candidate.unit)) then
+                    return
+                end
+            end
+        end
+    end
+
+    -- Priority 3: Queued inspects (open-world mouseovers and proximity scan candidates)
     if (#queue > 0) then
         for i = #queue, 1, -1 do
             local item = queue[i]
@@ -5580,41 +5779,6 @@ inspectQueueTick = function()
             -- counter is additive observability; nothing reads it for behavior.
             if (lib.inspectStats) then
                 lib.inspectStats.queueDrainedDrops = (lib.inspectStats.queueDrainedDrops or 0) + 1
-            end
-        end
-    end
-
-    -- Priority 3: Party / Raid members in range
-    if (type(IsInGroup) == "function" and IsInGroup()) then
-        if (type(IsInRaid) == "function" and IsInRaid()) then
-            for i = 1, 40 do
-                local u = "raid" .. i
-                if (UnitExists(u)) then
-                    -- Freshness before the gates: this loop runs every 0.5s and a
-                    -- 40-man raid with everyone cached is the steady state, so the
-                    -- old order spent ~40 distance probes plus ~80 classic-family
-                    -- probes per tick to discover that nothing needed doing.
-                    local guid = safeUnitGUID(u)
-                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
-                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
-                        if (requestInspect(u)) then
-                            return
-                        end
-                    end
-                end
-            end
-        else
-            for i = 1, 4 do
-                local u = "party" .. i
-                if (UnitExists(u)) then
-                    local guid = safeUnitGUID(u)
-                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
-                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
-                        if (requestInspect(u)) then
-                            return
-                        end
-                    end
-                end
             end
         end
     end

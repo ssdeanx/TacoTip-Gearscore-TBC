@@ -69,8 +69,10 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
      | awk '/Name = "GetConfigsByType"/,/^\t\t},$/ {print}'
    git show origin/forever:Interface/AddOns/Blizzard_APIDocumentationGenerated/SharedTraitsDocumentation.lua \
      | awk '/Name = "TraitConfigInfo"/,/^ },$/ {print}'
+   # Call sites excluding generated documentation
+   git grep -n 'GetConfigsByType\|GetConfigIDsBySpecID' origin/forever -- '*.lua' | grep -v Documentation
    ```
-   Report the full argument/return/field list from the awk output, not a truncated `grep -A` excerpt. `GetConfigsByType` takes `configType` and returns `configIDs`; `TraitConfigInfo` includes `ID`, `type`, `name`, `treeIDs`, and `usesSharedActionBars`.
+   GetConfigsByType records SecretArguments AllowedWhenUntainted, and the call-site grep names Blizzard_ClassTalentsFrame.lua:802 calling GetConfigIDsBySpecID. Report the full argument/return/field list from the awk output, not a truncated `grep -A` excerpt. `GetConfigsByType` takes `configType` and returns `configIDs`; `TraitConfigInfo` includes `ID`, `type`, `name`, `treeIDs`, and `usesSharedActionBars`. Copy every field Name verbatim and never normalize or rename fields: TalentInfoQuery lists groupIndex, isInspect, and tier. If you think you see talentGroup in the query, you are misreading the block, so re-extract with the awk range above and report what the output actually shows.
 
 6. **Read implementation or call sites via `git show` / `git grep` on the ref.** Determine the client-specific source path first (paths differ by family), then read a section:
    ```bash
@@ -147,7 +149,7 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
     ```bash
     grep -RInE 'CanInspect|CheckInteractDistance' --include='*.lua' .
     ```
-    For every hit, record file and line, the call form (`_G.`, local alias, or direct), and the client-family guard or skip. Report a table: file:line, function, client family behavior, guard/skip status. A call is acceptable only when it is either guarded by a client-aware predicate (for example Forever/Retail skip or library guard) or intentionally limited to Classic clients. Do not leave an unguarded direct call on Forever or Retail.
+    Run the grep from the addon repo root and paste each grep line verbatim into the report table (file:line, function, call form, client-family guard or skip). Never use placeholder text such as grep hits recorded verbatim in audit and never submit a table with no file:line entries; if grep returns no hits, state explicitly no hits with the command and working directory, and if the output is unavailable, re-run this step before reporting. A generic guard description without a tied call does not count as verified. A call is acceptable only when it is either guarded by a client-aware predicate (for example Forever/Retail skip or library guard) or intentionally limited to Classic clients. Do not leave an unguarded direct call on Forever or Retail.
 
 12. **Audit unsafe tooltip predicates.** Search addon tooltip code for string operations on aura tooltip text:
     ```bash
@@ -258,6 +260,8 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - **Absence is a result.** Report ABSENT explicitly per branch; never infer presence from another branch. `C_TooltipInfo.GetUnitAura` is absent on the Classic families.
 - **Signature blocks are multi-line.** Use `-A20` or more; truncating hides Returns/Arguments and annotation differences.
 - **`grep -A` can return no output or truncate nested docs.** For nested `SpecializationInfoDocumentation`, `SharedTraitsDocumentation`, and `TraitConstantsDocumentation` blocks, use the awk Name-to-close range reads in step 5a and cite the full block.
+- **No placeholder audit tables.** A protected-call audit with placeholder text and no file:line entries, or a generic guard claim untied to any call, is a failed audit even when the prose sounds correct. If grep output is unavailable, re-run step 11 until every hit has a concrete file:line and a tied guard or skip.
+- **Never paraphrase documentation field names.** Report groupIndex, tier, and all other field Names exactly as the awk output spells them; normalizing them to talentGroup or moving tier out of the query corrupts the contract.
 - **Forever inspect paths are client-specific.** Use `Blizzard_PlayerSpells/ClassTalents/Blizzard_ClassTalentsFrame.lua` and `Blizzard_PlayerSpells/Blizzard_PlayerSpellsFrame.lua` on `origin/forever`; do not substitute Classic or Retail paths or refs.
 - **Working tree may sit on classic_era.** Local files reflect only that branch; never treat them as evidence for other branches.
 - **Secret text is not comparable.** Expressions such as `text == ""`, `text == nil` only after a type check, `string.lower(text)`, `string.find`, concatenation, logging, or table-key use can crash or taint in combat. Guard with `issecretvalue`/`canaccessvalue` before any operation.
@@ -281,12 +285,12 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - Signatures and annotations applied to code match the generated documentation blocks read from `origin/<branch>:path`.
 - `C_TooltipInfo.GetUnitAura` is reported with `SecretWhenUnitAuraRestricted = true` where present, and ABSENT on Classic Era, Anniversary, and Titan.
 - Secret aura tooltip text is documented as forward-only: untouched, never compared or string-processed.
-- Every direct `CanInspect`/`CheckInteractDistance` call is listed with file:line and a client-aware guard or skip.
+- Every direct `CanInspect`/`CheckInteractDistance` call is listed with a concrete file:line from the step 11 grep and a client-aware guard or skip tied to that call, with no placeholder text and no table lacking file:line entries.
 - `/tt diag` reports distance on Classic clients and does not invoke `CheckInteractDistance` directly on Forever or Retail.
 - No `ADDON_ACTION_BLOCKED` error occurs during `/tt diag`.
 - Unsafe tooltip predicates are identified and corrected with an `issecretvalue`/`canaccessvalue` guard plus `pcall` before any string operation, while preserving ordinary-text foreign-row detection.
 - `issecretvalue` is declared in `.luacheckrc` `read_globals` and used directly (not via `_G.issecretvalue`, not self-defined); `luacheck` reports 0 warnings / 0 errors and no W113 for `issecretvalue`.
 - The power-bar show gate returns true for secret `UnitPowerMax` without arithmetic/comparison on the secret value, and the secret values are passed uncompared to StatusBar `SetMinMaxValues`/`SetValue`.
 - Tooltip harness passes for FOREVER and RETAIL with secret-value pins, a `UnitPowerMax > 0` mutant fails those pins (red), and the restored helper returns to green.
-- Nested `SpecializationInfoDocumentation` and `SharedTraitsDocumentation` blocks are extracted with awk Name-to-close ranges and report full fields (for example `GetSpecialization`, `TalentInfoQuery`, `TalentInfoResult`, `GetConfigsByType`, and `TraitConfigInfo`).
+- Nested `SpecializationInfoDocumentation` and `SharedTraitsDocumentation` blocks are extracted with awk Name-to-close ranges and report full fields verbatim, including TalentInfoQuery groupIndex, isInspect, and tier and TalentInfoResult fields.
 - The Forever inspect chain cites `TraitConstantsDocumentation.lua:352` (`INSPECT_TRAIT_CONFIG_ID = -1`) and `Blizzard_ClassTalentsFrame.lua:887` (`SetConfigID(...INSPECT_TRAIT_CONFIG_ID...)`).

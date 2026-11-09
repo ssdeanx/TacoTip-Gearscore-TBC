@@ -517,6 +517,21 @@ local function readLevel(revision)
     return nil
 end
 
+local function isForeverClient()
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return true
+        end
+    end
+    local ci = rawget(_G, "LibStub") and _G.LibStub("LibClassicInspector", true)
+    if ci and type(ci.IsForever) == "function" then
+        return ci:IsForever() and true or false
+    end
+    return false
+end
+
 -- Is the level-70 rule in force?
 --
 -- ONE source of truth: the same accessor the scorer is handed
@@ -526,6 +541,9 @@ end
 -- gate believed the user had switched the restriction off, and the three
 -- metrics then read "Unavailable" instead of showing a value.
 local function level70RestrictionEnabled()
+    if isForeverClient() then
+        return false
+    end
     local core = namespace.Core
     if type(core) == "table" and type(core.GetEnhancementPolicy) == "function" then
         local ok, policy = pcall(core.GetEnhancementPolicy)
@@ -540,6 +558,9 @@ local function level70RestrictionEnabled()
 end
 
 local function enhancementMetricsSuppressed(revision)
+    if isForeverClient() then
+        return false
+    end
     if not level70RestrictionEnabled() then
         return false
     end

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.9"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.0"
 
 
 
@@ -77,28 +77,67 @@ end
 
 stage("core")
 
+local safeWipe = _G.wipe or table.wipe or function(t)
+    if (type(t) ~= "table") then return t end
+    for k in pairs(t) do t[k] = nil end
+    return t
+end
+
+-- Zero-allocation tooltip line fontstring caches:
+-- On Classic Era, TBC, and Titanforge where tooltip.GetLeftLine does not exist,
+-- lookups fall back to _G[name .. "TextLeft" .. index]. Caching the resolved
+-- FontString objects avoids dozens of string allocations per hover tick.
+local tooltipLeftLineCache = setmetatable({}, { __mode = "k" })
+local tooltipRightLineCache = setmetatable({}, { __mode = "k" })
+
 function TT.GetTooltipLeftLine(tooltip, index)
     if (not tooltip or not index) then return nil end
+    local lines = tooltipLeftLineCache[tooltip]
+    if (lines and lines[index]) then
+        return lines[index]
+    end
+    local line
     if (tooltip.GetLeftLine) then
-        return tooltip:GetLeftLine(index)
+        line = tooltip:GetLeftLine(index)
+    else
+        local name = tooltip.GetName and tooltip:GetName()
+        if (name) then
+            line = _G[name .. "TextLeft" .. index]
+        end
     end
-    local name = tooltip.GetName and tooltip:GetName()
-    if (name) then
-        return _G[name .. "TextLeft" .. index]
+    if (line) then
+        if (not lines) then
+            lines = {}
+            tooltipLeftLineCache[tooltip] = lines
+        end
+        lines[index] = line
     end
-    return nil
+    return line
 end
 
 function TT.GetTooltipRightLine(tooltip, index)
     if (not tooltip or not index) then return nil end
+    local lines = tooltipRightLineCache[tooltip]
+    if (lines and lines[index]) then
+        return lines[index]
+    end
+    local line
     if (tooltip.GetRightLine) then
-        return tooltip:GetRightLine(index)
+        line = tooltip:GetRightLine(index)
+    else
+        local name = tooltip.GetName and tooltip:GetName()
+        if (name) then
+            line = _G[name .. "TextRight" .. index]
+        end
     end
-    local name = tooltip.GetName and tooltip:GetName()
-    if (name) then
-        return _G[name .. "TextRight" .. index]
+    if (line) then
+        if (not lines) then
+            lines = {}
+            tooltipRightLineCache[tooltip] = lines
+        end
+        lines[index] = line
     end
-    return nil
+    return line
 end
 
 local getTooltipLeftLine = TT.GetTooltipLeftLine
@@ -204,7 +243,14 @@ local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
 function TT.isSecretValue(v)
-    return (type(issecretvalue) == "function" and issecretvalue(v))
+    if (type(issecretvalue) == "function" and issecretvalue(v)) then
+        return true
+    end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if (type(canaccess) == "function" and not canaccess(v)) then
+        return true
+    end
+    return false
 end
 local isSecretValue = TT.isSecretValue
 
@@ -212,14 +258,15 @@ function TT.safeEquals(a, b)
     if (a == nil or b == nil or TT.isSecretValue(a) or TT.isSecretValue(b)) then
         return false
     end
-    return a == b
+    local ok, eq = pcall(function() return a == b end)
+    return ok and eq == true
 end
 local safeEquals = TT.safeEquals
 
 function TT.safeUnitGUID(unit)
-    if (not unit or type(UnitGUID) ~= "function") then return nil end
-    local guid = UnitGUID(unit)
-    if (not guid or TT.isSecretValue(guid)) then return nil end
+    if (not unit or type(UnitGUID) ~= "function" or TT.isSecretValue(unit)) then return nil end
+    local ok, guid = pcall(UnitGUID, unit)
+    if (not ok or not guid or TT.isSecretValue(guid)) then return nil end
     return guid
 end
 local safeUnitGUID = TT.safeUnitGUID
@@ -271,6 +318,20 @@ local function getTooltipState(tooltip)
     return tooltip._tacoTipState
 end
 
+-- Resolve the owner frame's unit token across player, target, pet, party,
+-- and raid frames (handling direct .unit, .displayedUnit, or secure attributes).
+local function getTooltipOwnerUnit(tooltip)
+    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
+    if (not owner) then
+        return nil
+    end
+    local unit = owner.unit or owner.displayedUnit
+    if (not unit and type(owner.GetAttribute) == "function") then
+        unit = owner:GetAttribute("unit")
+    end
+    return unit
+end
+
 -- The owner frame's unit is the strongest identity a unit tooltip has. It is
 -- set by UnitFrame_UpdateTooltip before SetUnit and it survives every periodic
 -- re-drive, including the first one -- when the modern post-call runs before
@@ -283,15 +344,67 @@ local function noteOwnerUnitGUID(tooltip)
     if (not state) then
         return
     end
-    local owner = tooltip.GetOwner and tooltip:GetOwner()
-    if (owner and owner.unit and type(UnitGUID) == "function"
-            and (not UnitExists or UnitExists(owner.unit))) then
-        state.ownerUnitGUID = safeUnitGUID(owner.unit)
-        state.ownerUnitToken = owner.unit
+    local ownerUnit = getTooltipOwnerUnit(tooltip)
+    if (ownerUnit and type(UnitGUID) == "function"
+            and (not UnitExists or UnitExists(ownerUnit))) then
+        state.ownerUnitGUID = safeUnitGUID(ownerUnit)
+        state.ownerUnitToken = ownerUnit
     else
         state.ownerUnitGUID = nil
         state.ownerUnitToken = nil
     end
+end
+
+local function isUnitFramePeriodicUpdate(tooltip)
+    if (not tooltip) then
+        return false
+    end
+    local owner = tooltip.GetOwner and tooltip:GetOwner()
+    if (not owner) then
+        return false
+    end
+    local state = getTooltipState(tooltip)
+    local curGUID = state and state.currentUnitGUID
+    local ownerUnitGUID = state and state.ownerUnitGUID
+    local ownerUnit = getTooltipOwnerUnit(tooltip)
+    local unitGUID
+    if (ownerUnit and UnitExists and UnitExists(ownerUnit)) then
+        unitGUID = safeUnitGUID(ownerUnit)
+    end
+    -- Two proofs of "still the same unit": the rendered GUID (successful
+    -- resolve) and the owner's unit GUID (recorded before resolution ran).
+    -- The second exists because the modern post-call runs before Show(), when
+    -- the first tick can be unreadable -- and currentUnitGUID is then never
+    -- written, so the old check rejected every subsequent tick and tore the
+    -- portrait down five times a second while the mouse sat still on a unit
+    -- frame. That is the long-standing Retail/Forever blink.
+    -- The owner-GUID proof is modern-only: the pre-Show postcall resolution
+    -- failure it covers is a modern ordering fact. Classic keeps the old
+    -- currentUnitGUID-only test exactly.
+    local sameUnit = false
+    if (unitGUID ~= nil) then
+        sameUnit = safeEquals(unitGUID, curGUID)
+            or ((isForever or isRetail) and safeEquals(unitGUID, ownerUnitGUID))
+    elseif ((isForever or isRetail) and ownerUnit and state and state.ownerUnitToken
+            and UnitExists and UnitExists(ownerUnit)
+            and type(UnitIsUnit) == "function" and UnitIsUnit(ownerUnit, state.ownerUnitToken)) then
+        sameUnit = true
+    end
+    if (not sameUnit) then
+        return false
+    end
+    if (owner.UpdateTooltip) then
+        return true
+    end
+    -- UnitFrame_OnLeave nils UpdateTooltip before GameTooltip:FadeOut(), so the
+    -- first re-drive after a re-hover reaches ClearLines with no
+    -- UpdateTooltip even though the owner still proves the same unit. While
+    -- the tooltip is SHOWN that clear is the 0.2s tick and must not tear the
+    -- portrait down. A hidden OnHide keeps the normal cleanup path: the parent
+    -- already hides its children, so the portrait is not visible there, and
+    -- skipping the timer/power-bar cleanup on a real hide would be a different
+    -- behaviour change. Classic keeps the old guard exactly.
+    return (isForever or isRetail) and (not tooltip.IsShown or tooltip:IsShown()) and true or false
 end
 
 local function cancelTooltipTimer(tooltip, field)
@@ -345,6 +458,7 @@ local reportedErrors = {}
 TT.lastTooltipError = nil
 TT.totalErrorsCaught = TT.totalErrorsCaught or 0
 TT.errorLog = TT.errorLog or {}
+TT.warningLog = TT.warningLog or {}
 
 function TT:RecordError(subsystem, message, context)
     if (message == nil) then
@@ -354,6 +468,8 @@ function TT:RecordError(subsystem, message, context)
     TT.lastTooltipError = text
     TT.totalErrorsCaught = (TT.totalErrorsCaught or 0) + 1
     local now = (type(GetTime) == "function") and GetTime() or 0
+    local fnDebugStack = rawget(_G, "debugstack")
+    local stack = (type(fnDebugStack) == "function") and fnDebugStack(2, 8, 8) or nil
     local log = TT.errorLog
     if (type(log) == "table") then
         if (#log >= 15) then
@@ -364,7 +480,44 @@ function TT:RecordError(subsystem, message, context)
             subsystem = subsystem or "General",
             message = text,
             context = context and tostring(context) or nil,
+            stack = stack,
         }
+    end
+end
+
+function TT:RecordWarning(subsystem, message, context)
+    if (message == nil) then
+        return
+    end
+    local text = tostring(message)
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    local fnDebugStack = rawget(_G, "debugstack")
+    local stack = (type(fnDebugStack) == "function") and fnDebugStack(2, 6, 6) or nil
+    local log = TT.warningLog
+    if (type(log) == "table") then
+        if (#log >= 30) then
+            table.remove(log, 1)
+        end
+        log[#log + 1] = {
+            time = now,
+            subsystem = subsystem or "Warning",
+            message = text,
+            context = context and tostring(context) or nil,
+            stack = stack,
+        }
+    end
+end
+
+function TT:ClearDiagnosticLogs()
+    TT.errorLog = {}
+    TT.warningLog = {}
+    TT.totalErrorsCaught = 0
+    TT.lastTooltipError = nil
+    reportedErrors = {}
+    if (TT.ev) then
+        TT.ev.pipelineErrorsSuppressed = 0
+        TT.ev.resolveTooltipUnitFailed = 0
+        TT.ev.portraitSetFailed = 0
     end
 end
 
@@ -1148,9 +1301,12 @@ end
 
 local function resolveUnitTokenFromGUID(guid, tooltip)
     if (not guid or isSecretValue(guid)) then return nil end
-    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
-    if (owner and owner.unit and UnitExists and UnitExists(owner.unit) and safeEquals(safeUnitGUID(owner.unit), guid)) then
-        return owner.unit
+    local ownerUnit = getTooltipOwnerUnit(tooltip)
+    if (ownerUnit and not isSecretValue(ownerUnit) and UnitExists and type(UnitExists) == "function") then
+        local okO, existsO = pcall(UnitExists, ownerUnit)
+        if (okO and existsO and safeEquals(safeUnitGUID(ownerUnit), guid)) then
+            return ownerUnit
+        end
     end
     if (safeEquals(safeUnitGUID("player"), guid)) then
         return "player"
@@ -1162,6 +1318,22 @@ local function resolveUnitTokenFromGUID(guid, tooltip)
         return "pet"
     elseif (safeEquals(safeUnitGUID("focus"), guid)) then
         return "focus"
+    end
+    if (type(UnitExists) == "function") then
+        for i = 1, 4 do
+            local partyToken = "party" .. i
+            local okP, existsP = pcall(UnitExists, partyToken)
+            if (okP and existsP and safeEquals(safeUnitGUID(partyToken), guid)) then
+                return partyToken
+            end
+        end
+        for i = 1, 40 do
+            local raidToken = "raid" .. i
+            local okR, existsR = pcall(UnitExists, raidToken)
+            if (okR and existsR and safeEquals(safeUnitGUID(raidToken), guid)) then
+                return raidToken
+            end
+        end
     end
     return nil
 end
@@ -1199,9 +1371,9 @@ local function resolveTooltipUnit(tooltip, unit)
         end
     end
     if (tooltip and tooltip.GetOwner) then
-        local owner = tooltip:GetOwner()
-        if (owner and owner.unit and UnitExists and UnitExists(owner.unit)) then
-            return owner.unit
+        local ownerUnit = getTooltipOwnerUnit(tooltip)
+        if (ownerUnit and UnitExists and UnitExists(ownerUnit)) then
+            return ownerUnit
         end
     end
     -- Last resort. Returning "mouseover" unconditionally is wrong whenever the
@@ -1289,6 +1461,18 @@ local function anchorTooltipPortrait(tooltip, portrait, fromShow)
     if invertSide then
         cachedSide = (cachedSide == "left") and "right" or "left"
     end
+
+    -- If already anchored to this side, scale, and invert with valid points,
+    -- skip ClearAllPoints(): calling ClearAllPoints() on an active 3D PlayerModel
+    -- invalidates the camera projection viewport, causing flickering on periodic 0.2s Show() calls.
+    if (portrait._tacoTipAnchorSide == cachedSide
+            and portrait._tacoTipScale == portraitScale
+            and portrait._tacoTipInvert == invertSide
+            and state.portraitAnchored
+            and portrait.GetNumPoints and portrait:GetNumPoints() > 0) then
+        return
+    end
+
     ---@diagnostic disable-next-line: inject-field
     state.portraitSide = cachedSide
     ---@diagnostic disable-next-line: inject-field
@@ -1300,6 +1484,7 @@ local function anchorTooltipPortrait(tooltip, portrait, fromShow)
     portrait._tacoTipScale = portraitScale
     ---@diagnostic disable-next-line: inject-field
     portrait._tacoTipInvert = invertSide
+    portrait._tacoTipAnchorSide = cachedSide
     portrait:ClearAllPoints()
     portrait:SetSize(portraitW, portraitH)
     TT.ev.portraitAnchor = (TT.ev.portraitAnchor or 0) + 1
@@ -1631,14 +1816,21 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
     if (not guid or TT.isSecretValue(guid)) then
         return nil
     end
+    activeGroup = activeGroup or 1
     -- Self never has an inspect-cache record, so the items-keyed memo below can
     -- never answer for the player. Keep the last live Pawn score under its own
     -- key instead; without this the line was computed on one render and then
     -- missing on the next (the blink).
     if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
         local selfMemo = TT._selfPawnMemo
-        if (selfMemo and selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore) then
-            return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
+        if (selfMemo) then
+            local groupMemo = selfMemo[activeGroup]
+            if (groupMemo and groupMemo.pawnScore) then
+                return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
+            end
+            if (selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore) then
+                return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
+            end
         end
         return nil
     end
@@ -1647,8 +1839,14 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
     end
     local memo = TT._gsMemo
     local entry = memo and memo[guid]
-    if (entry and entry.items == items and entry.pawnGroup == activeGroup and entry.pawnScore) then
-        return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
+    if (entry and entry.items == items) then
+        local groupMemo = entry.pawnScores and entry.pawnScores[activeGroup]
+        if (groupMemo and groupMemo.pawnScore) then
+            return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
+        end
+        if (entry.pawnGroup == activeGroup and entry.pawnScore) then
+            return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
+        end
     end
     return nil
 end
@@ -1657,13 +1855,19 @@ function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, spec
     if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number" or pawnScore <= 0) then
         return
     end
+    activeGroup = activeGroup or 1
     if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
-        TT._selfPawnMemo = {
+        TT._selfPawnMemo = TT._selfPawnMemo or {}
+        TT._selfPawnMemo[activeGroup] = {
             pawnGroup = activeGroup,
             pawnScore = pawnScore,
             pawnSpecName = specName,
             pawnSpecColor = specColor,
         }
+        TT._selfPawnMemo.pawnGroup = activeGroup
+        TT._selfPawnMemo.pawnScore = pawnScore
+        TT._selfPawnMemo.pawnSpecName = specName
+        TT._selfPawnMemo.pawnSpecColor = specColor
         return
     end
     if (not items) then
@@ -1683,12 +1887,19 @@ function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, spec
     local entry = memo[guid]
     if (not entry) then
         TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
-        entry = { items = items }
+        entry = { items = items, pawnScores = {} }
         memo[guid] = entry
     elseif (entry.items ~= items) then
-        entry = { items = items }
+        entry = { items = items, pawnScores = {} }
         memo[guid] = entry
     end
+    entry.pawnScores = entry.pawnScores or {}
+    entry.pawnScores[activeGroup] = {
+        pawnGroup = activeGroup,
+        pawnScore = pawnScore,
+        pawnSpecName = specName,
+        pawnSpecColor = specColor,
+    }
     entry.pawnGroup = activeGroup
     entry.pawnScore = pawnScore
     entry.pawnSpecName = specName
@@ -2161,42 +2372,48 @@ local function isForeverWatchedFrameUnit(unit)
     return string.match(unit, "^party%d+$") ~= nil or string.match(unit, "^raid%d+$") ~= nil
 end
 
-local function getTooltipOwnerUnit(tooltip)
-    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
-    if (not owner) then
-        return nil
-    end
-    local unit = owner.unit
-    if (not unit and type(owner.GetAttribute) == "function") then
-        unit = owner:GetAttribute("unit")
-    end
-    return unit
-end
-
 -- The target frame's token is "target"; C_Map.GetBestMapForUnit documents the
 -- player and party members, and does not answer for the "target" token. When
 -- the target is a group member, translate it to its own party/raid token so
 -- the documented query can answer. A target that is not in the group has no
 -- group token, and the client cannot place a non-group player anyway.
 local function resolveGroupTokenFor(unit)
-    if (not unit or type(UnitIsUnit) ~= "function") then
+    if (not unit or isSecretValue(unit)) then
         return nil
     end
-    local inParty = (type(UnitInParty) == "function") and UnitInParty(unit)
-    local inRaid = (type(UnitInRaid) == "function") and UnitInRaid(unit)
+    local inParty = false
+    if (type(UnitInParty) == "function") then
+        local okP, resP = pcall(UnitInParty, unit)
+        if (okP and not isSecretValue(resP) and resP == true) then
+            inParty = true
+        end
+    end
+    local inRaid = false
+    if (type(UnitInRaid) == "function") then
+        local okR, resR = pcall(UnitInRaid, unit)
+        if (okR and not isSecretValue(resR) and resR ~= nil and resR ~= false) then
+            inRaid = true
+        end
+    end
     if (not inParty and not inRaid) then
         return nil
     end
-    for i = 1, 4 do
-        local token = "party" .. i
-        if (UnitIsUnit(unit, token)) then
-            return token
+    if (inParty and type(UnitIsUnit) == "function") then
+        for i = 1, 4 do
+            local token = "party" .. i
+            local okU, isU = pcall(UnitIsUnit, unit, token)
+            if (okU and not isSecretValue(isU) and isU == true) then
+                return token
+            end
         end
     end
-    for i = 1, 40 do
-        local token = "raid" .. i
-        if (UnitIsUnit(unit, token)) then
-            return token
+    if (inRaid and type(UnitIsUnit) == "function") then
+        for i = 1, 40 do
+            local token = "raid" .. i
+            local okU, isU = pcall(UnitIsUnit, unit, token)
+            if (okU and not isSecretValue(isU) and isU == true) then
+                return token
+            end
         end
     end
     return nil
@@ -2205,26 +2422,23 @@ end
 local mapZoneCache = {}
 
 local function getUnitZoneName(unit)
-    if (not unit or not GetBestMapForUnit or not GetMapInfo) then
+    if (not unit or isSecretValue(unit) or not GetBestMapForUnit or not GetMapInfo) then
         return nil
     end
     local okMap, mapID = pcall(GetBestMapForUnit, unit)
-    if (not okMap or not mapID) then
+    if (not okMap or not mapID or isSecretValue(mapID) or type(mapID) ~= "number") then
         return nil
     end
     local cached = mapZoneCache[mapID]
-    if (cached) then
+    if (cached and not isSecretValue(cached)) then
         return cached
     end
     local okInfo, mapInfo = pcall(GetMapInfo, mapID)
-    local name = okInfo and mapInfo and mapInfo.name
-    if (type(name) ~= "string" or name == "") then
+    if (not okInfo or type(mapInfo) ~= "table") then
         return nil
     end
-    -- A secret value cannot be concatenated into a row. If the client marks
-    -- the name secret, the row is omitted rather than risking a protected
-    -- string operation.
-    if (type(issecretvalue) == "function" and issecretvalue(name)) then
+    local name = mapInfo.name
+    if (isSecretValue(name) or type(name) ~= "string" or name == "") then
         return nil
     end
     mapZoneCache[mapID] = name
@@ -2276,6 +2490,12 @@ local function onTooltipSetUnit(tooltip, data)
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
     if (not tooltipUnit and data and data.guid) then
         tooltipUnit = resolveUnitTokenFromGUID(data.guid, tooltip)
+    end
+    if (not tooltipUnit) then
+        local ownerUnit = getTooltipOwnerUnit(tooltip)
+        if (ownerUnit and UnitExists and UnitExists(ownerUnit)) then
+            tooltipUnit = ownerUnit
+        end
     end
     name = name or (tooltipUnit and UnitName(tooltipUnit))
     if (not tooltipUnit) then
@@ -2373,13 +2593,13 @@ local function onTooltipSetUnit(tooltip, data)
     -- from "this is the same unit being re-rendered because a GearScore item load
     -- completed". Only the former may tear down the 3D portrait.
     local previousGUID = getTooltipState(tooltip).currentUnitGUID
-    -- keepModel: the ONLY call site that can prove the unit did not change.
-    -- True here means "same character, GearScore item load completing, border
+    -- keepModel: true means "same character, GearScore item load completing, border
     -- refresh, re-render" -- all of which must be a complete no-op for the
     -- portrait, or it hides and re-shows on an unchanged model. False (the
-    -- default, and what every other caller gets) tears it down, which is also
+    -- default, and what other callers get) tears it down, which is also
     -- what a genuinely different unit needs so the previous mesh cannot persist.
-    clearTooltipVisuals(tooltip, nil, TT.safeEquals(previousGUID, guid), "guid-change")
+    local isSame = TT.safeEquals(previousGUID, guid)
+    clearTooltipVisuals(tooltip, nil, isSame, "guid-change", isSame)
     getTooltipState(tooltip).currentUnitGUID = guid
     storeTooltipPlayerClassColor(tooltip, tooltipUnit)
 
@@ -2407,8 +2627,8 @@ local function onTooltipSetUnit(tooltip, data)
 
     local wide_style = (TacoTipConfig.tip_style == 1 or ((TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4) and IsShiftKeyDown()))
     local mini_style = (not wide_style and (TacoTipConfig.tip_style == 4 or TacoTipConfig.tip_style == 5))
-    table.wipe(pooledTooltipText)
-    table.wipe(pooledLinesToAdd)
+    safeWipe(pooledTooltipText)
+    safeWipe(pooledLinesToAdd)
     linesToAddCount = 0
     local text = pooledTooltipText
     local linesToAdd = pooledLinesToAdd
@@ -2611,7 +2831,7 @@ local function onTooltipSetUnit(tooltip, data)
             levelLine = string.format("|cFFFFFFFF%s|r %s", levelLabel, levelStr)
         end
 
-        table.wipe(pooledPlayerText)
+        safeWipe(pooledPlayerText)
         local newText = pooledPlayerText
         newText[1] = text[1]
 
@@ -2943,7 +3163,7 @@ local function onTooltipSetUnit(tooltip, data)
                         -- the whole render before the write-back, taking the
                         -- already-queued GearScore/iLvl lines with it; isolate it.
                         local pawnOk, pScore, pSpec, pColor = pcall(TT_PAWN.GetScore, TT_PAWN,
-                            guid, not needGsScore)
+                            guid, not needGsScore, activeGroup)
                         if (pawnOk) then
                             pawnScore, specName, specColor = pScore, pSpec, pColor
                         else
@@ -2955,6 +3175,21 @@ local function onTooltipSetUnit(tooltip, data)
                                 TT.clearGearScoreRetry(guid)
                             end
                             TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+
+                            -- Dual-spec pre-calculation: if the character has a secondary spec group,
+                            -- pre-compute and memoize it without callbacks so switching specs is instantaneous.
+                            local numGroups = (CI and CI.GetNumSpecGroups and CI:GetNumSpecGroups(guid)) or 1
+                            if (numGroups > 1 and type(TT_PAWN.GetScore) == "function") then
+                                local altGroup = (activeGroup == 1) and 2 or 1
+                                local altScore = TT.getPawnScoreMemo(guid, items, altGroup)
+                                if (not altScore) then
+                                    local okAlt, aScore, aSpec, aColor = pcall(TT_PAWN.GetScore, TT_PAWN,
+                                        guid, false, altGroup)
+                                    if (okAlt and aScore and aScore > 0) then
+                                        TT.setPawnScoreMemo(guid, items, altGroup, aScore, aSpec, aColor)
+                                    end
+                                end
+                            end
                         elseif (not retryNoted) then
                             TT.noteGearScoreRetry(guid, scoreNow)
                             TT:WarmGearItemData(guid)
@@ -3012,8 +3247,8 @@ local function onTooltipSetUnit(tooltip, data)
                 end
                 local zoneName = getUnitZoneName(zoneUnit) or getUnitZoneName(zoneOwnerUnit)
                     or getUnitZoneName(tooltipUnit)
-                if (zoneName) then
-                    local zoneLabel = ZONE or "Zone"
+                if (zoneName and not isSecretValue(zoneName)) then
+                    local zoneLabel = (ZONE and not isSecretValue(ZONE)) and ZONE or "Zone"
                     if (wide_style) then
                         addLineDouble(zoneLabel .. ":", zoneName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                             NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
@@ -3132,32 +3367,32 @@ local function onTooltipSetUnit(tooltip, data)
             TacoTipPowerBar:SetStatusBarColor(0, 0, 1)
             rawset(TacoTipPowerBar, "Update", function(self, u)
                 if (TacoTipConfig.show_power_bar) then
-                    local unit = u or resolveTooltipUnit(GameTooltip)
-                    if (unit) then
+                    local unit = u or resolveTooltipUnit(GameTooltip) or self._tacoTipUnit
+                    if (unit and (not UnitExists or UnitExists(unit))) then
                         local _, power = UnitPowerType(unit)
-                        -- No throwaway table. This runs on UNIT_POWER_UPDATE,
-                        -- UNIT_MAXPOWER and UNIT_DISPLAYPOWER as well as once
-                        -- per render, and `PowerBarColor[power] or {}` allocated
-                        -- a fresh five-field table on every one of those for any
-                        -- power token PowerBarColor does not key, then dropped
-                        -- it on the next line. It was the only bare table literal
-                        -- left in a pipeline that is otherwise built on pooled
-                        -- buffers, and it sat on the hottest path in the render.
-                        --
-                        -- A module-level constant is the right shape: the colour
-                        -- is read-only, so one shared table is safe to hand to
-                        -- SetStatusBarColor, and the fallback (0, 0, 1) is
-                        -- preserved exactly -- including the `or 1` on blue,
-                        -- which is what made an unkeyed power type render blue
-                        -- rather than black.
                         local color = (PowerBarColor and PowerBarColor[power]) or FALLBACK_POWER_COLOR
-                        self:SetStatusBarColor(color.r or 0, color.g or 0, color.b or 1);
-                        self:SetMinMaxValues(0, UnitPowerMax(unit))
-                        self:SetValue(UnitPower(unit))
+                        self:SetStatusBarColor(color.r or 0, color.g or 0, color.b or 1)
+                        local max = UnitPowerMax(unit)
+                        local cur = UnitPower(unit)
+                        if (max ~= nil) then
+                            self:SetMinMaxValues(0, max)
+                        end
+                        if (cur ~= nil) then
+                            self:SetValue(cur)
+                        end
+                        if (self.Text) then
+                            if (isSecretValue(cur) or isSecretValue(max)) then
+                                self.Text:SetText("")
+                            elseif (type(cur) == "number" and type(max) == "number") then
+                                self.Text:SetText(string.format("%d / %d", cur, max))
+                            end
+                        end
                     else
-                        self:Hide()
-                        stopPowerBarTicker()
-                        clearPowerBarPadding(GameTooltip)
+                        if (not GameTooltip or not GameTooltip:IsShown()) then
+                            self:Hide()
+                            stopPowerBarTicker()
+                            clearPowerBarPadding(GameTooltip)
+                        end
                     end
                 end
             end)
@@ -3689,57 +3924,6 @@ if ((isForever or isRetail) and type(_G.UnitFrame_UpdateTooltip) == "function"
     hooksecurefunc("UnitFrame_UpdateTooltip", function()
         blankUnitFrameInstruction(GameTooltip)
     end)
-end
-
-local function isUnitFramePeriodicUpdate(tooltip)
-    if (not tooltip) then
-        return false
-    end
-    local owner = tooltip.GetOwner and tooltip:GetOwner()
-    if (not owner) then
-        return false
-    end
-    local state = getTooltipState(tooltip)
-    local curGUID = state and state.currentUnitGUID
-    local ownerUnitGUID = state and state.ownerUnitGUID
-    local unitGUID
-    if (owner.unit and UnitExists and UnitExists(owner.unit)) then
-        unitGUID = safeUnitGUID(owner.unit)
-    end
-    -- Two proofs of "still the same unit": the rendered GUID (successful
-    -- resolve) and the owner's unit GUID (recorded before resolution ran).
-    -- The second exists because the modern post-call runs before Show(), when
-    -- the first tick can be unreadable -- and currentUnitGUID is then never
-    -- written, so the old check rejected every subsequent tick and tore the
-    -- portrait down five times a second while the mouse sat still on a unit
-    -- frame. That is the long-standing Retail/Forever blink.
-    -- The owner-GUID proof is modern-only: the pre-Show postcall resolution
-    -- failure it covers is a modern ordering fact. Classic keeps the old
-    -- currentUnitGUID-only test exactly.
-    local sameUnit = false
-    if (unitGUID ~= nil) then
-        sameUnit = safeEquals(unitGUID, curGUID)
-            or ((isForever or isRetail) and safeEquals(unitGUID, ownerUnitGUID))
-    elseif ((isForever or isRetail) and owner.unit and state and state.ownerUnitToken
-            and UnitExists and UnitExists(owner.unit)
-            and type(UnitIsUnit) == "function" and UnitIsUnit(owner.unit, state.ownerUnitToken)) then
-        sameUnit = true
-    end
-    if (not sameUnit) then
-        return false
-    end
-    if (owner.UpdateTooltip) then
-        return true
-    end
-    -- UnitFrame_OnLeave nils UpdateTooltip before GameTooltip:FadeOut(), so the
-    -- first re-drive after a re-hover reaches ClearLines with no
-    -- UpdateTooltip even though the owner still proves the same unit. While
-    -- the tooltip is SHOWN that clear is the 0.2s tick and must not tear the
-    -- portrait down. A hidden OnHide keeps the normal cleanup path: the parent
-    -- already hides its children, so the portrait is not visible there, and
-    -- skipping the timer/power-bar cleanup on a real hide would be a different
-    -- behaviour change. Classic keeps the old guard exactly.
-    return (isForever or isRetail) and (not tooltip.IsShown or tooltip:IsShown()) and true or false
 end
 
 local function registerTooltipVisualClearing(tooltipFrame)
@@ -4564,6 +4748,11 @@ local function collectProblems()
                 add("error", string.format("Inspect requests timed out %d time(s) without server response",
                     timeouts))
             end
+            local rejected = tonumber(st.rejected) or 0
+            if (rejected > 0) then
+                add("warn", string.format("Inspect requests rejected %d time(s) (last refusal reason: '%s')",
+                    rejected, tostring(st.lastRejectedReason or "unknown")))
+            end
             if (st.lastError) then
                 add("warn", "Last inspect-call error: " .. tostring(st.lastError))
             end
@@ -4575,6 +4764,16 @@ local function collectProblems()
         add("warn", string.format(
             "Portrait model failed to load %d time(s); the tooltip retries on the next render",
             portraitFailed))
+    end
+
+    local warningCount = (type(TT.warningLog) == "table") and #TT.warningLog or 0
+    if (warningCount > 0) then
+        add("warn", string.format("%d warning(s) logged (last: '%s')",
+            warningCount, tostring(TT.warningLog[warningCount].message or "unknown")))
+    end
+
+    if (type(InCombatLockdown) == "function" and InCombatLockdown()) then
+        add("warn", "Player is in combat lockdown; protected UI actions are restricted")
     end
 
     local elapsed, uptimeText = diagUptime()
@@ -4970,32 +5169,51 @@ end
 local function collectErrorsSection()
     local s = diagSection("errors", "error history")
     diagRow(s, "total errors caught", TT.totalErrorsCaught or 0, "info")
+    local warnCount = (type(TT.warningLog) == "table") and #TT.warningLog or 0
+    diagRow(s, "total warnings logged", warnCount, warnCount > 0 and "warn" or "info")
     diagRow(s, "pipeline suppressed", (TT.ev and TT.ev.pipelineErrorsSuppressed) or 0, "info")
     diagRow(s, "last tooltip error", TT.lastTooltipError or "none",
         TT.lastTooltipError and "warn" or "info")
     local log = TT.errorLog
     if (type(log) ~= "table" or #log == 0) then
         diagRow(s, "recent error entries", "none recorded since /reload", "info")
-        return s
-    end
-    local startIdx = math.max(1, #log - (DIAG_MAX_ERROR_ROWS - 1))
-    local shown = 0
-    for i = startIdx, #log do
-        local entry = log[i]
-        if (type(entry) == "table") then
-            shown = shown + 1
-            local value = string.format("[%.1fs] [%s] %s%s",
-                tonumber(entry.time) or 0,
-                tostring(entry.subsystem or "Error"),
-                tostring(entry.message or ""),
-                entry.context and (" (" .. tostring(entry.context) .. ")") or "")
-            diagRow(s, "recent error " .. shown, value, "error")
+    else
+        local startIdx = math.max(1, #log - (DIAG_MAX_ERROR_ROWS - 1))
+        local shown = 0
+        for i = startIdx, #log do
+            local entry = log[i]
+            if (type(entry) == "table") then
+                shown = shown + 1
+                local value = string.format("[%.1fs] [%s] %s%s",
+                    tonumber(entry.time) or 0,
+                    tostring(entry.subsystem or "Error"),
+                    tostring(entry.message or ""),
+                    entry.context and (" (" .. tostring(entry.context) .. ")") or "")
+                diagRow(s, "recent error " .. shown, value, "error")
+            end
+        end
+        local older = #log - shown
+        if (older > 0) then
+            diagRow(s, "recent error entries", "...and " .. older .. " older "
+                .. (older == 1 and "entry" or "entries"), "info")
         end
     end
-    local older = #log - shown
-    if (older > 0) then
-        diagRow(s, "recent error entries", "...and " .. older .. " older "
-            .. (older == 1 and "entry" or "entries"), "info")
+    local wlog = TT.warningLog
+    if (type(wlog) == "table" and #wlog > 0) then
+        local wStart = math.max(1, #wlog - 3)
+        local wShown = 0
+        for i = wStart, #wlog do
+            local entry = wlog[i]
+            if (type(entry) == "table") then
+                wShown = wShown + 1
+                local value = string.format("[%.1fs] [%s] %s%s",
+                    tonumber(entry.time) or 0,
+                    tostring(entry.subsystem or "Warning"),
+                    tostring(entry.message or ""),
+                    entry.context and (" (" .. tostring(entry.context) .. ")") or "")
+                diagRow(s, "recent warning " .. wShown, value, "warn")
+            end
+        end
     end
     return s
 end
@@ -5129,6 +5347,132 @@ function TT:PrintDiagnostics()
         end
     end
     print("|cff59f0dc================================|r")
+end
+
+function TT:FormatDiagnosticTraces()
+    local lines = {}
+    lines[#lines + 1] = "===== TACOTIP DETAILED TRACE & DIAGNOSTICS LOG ====="
+    lines[#lines + 1] = "Addon Version: " .. tostring(addOnVersion)
+    lines[#lines + 1] = "Client: " .. tostring(CI and CI.family or "unknown") .. " (Interface: " .. tostring(CI and CI.interfaceVersion or "unknown") .. ")"
+    lines[#lines + 1] = "Total Errors Caught: " .. tostring(TT.totalErrorsCaught or 0)
+    lines[#lines + 1] = "Pipeline Errors Suppressed: " .. tostring((TT.ev and TT.ev.pipelineErrorsSuppressed) or 0)
+    lines[#lines + 1] = ""
+
+    local errLog = TT.errorLog or {}
+    lines[#lines + 1] = string.format("--- Captured Errors (%d recorded) ---", #errLog)
+    if (#errLog == 0) then
+        lines[#lines + 1] = "  (No errors recorded since reload)"
+    else
+        for i = 1, #errLog do
+            local e = errLog[i]
+            lines[#lines + 1] = string.format("[%d] Time: %.1fs | Subsystem: %s%s",
+                i, tonumber(e.time) or 0, tostring(e.subsystem or "Error"),
+                e.context and (" | Context: " .. tostring(e.context)) or "")
+            lines[#lines + 1] = "    Message: " .. tostring(e.message or "")
+            if (e.stack) then
+                lines[#lines + 1] = "    Stack Trace:\n" .. tostring(e.stack)
+            end
+        end
+    end
+    lines[#lines + 1] = ""
+
+    local warnLog = TT.warningLog or {}
+    lines[#lines + 1] = string.format("--- Captured Warnings (%d recorded) ---", #warnLog)
+    if (#warnLog == 0) then
+        lines[#lines + 1] = "  (No warnings recorded since reload)"
+    else
+        for i = 1, #warnLog do
+            local w = warnLog[i]
+            lines[#lines + 1] = string.format("[%d] Time: %.1fs | Subsystem: %s%s",
+                i, tonumber(w.time) or 0, tostring(w.subsystem or "Warning"),
+                w.context and (" | Context: " .. tostring(w.context)) or "")
+            lines[#lines + 1] = "    Message: " .. tostring(w.message or "")
+            if (w.stack) then
+                lines[#lines + 1] = "    Trace:\n" .. tostring(w.stack)
+            end
+        end
+    end
+    lines[#lines + 1] = ""
+
+    local ev = TT.ev or {}
+    lines[#lines + 1] = "--- Event & Pipeline Counters ---"
+    lines[#lines + 1] = string.format("  Unit Renders: %s | Unit Resolve Failures: %s (Last cause: %s)",
+        tostring(ev.unitRender or 0), tostring(ev.resolveTooltipUnitFailed or 0), tostring(ev.resolveTooltipUnitLastCause or "none"))
+    lines[#lines + 1] = string.format("  Portrait Teardowns: %s (Destroys: %s, Set Failures: %s, Anchors: %s)",
+        tostring(ev.portraitHide or 0), tostring(ev.portraitDestroy or 0), tostring(ev.portraitSetFailed or 0), tostring(ev.portraitAnchor or 0))
+    lines[#lines + 1] = string.format("  GearScore Callbacks: %s (Reentrant: %s, Wrong Unit: %s, Misses: %s)",
+        tostring(ev.gsCallback or 0), tostring(ev.gsCallbackReentrant or 0), tostring(ev.gsCallbackWrongUnit or 0), tostring(ev.gsCallbackNoUnit or 0))
+    if (ev.teardownBy) then
+        lines[#lines + 1] = "  Teardown Reasons: " .. diagTeardownText(ev.teardownBy)
+    end
+    lines[#lines + 1] = "================================================="
+
+    return table.concat(lines, "\n")
+end
+
+function TT:FormatDiagnosticExport()
+    local lines = {}
+    lines[#lines + 1] = "```markdown"
+    lines[#lines + 1] = "# TacoTip System Diagnostic Report"
+    lines[#lines + 1] = string.format("- Addon Version: %s", tostring(addOnVersion))
+    lines[#lines + 1] = string.format("- Client Family: %s (Interface: %s)", tostring(CI and CI.family or "unknown"), tostring(CI and CI.interfaceVersion or "unknown"))
+    lines[#lines + 1] = string.format("- Load Status: %s (Stage: %s)", TT.LOAD_OK and "OK" or "FAILED", tostring(TT.LOAD_STAGE or "complete"))
+    lines[#lines + 1] = string.format("- Total Errors Caught: %d", tonumber(TT.totalErrorsCaught) or 0)
+    lines[#lines + 1] = string.format("- Pipeline Suppressed: %d", tonumber(TT.ev and TT.ev.pipelineErrorsSuppressed) or 0)
+    lines[#lines + 1] = ""
+
+    local ok, diag = pcall(TT.CollectDiagnostics, TT)
+    if (ok and type(diag) == "table") then
+        local verdict = diag.verdict or {}
+        lines[#lines + 1] = string.format("## System Health: %s", tostring(verdict.text or "UNKNOWN"))
+        lines[#lines + 1] = ""
+        for _, sec in ipairs(diag.sections or {}) do
+            if (type(sec) == "table") then
+                lines[#lines + 1] = string.format("### %s", tostring(sec.title or sec.id or "Section"))
+                for _, r in ipairs(sec.rows or {}) do
+                    if (type(r) == "table") then
+                        lines[#lines + 1] = string.format("- **%s**: %s", tostring(r.label or ""), tostring(r.value or ""))
+                    end
+                end
+                lines[#lines + 1] = ""
+            end
+        end
+    end
+
+    local errLog = TT.errorLog or {}
+    if (#errLog > 0) then
+        lines[#lines + 1] = string.format("## Captured Error Traces (%d)", #errLog)
+        for i = 1, #errLog do
+            local e = errLog[i]
+            lines[#lines + 1] = string.format("[%d] (%.1fs) [%s] %s%s",
+                i, tonumber(e.time) or 0, tostring(e.subsystem or "Error"),
+                tostring(e.message or ""),
+                e.context and (" (" .. tostring(e.context) .. ")") or "")
+            if (e.stack) then
+                lines[#lines + 1] = tostring(e.stack)
+            end
+        end
+        lines[#lines + 1] = ""
+    end
+
+    local warnLog = TT.warningLog or {}
+    if (#warnLog > 0) then
+        lines[#lines + 1] = string.format("## Captured Warning Traces (%d)", #warnLog)
+        for i = 1, #warnLog do
+            local w = warnLog[i]
+            lines[#lines + 1] = string.format("[%d] (%.1fs) [%s] %s%s",
+                i, tonumber(w.time) or 0, tostring(w.subsystem or "Warning"),
+                tostring(w.message or ""),
+                w.context and (" (" .. tostring(w.context) .. ")") or "")
+            if (w.stack) then
+                lines[#lines + 1] = tostring(w.stack)
+            end
+        end
+        lines[#lines + 1] = ""
+    end
+
+    lines[#lines + 1] = "```"
+    return table.concat(lines, "\n")
 end
 
 local function onEvent(self, event, ...)

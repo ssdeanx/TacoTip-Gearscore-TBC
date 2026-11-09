@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.9"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.0"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -372,6 +372,8 @@ local function showTooltipMover()
     end
 end
 
+local dashboard
+
 local function registerSlashCommands()
     local slashCmdList = rawget(_G, "SlashCmdList")
     if (not slashCmdList) then
@@ -473,6 +475,13 @@ local function registerSlashCommands()
                         tostring(CI.interfaceVersion)))
                 end
                 print("|cff59f0dcTacoTip:|r Enable a Lua error handler (BugSack/Swatter) and /reload.")
+            end
+        elseif (cmd == "report" or cmd == "export") then
+            if (TT and TT.ShowStandaloneDashboard) then
+                pcall(TT.ShowStandaloneDashboard, TT, "diagnostics")
+            end
+            if (dashboard and dashboard.ExportDiagnostics) then
+                pcall(dashboard.ExportDiagnostics, dashboard)
             end
         elseif (cmd == "discord" or cmd == "community") then
             print("|cff59f0dcTacoTip:|r Join the TacoTip Discord community: |cffffb81chttps://discord.gg/JuVJBwXqv|r")
@@ -1907,29 +1916,31 @@ local EXTRAS_URL = "https://www.curseforge.com/wow/addons/tacotip-extras"
 local WHITE8X8 = "Interface\\Buttons\\WHITE8X8"
 local LOGO_TEXTURE_PATH = "Interface\\AddOns\\" .. tostring(addOnName or "TacoTip") .. "\\logo.tga"
 
--- Enterprise dark theme palette derived from logo.png (Obsidian, Taco Gold, Emerald Green)
+-- Enterprise dark theme palette derived from logo.png (Charcoal Slate, Taco Gold, Lime / Green-Yellow)
 local DASH_THEME = {
-    windowBg = { 0.067, 0.075, 0.094, 0.97 },
-    headerBg = { 0.047, 0.055, 0.071, 1.00 },
-    sidebarBg = { 0.055, 0.063, 0.082, 1.00 },
-    cardBg = { 0.098, 0.110, 0.137, 0.96 },
-    cardHoverBg = { 0.129, 0.145, 0.180, 0.98 },
-    cardActiveBg = { 0.145, 0.125, 0.075, 0.98 },
-    inputBg = { 0.039, 0.043, 0.055, 1.00 },
-    borderSubtle = { 0.165, 0.188, 0.231, 1.00 },
-    borderGold = { 1.000, 0.722, 0.110, 1.00 },
-    borderEmerald = { 0.180, 0.800, 0.443, 1.00 },
-    borderDiscord = { 0.345, 0.396, 0.949, 1.00 },
-    borderAmber = { 0.902, 0.494, 0.133, 1.00 },
-    borderCoral = { 0.906, 0.298, 0.235, 1.00 },
-    gold = { 1.000, 0.722, 0.110 },
-    emerald = { 0.180, 0.800, 0.443 },
-    cyan = { 0.349, 0.941, 0.863 },
-    amber = { 0.902, 0.494, 0.133 },
-    coral = { 0.906, 0.298, 0.235 },
+    windowBg = { 0.105, 0.108, 0.112, 0.98 },
+    headerBg = { 0.080, 0.082, 0.085, 1.00 },
+    sidebarBg = { 0.090, 0.092, 0.095, 1.00 },
+    cardBg = { 0.135, 0.138, 0.140, 0.96 },
+    cardHoverBg = { 0.170, 0.178, 0.160, 0.98 },
+    cardActiveBg = { 0.185, 0.190, 0.135, 0.98 },
+    inputBg = { 0.065, 0.068, 0.070, 1.00 },
+    borderSubtle = { 0.220, 0.225, 0.230, 1.00 },
+    borderGold = { 1.000, 0.780, 0.120, 1.00 },
+    borderEmerald = { 0.680, 0.860, 0.200, 1.00 },
+    borderDiscord = { 0.380, 0.420, 0.460, 1.00 },
+    borderAmber = { 0.920, 0.700, 0.140, 1.00 },
+    borderCoral = { 0.906, 0.320, 0.240, 1.00 },
+    gold = { 1.000, 0.780, 0.120 },
+    emerald = { 0.680, 0.860, 0.200 },
+    lime = { 0.720, 0.880, 0.180 },
+    greenYellow = { 0.780, 0.900, 0.220 },
+    cyan = { 0.750, 0.880, 0.250 },
+    amber = { 0.920, 0.700, 0.140 },
+    coral = { 0.906, 0.320, 0.240 },
     textPrimary = { 0.96, 0.97, 0.98 },
-    textMuted = { 0.60, 0.65, 0.72 },
-    textDisabled = { 0.38, 0.41, 0.46 },
+    textMuted = { 0.62, 0.65, 0.68 },
+    textDisabled = { 0.40, 0.42, 0.44 },
 }
 
 local function paintFlatBox(frame, bg, border)
@@ -2001,30 +2012,30 @@ local function createFlatActionCard(parent, width, height, labelText, variant, o
 
     local normalBg, hoverBg, normalBorder, hoverBorder
     if (variant == "emerald") then
-        normalBg = { 0.11, 0.36, 0.22, 0.96 }
-        hoverBg = { 0.15, 0.48, 0.29, 1.00 }
+        normalBg = { 0.16, 0.25, 0.10, 0.96 }
+        hoverBg = { 0.22, 0.35, 0.14, 1.00 }
         normalBorder = DASH_THEME.borderEmerald
-        hoverBorder = { 0.32, 0.92, 0.56, 1.00 }
+        hoverBorder = { 0.75, 0.92, 0.24, 1.00 }
     elseif (variant == "gold") then
-        normalBg = { 0.28, 0.21, 0.06, 0.96 }
-        hoverBg = { 0.38, 0.28, 0.08, 1.00 }
+        normalBg = { 0.26, 0.20, 0.06, 0.96 }
+        hoverBg = { 0.36, 0.28, 0.08, 1.00 }
         normalBorder = DASH_THEME.borderGold
         hoverBorder = { 1.00, 0.84, 0.32, 1.00 }
     elseif (variant == "discord") then
-        normalBg = { 0.16, 0.19, 0.42, 0.96 }
-        hoverBg = { 0.22, 0.26, 0.56, 1.00 }
+        normalBg = { 0.15, 0.17, 0.21, 0.96 }
+        hoverBg = { 0.20, 0.23, 0.28, 1.00 }
         normalBorder = DASH_THEME.borderDiscord
-        hoverBorder = { 0.50, 0.56, 1.00, 1.00 }
+        hoverBorder = { 0.60, 0.68, 0.78, 1.00 }
     elseif (variant == "danger") then
-        normalBg = { 0.14, 0.11, 0.12, 0.96 }
-        hoverBg = { 0.28, 0.14, 0.12, 1.00 }
+        normalBg = { 0.16, 0.11, 0.11, 0.96 }
+        hoverBg = { 0.26, 0.14, 0.12, 1.00 }
         normalBorder = DASH_THEME.borderSubtle
         hoverBorder = DASH_THEME.borderAmber
     else
-        normalBg = { 0.12, 0.14, 0.18, 0.96 }
-        hoverBg = { 0.17, 0.20, 0.25, 1.00 }
+        normalBg = { 0.135, 0.138, 0.140, 0.96 }
+        hoverBg = { 0.180, 0.188, 0.170, 1.00 }
         normalBorder = DASH_THEME.borderSubtle
-        hoverBorder = DASH_THEME.borderGold
+        hoverBorder = DASH_THEME.borderEmerald
     end
 
     paintFlatBox(card, normalBg, normalBorder)
@@ -2099,16 +2110,16 @@ local function buildRootPage()
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 56, -12)
-    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cff59f0dc" ..
+    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cffb4e634" ..
     addOnTitle .. " v" .. addOnVersion .. "|r")
 
     local description = createWrappedText(panel, "GameFontHighlightSmall", 540,
-        "|cffffb81c200,000+ Downloads Milestone!|r Thank you to our community! " ..
+        "|cffffd100200,000+ Downloads Milestone!|r Thank you to our community! " ..
         (L["OPTIONS_ROOT_DESCRIPTION"] or L["TEXT_OPT_DESC"] or ""))
     description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
 
     local openDashCard = createFlatActionCard(heroCard, 195, 24,
-        "|cffffb81cOpen TacoTip Dashboard (/tt)|r", "gold",
+        "|cffffd100Open TacoTip Dashboard (/tt)|r", "gold",
         function()
             if (TT and TT.ShowStandaloneDashboard) then
                 TT:ShowStandaloneDashboard("general")
@@ -2119,9 +2130,9 @@ local function buildRootPage()
     openDashCard:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 10)
 
     local openDiscordCard = createFlatActionCard(heroCard, 210, 24,
-        "|cff59f0dcDiscord:|r |cffffffffdiscord.gg/JuVJBwXqv|r", "discord",
+        "|cffb4e634Discord:|r |cffffffffdiscord.gg/JuVJBwXqv|r", "discord",
         function()
-            print("|cff59f0dcTacoTip:|r Join the TacoTip Discord community: |cffffb81c" .. DISCORD_INVITE_URL .. "|r")
+            print("|cffb4e634TacoTip:|r Join the TacoTip Discord community: |cffffd100" .. DISCORD_INVITE_URL .. "|r")
             if (TT and TT.ShowStandaloneDashboard) then
                 TT:ShowStandaloneDashboard("community")
             end
@@ -2131,7 +2142,7 @@ local function buildRootPage()
     openDiscordCard:SetPoint("LEFT", openDashCard, "RIGHT", 8, 0)
 
     local openDiagCard = createFlatActionCard(heroCard, 155, 24,
-        "|cff2ecc71Live Diagnostics|r", "emerald",
+        "|cffb4e634Live Diagnostics|r", "emerald",
         function()
             if (TT and TT.ShowStandaloneDashboard) then
                 TT:ShowStandaloneDashboard("diagnostics")
@@ -2174,16 +2185,16 @@ local function buildRootPage()
                 getLocaleDisplayName(GetLocale() or "enUS"))
         local lines = {
             L["OPTIONS_ROOT_PAGE_HINT"] or "Use the child pages in the AddOns tree to configure TacoTip.",
-            "|cff59f0dc•|r " .. string.format(L["OPTIONS_STATUS_LANGUAGE"] or "Addon language: %s.", localeSummary),
-            "|cff59f0dc•|r " .. tooltipMode,
-            "|cff59f0dc•|r " ..
+            "|cffb4e634•|r " .. string.format(L["OPTIONS_STATUS_LANGUAGE"] or "Addon language: %s.", localeSummary),
+            "|cffb4e634•|r " .. tooltipMode,
+            "|cffb4e634•|r " ..
             (TacoTipConfig.show_gs_character and (L["OPTIONS_STATUS_CHARACTER_GS_ON"] or "Character and inspect GearScore overlays are enabled.") or (L["OPTIONS_STATUS_CHARACTER_GS_OFF"] or "Character and inspect GearScore overlays are disabled.")),
-            "|cff59f0dc•|r " ..
+            "|cffb4e634•|r " ..
             (TacoTipConfig.show_avg_ilvl and (L["OPTIONS_STATUS_CHARACTER_ILVL_ON"] or "Average item level overlays are enabled.") or (L["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] or "Average item level overlays are disabled.")),
-            "|cff59f0dc•|r " ..
+            "|cffb4e634•|r " ..
             (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked.") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked.")),
-            "|cff59f0dc•|r Community Discord: |cffffb81c" ..
-            DISCORD_INVITE_URL .. "|r  (Type |cff2ecc71/tt|r to open the full Dashboard)"
+            "|cffb4e634•|r Community Discord: |cffffd100" ..
+            DISCORD_INVITE_URL .. "|r  (Type |cffb4e634/tt|r to open the full Dashboard)"
         }
         return table.concat(lines, "\n")
     end
@@ -3352,7 +3363,6 @@ end
 -- Built lazily on first show, so nothing here exists until the player asks.
 -- Every setting stays on the Blizzard pages; "All Settings" opens them.
 -- ============================================================================
-local dashboard
 
 local function buildDiagnosticsReport()
     local lines = { "TacoTip " .. tostring(addOnVersion) .. " | " .. getClientFamilyDisplayLabel() }
@@ -3386,7 +3396,7 @@ end
 
 local function createDashboard()
     local frame = CreateFrame("Frame", "TacoTipDashboard", UIParent)
-    frame:SetSize(840, 540)
+    frame:SetSize(920, 590)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("DIALOG")
     frame:SetMovable(true)
@@ -3415,51 +3425,51 @@ local function createDashboard()
 
     local title = header:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("LEFT", logo, "RIGHT", 10, 0)
-    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cff9ba3ae" ..
-        addOnVersion .. " · " .. getClientFamilyDisplayLabel() .. "|r")
+    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cffb4e634" ..
+        addOnVersion .. "|r · |cff9ba3ae" .. getClientFamilyDisplayLabel() .. "|r")
 
     local close = createFlatActionCard(header, 28, 24, "X", "danger", function() frame:Hide() end,
         "Close", "Close the dashboard (ESC also works).")
     close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
 
-    -- Left Sidebar
+    -- Left Sidebar (Narrower: 165px wide)
     local sidebar = CreateFrame("Frame", nil, frame)
     sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
-    sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 46)
-    sidebar:SetWidth(180)
+    sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 31)
+    sidebar:SetWidth(165)
     paintFlatBox(sidebar, DASH_THEME.sidebarBg)
 
-    -- Right Content Area
+    -- Right Content Area (Extends down to bottom near sleek footer)
     local content = CreateFrame("Frame", nil, frame)
     content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 14, -12)
-    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -16, 56)
+    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -16, 36)
 
-    -- Bottom Persistent Footer
+    -- Bottom Persistent Footer (Sleek: 30px height)
     local footer = CreateFrame("Frame", nil, frame)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 1)
     footer:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
-    footer:SetHeight(45)
+    footer:SetHeight(30)
     paintFlatBox(footer, DASH_THEME.headerBg)
 
     local hint = footer:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-    hint:SetPoint("LEFT", footer, "LEFT", 16, 0)
+    hint:SetPoint("LEFT", footer, "LEFT", 14, 0)
     hint:SetText("/tt · ESC to close")
 
-    local moveCard = createFlatActionCard(footer, 140, 26, "Move Tooltip", "emerald", function()
+    local moveCard = createFlatActionCard(footer, 125, 22, "Move Tooltip", "emerald", function()
         showTooltipMover()
     end, "Move Tooltip", "Show the live tooltip mover so you can drag and save a custom tooltip position.")
-    moveCard:SetPoint("RIGHT", footer, "RIGHT", -14, 0)
+    moveCard:SetPoint("RIGHT", footer, "RIGHT", -12, 0)
 
-    local resetCard = createFlatActionCard(footer, 160, 26, "Reset Configuration", "danger", function()
+    local resetCard = createFlatActionCard(footer, 145, 22, "Reset Configuration", "danger", function()
         resetCfg()
         if (TT.RefreshOptionsUI) then TT:RefreshOptionsUI() end
         if (frame.RefreshAll) then frame:RefreshAll() end
     end, "Reset Configuration", "Restore every TacoTip setting to its default.")
-    resetCard:SetPoint("RIGHT", moveCard, "LEFT", -10, 0)
+    resetCard:SetPoint("RIGHT", moveCard, "LEFT", -8, 0)
 
-    -- Sidebar Search Box (Matching "Find a setting" in settingexample.png)
+    -- Sidebar Search Box (Matching narrower sidebar)
     local searchBox = CreateFrame("EditBox", "TacoTipDashboardSearch", sidebar, "InputBoxTemplate")
-    searchBox:SetSize(156, 22)
+    searchBox:SetSize(141, 22)
     searchBox:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 12, -10)
     searchBox:SetAutoFocus(false)
     searchBox:SetFontObject("GameFontHighlightSmall")
@@ -3471,7 +3481,7 @@ local function createDashboard()
     -- Helper: Pill Toggle Switch Card
     local function createPillToggle(parent, titleText, descText, initialVal, onToggle)
         local card = CreateFrame("Frame", nil, parent)
-        card:SetSize(590, 42)
+        card:SetSize(680, 42)
         card:EnableMouse(true)
         paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
 
@@ -3488,35 +3498,50 @@ local function createDashboard()
         local pill = CreateFrame("Frame", nil, card)
         pill:SetSize(38, 18)
         pill:SetPoint("RIGHT", card, "RIGHT", -14, 0)
-        paintFlatBox(pill, { 0.15, 0.17, 0.21, 1 }, { 0.28, 0.32, 0.38, 1 })
+        paintFlatBox(pill, { 0.16, 0.18, 0.18, 1 }, { 0.28, 0.30, 0.30, 1 })
 
         local knob = pill:CreateTexture(nil, "ARTWORK")
         knob:SetTexture(WHITE8X8)
         knob:SetSize(12, 12)
 
         local isChecked = initialVal and true or false
+        local isDisabled = false
+        local disabledReason = nil
+
         local function updatePill()
+            if (isDisabled) then return end
             if (isChecked) then
-                pill:SetFlatColors({ 1.0, 0.72, 0.11, 0.95 }, DASH_THEME.borderGold)
+                pill:SetFlatColors({ 0.70, 0.86, 0.20, 0.95 }, DASH_THEME.borderEmerald)
                 knob:ClearAllPoints()
                 knob:SetPoint("RIGHT", pill, "RIGHT", -3, 0)
-                knob:SetVertexColor(0.12, 0.12, 0.12, 1)
+                knob:SetVertexColor(0.10, 0.12, 0.08, 1)
             else
-                pill:SetFlatColors({ 0.15, 0.17, 0.21, 1 }, { 0.28, 0.32, 0.38, 1 })
+                pill:SetFlatColors({ 0.16, 0.18, 0.18, 1 }, { 0.28, 0.30, 0.30, 1 })
                 knob:ClearAllPoints()
                 knob:SetPoint("LEFT", pill, "LEFT", 3, 0)
-                knob:SetVertexColor(0.65, 0.70, 0.75, 1)
+                knob:SetVertexColor(0.60, 0.65, 0.60, 1)
             end
         end
         updatePill()
 
         card:SetScript("OnEnter", function(self)
+            if (isDisabled) then
+                if (disabledReason) then
+                    showHoverTooltip(self, titleText, "|cffff8080" .. disabledReason .. "|r")
+                end
+                return
+            end
             self:SetFlatColors(DASH_THEME.cardHoverBg, DASH_THEME.borderGold)
         end)
         card:SetScript("OnLeave", function(self)
+            if (isDisabled) then
+                if (disabledReason) then GameTooltip:Hide() end
+                return
+            end
             self:SetFlatColors(DASH_THEME.cardBg, DASH_THEME.borderSubtle)
         end)
         card:SetScript("OnMouseDown", function()
+            if (isDisabled) then return end
             isChecked = not isChecked
             updatePill()
             if (onToggle) then
@@ -3529,6 +3554,20 @@ local function createDashboard()
             updatePill()
         end
         card.GetChecked = function() return isChecked end
+        card.SetDisabled = function(_, disabled, reason)
+            isDisabled = disabled and true or false
+            disabledReason = reason
+            if (isDisabled) then
+                t:SetTextColor(DASH_THEME.textDisabled[1], DASH_THEME.textDisabled[2], DASH_THEME.textDisabled[3])
+                d:SetTextColor(DASH_THEME.textDisabled[1], DASH_THEME.textDisabled[2], DASH_THEME.textDisabled[3])
+                pill:SetFlatColors({ 0.12, 0.13, 0.14, 0.8 }, { 0.20, 0.22, 0.24, 0.8 })
+                knob:SetVertexColor(0.35, 0.38, 0.40, 0.8)
+            else
+                t:SetTextColor(DASH_THEME.textPrimary[1], DASH_THEME.textPrimary[2], DASH_THEME.textPrimary[3])
+                d:SetTextColor(DASH_THEME.textMuted[1], DASH_THEME.textMuted[2], DASH_THEME.textMuted[3])
+                updatePill()
+            end
+        end
         card.searchText = strlower((titleText or "") .. " " .. (descText or ""))
         return card
     end
@@ -3536,7 +3575,7 @@ local function createDashboard()
     -- Helper: Slider Card
     local function createDashboardSlider(parent, titleText, descText, minVal, maxVal, step, initialVal, onValueChange, formatVal)
         local card = CreateFrame("Frame", nil, parent)
-        card:SetSize(590, 48)
+        card:SetSize(680, 48)
         paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
 
         local t = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -3590,14 +3629,14 @@ local function createDashboard()
     -- Helper: Callout Notice Box
     local function createNoticeBox(parent, iconLabel, noticeText, isEmerald, customHeight)
         local box = CreateFrame("Frame", nil, parent)
-        box:SetSize(590, customHeight or 34)
+        box:SetSize(680, customHeight or 34)
         local borderCol = isEmerald and DASH_THEME.borderEmerald or DASH_THEME.borderGold
         local bgCol = isEmerald and { 0.08, 0.22, 0.14, 0.95 } or { 0.22, 0.17, 0.06, 0.95 }
         paintFlatBox(box, bgCol, borderCol)
 
         local ic = box:CreateFontString(nil, "ARTWORK", "GameFontNormal")
         ic:SetPoint("LEFT", box, "LEFT", 10, 0)
-        ic:SetText(iconLabel or "|cffffb81c[TIP]|r")
+        ic:SetText(iconLabel or "|cffffd100[TIP]|r")
 
         local txt = box:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
         txt:SetPoint("LEFT", ic, "RIGHT", 8, 0)
@@ -3647,6 +3686,7 @@ local function createDashboard()
             applySearch()
         end
         if (id == "diagnostics" and frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
+        if (id == "extras" and frame.RefreshEmbeddedLeaderboard) then frame:RefreshEmbeddedLeaderboard() end
     end
     frame.SelectTab = function(_, id) if (tabs[id]) then selectTab(id) end end
 
@@ -3659,12 +3699,12 @@ local function createDashboard()
 
         local yPos
         if (isBottom) then
-            local bottomStart = hasExtras and -264 or -236
-            yPos = bottomStart - (order - 1) * 31
+            local bottomStart = hasExtras and -280 or -250
+            yPos = bottomStart - (order - 1) * 32
         else
-            yPos = -38 - (order - 1) * 31
+            yPos = -38 - (order - 1) * 32
         end
-        local btn = createFlatActionCard(sidebar, 160, 28, label, "plain", function() selectTab(id) end)
+        local btn = createFlatActionCard(sidebar, 145, 28, label, "plain", function() selectTab(id) end)
         btn:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 10, yPos)
         tabButtons[id] = btn
         return page
@@ -3673,22 +3713,23 @@ local function createDashboard()
     -- Subtle sidebar divider line between category tabs and utility tabs
     local sideDiv = sidebar:CreateTexture(nil, "BORDER")
     sideDiv:SetTexture(WHITE8X8)
-    sideDiv:SetSize(158, 1)
-    sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -256 or -228)
+    sideDiv:SetSize(143, 1)
+    sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -272 or -242)
     sideDiv:SetVertexColor(0.24, 0.28, 0.34, 0.8)
 
     local function createScrollCategory(id, label, titleText, descText, order, isBottom)
         local page = addTab(id, label, order, isBottom)
         local ph = page:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
         ph:SetPoint("TOPLEFT", page, "TOPLEFT", 4, 0)
-        ph:SetText("|cffffb81c" .. titleText .. "|r")
+        ph:SetText("|cffffd100" .. titleText .. "|r")
 
-        local pd = createWrappedText(page, "GameFontHighlightSmall", 590, descText)
+        local pd = createWrappedText(page, "GameFontHighlightSmall", 680, descText)
         pd:SetPoint("TOPLEFT", ph, "BOTTOMLEFT", 0, -4)
 
         local scroll, scrollChild = createScrollPage(page)
+        scroll:ClearAllPoints()
         scroll:SetPoint("TOPLEFT", pd, "BOTTOMLEFT", 0, -8)
-        scroll:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -22, 4)
+        scroll:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -18, 4)
         return page, scrollChild
     end
 
@@ -3703,7 +3744,7 @@ local function createDashboard()
     local function addSectionHeader(scrollChild, headerText, curY)
         local h = scrollChild:CreateFontString(nil, "ARTWORK", "GameFontNormal")
         h:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 6, curY - 4)
-        h:SetText("|cffffb81c" .. headerText .. "|r")
+        h:SetText("|cffffd100" .. headerText .. "|r")
         return curY - 26
     end
 
@@ -3734,12 +3775,12 @@ local function createDashboard()
             local active = (TacoTipConfig.tip_style == c.value)
             c.card:SetFlatColors(active and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
                 active and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
-            c.radio:SetText(active and "|cffffb81c[X]|r" or "|cff5c6370[ ]|r")
+            c.radio:SetText(active and "|cffffd100[X]|r" or "|cff5c6370[ ]|r")
         end
     end
     for i, preset in ipairs(presets) do
         local card = CreateFrame("Frame", nil, generalChild)
-        card:SetSize(190, 50)
+        card:SetSize(194, 50)
         card:EnableMouse(true)
         paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
 
@@ -3775,12 +3816,12 @@ local function createDashboard()
 
         local col = (i - 1) % 3
         local row = math.floor((i - 1) / 3)
-        card:SetPoint("TOPLEFT", generalChild, "TOPLEFT", col * 200, gy - row * 56)
+        card:SetPoint("TOPLEFT", generalChild, "TOPLEFT", col * 203, gy - row * 56)
         styleCards[i] = { value = preset.value, card = card, radio = rad }
     end
     gy = gy - 118
 
-    local noticeShift = createNoticeBox(generalChild, "|cffffb81c[TIP]|r",
+    local noticeShift = createNoticeBox(generalChild, "|cffffd100[TIP]|r",
         "Holding SHIFT dynamically expands Compact and Mini tooltips to full Wide detail.")
     noticeShift:SetPoint("TOPLEFT", generalChild, "TOPLEFT", 0, gy)
     gy = gy - 42
@@ -4109,7 +4150,7 @@ local function createDashboard()
         "Configure GearScore, Item Level, Talents, Gems, Enchants, and Pawn.", 6)
     local cy = 0
 
-    local noticeChar = createNoticeBox(charChild, "|cff2ecc71[READY]|r",
+    local noticeChar = createNoticeBox(charChild, "|cffb4e634[READY]|r",
         "Real-time GearScore and talent inspection active with automatic throttling and caching.", true)
     noticeChar:SetPoint("TOPLEFT", charChild, "TOPLEFT", 0, cy)
     cy = cy - 42
@@ -4150,6 +4191,13 @@ local function createDashboard()
             onSettingChanged()
         end)
     cy = registerRow(charChild, syncControls.show_pawn_player, "character", cy)
+
+    syncControls.show_achievement_points = createPillToggle(charChild, "Show Achievement Points",
+        "Display total player achievement points (Retail clients only).", TacoTipConfig.show_achievement_points, function(v)
+            TacoTipConfig.show_achievement_points = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_achievement_points, "character", cy)
 
     syncControls.show_gs_items = createPillToggle(charChild, "Show Item GearScore",
         "Display calculated GearScore on item tooltips.", TacoTipConfig.show_gs_items, function(v)
@@ -4197,56 +4245,395 @@ local function createDashboard()
             "Server leaderboard, peer-to-peer sync, and advanced equipment auditing.", 7)
         local ey = 0
 
-        local noticeExtras = createNoticeBox(extrasChild, "|cff2ecc71[CONNECTED]|r",
+        local noticeExtras = createNoticeBox(extrasChild, "|cffb4e634[CONNECTED]|r",
             "TacoTip Extras is active. Peer-to-peer synchronization and server rankings are running.", true)
         noticeExtras:SetPoint("TOPLEFT", extrasChild, "TOPLEFT", 0, ey)
         ey = ey - 44
 
         ey = addSectionHeader(extrasChild, "Leaderboard & Server Rankings", ey)
 
-        -- Action Card: Open Leaderboard
-        local lbCard = CreateFrame("Frame", nil, extrasChild)
-        lbCard:SetSize(590, 52)
-        paintFlatBox(lbCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
-        lbCard.searchText = "server leaderboard rankings gearscore ranks ex"
+        -- ====================================================================
+        -- Embedded Leaderboard Surface
+        -- ====================================================================
+        local lbContainer = CreateFrame("Frame", nil, extrasChild)
+        lbContainer:SetSize(680, 365)
+        paintFlatBox(lbContainer, DASH_THEME.cardBg, DASH_THEME.borderGold)
+        lbContainer.searchText = "server leaderboard rankings gearscore ranks ex"
 
-        local lbIcon = lbCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-        lbIcon:SetPoint("LEFT", lbCard, "LEFT", 14, 0)
-        lbIcon:SetText("|cffffb81c[TOP]|r")
+        local currentTab = "all"
+        local searchQuery = ""
+        local currentOffset = 0
+        local visibleRowsCount = 10
+        local cachedLeaderboardList = {}
 
-        local lbTitle = lbCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        lbTitle:SetPoint("TOPLEFT", lbIcon, "TOPRIGHT", 10, 4)
-        lbTitle:SetText("Server Leaderboard (/ex ranks)")
+        -- Toolbar (y = -8)
+        local allBtn = createFlatActionCard(lbContainer, 80, 24, "All Realm", "gold")
+        allBtn:SetPoint("TOPLEFT", lbContainer, "TOPLEFT", 10, -8)
 
-        local lbDesc = lbCard:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-        lbDesc:SetPoint("TOPLEFT", lbTitle, "BOTTOMLEFT", 0, -2)
-        lbDesc:SetPoint("RIGHT", lbCard, "RIGHT", -120, 0)
-        lbDesc:SetJustifyH("LEFT")
-        lbDesc:SetText("Browse realm-wide GearScore rankings, equipment stats, and top-geared players.")
+        local allyBtn = createFlatActionCard(lbContainer, 75, 24, "Alliance", "plain")
+        allyBtn:SetPoint("LEFT", allBtn, "RIGHT", 6, 0)
 
-        local lbBtn = createFlatActionCard(lbCard, 100, 26, "Open Ranks", "gold", function()
+        local hordeBtn = createFlatActionCard(lbContainer, 70, 24, "Horde", "plain")
+        hordeBtn:SetPoint("LEFT", allyBtn, "RIGHT", 6, 0)
+
+        local lbSearch = CreateFrame("EditBox", nil, lbContainer, "InputBoxTemplate")
+        lbSearch:SetSize(130, 20)
+        lbSearch:SetPoint("LEFT", hordeBtn, "RIGHT", 14, 0)
+        lbSearch:SetAutoFocus(false)
+        lbSearch:SetFontObject("GameFontHighlightSmall")
+
+        local lbSearchPlaceholder = lbSearch:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        lbSearchPlaceholder:SetPoint("LEFT", lbSearch, "LEFT", 4, 0)
+        lbSearchPlaceholder:SetText("Filter player/guild...")
+
+        local syncQuickBtn = createFlatActionCard(lbContainer, 80, 24, "Sync Now", "emerald")
+        syncQuickBtn:SetPoint("TOPRIGHT", lbContainer, "TOPRIGHT", -10, -8)
+
+        local popupBtn = createFlatActionCard(lbContainer, 90, 24, "Open Popup", "plain")
+        popupBtn:SetPoint("RIGHT", syncQuickBtn, "LEFT", -6, 0)
+
+        -- Column Header Bar (y = -38, height 22)
+        local tableHeader = CreateFrame("Frame", nil, lbContainer)
+        tableHeader:SetPoint("TOPLEFT", lbContainer, "TOPLEFT", 10, -38)
+        tableHeader:SetSize(660, 22)
+        paintFlatBox(tableHeader, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+
+        local colRank = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colRank:SetPoint("LEFT", tableHeader, "LEFT", 8, 0)
+        colRank:SetText("|cffffd100#|r")
+
+        local colPlayer = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colPlayer:SetPoint("LEFT", tableHeader, "LEFT", 42, 0)
+        colPlayer:SetText("|cffffd100Player|r")
+
+        local colGuild = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colGuild:SetPoint("LEFT", tableHeader, "LEFT", 195, 0)
+        colGuild:SetText("|cffffd100Guild|r")
+
+        local colLvl = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colLvl:SetPoint("LEFT", tableHeader, "LEFT", 335, 0)
+        colLvl:SetText("|cffffd100Lvl|r")
+
+        local colSpec = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colSpec:SetPoint("LEFT", tableHeader, "LEFT", 375, 0)
+        colSpec:SetText("|cffffd100Spec|r")
+
+        local colILvl = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colILvl:SetPoint("LEFT", tableHeader, "LEFT", 485, 0)
+        colILvl:SetText("|cffffd100iLvl|r")
+
+        local colGS = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        colGS:SetPoint("LEFT", tableHeader, "LEFT", 545, 0)
+        colGS:SetText("|cffffd100GearScore|r")
+
+        -- 10 Rows
+        local rows = {}
+        for r = 1, visibleRowsCount do
+            local row = CreateFrame("Button", nil, lbContainer)
+            row:SetSize(640, 24)
+            row:SetPoint("TOPLEFT", lbContainer, "TOPLEFT", 10, -62 - (r - 1) * 25)
+
+            local rbg = row:CreateTexture(nil, "BACKGROUND")
+            rbg:SetAllPoints()
+            if (r % 2 == 0) then
+                rbg:SetColorTexture(1, 1, 1, 0.03)
+            else
+                rbg:SetColorTexture(0, 0, 0, 0.20)
+            end
+            row.bg = rbg
+
+            local classBar = row:CreateTexture(nil, "ARTWORK")
+            classBar:SetPoint("LEFT", row, "LEFT", 0, 0)
+            classBar:SetSize(3, 24)
+            classBar:SetColorTexture(0.7, 0.7, 0.7, 1)
+            row.classBar = classBar
+
+            local rankTxt = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            rankTxt:SetPoint("LEFT", row, "LEFT", 8, 0)
+            row.rankTxt = rankTxt
+
+            local nameTxt = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            nameTxt:SetPoint("LEFT", row, "LEFT", 42, 0)
+            nameTxt:SetWidth(148)
+            nameTxt:SetJustifyH("LEFT")
+            row.nameTxt = nameTxt
+
+            local guildTxt = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+            guildTxt:SetPoint("LEFT", row, "LEFT", 195, 0)
+            guildTxt:SetWidth(135)
+            guildTxt:SetJustifyH("LEFT")
+            row.guildTxt = guildTxt
+
+            local lvlTxt = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+            lvlTxt:SetPoint("LEFT", row, "LEFT", 335, 0)
+            row.lvlTxt = lvlTxt
+
+            local specTxt = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            specTxt:SetPoint("LEFT", row, "LEFT", 375, 0)
+            specTxt:SetWidth(105)
+            specTxt:SetJustifyH("LEFT")
+            row.specTxt = specTxt
+
+            local ilvlTxt = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            ilvlTxt:SetPoint("LEFT", row, "LEFT", 485, 0)
+            row.ilvlTxt = ilvlTxt
+
+            local gsTxt = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            gsTxt:SetPoint("LEFT", row, "LEFT", 545, 0)
+            row.gsTxt = gsTxt
+
+            row:SetScript("OnEnter", function(self)
+                self.bg:SetColorTexture(1.0, 0.78, 0.12, 0.15)
+                if (self.entry) then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:ClearLines()
+                    GameTooltip:AddLine(tostring(self.entry.name or "Unknown"), 1, 1, 1)
+                    if (self.entry.guild and self.entry.guild ~= "") then
+                        GameTooltip:AddLine("<" .. tostring(self.entry.guild) .. ">", 0.6, 0.8, 1)
+                    end
+                    GameTooltip:AddLine("GearScore: " .. tostring(self.entry.gs or 0), 1, 0.82, 0)
+                    if (self.entry.ilvl and self.entry.ilvl > 0) then
+                        GameTooltip:AddLine("Average iLvl: " .. tostring(self.entry.ilvl), 0.8, 0.8, 0.8)
+                    end
+                    GameTooltip:Show()
+                end
+            end)
+            row:SetScript("OnLeave", function(self)
+                if (r % 2 == 0) then
+                    self.bg:SetColorTexture(1, 1, 1, 0.03)
+                else
+                    self.bg:SetColorTexture(0, 0, 0, 0.20)
+                end
+                GameTooltip:Hide()
+            end)
+
+            rows[r] = row
+        end
+
+        -- Scroll slider on right
+        local scrollBar = CreateFrame("Slider", nil, lbContainer, "OptionsSliderTemplate")
+        scrollBar:SetPoint("TOPRIGHT", lbContainer, "TOPRIGHT", -10, -62)
+        scrollBar:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -10, 38)
+        scrollBar:SetWidth(14)
+        scrollBar:SetMinMaxValues(0, 0)
+        scrollBar:SetValue(0)
+        scrollBar:SetValueStep(1)
+        if (scrollBar.SetObeyStepOnDrag) then scrollBar:SetObeyStepOnDrag(true) end
+
+        -- Bottom Status Strip
+        local statusStrip = lbContainer:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        statusStrip:SetPoint("BOTTOMLEFT", lbContainer, "BOTTOMLEFT", 12, 10)
+        statusStrip:SetText("Rankings loading...")
+
+        local topBtn = createFlatActionCard(lbContainer, 50, 20, "Top", "plain", function()
+            scrollBar:SetValue(0)
+        end)
+        topBtn:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -10, 8)
+
+        local myRankBtn = createFlatActionCard(lbContainer, 70, 20, "My Rank", "gold", function()
+            local myGUID = _G.UnitGUID and _G.UnitGUID("player")
+            if (myGUID) then
+                for idx, entry in ipairs(cachedLeaderboardList) do
+                    if (entry.guid == myGUID) then
+                        local targetOffset = math.max(0, idx - math.floor(visibleRowsCount / 2))
+                        scrollBar:SetValue(targetOffset)
+                        break
+                    end
+                end
+            end
+        end)
+        myRankBtn:SetPoint("RIGHT", topBtn, "LEFT", -6, 0)
+
+        local function getEntryClassColor(classToken)
+            if (classToken == "SHAMAN" and (not TacoTipConfig or TacoTipConfig.shaman_blue ~= false)) then
+                return 0.0, 0.44, 0.87
+            end
+            local colors = _G.CUSTOM_CLASS_COLORS or _G.RAID_CLASS_COLORS
+            local c = colors and classToken and colors[classToken]
+            if (c) then
+                return c.r, c.g, c.b
+            end
+            return 0.82, 0.82, 0.82
+        end
+
+        local function getGsColor(gs)
+            if (type(gs) ~= "number" or gs <= 0) then
+                return 0.6, 0.6, 0.6
+            end
+            local gsModule = rawget(_G, "TT_GS")
+            if (gsModule and type(gsModule.GetQuality) == "function") then
+                local ok, r, g, b = pcall(gsModule.GetQuality, gsModule, gs)
+                if (ok and type(r) == "number") then
+                    return r, g, b
+                end
+            end
+            if (gs >= 5000) then return 1.0, 0.5, 0.0
+            elseif (gs >= 4000) then return 0.64, 0.21, 0.93
+            elseif (gs >= 3000) then return 0.0, 0.44, 0.87
+            elseif (gs >= 2000) then return 0.12, 1.0, 0.0
+            end
+            return 1.0, 1.0, 1.0
+        end
+
+        local function updateRows()
+            local total = #cachedLeaderboardList
+            local maxScroll = math.max(0, total - visibleRowsCount)
+            scrollBar:SetMinMaxValues(0, maxScroll)
+
+            local myGUID = _G.UnitGUID and _G.UnitGUID("player")
+            for r = 1, visibleRowsCount do
+                local entryIdx = currentOffset + r
+                local entry = cachedLeaderboardList[entryIdx]
+                local row = rows[r]
+                if (entry) then
+                    row.entry = entry
+                    local rank = entry.rank or entryIdx
+                    if (rank == 1) then
+                        row.rankTxt:SetText("|cffffd700#1|r")
+                    elseif (rank == 2) then
+                        row.rankTxt:SetText("|cffc0c0c0#2|r")
+                    elseif (rank == 3) then
+                        row.rankTxt:SetText("|cffcd7f32#3|r")
+                    else
+                        row.rankTxt:SetText("|cff888888#" .. tostring(rank) .. "|r")
+                    end
+
+                    local cr, cg, cb = getEntryClassColor(entry.class)
+                    row.classBar:SetColorTexture(cr, cg, cb, 0.9)
+
+                    local pName = entry.name or "Unknown"
+                    if (entry.guid == myGUID) then
+                        pName = "|cffffd100► |r" .. pName
+                    end
+                    row.nameTxt:SetText(pName)
+                    row.nameTxt:SetTextColor(cr, cg, cb)
+
+                    row.guildTxt:SetText(entry.guild and entry.guild ~= "" and ("<" .. entry.guild .. ">") or "")
+                    row.lvlTxt:SetText(tostring(entry.level or ""))
+
+                    row.specTxt:SetText(entry.specName or "Unknown")
+                    row.ilvlTxt:SetText(tostring(entry.ilvl or ""))
+
+                    local gsVal = entry.gs or 0
+                    local gr, gg, gb = getGsColor(gsVal)
+                    row.gsTxt:SetText(tostring(gsVal))
+                    row.gsTxt:SetTextColor(gr, gg, gb)
+
+                    row:Show()
+                else
+                    row.entry = nil
+                    row:Hide()
+                end
+            end
+
+            local realmName = _G.GetRealmName and _G.GetRealmName() or "Realm"
+            local myRank = nil
+            if (myGUID) then
+                for idx, entry in ipairs(cachedLeaderboardList) do
+                    if (entry.guid == myGUID) then
+                        myRank = idx
+                        break
+                    end
+                end
+            end
+            if (total == 0) then
+                statusStrip:SetText("|cff888888No ranked players recorded yet on " .. realmName .. ". Inspect players to populate.|r")
+            elseif (myRank) then
+                statusStrip:SetText(string.format("|cffb4e634Standing:|r Rank |cffffd100#%d|r of %d on %s", myRank, total, realmName))
+            else
+                statusStrip:SetText(string.format("|cff9ba3aeLeaderboard:|r %d player(s) tracked on %s", total, realmName))
+            end
+        end
+
+        scrollBar:SetScript("OnValueChanged", function(_, val)
+            currentOffset = math.floor(val + 0.5)
+            updateRows()
+        end)
+
+        lbContainer:EnableMouseWheel(true)
+        lbContainer:SetScript("OnMouseWheel", function(_, delta)
+            local minV, maxV = scrollBar:GetMinMaxValues()
+            local curV = scrollBar:GetValue()
+            local nextV = math.max(minV, math.min(maxV, curV - delta * 2))
+            scrollBar:SetValue(nextV)
+        end)
+
+        local function refreshLeaderboardData()
+            local rankDB = rawget(_G, "TacoTipExtrasRankDB")
+            if (not rankDB or type(rankDB.GetLeaderboard) ~= "function") then
+                cachedLeaderboardList = {}
+                updateRows()
+                return
+            end
+            local rawList = rankDB.GetLeaderboard(nil, currentTab, "ALL", searchQuery, nil)
+            cachedLeaderboardList = rawList or {}
+            updateRows()
+        end
+
+        local function setTab(tabName)
+            currentTab = tabName
+            allBtn:SetFlatColors(tabName == "all" and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
+                tabName == "all" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+            allyBtn:SetFlatColors(tabName == "alliance" and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
+                tabName == "alliance" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+            hordeBtn:SetFlatColors(tabName == "horde" and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
+                tabName == "horde" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+            currentOffset = 0
+            scrollBar:SetValue(0)
+            refreshLeaderboardData()
+        end
+
+        allBtn:SetScript("OnMouseDown", function() setTab("all") end)
+        allyBtn:SetScript("OnMouseDown", function() setTab("alliance") end)
+        hordeBtn:SetScript("OnMouseDown", function() setTab("horde") end)
+
+        lbSearch:SetScript("OnTextChanged", function(self)
+            local q = self:GetText() or ""
+            if (q == "") then
+                lbSearchPlaceholder:Show()
+            else
+                lbSearchPlaceholder:Hide()
+            end
+            searchQuery = q
+            currentOffset = 0
+            scrollBar:SetValue(0)
+            refreshLeaderboardData()
+        end)
+
+        syncQuickBtn:SetScript("OnMouseDown", function()
+            local syncNow = rawget(_G, "TacoTipExtrasSyncNow")
+            if (type(syncNow) == "function") then
+                pcall(syncNow, true)
+            elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TTGSSYNC) == "function") then
+                pcall(_G.SlashCmdList.TTGSSYNC, "")
+            end
+            refreshLeaderboardData()
+        end)
+
+        popupBtn:SetScript("OnMouseDown", function()
             local toggle = rawget(_G, "TacoTipExtrasToggleLeaderboard")
             if (type(toggle) == "function") then
                 pcall(toggle)
             elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TACOTIPEXTRAS) == "function") then
                 pcall(_G.SlashCmdList.TACOTIPEXTRAS, "ranks")
             end
-        end, "Open Leaderboard", "Open the server-wide GearScore leaderboard.")
-        lbBtn:SetPoint("RIGHT", lbCard, "RIGHT", -12, 0)
+        end)
 
-        ey = registerRow(extrasChild, lbCard, "extras", ey, 52)
+        frame.RefreshEmbeddedLeaderboard = refreshLeaderboardData
+
+        ey = registerRow(extrasChild, lbContainer, "extras", ey, 365)
 
         ey = addSectionHeader(extrasChild, "Peer-to-Peer Database Synchronization", ey)
 
         -- Action Card: Sync Now
         local syncCard = CreateFrame("Frame", nil, extrasChild)
-        syncCard:SetSize(590, 56)
+        syncCard:SetSize(680, 56)
         paintFlatBox(syncCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
         syncCard.searchText = "sync now database peer p2p ttgssync broadcast"
 
         local syncIcon = syncCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
         syncIcon:SetPoint("LEFT", syncCard, "LEFT", 14, 0)
-        syncIcon:SetText("|cff3498db[P2P]|r")
+        syncIcon:SetText("|cffb4e634[P2P]|r")
 
         local syncTitle = syncCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
         syncTitle:SetPoint("TOPLEFT", syncIcon, "TOPRIGHT", 10, 4)
@@ -4267,7 +4654,8 @@ local function createDashboard()
             elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TTGSSYNC) == "function") then
                 pcall(_G.SlashCmdList.TTGSSYNC, "")
             end
-            syncStatusText:SetText("|cff2ecc71✓ Sync request broadcast to peers!|r")
+            syncStatusText:SetText("|cffb4e634✓ Sync request broadcast to peers!|r")
+            if (frame.RefreshEmbeddedLeaderboard) then frame:RefreshEmbeddedLeaderboard() end
         end, "Sync Now", "Trigger an immediate peer-to-peer sync with guild, party, and sync channel.")
         syncBtn:SetPoint("RIGHT", syncCard, "RIGHT", -12, 0)
 
@@ -4278,7 +4666,7 @@ local function createDashboard()
 
         -- Action Card: Open Extras Settings
         local optCard = CreateFrame("Frame", nil, extrasChild)
-        optCard:SetSize(590, 52)
+        optCard:SetSize(680, 52)
         paintFlatBox(optCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
         optCard.searchText = "extras settings options configuration ex tte"
 
@@ -4310,7 +4698,7 @@ local function createDashboard()
 
         ey = addSectionHeader(extrasChild, "Architecture & Privacy Notice", ey)
 
-        local infoBox = createNoticeBox(extrasChild, "|cffffb81c[INFO]|r",
+        local infoBox = createNoticeBox(extrasChild, "|cffffd100[INFO]|r",
             "No remote server or external database is used. All leaderboard rankings and gear records are synced peer-to-peer (P2P) in-game via WoW addon messages and saved directly to your local SavedVariables.", false, 50)
         infoBox:SetPoint("TOPLEFT", extrasChild, "TOPLEFT", 0, ey)
         ey = ey - 58
@@ -4324,45 +4712,96 @@ local function createDashboard()
     local diag = addTab("diagnostics", "Diagnostics", 1, true)
     local dh = diag:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     dh:SetPoint("TOPLEFT", diag, "TOPLEFT", 0, 0)
-    dh:SetText("|cffffb81cSystem Diagnostics|r")
+    dh:SetText("|cffffd100System Diagnostics & Health Monitor|r")
 
     local verdictText = diag:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     verdictText:SetPoint("TOPLEFT", dh, "BOTTOMLEFT", 0, -6)
 
     local diagScroll = CreateFrame("ScrollFrame", "TacoTipDashboardDiagScroll", diag, "UIPanelScrollFrameTemplate")
     diagScroll:SetPoint("TOPLEFT", verdictText, "BOTTOMLEFT", 0, -8)
-    diagScroll:SetPoint("BOTTOMRIGHT", diag, "BOTTOMRIGHT", -26, 34)
+    diagScroll:SetPoint("BOTTOMRIGHT", diag, "BOTTOMRIGHT", -26, 38)
 
     local diagBox = CreateFrame("EditBox", nil, diagScroll)
     diagBox:SetMultiLine(true)
     diagBox:SetAutoFocus(false)
     diagBox:SetFontObject("GameFontHighlightSmall")
-    diagBox:SetWidth(580)
+    diagBox:SetWidth(590)
     diagBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     diagScroll:SetScrollChild(diagBox)
 
+    local showingTraces = false
+
     frame.RefreshDiagnostics = function()
         local report, verdict = buildDiagnosticsReport()
-        local color = "|cff2ecc71"
+        local statusLabel
         if (not verdict) then
-            color = "|cffe74c3c"
+            statusLabel = "|cffff4d4d[UNAVAILABLE]|r Diagnostics engine failed"
         elseif (not verdict.healthy) then
-            color = (verdict.severity == "error") and "|cffe74c3c" or "|cffe67e22"
+            if (verdict.severity == "error") then
+                statusLabel = "|cffff4d4d[FAILURES DETECTED]|r " .. tostring(verdict.text or "Errors logged")
+            else
+                statusLabel = "|cffffd100[WARNINGS LOGGED]|r " .. tostring(verdict.text or "Warnings detected")
+            end
+        else
+            statusLabel = "|cffb4e634[HEALTHY]|r " .. tostring(verdict.text or "All systems nominal")
         end
-        verdictText:SetText("Status: " .. color .. tostring(verdict and verdict.text or "UNAVAILABLE") .. "|r")
-        diagBox:SetText(report)
+        verdictText:SetText("Status: " .. statusLabel)
+
+        if (showingTraces) then
+            local traces = (TT and TT.FormatDiagnosticTraces) and TT:FormatDiagnosticTraces() or "No detailed traces available."
+            diagBox:SetText(traces)
+        else
+            diagBox:SetText(report)
+        end
     end
 
-    local copyCard = createFlatActionCard(diag, 180, 26, "Select Report (Ctrl+C)", "emerald", function()
+    frame.ExportDiagnostics = function()
+        if (TT and TT.FormatDiagnosticExport) then
+            local exp = TT:FormatDiagnosticExport()
+            diagBox:SetText(exp)
+            diagBox:SetFocus()
+            diagBox:HighlightText()
+            print("|cff59f0dcTacoTip:|r Markdown diagnostic report generated & selected! Press |cffffd100Ctrl+C|r to copy.")
+        end
+    end
+
+    local copyCard = createFlatActionCard(diag, 100, 26, "Select (Ctrl+C)", "emerald", function()
         diagBox:SetFocus()
         diagBox:HighlightText()
     end, "Copy report", "Selects the whole report. Press Ctrl+C, then paste it into Discord or a bug report.")
-    copyCard:SetPoint("BOTTOMLEFT", diag, "BOTTOMLEFT", 0, 0)
+    copyCard:SetPoint("BOTTOMLEFT", diag, "BOTTOMLEFT", 0, 4)
 
-    local refreshCard = createFlatActionCard(diag, 100, 26, "Refresh", "plain", function()
+    local exportCard = createFlatActionCard(diag, 115, 26, "Export Markdown", "emerald", function()
+        if (frame.ExportDiagnostics) then
+            frame:ExportDiagnostics()
+        end
+    end, "Export Markdown", "Generate a clean Markdown diagnostic bundle ready for Discord or GitHub.")
+    exportCard:SetPoint("LEFT", copyCard, "RIGHT", 6, 0)
+
+    local refreshCard = createFlatActionCard(diag, 70, 26, "Refresh", "plain", function()
         frame:RefreshDiagnostics()
-    end)
-    refreshCard:SetPoint("LEFT", copyCard, "RIGHT", 8, 0)
+    end, "Refresh", "Re-run system diagnostics collection.")
+    refreshCard:SetPoint("LEFT", exportCard, "RIGHT", 6, 0)
+
+    local traceToggleCard
+    traceToggleCard = createFlatActionCard(diag, 175, 26, "View Error & Warning Traces", "gold", function()
+        showingTraces = not showingTraces
+        if (showingTraces) then
+            traceToggleCard.text:SetText("View Summary Report")
+        else
+            traceToggleCard.text:SetText("View Error & Warning Traces")
+        end
+        frame:RefreshDiagnostics()
+    end, "Toggle Traces", "Switch between the full diagnostic summary and detailed error/warning stack traces.")
+    traceToggleCard:SetPoint("LEFT", refreshCard, "RIGHT", 6, 0)
+
+    local clearCard = createFlatActionCard(diag, 85, 26, "Clear Logs", "danger", function()
+        if (TT and TT.ClearDiagnosticLogs) then
+            TT:ClearDiagnosticLogs()
+        end
+        frame:RefreshDiagnostics()
+    end, "Clear Logs", "Clear the in-memory error and warning trace logs.")
+    clearCard:SetPoint("LEFT", traceToggleCard, "RIGHT", 6, 0)
 
     -- ========================================================================
     -- Tab 8: Community Hub
@@ -4370,10 +4809,10 @@ local function createDashboard()
     local community = addTab("community", "Community", 2, true)
     local ch = community:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     ch:SetPoint("TOPLEFT", community, "TOPLEFT", 0, 0)
-    ch:SetText("|cffffb81cCommunity Hub|r")
+    ch:SetText("|cffffd100Community Hub|r")
 
-    local cd = createWrappedText(community, "GameFontHighlightSmall", 590,
-        "|cffffb81c200,000+ downloads|r - thank you for helping TacoTip grow! Join our Discord community for live support, " ..
+    local cd = createWrappedText(community, "GameFontHighlightSmall", 600,
+        "|cffffd100200,000+ downloads|r - thank you for helping TacoTip grow! Join our Discord community for live support, " ..
         "feedback, and updates. Select the link, press Ctrl+C, and paste it into your browser.")
     cd:SetPoint("TOPLEFT", ch, "BOTTOMLEFT", 0, -6)
 
@@ -4383,7 +4822,7 @@ local function createDashboard()
         lbl:SetText(label)
         local edit = CreateFrame("EditBox", nil, community, "InputBoxTemplate")
         edit:SetAutoFocus(false)
-        edit:SetSize(540, 24)
+        edit:SetSize(560, 24)
         edit:SetPoint("TOPLEFT", lbl, "BOTTOMLEFT", 6, -4)
         edit:SetText(url)
         edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
@@ -4391,9 +4830,9 @@ local function createDashboard()
         edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
         return edit
     end
-    local d1 = linkRow(cd, "|cff5865f2Discord Invite|r", DISCORD_INVITE_URL)
-    local d2 = linkRow(d1, "|cff59f0dcCurseForge|r", CURSEFORGE_URL)
-    linkRow(d2, "|cffe67e22TacoTip Extras|r", EXTRAS_URL)
+    local d1 = linkRow(cd, "|cffffd100Discord Invite|r", DISCORD_INVITE_URL)
+    local d2 = linkRow(d1, "|cffb4e634CurseForge|r", CURSEFORGE_URL)
+    linkRow(d2, "|cffffd100TacoTip Extras|r", EXTRAS_URL)
 
     -- ========================================================================
     -- Tab 9: Reset Defaults
@@ -4401,13 +4840,13 @@ local function createDashboard()
     local resetPage = addTab("reset", "Reset Defaults", 3, true)
     local rh = resetPage:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     rh:SetPoint("TOPLEFT", resetPage, "TOPLEFT", 0, 0)
-    rh:SetText("|cffffb81cReset Configuration|r")
+    rh:SetText("|cffffd100Reset Configuration|r")
 
-    local rd = createWrappedText(resetPage, "GameFontHighlightSmall", 590,
+    local rd = createWrappedText(resetPage, "GameFontHighlightSmall", 600,
         "Restore all TacoTip settings back to their default recommended values.")
     rd:SetPoint("TOPLEFT", rh, "BOTTOMLEFT", 0, -6)
 
-    local rNotice = createNoticeBox(resetPage, "|cffe74c3c[RESET]|r",
+    local rNotice = createNoticeBox(resetPage, "|cffff4d4d[RESET]|r",
         "Warning: This will restore all tooltip styles, colors, positioning offsets, and toggles back to defaults.")
     rNotice:SetPoint("TOPLEFT", rd, "BOTTOMLEFT", 0, -14)
 
@@ -4423,7 +4862,7 @@ local function createDashboard()
         resetCfg()
         if (TT.RefreshOptionsUI) then TT:RefreshOptionsUI() end
         if (frame.RefreshAll) then frame:RefreshAll() end
-        rStatus:SetText("|cff2ecc71✓ Configuration restored to defaults.|r")
+        rStatus:SetText("|cffb4e634✓ Configuration restored to defaults.|r")
     end, "Reset", "Restore all settings to default.")
     rDoBtn:SetPoint("TOPLEFT", rStatus, "BOTTOMLEFT", 0, -8)
 
@@ -4433,6 +4872,25 @@ local function createDashboard()
         for k, ctl in pairs(syncControls) do
             if (ctl.SetChecked and TacoTipConfig[k] ~= nil) then
                 ctl:SetChecked(TacoTipConfig[k])
+            end
+        end
+        local hasAchievements = CI and CI.IsRetail and CI:IsRetail() and true or false
+        if (syncControls.show_achievement_points) then
+            if (hasAchievements) then
+                syncControls.show_achievement_points:SetDisabled(false)
+                syncControls.show_achievement_points:SetChecked(TacoTipConfig.show_achievement_points)
+            else
+                syncControls.show_achievement_points:SetDisabled(true, "Achievement point comparison is restricted to Retail clients.")
+                syncControls.show_achievement_points:SetChecked(false)
+            end
+        end
+        if (syncControls.show_pawn_player) then
+            if (isPawnLoaded) then
+                syncControls.show_pawn_player:SetDisabled(false)
+                syncControls.show_pawn_player:SetChecked(TacoTipConfig.show_pawn_player)
+            else
+                syncControls.show_pawn_player:SetDisabled(true, "Pawn addon is not loaded or missing.")
+                syncControls.show_pawn_player:SetChecked(false)
             end
         end
         if (syncControls.custom_position) then

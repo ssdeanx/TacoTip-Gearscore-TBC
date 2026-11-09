@@ -5,7 +5,7 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v0.9.9) and **TacoTip Extras**
+two addons, one repo: **TacoTip** (root, v1.0.0) and **TacoTip Extras**
 (`TacoTip_Extras/`, v1.2.5), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
@@ -33,9 +33,14 @@ the five clients are two API worlds. never cross them.
   `displayName` and `icon`); per-tree points come from
   `C_Traits.GetGroupCurrencyInfo(configID, groupIDs)` → `spentInTree`, and
   the inspected player's trait config is the documented constant
-  `Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID` (-1,
-  `TraitConstantsDocumentation.lua`), which Blizzard itself loads for the
-  inspect talent frame (`Blizzard_ClassTalentsFrame.lua:887`). That config is
+  `Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID = -1`
+  (`TraitConstantsDocumentation.lua:352`), which Blizzard's Camelot
+  `ClassTalentsFrame` loads for the inspect frame
+  (`Interface/AddOns/Blizzard_PlayerSpells/ClassTalents/Blizzard_ClassTalentsFrame.lua:887`,
+  `RefreshConfigID` -> `SetConfigID(..., INSPECT_TRAIT_CONFIG_ID)`). The
+  `validInspect` gate is `C_Traits.HasValidInspectData()`
+  (`SharedTraitsDocumentation.lua`): `true` means the client has the
+  inspected player's trait config loaded. That config is
   the inspected player's ACTIVE group; the inactive group is attempted
   through `C_SpecializationInfo.GetTalentInfo` with `isInspect = true`,
   `target = <unit>`, `groupIndex = <g>` and is drawn only when the client

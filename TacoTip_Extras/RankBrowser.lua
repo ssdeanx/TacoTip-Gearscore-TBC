@@ -15,6 +15,15 @@ namespace.RankBrowser = RankBrowser
 -- that reads them resolves through L at render time.
 local L = _G.TACOEXTRAS_LOCALE or {}
 
+local function isSecretValue(val)
+    if val == nil then return false end
+    if type(issecretvalue) == "function" then
+        local ok, isSec = pcall(issecretvalue, val)
+        if ok and isSec then return true end
+    end
+    return false
+end
+
 -- ---------------------------------------------------------------------------
 -- Layout constants
 -- ---------------------------------------------------------------------------
@@ -1038,7 +1047,9 @@ local function renderRow(row, entry, index, gsRank, myGUID)
 
     -- Name in class colour, plus a thin class bar down the left edge.
     local c = getClassColor(classTokenOf(entry))
-    row.nameText:SetText(entry.name or L["LB_TIP_UNKNOWN"])
+    local pName = entry.name
+    if isSecretValue(pName) then pName = "Restricted" end
+    row.nameText:SetText(pName or L["LB_TIP_UNKNOWN"])
     row.nameText:SetTextColor(c[1], c[2], c[3])
     row.classBar:SetColorTexture(c[1], c[2], c[3], 0.85)
 
@@ -1066,14 +1077,18 @@ local function renderRow(row, entry, index, gsRank, myGUID)
 
     -- GearScore and iLvl share the score's quality colour.
     local gs = entry.gs or 0
+    if isSecretValue(gs) then gs = 0 end
     local gr, gg, gb = getGSQualityColor(gs, viewBestGS)
     row.gsText:SetText(tostring(gs))
     row.gsText:SetTextColor(gr, gg, gb)
-    row.ilvlText:SetText(string.format("%.1f", entry.ilvl or 0))
+    local ilvl = entry.ilvl or 0
+    if isSecretValue(ilvl) then ilvl = 0 end
+    row.ilvlText:SetText(string.format("%.1f", ilvl))
     row.ilvlText:SetTextColor(gr, gg, gb)
 
     -- Level renders blank when unknown (0) -- old rows stay clean.
-    local level = tonumber(entry.level)
+    local rawLevel = entry.level
+    local level = (not isSecretValue(rawLevel)) and tonumber(rawLevel) or 0
     row.levelText:SetText((level and level > 0) and tostring(level) or "")
     row.levelText:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
 
@@ -1356,6 +1371,42 @@ local function announceScanComplete()
         if sound ~= nil then
             pcall(_G.PlaySound, sound)
         end
+    end
+end
+
+function RankBrowser.AnnounceSyncReceived(count)
+    local f = rankFrame
+    if not f or type(f.scanStatus) ~= "table" then
+        return
+    end
+    if isSecretValue(count) then return end
+    local num = tonumber(count) or 0
+    if num <= 0 then return end
+    local total = 0
+    local db = namespace.RankDB
+    if type(db) == "table" and type(db.GetLeaderboard) == "function" then
+        local _, c = db.GetLeaderboard(nil, "All", "ALL", "")
+        total = tonumber(c) or 0
+    end
+    local msg = string.format("Sync received: %d record%s (%d total)", num, num == 1 and "" or "s", total)
+    if type(f.scanStatus.SetText) == "function" then
+        pcall(f.scanStatus.SetText, f.scanStatus, msg)
+    end
+    if type(f.scanStatus.Show) == "function" then
+        pcall(f.scanStatus.Show, f.scanStatus)
+    end
+    f.scanStatusToken = (f.scanStatusToken or 0) + 1
+    local token = f.scanStatusToken
+    local timer = _G.C_Timer
+    if type(timer) == "table" and type(timer.After) == "function" then
+        timer.After(4.0, function()
+            if f and f.scanStatusToken == token and type(f.scanStatus) == "table"
+                and type(f.scanStatus.GetText) == "function"
+                and f.scanStatus:GetText() == msg
+                and type(f.scanStatus.Hide) == "function" then
+                pcall(f.scanStatus.Hide, f.scanStatus)
+            end
+        end)
     end
 end
 

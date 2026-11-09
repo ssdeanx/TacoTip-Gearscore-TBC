@@ -1252,3 +1252,6 @@ function RankDB.PurgeDatabase(realm)
     forgetRowBookkeeping(realmKey)
     return count
 end
+
+rawset(_G, "TacoTipExtrasRankDB", RankDB)
+

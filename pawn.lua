@@ -137,7 +137,7 @@ local function itemcacheCB(tbl, id)
 end
 
 
-function TT_PAWN:GetScore(unitorguid, useCallback)
+function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
     local guid = getPlayerGUID(unitorguid)
     if (guid) then
         local isSelf = (unitorguid == "player")
@@ -155,7 +155,8 @@ function TT_PAWN:GetScore(unitorguid, useCallback)
             end
         end
 
-        local spec = CI:GetSpecialization(guid) or 1
+        local activeGroup = specGroup or (CI and CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
+        local spec = CI:GetSpecialization(guid, activeGroup) or 1
         local ppOk, _, PlayerEnglishClass = pcall(GetPlayerInfoByGUID, guid)
         local class = ppOk and PlayerEnglishClass or nil
         local pawnScore = 0

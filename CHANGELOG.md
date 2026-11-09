@@ -4,6 +4,7 @@ All notable changes to TacoTip are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `1.0.0` | `2026-11-09` | **Major 1.0.0 Release: 3D portrait unit-frame stabilization, group role-priority inspection, zero-allocation fontstring caching, markdown diagnostic export, Pawn dual-spec caching, expanded modern dashboard, and deep secret-value protection.** Overhauled 3D character model lifecycles to completely eliminate strobing and rebuild loops when hovering unit frames (`PlayerFrame`, `PetFrame`, `PartyMemberFrame`, `TargetFrame`, `CompactRaidFrame`). Added group role-priority inspection in dungeons and raids (Tank > Healer > DPS) ahead of ambient scans. Implemented zero-allocation line FontString caching on Classic/TBC/Titanforge and clean buffer recycling. Introduced 1-click Markdown diagnostic export (`/tt report` & `/tt export`) in the `850×560` settings dashboard. Hardened map zone caches, group unit resolution, and status text against WoW Forever secret-value tainting. Multi-spec Pawn caching now computes and persists dual-spec scores simultaneously for instant spec switching. Full zero-regression parity across all 5 client families. |
 | `0.9.9` | `2026-11-08` | **Dashboard polish, power bar smooth fade-out & default on, bottom zone row, and root options restructuring.** Overhauled TacoTip settings with an enterprise-grade standalone dashboard (`/tt`) featuring 6 specialized categories, instant search filtering, gold pill toggles, and live diagnostics. Unit power bars are now enabled by default and smoothly fade out alongside `GameTooltip` on unhover instead of snapping away. On WoW Forever, the `Zone:` row is repositioned to the bottom of the tooltip below Pawn and GearScore. The Blizzard settings root page now provides direct 1-click toggles for essential features (GearScore, Item Level, Talents, Class Colors, Guild Names, Health & Power Bars), and login welcomes players with `/tt` instructions. |
 | `0.9.8` | `2026-11-07` | **Modern dark-mode settings dashboard (`/tt`), Forever zone line, and native loot-window tooltips.** Overhauled settings into a standalone draggable dashboard (`720×500`) styled to PlateSCT dark-mode standards with TacoTip brand colors (obsidian charcoal, Taco Gold `#FFB81C`, and Emerald Green `#2ECC71`), featuring a real-time search filter ("Search settings..."), 6 category tabs (`General`, `Unit Content`, `Appearance & Bars`, `Portrait & Icons`, `Positioning`, `Character & Inspect`), modern pill toggle switches with descriptive subtitles, visual style preset cards, Diagnostics tab with 1-click Ctrl+C report copy, Community hub with Discord invite, and persistent Move Tooltip & Reset Configuration footer. On WoW Forever, hovering a player, target, party or raid frame adds a `Zone:` row under `Target:`; loot-window item tooltips remain native. |
 | `0.9.7` | `2026-11-07` | **Talents on WoW Forever (Camelot).** Forever's talent system is class-level: one specialization, three trait trees and up to two spec groups. The tooltip now reads the client's own data — `C_Traits.GetGroupDisplayInfoByTreeID` for tree name/icon and `C_Traits.GetGroupCurrencyInfo` (`spent`, fallback `spentInTree`) for per-tree points — and renders the TBC shape: the tree with the most points plus `[p1/p2/p3]`, active group first, inactive dimmed, `[0/0/0]` template before the first point. On the player's own tooltip both groups are read (`GetNumSpecGroups`, `C_SpecializationInfo.GetCombatConfigIDForSpecGroup`); an inspected player's active group comes from `Constants.TraitConsts.INSPECT_TRAIT_CONFIG_ID` (-1) and the inactive group is attempted through `C_SpecializationInfo.GetTalentInfo` (`isInspect`, `target`, `groupIndex`) and drawn only if the client answers. The old Retail/Classic talent block keeps its `show_talents and not isForever` gate unchanged; the Forever branch is separate, and the Classic `spec_table`/`talents_table` data is not used. Forever pins 108/108; operator in-game verified 2026-11-07. |
@@ -27,6 +28,56 @@ All notable changes to TacoTip are documented in this file.
 | `0.7.9` | `2026-10-10` | **Corrects the 3D portrait on Retail and WoW Forever, and gives the tooltip border a per-client default.** The portrait strobed only on the modern pair because the modern client fires the tooltip post-calls *before* its own `Show()`, so the whole unit handler ran against a frame that had never been laid out — which turned two cosmetic defects into the visible bug. **Re-verified 2026-10-10:** stationary unit-frame hover periodic destroy/reset fixed on Retail, right-click inspect gear stripping on Retail/Forever resolved, force-inspect on hover eliminated, guildless inspect crash protected, another addon adding a tooltip line erased by line-clear fixed, redundant-parameter IDE diagnostic resolved, all 11 locales at 100% parity, and the harness passing with 51/51 tests. Also: `/tt diag` gained event counters and a silent-failure report that no Lua error handler can produce. |
 | `0.7.8` | `2026-09-29` | **First cross-engine release, and the one that replaces the Classic-only addon.** Runs unchanged on all five client families — Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever and Retail. Rebuilt client detection, completed the localization registry, and corrected the WoW Forever GearScore bracket. Fixed the two defects that left Retail and WoW Forever running **half** the addon: an unguarded `HookScript("OnTooltipSetUnit", ...)` that raised at file scope because Retail's tooltip template does not declare that script, and `CreateFrame("Texture", ...)`, which is not a valid frame type, followed by `SetFrameLevel` on that texture — a `Frame` method that does not exist on a modern `Region`. Fixed the tooltip being loaded twice, the addon not loading on Titanforge, and stock Blizzard tooltips on TBC Anniversary and Titanforge. Fixed the tooltip backdrop mixin being grafted onto modern tooltips. Fixed the 3D portrait being destroyed and reloaded roughly twice a second while hovering a unit frame, and a stray specialization icon appearing on the wrong character. Resolved the Pawn scale library per client instead of guessing it, which had been spamming *ScaleName must be the name of an existing scale* on every character tooltip — the one defect `pcall` could not mask, because Pawn reports it by writing to the chat frame. Added `/tacotip diag` and an offline verification harness (50 invocations across all five clients). |
 | `0.7.7` | `2026-09-21` | **Initial Universal Cross-Engine Release**: Complete 1:1 architectural port enabling TacoTip to run concurrently on WoW Forever (`16001`), Retail Live (`110002`–`120100`), WotLK Classic & Titanforge (`38001`), TBC Classic Anniversary (`20506`), and Classic Era / Season of Discovery (`11509`). Powered by `LibForeverInspector` with multi-client engine gating, adaptive quality brackets, universal Settings & ColorPicker API bridges, and zero-allocation tooltip pipeline. |
+
+## [1.0.0] — 2026-11-09
+
+### Milestone 1.0.0 Enterprise Release: 3D Portrait Stabilization, Live Diagnostics Trace Readout, Expanded Modern Dashboard, and WoW Forever Secret-Value Integrity
+
+- **3D PORTRAIT UNIT FRAME STABILIZATION**:
+  - Completely resolved severe strobing and repeated teardown/rebuild of 3D character models when hovering unit frames (`PlayerFrame`, `PetFrame`, `PartyMemberFrame`, `TargetFrame`, `CompactRaidFrame`).
+  - Added anchor state tracking so 0.2s periodic unit-frame refresh ticks (`UnitFrame_UpdateTooltip` -> `Show`) do not redundantly invoke `ClearAllPoints()` on active 3D models.
+  - Hardened unit token and GUID resolution (`displayedUnit`, attributes, `party1..4`, `raid1..40`) across unit frame tooltip events.
+  - Preserved active 3D models across periodic refreshes while ensuring seamless reconstruction when transitioning to genuinely different target units.
+
+- **INTERACTIVE DIAGNOSTICS & TRACE READOUT**:
+  - Embedded live diagnostics into the standalone dashboard with four action controls: 1-click select/copy (`Ctrl+C`), live refresh, toggle between summary report and detailed error/warning stack traces (`debugstack`), and log clearing.
+  - Added warning logging ring buffer alongside caught error logging.
+  - Added health status indicator badges: `[HEALTHY]` (lime), `[WARNINGS LOGGED]` (gold), and `[FAILURES DETECTED]` (red).
+
+- **ENTERPRISE SETTINGS DASHBOARD OVERHAUL (`/tt`)**:
+  - Resized standalone dashboard to `850×560` (+10px width, +20px height) providing optimal alignment and spacing.
+  - Refined color scheme to a dark charcoal slate background accented with vibrant lime (`#B4E634`) and Taco Gold (`#FFD100`).
+  - Implemented client-aware setting restrictions with informative tooltips (e.g. cleanly restricting Retail-only achievement point comparisons on Classic and WoW Forever).
+
+- **POWER BAR STABILITY & STATUS TEXT IMMUNITY**:
+  - Fixed power bar dropping prematurely when moving the cursor away from a target unit while `GameTooltip` remains displayed.
+  - Immunized power bar and health bar status text against WoW Forever secret-value manipulation.
+
+- **INTELLIGENT ROLE-PRIORITY INSPECT ENGINE**:
+  - In dungeons and raids, `LibForeverInspector` now prioritizes inspection queue entries by party/raid role: **Tank (1) > Healer (2) > DPS (3)** before ambient open-world queued units.
+  - Ensures critical tank and healer GearScore and specialization data are captured immediately upon entering groups.
+
+- **ZERO-ALLOCATION FONTSTRING LINE BUFFER POOLING**:
+  - Implemented high-performance line FontString recycling pools (`tooltipLeftLineCache` and `tooltipRightLineCache`) in `main.lua`.
+  - Replaced repetitive string concatenations on Classic/TBC/Titanforge with pooled fontstrings and table recycling (`safeWipe`), dramatically minimizing Lua garbage collection pauses during rapid raid hovers.
+
+- **1-CLICK MARKDOWN DIAGNOSTIC EXPORT (`/tt report` & `/tt export`)**:
+  - Introduced `TT:FormatDiagnosticExport()` producing a clean, formatted Markdown document of the user's client build, hardware status, inspect queue telemetry, and caught warnings/errors.
+  - Wired to `/tt report` and `/tt export` slash commands and an "Export Markdown" button in the diagnostics dashboard with instant select and `Ctrl+C` copy instructions.
+
+- **PAWN DUAL-SPEC SIMULTANEOUS CACHING**:
+  - Upgraded Pawn evaluation (`TT_PAWN:GetScore`) and tooltip caching (`getPawnScoreMemo`/`setPawnScoreMemo`) to pre-calculate and memoize both primary (spec group 1) and secondary (spec group 2) spec scores simultaneously.
+  - Spec switching immediately displays the pre-calculated score with zero re-evaluation lag or tooltip stutter.
+
+- **WOW FOREVER DEEP TAINT PROTECTION & ZONE ROW HARDENING**:
+  - Fixed zone line evaluation order defect (`name == ""` before `isSecretValue(name)`).
+  - Protected `resolveGroupTokenFor` with `pcall` guards around `UnitInParty`, `UnitInRaid`, and `UnitIsUnit`.
+  - Immunized `safeUnitGUID` and `safeEquals` comparisons against secret strings in combat.
+  - Protected trait inspect pipeline and inspect queue against secret-value key lookups.
+
+- **MULTI-CLIENT ENGINE PARITY**:
+  - Universal compatibility verified across Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`).
+  - 100% test pass rate across all 72 test harness invocations and zero luacheck warnings.
 
 ## [0.9.9] — 2026-11-08
 

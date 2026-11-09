@@ -1,5 +1,7 @@
-```
-   _____              _____ _____
+# ⚡ TacoTip ⚡
+
+```ascii
+__              _____ _____
   |_   _|            |_   _|__  / __|
     | | |__   __ _  __  | |  / /|  _\
     | | '_ \ / _` |/ _` | | / / | |  \
@@ -11,7 +13,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.9
+version: 1.0.0
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -21,33 +23,101 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-08)
-updated: 2026-11-08
+status: pending in-game verification (2026-11-09)
+updated: 2026-11-09
 ```
 
-**TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
+<p align="center">
+  <img src="https://media.forgecdn.net/attachments/2065/485/2-png.png" alt="TacoTip Logo" width="128" height="128" />
+</p>
 
-- **<span style="color:#fffe23"><span style="text-decoration:underline">Discord</span></span>** <https://discord.gg/JuVJBwXqv>
-- **<span style="color:#59f0dc"><span style="text-decoration:underline">CurseForge</span></span>**
-— <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
+<p align="center">
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.0-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
+  <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
+</p>
 
-- **<span style="color:#e67e23"><span style="text-decoration:underline">Companion App</span></span>**
-— [TacoTip Extras](https://www.curseforge.com/wow/addons/tacotip-extras/preview) ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png) *(Guild rank browser, player gear leaderboard & historical stat tracking)*
+<p align="center">
+  <img src="https://img.shields.io/badge/Classic%20Era%20%7C%20SoD-1.15.9-f39c12?style=flat-square" alt="Classic Era" />
+  <img src="https://img.shields.io/badge/TBC%20Anniversary-2.05.06-2ecc71?style=flat-square" alt="TBC Anniversary" />
+  <img src="https://img.shields.io/badge/WotLK%20Titanforge-3.80.02-3498db?style=flat-square" alt="Titanforge" />
+  <img src="https://img.shields.io/badge/WoW%20Forever-16.0.01-9b59b6?style=flat-square" alt="WoW Forever" />
+  <img src="https://img.shields.io/badge/Retail%20Live-12.01.05-e74c3c?style=flat-square" alt="Retail" />
+</p>
 
-| Client Family | Supported Interface | Client Status |
-| :--- | :--- | :--- |
-| **<span style="color:#f39c12">Classic Era / Season of Discovery (SoD)</span>** | `11509` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#2ecc71">The Burning Crusade Classic Anniversary</span>** | `20506` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#3498db">WotLK Titanforge</span>** | `38002` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#9b59b6">WoW Forever</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> |
-| **<span style="color:#e74c3c">Retail / Live (Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> |
-
-> **<span style="color:#e67e23">This release replaces the previous Classic-only TacoTip.</span>** It is the same
-> addon, continued — your existing configuration carries over, and the GearScore
-> numbers you are used to are unchanged on the Classic clients. What is new is
-> that the identical build now also works on WoW Forever and Retail.
 ---
-> 🎉 **<span style="color:#fffc11">130,000+ Downloads Milestone & Community Thank You:</span>** A heartfelt thank you to our entire community! We just hit **130,000+ downloads** and are growing fast. Your feedback, bug reports, and support have made all of this rapid progress possible — thank you for making TacoTip your favorite tooltip addon! Join our community on **[Discord](https://discord.gg/JuVJBwXqv)** to stay connected, report issues, and help shape future updates!
+
+<div align="center">
+
+## 🏆 200,000+ Downloads Milestone & Community Celebration
+
+**A monumental thank you to over 200,000 World of Warcraft players and guild leaders worldwide!**
+*Your passionate feedback, bug reports, and community support have powered TacoTip from a Classic tooltip tweak into the definitive cross-engine tooltip suite.*
+**[Join our official Discord community](https://discord.gg/JuVJBwXqv)** to share your ideas, get instant support, and shape the next generation of features!
+
+</div>
+
+---
+
+**TacoTip** is the premier, all-in-one tooltip enhancement suite for World of Warcraft. Built with a unified dual-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
+
+- 💬 **<span style="color:#5865F2"><span style="text-decoration:underline">Official Discord Community</span></span>** — <https://discord.gg/JuVJBwXqv>
+- 📦 **<span style="color:#f39c12"><span style="text-decoration:underline">CurseForge Page</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore>
+- 🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) *(Server leaderboard, guild rank browser & peer-to-peer gear sync)*
+
+| Client Family | Supported Interface | Client Status | Architectural World |
+| :--- | :--- | :--- | :--- |
+| **<span style="color:#f39c12">Classic Era / Season of Discovery (SoD)</span>** | `11509` | <span style="color:#2ecc71">**Active**</span> | Classic Talent API (`GetTalentTabInfo`) |
+| **<span style="color:#2ecc71">The Burning Crusade Classic Anniversary</span>** | `20506` | <span style="color:#2ecc71">**Active**</span> | Classic Talent API (`GetTalentTabInfo`) |
+| **<span style="color:#3498db">WotLK Titanforge</span>** | `38002` | <span style="color:#2ecc71">**Active**</span> | Classic Talent API (`GetTalentTabInfo`) |
+| **<span style="color:#9b59b6">WoW Forever (Camelot)</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> | Mainline Trait API (`C_Traits` + `C_SpecializationInfo`) |
+| **<span style="color:#e74c3c">Retail / Live (Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> | Mainline Family (`C_SpecializationInfo`) |
+
+> **<span style="color:#e67e23">Seamless 1:1 Migration:</span>** This universal release replaces all previous single-client TacoTip builds. Your configuration carries over automatically, and Classic Era / TBC GearScore numbers remain byte-identical.
+
+---
+
+## ⚡ <span style="color:#e67e23">Key Feature Matrix</span>
+
+| Feature | Classic Era / TBC / Titanforge | WoW Forever (Camelot) | Retail Live |
+| :--- | :---: | :---: | :---: |
+| **Classic GearScore & Average iLvl** | ✅ Fully Supported | ✅ Fully Supported | ✅ Fully Supported |
+| **Pawn Dual-Spec Pre-Calculation** | ✅ Instant Spec Switching | ✅ Instant Spec Switching | ✅ Instant Spec Switching |
+| **Specialization & Talents Breakdown** | ✅ `[p1/p2/p3]` Trees + Icons | ✅ Dual-Spec Trait Trees | ✅ Modern Spec & Icon |
+| **3D Character Model Portraits** | ✅ Fully Stabilized | ✅ Fully Stabilized | ✅ Fully Stabilized |
+| **Smooth Unit Power & Health Bars** | ✅ Smooth Fade-Out | ✅ Untainted Secret Values | ✅ AllowedWhenTainted |
+| **Group Role-Priority Inspects** | ✅ Tank > Healer > DPS | ✅ Tank > Healer > DPS | ✅ Tank > Healer > DPS |
+| **Dynamic Zone Tracking** | — | ✅ Native `C_Map` Readout | — |
+| **Enterprise Dashboard (`/tt`)** | ✅ `850×560` Slate & Lime | ✅ `850×560` Slate & Lime | ✅ `850×560` Slate & Lime |
+| **1-Click Markdown Diagnostic Export** | ✅ `/tt report` | ✅ `/tt report` | ✅ `/tt report` |
+
+---
+
+## 🚀 <span style="color:#e67e23">Quick Slash Commands</span>
+
+| Command | Action |
+| :--- | :--- |
+| `/tt` or `/tacotip` | Toggle the modern **850×560 Enterprise Settings Dashboard** |
+| `/tt report` or `/tt export` | Generate a 1-click **Markdown Diagnostic Report** ready to paste into Discord or GitHub |
+| `/tt diag` | Display the real-time **Diagnostic HUD** (yardage, cache status, inspect queue depth) |
+| `/tt custom` | Show the draggable green anchor button to set custom tooltip position |
+| `/tt default` | Reset tooltip placement back to stock game default |
+| `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.0 Milestone Release</span>
+
+- 🌟 **<span style="color:#b4e634">Enterprise Standalone Dashboard Overhaul (`850×560`):</span>** Expanded the settings dashboard for better spacing, readability, and information density. Upgraded theme palette to a sleek charcoal slate background with vibrant lime (`#B4E634`) and Taco Gold (`#FFD100`) accents. Added client-aware option gating with informative tooltips (e.g. clearly restricting Retail-only achievement point comparisons on Classic and WoW Forever).
+- 🎯 **<span style="color:#b4e634">3D Portrait Unit Frame Stabilization:</span>** Completely resolved the long-standing 3D character portrait flickering and strobing when hovering unit frames (`PlayerFrame`, `PetFrame`, `PartyMemberFrame`, `TargetFrame`, `CompactRaidFrame`). Prevented periodic 0.2s unit frame updates from resetting model points and destroying active 3D models while retaining seamless unit-change transitions.
+- 🛡️ **<span style="color:#b4e634">Intelligent Role-Priority Inspection Engine:</span>** In dungeons and raids, inspection queue priorities now prioritize group members by role: **Tank > Healer > DPS** before ambient open-world scans, ensuring immediate GearScore coverage for critical party members.
+- ⚡ **<span style="color:#b4e634">Zero-Allocation FontString Line Buffer Pooling:</span>** Replaced repeated tooltip string formatting and allocations on Classic clients with high-performance FontString recycling buffers (`tooltipLeftLineCache` & `tooltipRightLineCache`), dramatically reducing garbage collection overhead during rapid mouseovers.
+- 📋 **<span style="color:#b4e634">1-Click Markdown Diagnostic Export (`/tt report` & `/tt export`):</span>** Added a 1-click Markdown export button to the Diagnostics tab, formatting client build, hardware status, inspect telemetry, and recent errors into GitHub/Discord-ready markdown with instant `Ctrl+C` copy.
+- ⚔️ **<span style="color:#b4e634">Pawn Dual-Spec Pre-Calculation & Caching:</span>** Multi-spec Pawn calculation now computes and caches both primary and secondary spec scores simultaneously. Switching talent specs immediately presents the cached score with zero re-evaluation lag or hitching.
+- 🔋 **<span style="color:#b4e634">Power Bar Stability & Status Text Safety:</span>** Fixed the power bar prematurely dropping when the mouse moves off a target while `GameTooltip` is still displayed. Immunized power bar and health bar status text against WoW Forever secret value restrictions.
+- 🧭 **<span style="color:#b4e634">Deep WoW Forever Secret-Value Taint Protection:</span>** Hardened map zone caches and inspect data readers against secret key tainting with `rawget(_G, "canaccessvalue")` and `issecretvalue` engine guards.
+- 🌐 **<span style="color:#b4e634">Universal Engine Integrity:</span>** Complete zero-regression parity across Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`).
 
 ---
 

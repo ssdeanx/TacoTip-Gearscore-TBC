@@ -1789,8 +1789,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.5",
-    "TOC ## Version is 1.2.5", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.6",
+    "TOC ## Version is 1.2.6", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -8572,17 +8572,24 @@ check(openCompletion ~= nil and openCompletion.status == "complete"
         .. tostring(openCompletion and openCompletion.value
             and openCompletion.value.opportunities))
 
--- (a) The restriction ON: the SAME character is still restricted.
+-- (a) The restriction ON: the SAME character is still restricted (except WoW Forever where metrics show for all levels).
 local shutResult = ScoringP.Evaluate(policyRevision(60),
     { restrictEnhancementMetricsToLevel70 = true })
 for _, name in ipairs({ "potentialGS", "delta", "completion" }) do
     local metric = metricOf(shutResult, name)
-    check(metric ~= nil and metric.status == "suppressed"
-        and metric.reason == "level-policy",
-        "level-70 policy: with the restriction ON a level-60 character is still restricted ("
-            .. name .. ")",
-        "status=" .. tostring(metric and metric.status)
-            .. " reason=" .. tostring(metric and metric.reason))
+    if CLIENT == "forever" then
+        check(metric ~= nil and metric.status ~= "suppressed",
+            "level-70 policy: on WoW Forever enhancement metrics show for all levels ("
+                .. name .. ")",
+            "status=" .. tostring(metric and metric.status))
+    else
+        check(metric ~= nil and metric.status == "suppressed"
+            and metric.reason == "level-policy",
+            "level-70 policy: with the restriction ON a level-60 character is still restricted ("
+                .. name .. ")",
+            "status=" .. tostring(metric and metric.status)
+                .. " reason=" .. tostring(metric and metric.reason))
+    end
 end
 
 -- (b) A NIL policy is explicit: it blocks with a named reason instead of
@@ -8631,12 +8638,21 @@ if type(ScannerP) == "table" and type(CoreP) == "table"
     end
     scanNow("policy-pin-restricted")
     local restrictedMetrics, restrictedResult = currentMetrics()
-    check(restrictedMetrics ~= nil
-        and restrictedMetrics.potentialGS ~= nil
-        and restrictedMetrics.potentialGS.status == "suppressed",
-        "level-70 policy: the scanner honours the shipped default (restricted) for a level-60 player",
-        "status=" .. tostring(restrictedMetrics and restrictedMetrics.potentialGS
-            and restrictedMetrics.potentialGS.status))
+    if CLIENT == "forever" then
+        check(restrictedMetrics ~= nil
+            and restrictedMetrics.potentialGS ~= nil
+            and restrictedMetrics.potentialGS.status ~= "suppressed",
+            "level-70 policy: on WoW Forever the scanner shows enhancement metrics for a level-60 player",
+            "status=" .. tostring(restrictedMetrics and restrictedMetrics.potentialGS
+                and restrictedMetrics.potentialGS.status))
+    else
+        check(restrictedMetrics ~= nil
+            and restrictedMetrics.potentialGS ~= nil
+            and restrictedMetrics.potentialGS.status == "suppressed",
+            "level-70 policy: the scanner honours the shipped default (restricted) for a level-60 player",
+            "status=" .. tostring(restrictedMetrics and restrictedMetrics.potentialGS
+                and restrictedMetrics.potentialGS.status))
+    end
     check(restrictedResult ~= nil and type(restrictedResult.policy) == "table"
         and restrictedResult.policy.restrictEnhancementMetricsToLevel70 == true,
         "level-70 policy: the scan records the policy it was computed under",
@@ -8734,9 +8750,15 @@ if type(ScannerP) == "table" and type(CoreP) == "table"
         end
         ScannerP.Reevaluate()
         local shutStatus, shutReason = renderAndStatus()
-        check(shutStatus == "suppressed" and shutReason == "level-policy",
-            "level-70 policy: with the restriction ON the tooltip suppresses the level-60 player",
-            "status=" .. tostring(shutStatus) .. " reason=" .. tostring(shutReason))
+        if CLIENT == "forever" then
+            check(shutStatus ~= "suppressed",
+                "level-70 policy: on WoW Forever the tooltip does not suppress the level-60 player",
+                "status=" .. tostring(shutStatus) .. " reason=" .. tostring(shutReason))
+        else
+            check(shutStatus == "suppressed" and shutReason == "level-policy",
+                "level-70 policy: with the restriction ON the tooltip suppresses the level-60 player",
+                "status=" .. tostring(shutStatus) .. " reason=" .. tostring(shutReason))
+        end
     else
         out("   (the adapter refused this run, so the tooltip render half does not apply)\n")
     end

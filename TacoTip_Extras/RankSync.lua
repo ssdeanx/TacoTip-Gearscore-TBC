@@ -218,8 +218,8 @@ local function removeSyncChannelIfMade()
         removed = true
     end
 
-    -- Check all 10 channel slots to catch ttgssync if sitting in slot 1 or any other slot
-    for slot = 1, 10 do
+    -- Check protected channel slots (1..4) to catch ttgssync if sitting in slot 1-4
+    for slot = 1, 4 do
         local okSlot, slotId, slotName = pcall(getChan, slot)
         if okSlot then
             local isTtg = false
@@ -247,15 +247,12 @@ local function removeSyncChannelIfMade()
     end
 
     if removed then
-        channelRemovedByUser = true
         channel.id = nil
         channel.state = "dead"
         suppressChannelFromChat(CHANNEL_NAME)
     end
     return removed
 end
-
-removeSyncChannelIfMade()
 
 local function joinSyncChannel()
     local g = _G
@@ -1493,6 +1490,9 @@ local function ingestRecords(payload)
         if browser and type(browser.UpdateUI) == "function" then
             pcall(browser.UpdateUI)
         end
+        if browser and type(browser.AnnounceSyncReceived) == "function" then
+            pcall(browser.AnnounceSyncReceived, stored)
+        end
     end
     return stored, seen
 end
@@ -1519,6 +1519,9 @@ local function handlePayload(payload, chatType, sender)
                 local browser = namespace.RankBrowser
                 if browser and type(browser.UpdateUI) == "function" then
                     pcall(browser.UpdateUI)
+                end
+                if browser and type(browser.AnnounceSyncReceived) == "function" then
+                    pcall(browser.AnnounceSyncReceived, 1)
                 end
             else
                 -- M-5, the single-record arm: same count, same reason.
@@ -1635,10 +1638,10 @@ local function joinThenQuery(retries)
         cTimer.After(4.0, function()
             joinSyncChannel()
             armChannelProbe()
-            if channel.id and channel.id > 0 then
-                RankSync.RequestSync()
-            end
+            RankSync.RequestSync()
         end)
+    else
+        RankSync.RequestSync()
     end
 end
 

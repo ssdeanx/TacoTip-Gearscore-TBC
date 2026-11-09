@@ -168,6 +168,8 @@ check("TT_PAWN is initialized when Pawn is present", type(activePawn) == "table"
 if (type(activePawn) == "table") then
     check("TT_PAWN:GetItemScore is callable", type(activePawn.GetItemScore) == "function")
     check("TT_PAWN:GetScore is callable", type(activePawn.GetScore) == "function")
+    local spec2Score = activePawn:GetScore(SELF_GUID, false, 2)
+    check("TT_PAWN:GetScore supports specGroup argument", type(spec2Score) == "number")
 end
 
 -- NOTE: Prototypes for TT_PAWN.IsAvailable / TT_PAWN.DrainItemCache / late-load

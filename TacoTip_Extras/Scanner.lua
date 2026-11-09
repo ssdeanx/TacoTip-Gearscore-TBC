@@ -880,6 +880,15 @@ local function captureSlot(
             end
         end
     end
+    if nativeLink == nil and inspector and type(inspector.GetUnitData) == "function" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
+        if okData and type(cached) == "table" and type(cached.items) == "table" then
+            local link = cached.items[slotID]
+            if type(link) == "string" and link ~= "" then
+                nativeLink = link
+            end
+        end
+    end
 
     local effectiveItemID = isPositiveInteger(rawItemID) and rawItemID or nil
     if effectiveItemID == nil and type(nativeLink) == "string" then
@@ -1075,7 +1084,16 @@ end
 local function unitMatchesRemoteGUID(unit, guid)
     if type(unit) ~= "string"
         or unit == ""
-        or type(UnitExists) ~= "function"
+        or type(guid) ~= "string"
+        or guid == "" then
+        return false
+    end
+
+    if unit == guid then
+        return true
+    end
+
+    if type(UnitExists) ~= "function"
         or type(UnitIsPlayer) ~= "function"
         or type(UnitGUID) ~= "function" then
         return false
@@ -1105,19 +1123,25 @@ local function resolveRemoteUnit(guid, callbackUnit)
         return inspectFrame.unit
     end
 
-    if type(inspector) ~= "table"
-        or type(inspector.PlayerGUIDToUnitToken) ~= "function" then
-        return nil
+    if type(inspector) == "table"
+        and type(inspector.PlayerGUIDToUnitToken) == "function" then
+        local ok, resolved = pcall(
+            inspector.PlayerGUIDToUnitToken,
+            inspector,
+            guid
+        )
+        if ok and unitMatchesRemoteGUID(resolved, guid) then
+            return resolved
+        end
     end
 
-    local ok, resolved = pcall(
-        inspector.PlayerGUIDToUnitToken,
-        inspector,
-        guid
-    )
-    if ok and unitMatchesRemoteGUID(resolved, guid) then
-        return resolved
+    if type(inspector) == "table" and type(inspector.GetUnitData) == "function" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
+        if okData and type(cached) == "table" and type(cached.items) == "table" then
+            return guid
+        end
     end
+
     return nil
 end
 

@@ -2355,6 +2355,130 @@ do
 end
 
 --------------------------------------------------------------------------
+-- P19: Secret-value and taint safety on the Forever zone row & group tokens.
+-- If mapInfo.name is a secret value or UnitInRaid returns secret data,
+-- the row is safely omitted without throwing string/boolean exceptions.
+--------------------------------------------------------------------------
+do
+    local savedZone = REALG.ZONE
+    REALG.ZONE = "Zone"
+    local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
+    local savedDisplayedUnit = REALG.TooltipUtil.GetDisplayedUnit
+    local savedInParty = REALG.UnitInParty
+    local savedInRaid = REALG.UnitInRaid
+
+    local SECRET_STR = setmetatable({}, {
+        __tostring = function() error("cannot tostring secret value") end,
+        __eq = function() error("cannot compare secret value") end,
+        __concat = function() error("cannot concatenate secret value") end,
+    })
+    local savedIsSecret = REALG.issecretvalue
+    REALG.issecretvalue = function(v) return v == SECRET_STR end
+
+    REALG.__bestMapForUnit = function() return 999 end
+    REALG.__mapInfo = function(id) return (id == 999) and { name = SECRET_STR } or nil end
+
+    -- Even with secret mapInfo.name, render should not throw and Zone row is omitted
+    local ok, secretLines = pcall(function()
+        GT.GetOwner = function() return { unit = "party1" } end
+        GT.GetUnit = function() return "n", "party1" end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", "party1", "Player-6-000006"
+        end
+        GT:ClearLines()
+        GT:AddLine("Partymate")
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = "Player-6-000006" })
+        end
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i)
+            local t = l and l:GetText()
+            if (t ~= nil and t ~= "") then out[#out + 1] = tostring(t) end
+        end
+        return out
+    end)
+
+    check("P19: secret map name is safely omitted without throwing",
+        ok and type(secretLines) == "table",
+        "ok=" .. STD.tostring(ok))
+
+    -- Secret return from UnitInRaid / UnitInParty also safely handled
+    REALG.UnitInRaid = function() return SECRET_STR end
+    local okGroup, resGroup = pcall(function()
+        GT.GetOwner = function() return { unit = "target" } end
+        GT.GetUnit = function() return "n", "target" end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", "target", "Player-9-000009"
+        end
+        GT:ClearLines()
+        GT:AddLine("Targetguy")
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = "Player-9-000009" })
+        end
+        return true
+    end)
+
+    check("P19: secret group membership probe never throws boolean exception",
+        okGroup and resGroup == true,
+        "ok=" .. STD.tostring(okGroup))
+
+    REALG.issecretvalue = savedIsSecret
+    REALG.UnitInParty = savedInParty
+    REALG.UnitInRaid = savedInRaid
+    GT.GetOwner = savedOwner
+    GT.GetUnit = savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayedUnit
+    REALG.__bestMapForUnit = nil
+    REALG.__mapInfo = nil
+    REALG.ZONE = savedZone
+end
+
+--------------------------------------------------------------------------
+-- P20: Zero-allocation fontstring caching.
+-- GetTooltipLeftLine/RightLine memoize references to avoid runtime allocations.
+--------------------------------------------------------------------------
+do
+    local line1a = TT.GetTooltipLeftLine(GT, 1)
+    local line1b = TT.GetTooltipLeftLine(GT, 1)
+    check("P20: GetTooltipLeftLine returns memoized fontstring without allocating",
+        line1a ~= nil and line1a == line1b,
+        "line1a=" .. STD.tostring(line1a) .. " line1b=" .. STD.tostring(line1b))
+end
+
+--------------------------------------------------------------------------
+-- P21: FormatDiagnosticExport markdown generation.
+--------------------------------------------------------------------------
+do
+    local exp = TT.FormatDiagnosticExport and TT:FormatDiagnosticExport()
+    check("P21: FormatDiagnosticExport returns clean markdown report",
+        type(exp) == "string" and STD.string.find(exp, "```markdown", 1, true) == 1
+            and STD.string.find(exp, "TacoTip System Diagnostic Report", 1, true) ~= nil,
+        "export=" .. STD.tostring(exp and exp:sub(1, 60)))
+end
+
+--------------------------------------------------------------------------
+-- P22: Pawn dual-spec memoization: groups 1 and 2 cached simultaneously.
+--------------------------------------------------------------------------
+do
+    local testGUID = "Player-7-000007"
+    local dummyItems = { [1] = 1001, [2] = 1002 }
+    TT.setPawnScoreMemo(testGUID, dummyItems, 1, 1500, "Arms", "|cffc79c6e")
+    TT.setPawnScoreMemo(testGUID, dummyItems, 2, 1750, "Fury", "|cffc79c6e")
+
+    local score1, spec1 = TT.getPawnScoreMemo(testGUID, dummyItems, 1)
+    local score2, spec2 = TT.getPawnScoreMemo(testGUID, dummyItems, 2)
+
+    check("P22: Pawn dual-spec memo retains group 1 score",
+        score1 == 1500 and spec1 == "Arms",
+        "score1=" .. STD.tostring(score1) .. " spec1=" .. STD.tostring(spec1))
+    check("P22: Pawn dual-spec memo retains group 2 score simultaneously",
+        score2 == 1750 and spec2 == "Fury",
+        "score2=" .. STD.tostring(score2) .. " spec2=" .. STD.tostring(spec2))
+end
+
+--------------------------------------------------------------------------
 -- P13b: FojjiCore's row is switched off through its own option, and TacoTip
 -- never replaces GameTooltip's methods (no override, no secret predicate).
 --------------------------------------------------------------------------
