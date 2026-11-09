@@ -53,6 +53,7 @@ read_globals = {
     "UnitGUID",
     "UnitIsPlayer",
     "UnitLevel",
+    "issecretvalue",
 }
 
 globals = {

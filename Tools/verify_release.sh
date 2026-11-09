@@ -181,7 +181,7 @@ fi
 unexpected=""
 while IFS= read -r f; do
   case "$f" in
-    TacoTip.toc|CHANGELOG.md|LICENSE|README.md|THIRD_PARTY_NOTICES.md|tt.tga) ;;
+    TacoTip.toc|CHANGELOG.md|LICENSE|README.md|THIRD_PARTY_NOTICES.md|tt.tga|logo.tga) ;;
     */*)
       case "$f" in
         Locale/*.lua|Libs/*) ;;

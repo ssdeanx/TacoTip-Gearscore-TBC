@@ -809,7 +809,17 @@ end
 -- Always DESCENDING -- rank 1 is the highest GearScore -- whatever direction
 -- the display list currently happens to face (`sortAsc` never reaches here).
 local function buildGearScoreRanks(data)
-    local byGS = sortEntries(data, "gs", false)
+    local isSorted = true
+    for i = 1, #data - 1 do
+        local a, b = data[i], data[i + 1]
+        local aGS = tonumber(a and a.gs) or 0
+        local bGS = tonumber(b and b.gs) or 0
+        if aGS < bGS then
+            isSorted = false
+            break
+        end
+    end
+    local byGS = isSorted and data or sortEntries(data, "gs", false)
     local ranks = {}
     for i = 1, #byGS do
         local guid = byGS[i].guid
@@ -1172,40 +1182,97 @@ end
 -- This is NOT the gear-inspection scanner (Scanner.lua): inspecting equipment,
 -- the inspect-frame summary and the tooltip scores are untouched and keep
 -- working. Only the "Scan now" rank capture is off.
-local SCAN_DISABLED_TEXT = "Scan disabled"
-local SCAN_DISABLED_REASON = "The realm scan is temporarily disabled because it was crashing the inspect engine. Inspecting gear and tooltip scores still work."
+local SYNC_BUTTON_TEXT = "Sync Now"
+local SYNC_TOOLTIP_TITLE = "Sync Leaderboard"
+local SYNC_TOOLTIP_DESC = "Share and synchronize leaderboard rankings with your guild, party/raid, and peers."
 
--- Future work: restore StartScan's Core.RequestLocalScan path and remove this
--- notice together; do not enable one without the other.
+-- Inspect scan is blocked (preventing inspect engine crashes).
 function RankBrowser.IsScanAvailable()
     return false
 end
 
--- Grey a scan control out and make a click a no-op. BOTH scan surfaces call
--- this, so the label, the disabled state and the explanation cannot drift.
--- Returns false for a missing button rather than raising: a surface that fails
--- to build must not take the window down.
+-- Style and arm the sync button. BOTH surfaces (the leaderboard footer and
+-- the options panel) call this, so the label, the enabled state, tooltip,
+-- and click action cannot drift.
 function RankBrowser.StyleScanButton(button, explain)
     if type(button) ~= "table" then
         return false
     end
     if type(button.SetText) == "function" then
-        pcall(button.SetText, button, SCAN_DISABLED_TEXT)
+        pcall(button.SetText, button, SYNC_BUTTON_TEXT)
     end
-    if type(button.Disable) == "function" then
-        pcall(button.Disable, button)
+    if type(button.Enable) == "function" then
+        pcall(button.Enable, button)
     end
     if type(button.SetAlpha) == "function" then
-        pcall(button.SetAlpha, button, 0.55)
+        pcall(button.SetAlpha, button, 1.0)
     end
     if type(button.SetScript) ~= "function" then
         return true
     end
-    -- A disabled button does not dispatch OnClick on every client/template,
-    -- but replacing the handler costs nothing and guarantees the control
-    -- cannot start anything even if the disabled state is lost.
-    pcall(button.SetScript, button, "OnClick", function()
-        return false
+    pcall(button.SetScript, button, "OnClick", function(self)
+        local sync = namespace.RankSync
+        if type(sync) ~= "table" or type(sync.SyncNow) ~= "function" then
+            local f = rankFrame
+            if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                pcall(f.scanStatus.SetText, f.scanStatus, "Sync unavailable.")
+                if type(f.scanStatus.Show) == "function" then
+                    pcall(f.scanStatus.Show, f.scanStatus)
+                end
+            end
+            return false
+        end
+        local ok, started = pcall(sync.SyncNow, true)
+        if ok and started then
+            if type(self.SetText) == "function" then
+                pcall(self.SetText, self, "Syncing...")
+                local cTimer = rawget(_G, "C_Timer")
+                if type(cTimer) == "table" and type(cTimer.After) == "function" then
+                    pcall(cTimer.After, 2.5, function()
+                        if type(self.SetText) == "function" then
+                            pcall(self.SetText, self, SYNC_BUTTON_TEXT)
+                        end
+                    end)
+                end
+            end
+            local f = rankFrame
+            if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                pcall(f.scanStatus.SetText, f.scanStatus, "Sync requested. Exchanging records...")
+                if type(f.scanStatus.Show) == "function" then
+                    pcall(f.scanStatus.Show, f.scanStatus)
+                end
+                local cTimer = rawget(_G, "C_Timer")
+                if type(cTimer) == "table" and type(cTimer.After) == "function" then
+                    pcall(cTimer.After, 4.0, function()
+                        if f and type(f.scanStatus) == "table" and type(f.scanStatus.GetText) == "function"
+                            and f.scanStatus:GetText() == "Sync requested. Exchanging records..."
+                            and type(f.scanStatus.Hide) == "function" then
+                            pcall(f.scanStatus.Hide, f.scanStatus)
+                        end
+                    end)
+                end
+            end
+            return true
+        else
+            local f = rankFrame
+            if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                pcall(f.scanStatus.SetText, f.scanStatus, "Sync is on cooldown.")
+                if type(f.scanStatus.Show) == "function" then
+                    pcall(f.scanStatus.Show, f.scanStatus)
+                end
+                local cTimer = rawget(_G, "C_Timer")
+                if type(cTimer) == "table" and type(cTimer.After) == "function" then
+                    pcall(cTimer.After, 3.0, function()
+                        if f and type(f.scanStatus) == "table" and type(f.scanStatus.GetText) == "function"
+                            and f.scanStatus:GetText() == "Sync is on cooldown."
+                            and type(f.scanStatus.Hide) == "function" then
+                            pcall(f.scanStatus.Hide, f.scanStatus)
+                        end
+                    end)
+                end
+            end
+            return false
+        end
     end)
     if explain then
         pcall(button.SetScript, button, "OnEnter", function(self)
@@ -1216,7 +1283,10 @@ function RankBrowser.StyleScanButton(button, explain)
                 return
             end
             pcall(tip.SetOwner, tip, self, "ANCHOR_RIGHT")
-            pcall(tip.SetText, tip, SCAN_DISABLED_REASON, 1, 0.82, 0.4, true)
+            pcall(tip.SetText, tip, SYNC_TOOLTIP_TITLE, 1, 0.82, 0.4, true)
+            if type(tip.AddLine) == "function" then
+                pcall(tip.AddLine, tip, SYNC_TOOLTIP_DESC, 1, 1, 1, true)
+            end
             if type(tip.Show) == "function" then
                 pcall(tip.Show, tip)
             end
@@ -1232,8 +1302,8 @@ function RankBrowser.StyleScanButton(button, explain)
 end
 
 function RankBrowser.StartScan()
-    -- Blocked; see IsScanAvailable above. Kept as a function (not a nil) so a
-    -- caller that still asks gets a truthful `false` instead of a raise.
+    -- Inspect scanning is blocked (preventing inspect engine crashes).
+    -- StartScan returns false safely so existing callers bump no generation.
     return false
 end
 
@@ -1310,9 +1380,6 @@ function RankBrowser.RefreshProgress()
     if not RankBrowser.IsScanAvailable() then
         f.progressBar:Hide()
         f.scanning = false
-        if type(f.scanStatus) == "table" then
-            f.scanStatus:Hide()
-        end
         return true
     end
     local scanner = namespace.Scanner
@@ -2444,8 +2511,9 @@ function RankBrowser.CreateUI()
     -- Title. When the ButtonFrame template already provides its own title
     -- text, reuse it (set the text, create nothing); otherwise build ours in
     -- the title band.
-    if templateTitle then
-        providedTitle:SetText(L["LB_TITLE"] or "TacoTip GearScore Leaderboard")
+    local titleObj = providedTitle
+    if templateTitle and titleObj and type(titleObj.SetText) == "function" then
+        titleObj:SetText(L["LB_TITLE"] or "TacoTip GearScore Leaderboard")
     else
         local title = f:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
         title:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT, titleTop())

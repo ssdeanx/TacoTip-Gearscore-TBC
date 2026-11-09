@@ -9,6 +9,7 @@ namespace.RankSync = RankSync
 
 local PREFIX = "TACO_GS_SYNC"
 local CHANNEL_NAME = "ttgssync"
+local CHANNEL_PASSWORD = "tt_sync_pass_tbc"
 local THROTTLE_INTERVAL = 1.5
 local MAX_BURST = 3
 
@@ -45,10 +46,10 @@ local lastTokenTime = 0
 -- channels there). The state is proven by a real send of a one-line probe
 -- whose payload kind peers ignore silently.
 local channel = {
-    state = "idle",          -- idle (never probed) | probing | active | dead
-    id = nil,                -- resolved GetChannelName number, or nil
-    failures = 0,            -- consecutive throttle strikes observed on probes
-    nextProbeAt = 0,         -- uptime after which a dead channel may re-probe
+    state = "idle",  -- idle (never probed) | probing | active | dead
+    id = nil,        -- resolved GetChannelName number, or nil
+    failures = 0,    -- consecutive throttle strikes observed on probes
+    nextProbeAt = 0, -- uptime after which a dead channel may re-probe
 }
 local PROBE_RECHECK_SECONDS = 120
 local PROBE_MAX_THROTTLE_STRIKES = 3
@@ -102,35 +103,206 @@ end
 
 local function suppressChannelFromChat(cName)
     local g = _G
+    local removeChan = rawget(g, "ChatFrame_RemoveChannel")
     local removeGroup = rawget(g, "ChatFrame_RemoveChannelGroup")
-    if type(removeGroup) ~= "function" then return end
     for i = 1, 10 do
         local frameName = "ChatFrame" .. tostring(i)
         local cf = rawget(g, frameName)
         if cf then
-            pcall(removeGroup, cf, cName)
+            if type(removeChan) == "function" then
+                pcall(removeChan, cf, cName)
+            end
+            if type(cf.RemoveChannel) == "function" then
+                pcall(cf.RemoveChannel, cf, cName)
+            end
+            if type(removeGroup) == "function" then
+                pcall(removeGroup, cf, cName)
+            end
+            if type(cf.channelList) == "table" then
+                for idx, val in pairs(cf.channelList) do
+                    if type(val) == "string" and val:lower() == cName:lower() then
+                        cf.channelList[idx] = nil
+                        if type(cf.zoneChannelList) == "table" then
+                            cf.zoneChannelList[idx] = nil
+                        end
+                    end
+                end
+            end
+        end
+        local removeWin = rawget(g, "RemoveChatWindowChannel")
+        if type(removeWin) == "function" then
+            pcall(removeWin, i, cName)
         end
     end
 end
 
+local function filterChannelNotice(_, _, msg, _, _, _, _, _, _, _, channelName)
+    if channelName and type(channelName) == "string" and channelName:lower():find(CHANNEL_NAME:lower(), 1, true) then
+        return true
+    end
+    if msg and type(msg) == "string" and msg:lower():find(CHANNEL_NAME:lower(), 1, true) then
+        return true
+    end
+    return false
+end
+
+local function filterChannelChat(_, _, _, _, _, _, _, _, _, _, channelName)
+    if channelName and type(channelName) == "string" and channelName:lower():find(CHANNEL_NAME:lower(), 1, true) then
+        return true
+    end
+    return false
+end
+
+if type(_G.ChatFrame_AddMessageEventFilter) == "function" then
+    _G.ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL_NOTICE", filterChannelNotice)
+    _G.ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL_NOTICE_USER", filterChannelNotice)
+    _G.ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", filterChannelChat)
+end
+
+if type(_G.ChannelListMixin) == "table" and type(_G.ChannelListMixin.AddChatSystemButton) == "function" then
+    local origAddBtn = _G.ChannelListMixin.AddChatSystemButton
+    rawset(_G.ChannelListMixin, "AddChatSystemButton", function(self, channelID)
+        local getInfo = _G.GetChannelDisplayInfo
+        if type(getInfo) == "function" then
+            local name = getInfo(channelID)
+            if name and type(name) == "string" and name:lower() == CHANNEL_NAME:lower() then
+                return
+            end
+        end
+        return origAddBtn(self, channelID)
+    end)
+end
+
+if type(_G.SlashCmdList) == "table" then
+    _G["SLASH_TTGSSYNC1"] = "/ttgssync"
+    _G.SlashCmdList["TTGSSYNC"] = function()
+        if type(RankSync.SyncNow) == "function" then
+            pcall(RankSync.SyncNow, true)
+        end
+    end
+end
+
+local channelRemovedByUser = false
+
+local function removeSyncChannelIfMade()
+    local g = _G
+    local leaveByName = rawget(g, "LeaveChannelByName")
+    local leaveById = rawget(g, "LeaveChannelByLocalID")
+    local getChan = rawget(g, "GetChannelName")
+    local cChat = rawget(g, "C_ChatInfo")
+    local canLeave = (type(leaveByName) == "function")
+        or (type(leaveById) == "function")
+        or (type(cChat) == "table" and type(cChat.LeaveChannelByName) == "function")
+
+    if not canLeave or type(getChan) ~= "function" then
+        return false
+    end
+
+    local removed = false
+
+    -- Check if ttgssync is currently a joined channel by name
+    local okName, idByName, nameByName = pcall(getChan, CHANNEL_NAME)
+    if okName and type(idByName) == "number" and idByName > 0 then
+        if type(leaveByName) == "function" then
+            pcall(leaveByName, CHANNEL_NAME)
+            if type(nameByName) == "string" and nameByName ~= "" then
+                pcall(leaveByName, nameByName)
+            end
+        end
+        if type(leaveById) == "function" then
+            pcall(leaveById, idByName)
+        end
+        if type(cChat) == "table" and type(cChat.LeaveChannelByName) == "function" then
+            pcall(cChat.LeaveChannelByName, CHANNEL_NAME)
+        end
+        removed = true
+    end
+
+    -- Check all 10 channel slots to catch ttgssync if sitting in slot 1 or any other slot
+    for slot = 1, 10 do
+        local okSlot, slotId, slotName = pcall(getChan, slot)
+        if okSlot then
+            local isTtg = false
+            if type(slotName) == "string" and slotName:lower():find(CHANNEL_NAME:lower(), 1, true) then
+                isTtg = true
+            elseif type(slotId) == "string" and slotId:lower():find(CHANNEL_NAME:lower(), 1, true) then
+                isTtg = true
+            end
+            if isTtg then
+                if type(leaveByName) == "function" then
+                    pcall(leaveByName, CHANNEL_NAME)
+                    if type(slotName) == "string" and slotName ~= "" then
+                        pcall(leaveByName, slotName)
+                    end
+                end
+                if type(leaveById) == "function" then
+                    pcall(leaveById, slot)
+                end
+                if type(cChat) == "table" and type(cChat.LeaveChannelByName) == "function" then
+                    pcall(cChat.LeaveChannelByName, CHANNEL_NAME)
+                end
+                removed = true
+            end
+        end
+    end
+
+    if removed then
+        channelRemovedByUser = true
+        channel.id = nil
+        channel.state = "dead"
+        suppressChannelFromChat(CHANNEL_NAME)
+    end
+    return removed
+end
+
+removeSyncChannelIfMade()
+
 local function joinSyncChannel()
     local g = _G
+    local leaveByName = rawget(g, "LeaveChannelByName")
+    local leaveById = rawget(g, "LeaveChannelByLocalID")
+    local getChan = rawget(g, "GetChannelName")
+    local cChat = rawget(g, "C_ChatInfo")
+
+    -- If the channel was already made before or purged, remove it and do not rejoin
+    if removeSyncChannelIfMade() or channelRemovedByUser then
+        return
+    end
+
     local joinFunc = rawget(g, "JoinChannelByName")
     if type(joinFunc) == "function" then
-        pcall(joinFunc, CHANNEL_NAME, nil, nil)
+        pcall(joinFunc, CHANNEL_NAME, CHANNEL_PASSWORD, nil)
     end
     -- Re-resolve from zero every join instead of layering onto the last good
     -- value: a join that lands without effect (GetChannelName still 0/nil) used
     -- to leave the STALE id live, so addon traffic kept being aimed at a
     -- channel we were no longer in.
     local resolved = nil
-    local getChan = rawget(g, "GetChannelName")
     if type(getChan) == "function" then
         local ok, id = pcall(getChan, CHANNEL_NAME)
         if ok and type(id) == "number" and id > 0 then
             resolved = id
         end
     end
+
+    -- If the channel occupied slot 1..4 (e.g. hijacking General chat), IMMEDIATELY leave and kill it!
+    if resolved and resolved <= 4 then
+        if type(leaveByName) == "function" then
+            pcall(leaveByName, CHANNEL_NAME)
+        end
+        if type(leaveById) == "function" then
+            pcall(leaveById, resolved)
+        end
+        if type(cChat) == "table" and type(cChat.LeaveChannelByName) == "function" then
+            pcall(cChat.LeaveChannelByName, CHANNEL_NAME)
+        end
+        suppressChannelFromChat(CHANNEL_NAME)
+        channel.id = nil
+        channel.state = "dead"
+        channelRemovedByUser = true
+        return
+    end
+
     channel.id = resolved
     if resolved then
         suppressChannelFromChat(CHANNEL_NAME)
@@ -151,9 +323,18 @@ end
 -- tooltip keep working; render prefers the same map with the stored string
 -- as fallback.
 local CLASS_TOKEN_BY_ID = {
-    [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE",
-    [5] = "PRIEST", [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE",
-    [9] = "WARLOCK", [10] = "MONK", [11] = "DRUID", [12] = "DEMONHUNTER",
+    [1] = "WARRIOR",
+    [2] = "PALADIN",
+    [3] = "HUNTER",
+    [4] = "ROGUE",
+    [5] = "PRIEST",
+    [6] = "DEATHKNIGHT",
+    [7] = "SHAMAN",
+    [8] = "MAGE",
+    [9] = "WARLOCK",
+    [10] = "MONK",
+    [11] = "DRUID",
+    [12] = "DEMONHUNTER",
     [13] = "EVOKER",
 }
 
@@ -174,26 +355,51 @@ end
 -- (TBC/Wrath inspectable best, 0 none/unknown; Retail/Forever always 0).)
 local WIRE_VERSION = "2"
 
+local function safeNumber(val, default)
+    if type(issecretvalue) == "function" and issecretvalue(val) then
+        return default or 0
+    end
+    local n = tonumber(val)
+    if not n then return default or 0 end
+    return n
+end
+
+local function safeString(val)
+    if type(issecretvalue) == "function" and issecretvalue(val) then
+        return ""
+    end
+    if type(val) ~= "string" then return "" end
+    return val
+end
+
 function RankSync.SerializeRecord(rec)
     if type(rec) ~= "table" then return nil end
-    local specID = math.floor(tonumber(rec.specID) or 0)
-    local level = math.floor(tonumber(rec.level) or 0)
+    local specID = math.floor(safeNumber(rec.specID, 0))
+    local level = math.floor(safeNumber(rec.level, 0))
     if level < 0 then level = 0 end
-    local pvpRank = math.floor(tonumber(rec.pvpRank) or 0)
+    local pvpRank = math.floor(safeNumber(rec.pvpRank, 0))
     if pvpRank < 0 then pvpRank = 0 end
-    local arena = math.floor(tonumber(rec.arena) or 0)
+    local arena = math.floor(safeNumber(rec.arena, 0))
     if arena < 0 then arena = 0 end
+    local classID = math.floor(safeNumber(rec.classID, 0))
+    local gs = safeNumber(rec.gs, 0)
+    local ilvl = safeNumber(rec.ilvl, 0)
+    local timestamp = safeNumber(rec.timestamp, 0)
+    local guid = safeString(rec.guid)
+    local name = safeString(rec.name)
+    local guild = safeString(rec.guild)
+
     local parts = {
         "R",
         WIRE_VERSION,
-        rec.guid or "",
-        rec.name or "",
-        tostring(rec.classID or 0),
-        tostring(rec.gs or 0),
-        tostring(rec.ilvl or 0),
-        tostring(rec.timestamp or 0),
+        guid,
+        name,
+        tostring(classID),
+        tostring(gs),
+        tostring(ilvl),
+        tostring(timestamp),
         (specID > 0) and tostring(specID) or "",
-        rec.guild or "",
+        guild,
         tostring(level),
         tostring(pvpRank),
         tostring(arena),
@@ -241,6 +447,7 @@ local function splitFields(payload)
 end
 
 function RankSync.DeserializeRecord(payload)
+    if type(issecretvalue) == "function" and issecretvalue(payload) then return nil end
     if type(payload) ~= "string" then return nil end
     local parts = splitFields(payload)
     if #parts < RECORD_FIELDS or parts[1] ~= "R" then
@@ -253,23 +460,23 @@ function RankSync.DeserializeRecord(payload)
         countOutcome("versionReject")
         return nil
     end
-    local classID = tonumber(parts[5]) or 0
+    local classID = safeNumber(parts[5], 0)
     return {
-        guid = parts[3],
-        name = parts[4],
+        guid = safeString(parts[3]),
+        name = safeString(parts[4]),
         classID = classID,
         class = classTokenFromID(classID),
-        specID = tonumber(parts[9]) or 0,
-        gs = tonumber(parts[6]) or 0,
-        ilvl = tonumber(parts[7]) or 0,
-        timestamp = tonumber(parts[8]) or 0,
+        specID = safeNumber(parts[9], 0),
+        gs = safeNumber(parts[6], 0),
+        ilvl = safeNumber(parts[7], 0),
+        timestamp = safeNumber(parts[8], 0),
         -- Stage-3 cheap fields. Guild rides through as the raw string (the
         -- store sanitizes + truncates; "" is unguilded-or-unknown, never
         -- "Unknown"-filled). Level/pvpRank/arena are 0 when unknown.
-        guild = parts[10] or "",
-        level = tonumber(parts[11]) or 0,
-        pvpRank = tonumber(parts[12]) or 0,
-        arena = tonumber(parts[13]) or 0,
+        guild = safeString(parts[10]),
+        level = safeNumber(parts[11], 0),
+        pvpRank = safeNumber(parts[12], 0),
+        arena = safeNumber(parts[13], 0),
         source = "sync",
     }
 end
@@ -1228,20 +1435,20 @@ local function recordFromParts(parts, start)
         countOutcome("versionReject")
         return nil
     end
-    local classID = tonumber(parts[start + 4]) or 0
+    local classID = safeNumber(parts[start + 4], 0)
     return {
-        guid = parts[start + 2],
-        name = parts[start + 3],
+        guid = safeString(parts[start + 2]),
+        name = safeString(parts[start + 3]),
         classID = classID,
         class = classTokenFromID(classID),
-        specID = tonumber(parts[start + 8]) or 0,
-        gs = tonumber(parts[start + 5]) or 0,
-        ilvl = tonumber(parts[start + 6]) or 0,
-        timestamp = tonumber(parts[start + 7]) or 0,
-        guild = parts[start + 9] or "",
-        level = tonumber(parts[start + 10]) or 0,
-        pvpRank = tonumber(parts[start + 11]) or 0,
-        arena = tonumber(parts[start + 12]) or 0,
+        specID = safeNumber(parts[start + 8], 0),
+        gs = safeNumber(parts[start + 5], 0),
+        ilvl = safeNumber(parts[start + 6], 0),
+        timestamp = safeNumber(parts[start + 7], 0),
+        guild = safeString(parts[start + 9]),
+        level = safeNumber(parts[start + 10], 0),
+        pvpRank = safeNumber(parts[start + 11], 0),
+        arena = safeNumber(parts[start + 12], 0),
         source = "sync",
     }
 end
@@ -1281,6 +1488,12 @@ local function ingestRecords(payload)
         end
         index = index + RECORD_FIELDS
     end
+    if stored > 0 then
+        local browser = namespace.RankBrowser
+        if browser and type(browser.UpdateUI) == "function" then
+            pcall(browser.UpdateUI)
+        end
+    end
     return stored, seen
 end
 
@@ -1302,7 +1515,12 @@ local function handlePayload(payload, chatType, sender)
         if rec and namespace.RankDB
             and type(namespace.RankDB.StoreRecord) == "function" then
             local storedOK, storeReason = namespace.RankDB.StoreRecord(rec)
-            if not storedOK then
+            if storedOK then
+                local browser = namespace.RankBrowser
+                if browser and type(browser.UpdateUI) == "function" then
+                    pcall(browser.UpdateUI)
+                end
+            else
                 -- M-5, the single-record arm: same count, same reason.
                 countOutcome("recordRejected")
                 lastRecordRejectedReason = tostring(storeReason or "unknown")
@@ -1391,14 +1609,28 @@ RankSync.INBOUND_WINDOW_SECONDS = INBOUND_WINDOW_SECONDS
 -- Join the channel and then ASK. A query sent before the join lands reaches
 -- nobody, and GetChannelName can lag the join by a frame or two, so the first
 -- attempt is retried once rather than fired into a channel id that is still nil.
-local function joinThenQuery()
+local function joinThenQuery(retries)
+    retries = retries or 0
+    local g = _G
+    local getChan = rawget(g, "GetChannelName")
+    local cTimer = rawget(g, "C_Timer")
+    -- Ensure default zone channels (General, Trade) have established slot 1 before joining ttgssync (up to 3 attempts)
+    if retries < 3 and type(getChan) == "function" and type(cTimer) == "table" and type(cTimer.After) == "function" then
+        local ok1, id1 = pcall(getChan, 1)
+        if not (ok1 and type(id1) == "number" and id1 > 0) then
+            cTimer.After(5.0, function()
+                joinThenQuery(retries + 1)
+            end)
+            return
+        end
+    end
+
     joinSyncChannel()
     armChannelProbe()
     if channel.id and channel.id > 0 then
         RankSync.RequestSync()
         return
     end
-    local cTimer = rawget(_G, "C_Timer")
     if type(cTimer) == "table" and type(cTimer.After) == "function" then
         cTimer.After(4.0, function()
             joinSyncChannel()
@@ -1450,7 +1682,7 @@ local function syncNow(force)
     registerPrefix()
     local cTimer = rawget(_G, "C_Timer")
     if type(cTimer) == "table" and type(cTimer.After) == "function" then
-        cTimer.After(4.0, joinThenQuery)
+        cTimer.After(force and 1.0 or 4.0, joinThenQuery)
     else
         joinThenQuery()
     end
@@ -1495,9 +1727,15 @@ local function onEvent(_, event, arg1, arg2, arg3, arg4)
         end
     elseif event == "PLAYER_LOGIN" then
         registerPrefix()
+        removeSyncChannelIfMade()
     elseif event == "PLAYER_ENTERING_WORLD"
         or event == "ZONE_CHANGED_NEW_AREA" then
+        removeSyncChannelIfMade()
+        suppressChannelFromChat(CHANNEL_NAME)
         syncNow()
+    elseif event == "CHAT_MSG_CHANNEL_NOTICE" or event == "CHANNEL_UI_UPDATE" then
+        removeSyncChannelIfMade()
+        suppressChannelFromChat(CHANNEL_NAME)
     end
 end
 
@@ -1506,6 +1744,8 @@ if syncFrame then
     syncFrame:RegisterEvent("PLAYER_LOGIN")
     syncFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     syncFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    syncFrame:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
+    syncFrame:RegisterEvent("CHANNEL_UI_UPDATE")
     syncFrame:SetScript("OnEvent", onEvent)
     syncFrame:SetScript("OnUpdate", function()
         if #sendQueue > 0 then
@@ -1513,3 +1753,11 @@ if syncFrame then
         end
     end)
 end
+
+local function syncNowGlobal(manual)
+    if type(RankSync.SyncNow) == "function" then
+        return RankSync.SyncNow(manual)
+    end
+    return false
+end
+rawset(_G, "TacoTipExtrasSyncNow", syncNowGlobal)

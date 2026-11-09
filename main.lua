@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.8"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.9"
 
 
 
@@ -203,6 +203,26 @@ local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
+function TT.isSecretValue(v)
+    return (type(issecretvalue) == "function" and issecretvalue(v))
+end
+local isSecretValue = TT.isSecretValue
+
+function TT.safeEquals(a, b)
+    if (a == nil or b == nil or TT.isSecretValue(a) or TT.isSecretValue(b)) then
+        return false
+    end
+    return a == b
+end
+local safeEquals = TT.safeEquals
+
+function TT.safeUnitGUID(unit)
+    if (not unit or type(UnitGUID) ~= "function") then return nil end
+    local guid = UnitGUID(unit)
+    if (not guid or TT.isSecretValue(guid)) then return nil end
+    return guid
+end
+local safeUnitGUID = TT.safeUnitGUID
 -- v0.7.4: per-tooltip state. Every timer/generation/refresh handle now lives
 -- on the tooltip frame itself, so clearing/hiding one tooltip can never cancel
 -- or stale-out another tooltip's pending work (the pre-0.7.4 module-level
@@ -226,6 +246,8 @@ local UnitCanAttack = _G.UnitCanAttack
 ---@field portraitAnchored boolean|nil -- whether the 3D/2D portrait is anchored to current layout
 ---@field inspectRenderGUID string|nil -- GUID of the inspected unit when last rendered
 ---@field inspectRenderTime number|nil -- GetTime() monotonic timestamp of the last inspect render
+---@field ownerUnitGUID string|nil     -- GUID of the tooltip owner's unit frame token
+---@field ownerUnitToken string|nil    -- Unit token of the tooltip owner's frame (e.g. "party1")
 
 -- Inert fallback state for getTooltipState(nil): keeps the documented
 -- "state is always a table" contract so no call site needs a nil check.
@@ -264,9 +286,11 @@ local function noteOwnerUnitGUID(tooltip)
     local owner = tooltip.GetOwner and tooltip:GetOwner()
     if (owner and owner.unit and type(UnitGUID) == "function"
             and (not UnitExists or UnitExists(owner.unit))) then
-        state.ownerUnitGUID = UnitGUID(owner.unit)
+        state.ownerUnitGUID = safeUnitGUID(owner.unit)
+        state.ownerUnitToken = owner.unit
     else
         state.ownerUnitGUID = nil
+        state.ownerUnitToken = nil
     end
 end
 
@@ -1123,20 +1147,20 @@ local function resetTooltipBorderToDefault(tooltip)
 end
 
 local function resolveUnitTokenFromGUID(guid, tooltip)
-    if (not guid) then return nil end
+    if (not guid or isSecretValue(guid)) then return nil end
     local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner()
-    if (owner and owner.unit and UnitExists and UnitExists(owner.unit) and UnitGUID(owner.unit) == guid) then
+    if (owner and owner.unit and UnitExists and UnitExists(owner.unit) and safeEquals(safeUnitGUID(owner.unit), guid)) then
         return owner.unit
     end
-    if (UnitGUID("player") == guid) then
+    if (safeEquals(safeUnitGUID("player"), guid)) then
         return "player"
-    elseif (UnitGUID("mouseover") == guid) then
+    elseif (safeEquals(safeUnitGUID("mouseover"), guid)) then
         return "mouseover"
-    elseif (UnitGUID("target") == guid) then
+    elseif (safeEquals(safeUnitGUID("target"), guid)) then
         return "target"
-    elseif (UnitGUID("pet") == guid) then
+    elseif (safeEquals(safeUnitGUID("pet"), guid)) then
         return "pet"
-    elseif (UnitGUID("focus") == guid) then
+    elseif (safeEquals(safeUnitGUID("focus"), guid)) then
         return "focus"
     end
     return nil
@@ -1400,7 +1424,8 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- already showing the right person. UnitGUID is the identity that
             -- actually decides which mesh is correct.
             if (is3D and portrait.SetUnit) then
-                local modelKey = (unit and UnitGUID and UnitGUID(unit)) or unit
+                local uGuid = (unit and safeUnitGUID(unit)) or nil
+                local modelKey = (uGuid and not isSecretValue(uGuid)) and uGuid or unit
                 if (portrait.tacoTipModelKey ~= modelKey) then
                     -- Clear first so the previous character's mesh cannot persist
                     -- while the new one streams in (pcall: ClearModel may be absent
@@ -1509,16 +1534,17 @@ local GS_RETRY_FIRST = 0.5
 local GS_RETRY_MAX = 8
 local GS_RETRY_CAP = 512
 
-local function clearGearScoreRetry(guid)
+function TT.clearGearScoreRetry(guid)
+    if (not guid or TT.isSecretValue(guid)) then return end
     local retries = TT._gsRetry
-    if (retries and guid and retries[guid]) then
+    if (retries and retries[guid]) then
         retries[guid] = nil
         TT._gsRetryCount = math.max((TT._gsRetryCount or 0) - 1, 0)
     end
 end
 
-local function gearScoreRetryDue(guid, now)
-    if (not guid or type(now) ~= "number" or now <= 0) then
+function TT.gearScoreRetryDue(guid, now)
+    if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
         return true
     end
     local retries = TT._gsRetry
@@ -1526,8 +1552,8 @@ local function gearScoreRetryDue(guid, now)
     return (not entry) or now >= entry.at
 end
 
-local function noteGearScoreRetry(guid, now)
-    if (not guid or type(now) ~= "number" or now <= 0) then
+function TT.noteGearScoreRetry(guid, now)
+    if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
         return
     end
     local retries = TT._gsRetry
@@ -1561,8 +1587,8 @@ end
 -- live and is not in that cache at all.
 local GS_SCORE_MEMO_CAP = 512
 
-local function getGearScoreMemo(guid, items)
-    if (not guid or not items) then
+function TT.getGearScoreMemo(guid, items)
+    if (not guid or TT.isSecretValue(guid) or not items) then
         return nil
     end
     local memo = TT._gsMemo
@@ -1573,8 +1599,8 @@ local function getGearScoreMemo(guid, items)
     return nil
 end
 
-local function setGearScoreMemo(guid, items, score, ilvl)
-    if (not guid or not items or type(score) ~= "number" or score <= 0) then
+function TT.setGearScoreMemo(guid, items, score, ilvl)
+    if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number" or score <= 0) then
         return
     end
     local memo = TT._gsMemo
@@ -1601,15 +1627,15 @@ local function setGearScoreMemo(guid, items, score, ilvl)
     entry.ilvl = ilvl
 end
 
-local function getPawnScoreMemo(guid, items, activeGroup)
-    if (not guid) then
+function TT.getPawnScoreMemo(guid, items, activeGroup)
+    if (not guid or TT.isSecretValue(guid)) then
         return nil
     end
     -- Self never has an inspect-cache record, so the items-keyed memo below can
     -- never answer for the player. Keep the last live Pawn score under its own
     -- key instead; without this the line was computed on one render and then
     -- missing on the next (the blink).
-    if (guid == UnitGUID("player")) then
+    if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
         local selfMemo = TT._selfPawnMemo
         if (selfMemo and selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore) then
             return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
@@ -1627,11 +1653,11 @@ local function getPawnScoreMemo(guid, items, activeGroup)
     return nil
 end
 
-local function setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-    if (not guid or type(pawnScore) ~= "number" or pawnScore <= 0) then
+function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number" or pawnScore <= 0) then
         return
     end
-    if (guid == UnitGUID("player")) then
+    if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
         TT._selfPawnMemo = {
             pawnGroup = activeGroup,
             pawnScore = pawnScore,
@@ -1669,7 +1695,7 @@ local function setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, s
     entry.pawnSpecColor = specColor
 end
 
-local function clearGearScoreMemo(guid)
+function TT.clearGearScoreMemo(guid)
     local memo = TT._gsMemo
     if (memo and guid and memo[guid]) then
         memo[guid] = nil
@@ -1719,11 +1745,12 @@ local gsCallbackActive = false
 local gsCallbackPending = nil
 
 function TacoTip_GSCallback(guid)
+    if (not guid or TT.isSecretValue(guid)) then return end
     TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
     -- The data this ladder was waiting for has arrived (or the client has just
     -- finished with it); the next render starts from a clean attempt.
-    clearGearScoreRetry(guid)
-    clearGearScoreMemo(guid)
+    TT.clearGearScoreRetry(guid)
+    TT.clearGearScoreMemo(guid)
     if (gsCallbackActive) then
         gsCallbackPending = guid
         TT.ev.gsCallbackReentrant = (TT.ev.gsCallbackReentrant or 0) + 1
@@ -1737,7 +1764,8 @@ function TacoTip_GSCallback(guid)
         TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
         return
     end
-    if (UnitGUID(ttUnit) ~= guid) then
+    local ttGUID = safeUnitGUID(ttUnit)
+    if (not safeEquals(ttGUID, guid)) then
         TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
         return
     end
@@ -1753,7 +1781,7 @@ function TacoTip_GSCallback(guid)
     gsCallbackActive = false
     local pending = gsCallbackPending
     gsCallbackPending = nil
-    if (pending and pending ~= guid) then
+    if (pending and not safeEquals(pending, guid)) then
         TacoTip_GSCallback(pending)
     end
 end
@@ -1895,13 +1923,14 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
             tooltip.TacoTipSpecIcon:Hide()
         end
         if (tooltip == GameTooltip and TacoTipPowerBar) then
-            TacoTipPowerBar:Hide()
             stopPowerBarTicker()
+            if (reason ~= "cleared" or not tooltip:IsShown()) then
+                TacoTipPowerBar:Hide()
+                clearPowerBarPadding(tooltip)
+            end
+        else
+            clearPowerBarPadding(tooltip)
         end
-        -- The padding belongs to the power bar. Keeping it while the bar is
-        -- gone would leave every later tooltip padded; clearing it while the
-        -- memo still said 10 would suppress the re-apply forever.
-        clearPowerBarPadding(tooltip)
     end
     clearTooltipGuildLine(tooltip)
     clearTooltipLevelColorLine(tooltip)
@@ -2060,8 +2089,8 @@ local GEAR_WARM_COOLDOWN = 2.0
 local GEAR_WARM_ENTRY_CAP = 512
 
 function TT:WarmGearItemData(guid)
-    if (not guid) then return false, 0 end
-    if (guid == UnitGUID("player")) then return false, 0 end
+    if (not guid or isSecretValue(guid)) then return false, 0 end
+    if (safeEquals(guid, safeUnitGUID("player"))) then return false, 0 end
     -- Resolved at call time, not captured at load: this keeps tests able to
     -- count requests and tolerates a C_Item namespace that appears late.
     local request = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
@@ -2173,6 +2202,8 @@ local function resolveGroupTokenFor(unit)
     return nil
 end
 
+local mapZoneCache = {}
+
 local function getUnitZoneName(unit)
     if (not unit or not GetBestMapForUnit or not GetMapInfo) then
         return nil
@@ -2180,6 +2211,10 @@ local function getUnitZoneName(unit)
     local okMap, mapID = pcall(GetBestMapForUnit, unit)
     if (not okMap or not mapID) then
         return nil
+    end
+    local cached = mapZoneCache[mapID]
+    if (cached) then
+        return cached
     end
     local okInfo, mapInfo = pcall(GetMapInfo, mapID)
     local name = okInfo and mapInfo and mapInfo.name
@@ -2192,6 +2227,7 @@ local function getUnitZoneName(unit)
     if (type(issecretvalue) == "function" and issecretvalue(name)) then
         return nil
     end
+    mapZoneCache[mapID] = name
     return name
 end
 
@@ -2303,9 +2339,9 @@ local function onTooltipSetUnit(tooltip, data)
         -- an unproven change is a complete no-op, and a proven change tears the
         -- mesh down and leaves it down.
         local unresolvedState = getTooltipState(tooltip)
-        local incomingGUID = data and data.guid or nil
+        local incomingGUID = (data and data.guid and not TT.isSecretValue(data.guid)) and data.guid or nil
         local changeUnproven = (incomingGUID == nil)
-            or (incomingGUID == unresolvedState.currentUnitGUID)
+            or TT.safeEquals(incomingGUID, unresolvedState.currentUnitGUID)
         -- keepModel and retainModel both = changeUnproven, and the old call had
         -- both wrong in opposite directions:
         --
@@ -2325,13 +2361,14 @@ local function onTooltipSetUnit(tooltip, data)
         return
     end
 
-    local guid = (data and data.guid) or UnitGUID(tooltipUnit)
+    local rawGuid = (data and data.guid) or (type(UnitGUID) == "function" and UnitGUID(tooltipUnit))
+    local guid = (rawGuid and not TT.isSecretValue(rawGuid)) and rawGuid or nil
     -- Self has no inspect-cache record: CI:GetUnitData("player") is nil, so the
     -- score memo can never supply a value. The first render registers the
     -- item-load callbacks and TacoTip_GSCallback then clears the retry gate;
     -- without this flag the re-render skipped GetScore entirely and the self
     -- tooltip stayed header-only. Self must always take the live path.
-    local isSelf = (guid ~= nil and guid == UnitGUID("player"))
+    local isSelf = UnitIsUnit(tooltipUnit, "player") or TT.safeEquals(guid, TT.safeUnitGUID("player"))
     -- Resolve the guid BEFORE clearing, so the clear can tell "this unit changed"
     -- from "this is the same unit being re-rendered because a GearScore item load
     -- completed". Only the former may tear down the 3D portrait.
@@ -2342,7 +2379,7 @@ local function onTooltipSetUnit(tooltip, data)
     -- portrait, or it hides and re-shows on an unchanged model. False (the
     -- default, and what every other caller gets) tears it down, which is also
     -- what a genuinely different unit needs so the previous mesh cannot persist.
-    clearTooltipVisuals(tooltip, nil, (previousGUID ~= nil and previousGUID == guid), "guid-change")
+    clearTooltipVisuals(tooltip, nil, TT.safeEquals(previousGUID, guid), "guid-change")
     getTooltipState(tooltip).currentUnitGUID = guid
     storeTooltipPlayerClassColor(tooltip, tooltipUnit)
 
@@ -2502,35 +2539,6 @@ local function onTooltipSetUnit(tooltip, data)
         end
     end
 
-    -- Forever / Camelot: the hovered player's zone, one row below Target.
-    -- Gated on the four unit-frame families (see isForeverWatchedFrameUnit)
-    -- and on the client answering C_Map.GetBestMapForUnit; a unit the client
-    -- cannot place produces no row. The map query uses the OWNER frame's unit
-    -- token: the tooltip's resolved token is often "mouseover", which the
-    -- client does not answer for (C_Map.GetBestMapForUnit documents the player
-    -- and party members only, MapDocumentation.lua:49-60). The tooltip unit is
-    -- the fallback. The label is the client's own localized ZONE string, so no
-    -- locale key is invented here.
-    local zoneOwnerUnit = getTooltipOwnerUnit(tooltip)
-    if (isForever and UnitIsPlayer(tooltipUnit)
-            and isForeverWatchedFrameUnit(zoneOwnerUnit)) then
-        local zoneUnit = zoneOwnerUnit
-        if (zoneOwnerUnit == "target") then
-            zoneUnit = resolveGroupTokenFor(tooltipUnit) or zoneOwnerUnit
-        end
-        local zoneName = getUnitZoneName(zoneUnit) or getUnitZoneName(zoneOwnerUnit)
-            or getUnitZoneName(tooltipUnit)
-        if (zoneName) then
-            local zoneLabel = ZONE or "Zone"
-            if (wide_style) then
-                addLineDouble(zoneLabel .. ":", zoneName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
-                    NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
-                    HIGHLIGHT_FONT_COLOR.b)
-            else
-                addLineSingle(string.format("%s: |cFFFFFFFF%s|r", zoneLabel, zoneName), 1, 1, 1)
-            end
-        end
-    end
     if (UnitIsPlayer(tooltipUnit)) then
         local localizedClass, class = UnitClass(tooltipUnit)
         local localizedRace = UnitRace(tooltipUnit)
@@ -2877,29 +2885,29 @@ local function onTooltipSetUnit(tooltip, data)
                 and true or false
             local scoreData, items, scoreNow, retryDue
             local retryNoted = false
-            if (needGsScore or needPawnScore) then
+            if ((needGsScore or needPawnScore) and guid) then
                 scoreData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
                 items = scoreData and scoreData.items or nil
                 scoreNow = (type(GetTime) == "function") and GetTime() or 0
-                retryDue = gearScoreRetryDue(guid, scoreNow)
+                retryDue = TT.gearScoreRetryDue(guid, scoreNow)
             end
             if (needGsScore) then
-                local gearscore, avg_ilvl = getGearScoreMemo(guid, items)
+                local gearscore, avg_ilvl = TT.getGearScoreMemo(guid, items)
                 if (not gearscore) then
                     gearscore, avg_ilvl = 0, 0
                     if (retryDue or isSelf) then
                         gearscore, avg_ilvl = GearScore:GetScore(guid, retryDue)
                         if (gearscore > 0) then
-                            clearGearScoreRetry(guid)
+                            TT.clearGearScoreRetry(guid)
                             if (not isSelf) then
-                                setGearScoreMemo(guid, items, gearscore, avg_ilvl)
+                                TT.setGearScoreMemo(guid, items, gearscore, avg_ilvl)
                             end
                         else
                             -- GetScore just registered the load callbacks for every
                             -- uncached slot; ask for the data too, then let the
                             -- callback re-drive this render. The gate above keeps a
                             -- stationary hover from re-registering on every render.
-                            noteGearScoreRetry(guid, scoreNow)
+                            TT.noteGearScoreRetry(guid, scoreNow)
                             retryNoted = true
                             TT:WarmGearItemData(guid)
                         end
@@ -2927,7 +2935,7 @@ local function onTooltipSetUnit(tooltip, data)
             end
             if (needPawnScore) then
                 local activeGroup = (CI and CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
-                local pawnScore, specName, specColor = getPawnScoreMemo(guid, items, activeGroup)
+                local pawnScore, specName, specColor = TT.getPawnScoreMemo(guid, items, activeGroup)
                 if (not pawnScore) then
                     pawnScore, specName, specColor = 0, nil, nil
                     if (retryDue or isSelf) then
@@ -2944,11 +2952,11 @@ local function onTooltipSetUnit(tooltip, data)
                         end
                         if (pawnScore and pawnScore > 0) then
                             if (not needGsScore) then
-                                clearGearScoreRetry(guid)
+                                TT.clearGearScoreRetry(guid)
                             end
-                            setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+                            TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
                         elseif (not retryNoted) then
-                            noteGearScoreRetry(guid, scoreNow)
+                            TT.noteGearScoreRetry(guid, scoreNow)
                             TT:WarmGearItemData(guid)
                         end
                     end
@@ -2976,7 +2984,7 @@ local function onTooltipSetUnit(tooltip, data)
                 if (CI and CI.GetTotalAchievementPoints) then
                     achi_pts = CI:GetTotalAchievementPoints(guid)
                 end
-                if (not achi_pts and GetTotalAchievementPoints and guid == UnitGUID("player")) then
+                if (not achi_pts and GetTotalAchievementPoints and TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
                     achi_pts = GetTotalAchievementPoints()
                 end
                 if (achi_pts) then
@@ -2984,6 +2992,34 @@ local function onTooltipSetUnit(tooltip, data)
                         addLineDouble(ACHIEVEMENT_ICON .. " " .. achi_pts, " ", 1, 1, 1, 1, 1, 1)
                     else
                         addLineSingle(ACHIEVEMENT_ICON .. " " .. achi_pts, 1, 1, 1)
+                    end
+                end
+            end
+            -- Forever / Camelot: the hovered player's zone, at the bottom of the tooltip below Pawn.
+            -- Gated on the four unit-frame families (see isForeverWatchedFrameUnit)
+            -- and on the client answering C_Map.GetBestMapForUnit; a unit the client
+            -- cannot place produces no row. The map query uses the OWNER frame's unit
+            -- token: the tooltip's resolved token is often "mouseover", which the
+            -- client does not answer for (C_Map.GetBestMapForUnit documents the player
+            -- and party members only, MapDocumentation.lua:49-60). The tooltip unit is
+            -- the fallback. The label is the client's own localized ZONE string, so no
+            -- locale key is invented here.
+            local zoneOwnerUnit = getTooltipOwnerUnit(tooltip)
+            if (isForever and isForeverWatchedFrameUnit(zoneOwnerUnit)) then
+                local zoneUnit = zoneOwnerUnit
+                if (zoneOwnerUnit == "target") then
+                    zoneUnit = resolveGroupTokenFor(tooltipUnit) or zoneOwnerUnit
+                end
+                local zoneName = getUnitZoneName(zoneUnit) or getUnitZoneName(zoneOwnerUnit)
+                    or getUnitZoneName(tooltipUnit)
+                if (zoneName) then
+                    local zoneLabel = ZONE or "Zone"
+                    if (wide_style) then
+                        addLineDouble(zoneLabel .. ":", zoneName, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
+                            NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g,
+                            HIGHLIGHT_FONT_COLOR.b)
+                    else
+                        addLineSingle(string.format("%s: |cFFFFFFFF%s|r", zoneLabel, zoneName), 1, 1, 1)
                     end
                 end
             end
@@ -3517,11 +3553,14 @@ local function blankUnitFrameInstruction(tooltip)
     local numLines = tooltip:NumLines()
     for i = numLines, math.max(1, numLines - 2), -1 do
         local line = getTooltipLeftLine(tooltip, i)
-        if (line and line.GetText and line:GetText() == instruction) then
-            if (line.SetText) then
-                line:SetText("")
+        if (line and line.GetText) then
+            local text = line:GetText()
+            if (text and not isSecretValue(text) and text == instruction) then
+                if (line.SetText) then
+                    line:SetText("")
+                end
+                return
             end
-            return
         end
     end
 end
@@ -3664,8 +3703,8 @@ local function isUnitFramePeriodicUpdate(tooltip)
     local curGUID = state and state.currentUnitGUID
     local ownerUnitGUID = state and state.ownerUnitGUID
     local unitGUID
-    if (owner.unit and UnitExists and UnitExists(owner.unit) and type(UnitGUID) == "function") then
-        unitGUID = UnitGUID(owner.unit)
+    if (owner.unit and UnitExists and UnitExists(owner.unit)) then
+        unitGUID = safeUnitGUID(owner.unit)
     end
     -- Two proofs of "still the same unit": the rendered GUID (successful
     -- resolve) and the owner's unit GUID (recorded before resolution ran).
@@ -3677,8 +3716,15 @@ local function isUnitFramePeriodicUpdate(tooltip)
     -- The owner-GUID proof is modern-only: the pre-Show postcall resolution
     -- failure it covers is a modern ordering fact. Classic keeps the old
     -- currentUnitGUID-only test exactly.
-    local sameUnit = (unitGUID ~= nil and (unitGUID == curGUID
-        or ((isForever or isRetail) and unitGUID == ownerUnitGUID)))
+    local sameUnit = false
+    if (unitGUID ~= nil) then
+        sameUnit = safeEquals(unitGUID, curGUID)
+            or ((isForever or isRetail) and safeEquals(unitGUID, ownerUnitGUID))
+    elseif ((isForever or isRetail) and owner.unit and state and state.ownerUnitToken
+            and UnitExists and UnitExists(owner.unit)
+            and type(UnitIsUnit) == "function" and UnitIsUnit(owner.unit, state.ownerUnitToken)) then
+        sameUnit = true
+    end
     if (not sameUnit) then
         return false
     end
@@ -3941,10 +3987,10 @@ stage("status-bar")
 
 if (GameTooltipStatusBar) then
     GameTooltipStatusBar:HookScript("OnHide", function()
-        if (TacoTipPowerBar) then
+        stopPowerBarTicker()
+        if (TacoTipPowerBar and (not GameTooltip or not GameTooltip:IsShown())) then
             TacoTipPowerBar:Hide()
         end
-        stopPowerBarTicker()
     end)
 end
 
@@ -4597,7 +4643,13 @@ local function collectActiveUnitSection()
     local fnUnitRace = _G.UnitRace or UnitRace
     local name = (type(fnUnitName) == "function" and fnUnitName(activeUnit)) or "?"
     local guid = (type(fnUnitGUID) == "function" and fnUnitGUID(activeUnit)) or "?"
-    local isPlayer = (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) or false
+    if (isSecretValue(guid)) then
+        guid = "<secret>"
+    end
+    local isPlayer = false
+    if (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) then
+        isPlayer = true
+    end
     local level = (type(fnUnitLevel) == "function" and fnUnitLevel(activeUnit)) or "?"
     local class = (type(fnUnitClass) == "function" and fnUnitClass(activeUnit)) or "?"
     local race = (type(fnUnitRace) == "function" and fnUnitRace(activeUnit)) or ""
@@ -4620,7 +4672,7 @@ local function collectActiveUnitSection()
         -- and only probe it on the Classic families.
         local interactDist = "n/a (protected on this client)"
         if (not (isForever or isRetail) and type(fnCheckInteractDistance) == "function") then
-            interactDist = fnCheckInteractDistance(activeUnit, 1)
+            interactDist = tostring(fnCheckInteractDistance(activeUnit, 1))
         end
         local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
         local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
@@ -4644,7 +4696,7 @@ local function collectActiveUnitSection()
         -- (0 / no scored gear) instead of the render. useCallback=false keeps
         -- the probe from registering completion callbacks; it may still ask the
         -- client for uncached item data, which the hover path already does.
-        if (guid and guid == UnitGUID("player") and type(_G.TT_GS) == "table"
+        if (guid ~= "?" and guid ~= "<secret>" and safeEquals(guid, safeUnitGUID("player")) and type(_G.TT_GS) == "table"
                 and type(_G.TT_GS.GetScore) == "function") then
             local scoreOk, liveScore, liveIlvl = pcall(_G.TT_GS.GetScore, _G.TT_GS, guid, false)
             local liveText = scoreOk
@@ -5170,7 +5222,7 @@ local function onEvent(self, event, ...)
                 TT.InitInspectFrame = nil
             end
             CAfter(3, function()
-                print("|cff59f0dcTacoTip v" .. addOnVersion .. " " .. L["TEXT_HELP_WELCOME"])
+                print("|cff59f0dcTacoTip v" .. addOnVersion .. " " .. L["TEXT_HELP_WELCOME"] .. " (Type |cffffb81c/tt|r to open settings dashboard)")
                 if (first_login) then
                     print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_FIRST_LOGIN"])
                 end
@@ -5206,13 +5258,13 @@ local function onEvent(self, event, ...)
             TT.InitInspectFrame = nil
         end
         local guid = ...
-        if (guid) then
+        if (guid and not TT.isSecretValue(guid)) then
             -- A completed inspection supersedes any backoff from the previous
             -- data; the next render may attempt immediately.
-            clearGearScoreRetry(guid)
-            clearGearScoreMemo(guid)
+            TT.clearGearScoreRetry(guid)
+            TT.clearGearScoreMemo(guid)
             local ttUnit = resolveTooltipUnit(GameTooltip)
-            if (ttUnit and UnitGUID(ttUnit) == guid) then
+            if (ttUnit and TT.safeEquals(TT.safeUnitGUID(ttUnit), guid)) then
                 -- The library fires INVENTORY_READY and TALENTS_READY back to back
                 -- for ONE completed inspect. Rebuilding on both ran the entire
                 -- render twice for identical data -- the gate chain, the whole text

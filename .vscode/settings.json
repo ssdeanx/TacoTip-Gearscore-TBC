@@ -160,7 +160,8 @@
         "NORMAL_FONT_COLOR_CODE",
         "ITEM_QUANTITY_TEMPLATE",
         "BAG_FILTER_ASSIGNED_TO",
-        "CURRENCY_QUANTITY_TEMPLATE"
+        "CURRENCY_QUANTITY_TEMPLATE",
+        "ZONE"
     ],
     "chat.tools.terminal.autoApprove": {
         "git ls-tree": true,

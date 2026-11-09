@@ -408,6 +408,9 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     if type(rankSync) ~= "table" or type(rankSync.QueueInspectRecord) ~= "function" then
         return
     end
+    if type(issecretvalue) == "function" and issecretvalue(guid) then
+        return
+    end
     if type(guid) ~= "string" or guid == "" then
         return
     end
@@ -416,6 +419,9 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
         and type(result.metrics.gearScore) == "table"
         and result.metrics.gearScore.status == "complete"
         and result.metrics.gearScore.value
+    if type(issecretvalue) == "function" and issecretvalue(gs) then
+        return
+    end
     if type(gs) ~= "number" or gs <= 0 then
         return
     end
@@ -423,7 +429,12 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     local avgMetric = result.metrics.averageItemLevel
     local ilvl = 0
     if type(avgMetric) == "table" and avgMetric.status == "complete" and type(avgMetric.value) == "table" then
-        ilvl = avgMetric.value.raw or avgMetric.value.display or 0
+        local rawVal = avgMetric.value.raw or avgMetric.value.display or 0
+        if type(issecretvalue) == "function" and issecretvalue(rawVal) then
+            ilvl = 0
+        else
+            ilvl = rawVal
+        end
     end
 
     local g = _G
@@ -431,8 +442,14 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     local uName = rawget(g, "UnitName")
     if type(uName) == "function" and unit then
         local ok, n = pcall(uName, unit)
-        if ok and type(n) == "string" and n ~= "" then
+        if ok and (not (type(issecretvalue) == "function" and issecretvalue(n))) and type(n) == "string" and n ~= "" then
             pName = n
+        end
+    end
+    if (not pName) and inspector and type(inspector.GetUnitData) == "function" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, guid or unit)
+        if okData and type(cached) == "table" and type(cached.name) == "string" and cached.name ~= "" then
+            pName = cached.name
         end
     end
 
@@ -482,6 +499,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     -- anything unresolvable degrades to ""/0, never a raise).
     local guild = captureGuildName(unit)
     local level = captureLevelNumber(levelCell)
+    if type(issecretvalue) == "function" and issecretvalue(level) then level = 0 end
     local specID = captureSpecID(unit)
     local pvpRank, arena = capturePvPFields(unit)
 
@@ -522,7 +540,7 @@ local function capturePlayerCells(unit)
     local classToken
     if type(UnitClass) == "function" then
         local ok, _, token = pcall(UnitClass, unit)
-        if ok then
+        if ok and token then
             classToken = token
         end
     end
@@ -530,8 +548,20 @@ local function capturePlayerCells(unit)
     local level
     if type(UnitLevel) == "function" then
         local ok, value = pcall(UnitLevel, unit)
-        if ok then
+        if ok and value then
             level = value
+        end
+    end
+
+    if (not classToken or not level) and inspector and type(inspector.GetUnitData) == "function" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
+        if okData and type(cached) == "table" then
+            if not classToken and cached.class then
+                classToken = cached.class
+            end
+            if not level and cached.level then
+                level = cached.level
+            end
         end
     end
 
@@ -837,8 +867,17 @@ local function captureSlot(
     local nativeLink
     if type(GetInventoryItemLink) == "function" then
         local ok, value = pcall(GetInventoryItemLink, unit, slotID)
-        if ok then
+        if ok and value then
             nativeLink = value
+        end
+    end
+    if nativeLink == nil and inspector and type(inspector.GetInventoryItemMixin) == "function" then
+        local okMixin, mixin = pcall(inspector.GetInventoryItemMixin, inspector, unit, slotID)
+        if okMixin and type(mixin) == "table" and type(mixin.GetItemLink) == "function" then
+            local okLink, link = pcall(mixin.GetItemLink, mixin)
+            if okLink and type(link) == "string" and link ~= "" then
+                nativeLink = link
+            end
         end
     end
 
@@ -1125,6 +1164,14 @@ captureRemoteBody = function(context)
     end
 
     local unit = resolveRemoteUnit(context.guid, context.unit)
+    if not unit then
+        if inspector and type(inspector.GetUnitData) == "function" then
+            local okData, cached = pcall(inspector.GetUnitData, inspector, context.guid)
+            if okData and type(cached) == "table" and type(cached.items) == "table" then
+                unit = context.guid
+            end
+        end
+    end
     if not unit then
         return failRemote(context, "remote-unit-unavailable")
     end

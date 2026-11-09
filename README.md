@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip
-version: 0.9.8
+version: 0.9.9
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -21,13 +21,13 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-07)
-updated: 2026-11-07
+status: pending in-game verification (2026-11-08)
+updated: 2026-11-08
 ```
 
 **TacoTip** is the premier, all-in-one tooltip enhancement for World of Warcraft. Built with a unified cross-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
 
-- **<span style="color:#fffe23"><span style="text-decoration:underline">Discord</span></span>** <https://discord.gg/nnbN4Naad>
+- **<span style="color:#fffe23"><span style="text-decoration:underline">Discord</span></span>** <https://discord.gg/JuVJBwXqv>
 - **<span style="color:#59f0dc"><span style="text-decoration:underline">CurseForge</span></span>**
 — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (this add-on)
 
@@ -47,7 +47,20 @@ updated: 2026-11-07
 > numbers you are used to are unchanged on the Classic clients. What is new is
 > that the identical build now also works on WoW Forever and Retail.
 ---
-> 🎉 **<span style="color:#fffc11">200,000+ Downloads Milestone:</span>** A heartfelt thank you to the entire community! We just surpassed ****200,000 downloads**** and are growing faster than ever. Your continuous feedback, testing, and support have made all of this rapid progress possible — thank you for making TacoTip your go-to tooltip addon!
+> 🎉 **<span style="color:#fffc11">130,000+ Downloads Milestone & Community Thank You:</span>** A heartfelt thank you to our entire community! We just hit **130,000+ downloads** and are growing fast. Your feedback, bug reports, and support have made all of this rapid progress possible — thank you for making TacoTip your favorite tooltip addon! Join our community on **[Discord](https://discord.gg/JuVJBwXqv)** to stay connected, report issues, and help shape future updates!
+
+---
+
+## <span style="color:#e67e23">What's New in v0.9.9</span>
+
+- 🎛️ **<span style="color:#59f0dc">All-New Standalone Dashboard (`/tt`):</span>** Re-architected settings into a high-performance standalone settings dashboard with 6 specialized tabs (`General`, `Unit Content`, `Appearance & Bars`, `Portrait & Icons`, `Positioning`, `Character & Inspect`) plus utility hubs for Diagnostics, Community Discord, and Configuration Reset. Features real-time search with live category filtering, gold pill toggles, visual radio preset cards, and a persistent footer with instant Mover and Reset controls.
+- 🌟 **<span style="color:#59f0dc">Dynamic TacoTip Extras Dashboard Hub:</span>** When the companion addon TacoTip Extras is installed, the dashboard automatically unlocks a dedicated "Extras" tab featuring direct 1-click launchers for the Server Leaderboard (`/ex ranks`), Peer-to-Peer Sync Now (`/ttgssync`), and Extras configuration.
+- ⚡ **<span style="color:#59f0dc">Power Bar Smooth Fade-Out & Default Enabled:</span>** Unit power bars are now enabled by default. Fixed tooltip unhover lifecycle so the power bar smoothly fades out alongside `GameTooltip` instead of instantly disappearing. Background polling tickers cleanly stop upon cursor exit.
+- 🛡️ **<span style="color:#59f0dc">Dungeon & Combat Secret-Value Immunity (WoW Forever / Retail):</span>** Fully immunized all tooltip rendering, inspect queue processing, and scoring logic against restricted secret string errors in dungeons and combat encounters (resolving `attempted to index a table that cannot be indexed with secret keys` and `attempt to compare local 'unitGUID' (a secret string value)`).
+- 🧭 **<span style="color:#59f0dc">Natural Zone Row Positioning:</span>** On WoW Forever party and raid frames, the `Zone:` row has been repositioned to the bottom of the tooltip (below Pawn and GearScore), creating a clean, natural tooltip hierarchy.
+- 🛠️ **<span style="color:#59f0dc">Root Settings Restructuring:</span>** Reorganized the main options panel with 1-click toggles for the most essential features: Player GearScore, Average Item Level, Talents & Specialization, Class Colors, Guild Names, Health Bars, and Power Bars.
+- 💬 **<span style="color:#59f0dc">Welcome Message:</span>** Login welcome prompt now guides players to use `/tt` to access the settings dashboard.
+- 🔍 **<span style="color:#59f0dc">Diagnostic Clean-Up:</span>** Resolved all language server annotations and typing constraints across tooltip lifecycle states.
 
 ---
 
@@ -184,7 +197,8 @@ Configure TacoTip quickly from your chat bar using `/tt`, `/tacotip`, `/tip`, or
 
 | Command | Action |
 | :--- | :--- |
-| **<span style="color:#59f0dc">/tt</span>** or **<span style="color:#59f0dc">/tacotip</span>** | Opens the TacoTip configuration menu. |
+| **<span style="color:#59f0dc">/tt</span>** or **<span style="color:#59f0dc">/tacotip</span>** | Opens the modern standalone dark-mode dashboard (with real-time search, pill toggles, and live presets). |
+| **<span style="color:#59f0dc">/tt discord</span>** or **<span style="color:#59f0dc">/tt community</span>** | Opens the Community hub with our direct Discord invite link. |
 | **<span style="color:#59f0dc">/tt custom</span>** | Shows the draggable visual mover to place your tooltips anywhere on screen. |
 | **<span style="color:#59f0dc">/tt save</span>** | Saves the current position of the tooltip mover. |
 | **<span style="color:#59f0dc">/tt default</span>** | Disables custom positioning and restores Blizzard's default tooltip anchor. |

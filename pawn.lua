@@ -78,11 +78,14 @@ TT_PAWN = {}
 local TT_PAWN = TT_PAWN
 
 local function getPlayerGUID(arg)
-    if (arg) then
+    if (arg and not (type(issecretvalue) == "function" and issecretvalue(arg))) then
         if (GUIDIsPlayer(arg)) then
             return arg
         elseif (UnitIsPlayer(arg)) then
-            return UnitGUID(arg)
+            local ug = UnitGUID(arg)
+            if (ug and not (type(issecretvalue) == "function" and issecretvalue(ug))) then
+                return ug
+            end
         end
     end
     return nil
@@ -137,7 +140,15 @@ end
 function TT_PAWN:GetScore(unitorguid, useCallback)
     local guid = getPlayerGUID(unitorguid)
     if (guid) then
-        if (guid ~= UnitGUID("player")) then
+        local isSelf = (unitorguid == "player")
+            or (type(UnitIsUnit) == "function" and UnitIsUnit(unitorguid, "player"))
+        if (not isSelf) then
+            local playerGUID = type(UnitGUID) == "function" and UnitGUID("player")
+            if (playerGUID and not (type(issecretvalue) == "function" and issecretvalue(playerGUID))) then
+                isSelf = (guid == playerGUID)
+            end
+        end
+        if (not isSelf) then
             local _, invTime = CI:GetLastCacheTime(guid)
             if (invTime == 0) then
                 return 0, "", "|cffffffff"

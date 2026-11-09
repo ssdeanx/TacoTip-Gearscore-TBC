@@ -2007,16 +2007,16 @@ do
         STD.string.find(STD.table.concat(resolvedLines, "\n"), "Elwynn Forest", 1, true) ~= nil,
         STD.table.concat(resolvedLines, " | "))
 
-    -- The row sits directly under Target when a Target row exists.
+    -- The row sits at the bottom of the tooltip below Target and Pawn/scores.
     local targetLines = render("party1", "party1", PARTY_SEED)
     local targetIndex, zoneIndex
     for i, line in STD.ipairs(targetLines) do
         if (STD.string.find(line, "Target:", 1, true) == 1) then targetIndex = i end
         if (STD.string.find(line, "Zone:", 1, true) == 1) then zoneIndex = i end
     end
-    check("P16: the Zone row is directly under the Target row",
-        targetIndex ~= nil and zoneIndex ~= nil and zoneIndex == targetIndex + 1,
-        "target=" .. STD.tostring(targetIndex) .. " zone=" .. STD.tostring(zoneIndex))
+    check("P16: the Zone row sits at the bottom of the tooltip below Target",
+        targetIndex ~= nil and zoneIndex ~= nil and zoneIndex > targetIndex and zoneIndex == #targetLines,
+        "target=" .. STD.tostring(targetIndex) .. " zone=" .. STD.tostring(zoneIndex) .. " total=" .. STD.tostring(#targetLines))
 
     -- A player TARGET that is a group member must resolve through its own
     -- party/raid token: C_Map.GetBestMapForUnit does not answer for "target".

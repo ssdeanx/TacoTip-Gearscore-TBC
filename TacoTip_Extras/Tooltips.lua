@@ -189,6 +189,7 @@ local COMPACT_DELTA_LABEL = "\206\148"
 
 local function validPlayerGUID(guid)
     if type(guid) ~= "string"
+        or (type(issecretvalue) == "function" and issecretvalue(guid))
         or not string.match(guid, "^Player%-%d+%-%x+$") then
         return false
     end
@@ -257,11 +258,14 @@ local function tooltipUnit(target)
             if type(dispUnit) == "string" and dispUnit ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(dispUnit) then
                 return dispUnit
             end
-            if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function" then
-                if _G.UnitGUID("mouseover") == dispGUID then return "mouseover" end
-                if _G.UnitGUID("target") == dispGUID then return "target" end
-                if _G.UnitGUID("player") == dispGUID then return "player" end
-                if _G.UnitGUID("focus") == dispGUID then return "focus" end
+            if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function"
+                and not (type(issecretvalue) == "function" and issecretvalue(dispGUID)) then
+                for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
+                    local ug = _G.UnitGUID(u)
+                    if ug and not (type(issecretvalue) == "function" and issecretvalue(ug)) and ug == dispGUID then
+                        return u
+                    end
+                end
             end
         end
     end
@@ -279,11 +283,14 @@ local function tooltipUnit(target)
                 return name
             end
             -- If guid matches a known unit token:
-            if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function" then
-                if _G.UnitGUID("mouseover") == guid then return "mouseover" end
-                if _G.UnitGUID("target") == guid then return "target" end
-                if _G.UnitGUID("player") == guid then return "player" end
-                if _G.UnitGUID("focus") == guid then return "focus" end
+            if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function"
+                and not (type(issecretvalue) == "function" and issecretvalue(guid)) then
+                for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
+                    local ug = _G.UnitGUID(u)
+                    if ug and not (type(issecretvalue) == "function" and issecretvalue(ug)) and ug == guid then
+                        return u
+                    end
+                end
             end
         end
     end
@@ -324,11 +331,14 @@ local function validatePlayerUnit(target)
 end
 
 local function isLocalGUID(guid)
-    if type(_G.UnitGUID) ~= "function" then
+    if type(_G.UnitGUID) ~= "function" or (type(issecretvalue) == "function" and issecretvalue(guid)) then
         return false
     end
     local ok, playerGUID = pcall(_G.UnitGUID, "player")
-    return ok and playerGUID == guid
+    if not ok or (type(issecretvalue) == "function" and issecretvalue(playerGUID)) then
+        return false
+    end
+    return playerGUID == guid
 end
 
 -- One reused table. This used to allocate a fresh eight-field table on every

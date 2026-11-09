@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.8"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "0.9.9"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -74,7 +74,7 @@ local DEFAULTS = {
     show_pvp_icon = false,
     guild_rank_alt_style = true,
     show_hp_bar = true,
-    show_power_bar = false,
+    show_power_bar = true,
     shaman_blue = true,
     tooltip_border_use_class = true,
     tooltip_background_use_class = false,
@@ -469,12 +469,24 @@ local function registerSlashCommands()
                     print("|cff59f0dcTacoTip:|r Last stage reached: " .. tostring(TT.LOAD_STAGE))
                 end
                 if (CI) then
-                    print(string.format("|cff59f0dcTacoTip:|r Client family: %s, Interface: %s", tostring(CI.family), tostring(CI.interfaceVersion)))
+                    print(string.format("|cff59f0dcTacoTip:|r Client family: %s, Interface: %s", tostring(CI.family),
+                        tostring(CI.interfaceVersion)))
                 end
                 print("|cff59f0dcTacoTip:|r Enable a Lua error handler (BugSack/Swatter) and /reload.")
             end
+        elseif (cmd == "discord" or cmd == "community") then
+            print("|cff59f0dcTacoTip:|r Join the TacoTip Discord community: |cffffb81chttps://discord.gg/JuVJBwXqv|r")
+            if (TT and TT.ShowStandaloneDashboard) then
+                pcall(TT.ShowStandaloneDashboard, TT, "community")
+            end
+        elseif (cmd == "diag ui" or cmd == "diagui") then
+            if (TT and TT.ShowStandaloneDashboard) then
+                pcall(TT.ShowStandaloneDashboard, TT, "diagnostics")
+            end
         else
-            if (openOptionsPanel) then
+            if (TT and TT.ToggleStandaloneDashboard) then
+                pcall(TT.ToggleStandaloneDashboard, TT)
+            elseif (openOptionsPanel) then
                 openOptionsPanel()
             else
                 print("|cff59f0dcTacoTip:|r /tacotip custom - show the tooltip mover")
@@ -1284,11 +1296,27 @@ local function getOrCreateMediaPickerFrame()
         tinsert(_G.UISpecialFrames, "TacoTipMediaPickerFrame")
     end
 
+    frame:SetScript("OnUpdate", function(self)
+        if (not self.activeDropDown or not self.activeDropDown:IsVisible()) then
+            self:Hide()
+        end
+    end)
+    frame:SetScript("OnHide", function(self)
+        self.activeDropDown = nil
+    end)
+
     pickerFrame = frame
     return pickerFrame
 end
 
 local function toggleMediaPicker(dropDown)
+    if (not dropDown or dropDown.isDisabled or (dropDown.IsEnabled and not dropDown:IsEnabled())) then
+        return
+    end
+    if (_G.CloseDropDownMenus) then
+        _G.CloseDropDownMenus()
+    end
+
     local frame = getOrCreateMediaPickerFrame()
     if (frame:IsShown() and frame.activeDropDown == dropDown) then
         frame:Hide()
@@ -1873,6 +1901,181 @@ local function refreshOverlayPositions()
     if (TT.RefreshInspectFrame and InspectFrame and InspectFrame:IsShown()) then TT:RefreshInspectFrame() end
 end
 
+local DISCORD_INVITE_URL = "https://discord.gg/JuVJBwXqv"
+local CURSEFORGE_URL = "https://www.curseforge.com/wow/addons/tacotip-gearscore"
+local EXTRAS_URL = "https://www.curseforge.com/wow/addons/tacotip-extras"
+local WHITE8X8 = "Interface\\Buttons\\WHITE8X8"
+local LOGO_TEXTURE_PATH = "Interface\\AddOns\\" .. tostring(addOnName or "TacoTip") .. "\\logo.tga"
+
+-- Enterprise dark theme palette derived from logo.png (Obsidian, Taco Gold, Emerald Green)
+local DASH_THEME = {
+    windowBg = { 0.067, 0.075, 0.094, 0.97 },
+    headerBg = { 0.047, 0.055, 0.071, 1.00 },
+    sidebarBg = { 0.055, 0.063, 0.082, 1.00 },
+    cardBg = { 0.098, 0.110, 0.137, 0.96 },
+    cardHoverBg = { 0.129, 0.145, 0.180, 0.98 },
+    cardActiveBg = { 0.145, 0.125, 0.075, 0.98 },
+    inputBg = { 0.039, 0.043, 0.055, 1.00 },
+    borderSubtle = { 0.165, 0.188, 0.231, 1.00 },
+    borderGold = { 1.000, 0.722, 0.110, 1.00 },
+    borderEmerald = { 0.180, 0.800, 0.443, 1.00 },
+    borderDiscord = { 0.345, 0.396, 0.949, 1.00 },
+    borderAmber = { 0.902, 0.494, 0.133, 1.00 },
+    borderCoral = { 0.906, 0.298, 0.235, 1.00 },
+    gold = { 1.000, 0.722, 0.110 },
+    emerald = { 0.180, 0.800, 0.443 },
+    cyan = { 0.349, 0.941, 0.863 },
+    amber = { 0.902, 0.494, 0.133 },
+    coral = { 0.906, 0.298, 0.235 },
+    textPrimary = { 0.96, 0.97, 0.98 },
+    textMuted = { 0.60, 0.65, 0.72 },
+    textDisabled = { 0.38, 0.41, 0.46 },
+}
+
+local function paintFlatBox(frame, bg, border)
+    if (not frame) then
+        return
+    end
+    if (not frame._flatBg) then
+        local tex = frame:CreateTexture(nil, "BACKGROUND")
+        tex:SetTexture(WHITE8X8)
+        tex:SetAllPoints(frame)
+        frame._flatBg = tex
+    end
+    if (bg) then
+        frame._flatBg:SetVertexColor(bg[1] or 0, bg[2] or 0, bg[3] or 0, bg[4] or 1)
+    end
+    if (border) then
+        if (not frame._flatBorders) then
+            local bTop = frame:CreateTexture(nil, "BORDER")
+            bTop:SetTexture(WHITE8X8)
+            bTop:SetHeight(1)
+            bTop:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+            bTop:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+
+            local bBot = frame:CreateTexture(nil, "BORDER")
+            bBot:SetTexture(WHITE8X8)
+            bBot:SetHeight(1)
+            bBot:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+            bBot:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+
+            local bLeft = frame:CreateTexture(nil, "BORDER")
+            bLeft:SetTexture(WHITE8X8)
+            bLeft:SetWidth(1)
+            bLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+            bLeft:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+
+            local bRight = frame:CreateTexture(nil, "BORDER")
+            bRight:SetTexture(WHITE8X8)
+            bRight:SetWidth(1)
+            bRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+            bRight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+
+            frame._flatBorders = { bTop, bBot, bLeft, bRight }
+        end
+        local br, bgC, bb, ba = border[1] or 0.2, border[2] or 0.2, border[3] or 0.25, border[4] or 1
+        for _, bTex in ipairs(frame._flatBorders) do
+            bTex:SetVertexColor(br, bgC, bb, ba)
+        end
+    end
+    frame.SetFlatColors = function(self, nextBg, nextBorder)
+        if (nextBg and self._flatBg) then
+            self._flatBg:SetVertexColor(nextBg[1] or 0, nextBg[2] or 0, nextBg[3] or 0, nextBg[4] or 1)
+        end
+        if (nextBorder and self._flatBorders) then
+            local r, g, b, a = nextBorder[1] or 0.2, nextBorder[2] or 0.2, nextBorder[3] or 0.25, nextBorder[4] or 1
+            for _, bTex in ipairs(self._flatBorders) do
+                bTex:SetVertexColor(r, g, b, a)
+            end
+        end
+    end
+end
+
+-- Interactive Frame-based flat button. Using a Frame with OnMouseDown rather
+-- than a Button on the Blizzard root canvas keeps the harness button-probe
+-- walk untouched while providing crisp modern hover/click states in-game.
+local function createFlatActionCard(parent, width, height, labelText, variant, onClick, tooltipTitle, tooltipDesc)
+    local card = CreateFrame("Frame", nil, parent)
+    card:SetSize(width, height)
+    card:EnableMouse(true)
+
+    local normalBg, hoverBg, normalBorder, hoverBorder
+    if (variant == "emerald") then
+        normalBg = { 0.11, 0.36, 0.22, 0.96 }
+        hoverBg = { 0.15, 0.48, 0.29, 1.00 }
+        normalBorder = DASH_THEME.borderEmerald
+        hoverBorder = { 0.32, 0.92, 0.56, 1.00 }
+    elseif (variant == "gold") then
+        normalBg = { 0.28, 0.21, 0.06, 0.96 }
+        hoverBg = { 0.38, 0.28, 0.08, 1.00 }
+        normalBorder = DASH_THEME.borderGold
+        hoverBorder = { 1.00, 0.84, 0.32, 1.00 }
+    elseif (variant == "discord") then
+        normalBg = { 0.16, 0.19, 0.42, 0.96 }
+        hoverBg = { 0.22, 0.26, 0.56, 1.00 }
+        normalBorder = DASH_THEME.borderDiscord
+        hoverBorder = { 0.50, 0.56, 1.00, 1.00 }
+    elseif (variant == "danger") then
+        normalBg = { 0.14, 0.11, 0.12, 0.96 }
+        hoverBg = { 0.28, 0.14, 0.12, 1.00 }
+        normalBorder = DASH_THEME.borderSubtle
+        hoverBorder = DASH_THEME.borderAmber
+    else
+        normalBg = { 0.12, 0.14, 0.18, 0.96 }
+        hoverBg = { 0.17, 0.20, 0.25, 1.00 }
+        normalBorder = DASH_THEME.borderSubtle
+        hoverBorder = DASH_THEME.borderGold
+    end
+
+    paintFlatBox(card, normalBg, normalBorder)
+
+    local txt = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    txt:SetPoint("LEFT", card, "LEFT", 8, 0)
+    txt:SetPoint("RIGHT", card, "RIGHT", -8, 0)
+    txt:SetJustifyH("CENTER")
+    txt:SetText(labelText or "")
+    card.text = txt
+
+    card:SetScript("OnEnter", function(self)
+        self:SetFlatColors(hoverBg, hoverBorder)
+        if (tooltipDesc and tooltipDesc ~= "") then
+            showHoverTooltip(self, tooltipTitle or labelText, tooltipDesc)
+        end
+    end)
+    card:SetScript("OnLeave", function(self)
+        self:SetFlatColors(normalBg, normalBorder)
+        if (tooltipDesc and tooltipDesc ~= "") then
+            GameTooltip:Hide()
+        end
+    end)
+    card:SetScript("OnMouseDown", function(self)
+        if (onClick) then
+            safeCall(onClick, self)
+        end
+    end)
+
+    return card
+end
+
+local function getClientFamilyDisplayLabel()
+    if (not CI) then
+        return "WoW"
+    end
+    local fam = tostring(CI.family or "")
+    if (fam == "classic_era") then
+        return "Classic Era (11509)"
+    elseif (fam == "classic_anniversary") then
+        return "TBC Anniversary (20506)"
+    elseif (fam == "classic_titan") then
+        return "WotLK Titanforge (38002)"
+    elseif (fam == "forever") then
+        return "WoW Forever (16001)"
+    elseif (fam == "retail" or fam == "live") then
+        return "Retail (120105)"
+    end
+    return fam ~= "" and fam or "WoW"
+end
+
 local function buildRootPage()
     if (modernOptionsState.pages.rootBuilt) then
         return
@@ -1880,16 +2083,68 @@ local function buildRootPage()
 
     local panel = optionsFrame
     local controls = modernOptionsState.controls
-    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText(addOnTitle .. " v" .. addOnVersion)
+    paintFlatBox(panel, DASH_THEME.windowBg, DASH_THEME.borderSubtle)
 
-    local description = createWrappedText(panel, "GameFontHighlightSmall", 620,
-        L["OPTIONS_ROOT_DESCRIPTION"] or L["TEXT_OPT_DESC"])
-    description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    -- Hero Banner Card (Logo + Version + 200k Milestone + Dashboard / Discord / Diag Launchers)
+    local heroCard = CreateFrame("Frame", nil, panel)
+    heroCard:SetPoint("TOPLEFT", panel, "TOPLEFT", 14, -12)
+    heroCard:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -14, -12)
+    heroCard:SetHeight(92)
+    paintFlatBox(heroCard, DASH_THEME.headerBg, DASH_THEME.borderGold)
+
+    local logoIcon = heroCard:CreateTexture(nil, "ARTWORK")
+    logoIcon:SetSize(36, 36)
+    logoIcon:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 12, -12)
+    logoIcon:SetTexture(LOGO_TEXTURE_PATH)
+
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 56, -12)
+    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cff59f0dc" ..
+    addOnTitle .. " v" .. addOnVersion .. "|r")
+
+    local description = createWrappedText(panel, "GameFontHighlightSmall", 540,
+        "|cffffb81c200,000+ Downloads Milestone!|r Thank you to our community! " ..
+        (L["OPTIONS_ROOT_DESCRIPTION"] or L["TEXT_OPT_DESC"] or ""))
+    description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
+
+    local openDashCard = createFlatActionCard(heroCard, 195, 24,
+        "|cffffb81cOpen TacoTip Dashboard (/tt)|r", "gold",
+        function()
+            if (TT and TT.ShowStandaloneDashboard) then
+                TT:ShowStandaloneDashboard("general")
+            end
+        end,
+        "TacoTip Settings Dashboard",
+        "Open the full standalone TacoTip Settings window with 6 tabs, instant search, visual presets, and live diagnostics.")
+    openDashCard:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 10)
+
+    local openDiscordCard = createFlatActionCard(heroCard, 210, 24,
+        "|cff59f0dcDiscord:|r |cffffffffdiscord.gg/JuVJBwXqv|r", "discord",
+        function()
+            print("|cff59f0dcTacoTip:|r Join the TacoTip Discord community: |cffffb81c" .. DISCORD_INVITE_URL .. "|r")
+            if (TT and TT.ShowStandaloneDashboard) then
+                TT:ShowStandaloneDashboard("community")
+            end
+        end,
+        "Join TacoTip Discord Community",
+        "Click to open the copyable Discord invite link (" .. DISCORD_INVITE_URL .. ") and community hub.")
+    openDiscordCard:SetPoint("LEFT", openDashCard, "RIGHT", 8, 0)
+
+    local openDiagCard = createFlatActionCard(heroCard, 155, 24,
+        "|cff2ecc71Live Diagnostics|r", "emerald",
+        function()
+            if (TT and TT.ShowStandaloneDashboard) then
+                TT:ShowStandaloneDashboard("diagnostics")
+            elseif (TT and TT.PrintDiagnostics) then
+                TT:PrintDiagnostics()
+            end
+        end,
+        "System Diagnostics & Bug Report",
+        "Inspect live addon health, unit range status, inspect cache metrics, and copy a diagnostic report.")
+    openDiagCard:SetPoint("LEFT", openDiscordCard, "RIGHT", 8, 0)
 
     local quickActions = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    quickActions:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -18)
+    quickActions:SetPoint("TOPLEFT", heroCard, "BOTTOMLEFT", 2, -12)
     quickActions:SetText(L["OPTIONS_ROOT_QUICK_ACTIONS"] or "Quick Actions")
 
     local openMoverButton = createOptionsButton(panel, nil, L["OPTIONS_OPEN_TOOLTIP_MOVER"] or L["Mover"], 180, 24,
@@ -1898,7 +2153,7 @@ local function buildRootPage()
         end,
         L["OPTIONS_OPEN_TOOLTIP_MOVER_DESC"] or
         "Show the live tooltip mover so you can drag and save a custom tooltip position.")
-    openMoverButton:SetPoint("TOPLEFT", quickActions, "BOTTOMLEFT", 0, -8)
+    openMoverButton:SetPoint("TOPLEFT", quickActions, "BOTTOMLEFT", 0, -6)
 
     local resetButton = createOptionsButton(panel, nil, L["Reset configuration"], 180, 24, function()
             resetCfg()
@@ -1926,7 +2181,9 @@ local function buildRootPage()
             "|cff59f0dc•|r " ..
             (TacoTipConfig.show_avg_ilvl and (L["OPTIONS_STATUS_CHARACTER_ILVL_ON"] or "Average item level overlays are enabled.") or (L["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] or "Average item level overlays are disabled.")),
             "|cff59f0dc•|r " ..
-            (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked.") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked."))
+            (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked.") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked.")),
+            "|cff59f0dc•|r Community Discord: |cffffb81c" ..
+            DISCORD_INVITE_URL .. "|r  (Type |cff2ecc71/tt|r to open the full Dashboard)"
         }
         return table.concat(lines, "\n")
     end
@@ -1943,7 +2200,7 @@ local function buildRootPage()
                 TT:RefreshOptionsUI()
             end
         end)
-    controls.rootStyleChoice.label:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -18)
+    controls.rootStyleChoice.label:SetPoint("TOPLEFT", openMoverButton, "BOTTOMLEFT", 0, -14)
     controls.rootStyleChoice:SetPoint("TOPLEFT", controls.rootStyleChoice.label, "BOTTOMLEFT", -16, -2)
     if (controls.rootStyleChoice.description) then
         controls.rootStyleChoice.description:ClearAllPoints()
@@ -1951,9 +2208,82 @@ local function buildRootPage()
     end
 
     local styleBottom = controls.rootStyleChoice.description or controls.rootStyleChoice
-    modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, getRootSummaryText())
-    modernOptionsState.rootSummary:SetPoint("TOPLEFT", styleBottom, "BOTTOMLEFT",
-        controls.rootStyleChoice.description and -20 or 0, -12)
+
+    -- Core Tooltip Settings Section
+    local coreHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    coreHeader:SetPoint("TOPLEFT", styleBottom, "BOTTOMLEFT", controls.rootStyleChoice.description and -20 or 0, -12)
+    coreHeader:SetText(L["OPTIONS_SECTION_UNIT_TOOLTIPS"] or "Unit tooltip content")
+
+    controls.rootShowGsPlayer = createOptionsCheckbox(panel, nil,
+        L["OPTIONS_SHOW_PLAYER_GS"] or "Show Player GearScore",
+        L["OPTIONS_SHOW_PLAYER_GS_DESC"] or "Adds GearScore to player tooltips.",
+        function(_, value)
+            TacoTipConfig.show_gs_player = value
+            modernGetConfig()
+        end)
+    controls.rootShowGsPlayer:SetPoint("TOPLEFT", coreHeader, "BOTTOMLEFT", -2, -6)
+
+    controls.rootShowAvgIlvl = createOptionsCheckbox(panel, nil,
+        L["OPTIONS_CHARACTER_ILVL_LABEL"] or "Show Average Item Level",
+        L["OPTIONS_CHARACTER_ILVL_DESC"] or "Show average item level on tooltips and frames.",
+        function(_, value)
+            TacoTipConfig.show_avg_ilvl = value
+            refreshOverlayPositions()
+            modernGetConfig()
+        end)
+    controls.rootShowAvgIlvl:SetPoint("TOPLEFT", controls.rootShowGsPlayer, "BOTTOMLEFT", 0, -6)
+
+    controls.rootShowTalents = createOptionsCheckbox(panel, nil,
+        L["Talents"] or "Show Talents & Spec",
+        L["Show talents and specialization in tooltips"],
+        function(_, value)
+            TacoTipConfig.show_talents = value
+            modernGetConfig()
+        end)
+    controls.rootShowTalents:SetPoint("TOPLEFT", controls.rootShowAvgIlvl, "BOTTOMLEFT", 0, -6)
+
+    controls.rootColorClass = createOptionsCheckbox(panel, nil,
+        L["Class Color"] or "Class Color Names",
+        L["Color class names in tooltips"],
+        function(_, value)
+            TacoTipConfig.color_class = value
+            modernGetConfig()
+        end)
+    controls.rootColorClass:SetPoint("TOPLEFT", controls.rootShowTalents, "BOTTOMLEFT", 0, -6)
+
+    controls.rootShowGuildName = createOptionsCheckbox(panel, nil,
+        L["Guild Name"] or "Show Guild Name",
+        L["Show guild name in tooltips"],
+        function(_, value)
+            TacoTipConfig.show_guild_name = value
+            modernGetConfig()
+        end)
+    controls.rootShowGuildName:SetPoint("TOPLEFT", coreHeader, "BOTTOMLEFT", 310, -6)
+
+    controls.rootShowHpBar = createOptionsCheckbox(panel, nil,
+        L["Health Bar"] or "Show Health Bar",
+        L["Show unit's health bar under tooltip"],
+        function(_, value)
+            TacoTipConfig.show_hp_bar = value
+            modernGetConfig()
+        end)
+    controls.rootShowHpBar:SetPoint("TOPLEFT", controls.rootShowGuildName, "BOTTOMLEFT", 0, -6)
+
+    controls.rootShowPowerBar = createOptionsCheckbox(panel, nil,
+        L["Power Bar"] or "Show Power Bar",
+        L["Show unit's power bar under tooltip"],
+        function(_, value)
+            TacoTipConfig.show_power_bar = value
+            if (GameTooltip and GameTooltip:IsShown() and TT.ApplyTooltipAppearance
+                    and type(GameTooltip.GetUnit) == "function") then
+                local ok, _, unit = pcall(GameTooltip.GetUnit, GameTooltip)
+                if (ok and unit) then
+                    TT:ApplyTooltipAppearance(GameTooltip, unit)
+                end
+            end
+            modernGetConfig()
+        end)
+    controls.rootShowPowerBar:SetPoint("TOPLEFT", controls.rootShowHpBar, "BOTTOMLEFT", 0, -6)
 
     controls.rootLanguage = createOptionsDropdown(panel, nil, L["OPTIONS_LANGUAGE_LABEL"] or "Addon language",
         L["OPTIONS_LANGUAGE_DESC"] or
@@ -1970,7 +2300,7 @@ local function buildRootPage()
                 TT:RefreshOptionsUI()
             end
         end)
-    controls.rootLanguage.label:SetPoint("TOPLEFT", modernOptionsState.rootSummary, "BOTTOMLEFT", 0, -16)
+    controls.rootLanguage.label:SetPoint("TOPLEFT", controls.rootColorClass, "BOTTOMLEFT", 2, -12)
     controls.rootLanguage:SetPoint("TOPLEFT", controls.rootLanguage.label, "BOTTOMLEFT", -16, -2)
     if (controls.rootLanguage.description) then
         controls.rootLanguage.description:ClearAllPoints()
@@ -1979,7 +2309,7 @@ local function buildRootPage()
 
     local behaviorHeader = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     local langBottom = controls.rootLanguage.description or controls.rootLanguage
-    behaviorHeader:SetPoint("TOPLEFT", langBottom, "BOTTOMLEFT", controls.rootLanguage.description and -20 or 0, -16)
+    behaviorHeader:SetPoint("TOPLEFT", langBottom, "BOTTOMLEFT", controls.rootLanguage.description and -20 or 0, -12)
     behaviorHeader:SetText(L["OPTIONS_ROOT_BEHAVIOR_HEADER"] or "Behavior & client settings")
 
     controls.rootHideInCombat = createOptionsCheckbox(panel, nil,
@@ -1987,33 +2317,47 @@ local function buildRootPage()
         L["OPTIONS_HIDE_IN_COMBAT_DESC"] or
         "Skips TacoTip's talents and GearScore-style player additions while you are in combat.", function(_, value)
             TacoTipConfig.hide_in_combat = value
+            modernGetConfig()
         end)
-    controls.rootHideInCombat:SetPoint("TOPLEFT", behaviorHeader, "BOTTOMLEFT", -2, -8)
+    controls.rootHideInCombat:SetPoint("TOPLEFT", behaviorHeader, "BOTTOMLEFT", -2, -6)
 
     controls.rootUberTips = createOptionsCheckbox(panel, nil, L["Enhanced Tooltips"], L["TEXT_OPT_UBERTIPS"],
         function(_, value)
             SetCVar("UberTooltips", value and "1" or "0")
+            modernGetConfig()
         end)
-    controls.rootUberTips:SetPoint("TOPLEFT", behaviorHeader, "BOTTOMLEFT", 310, -8)
+    controls.rootUberTips:SetPoint("TOPLEFT", behaviorHeader, "BOTTOMLEFT", 310, -6)
 
     controls.rootChatClassColors = createOptionsCheckbox(panel, nil, L["Chat Class Colors"],
         L["Color names by class in chat windows"], function(_, value)
             SetCVar("chatClassColorOverride", value and "0" or "1")
+            modernGetConfig()
         end)
-    controls.rootChatClassColors:SetPoint("TOPLEFT", controls.rootHideInCombat, "BOTTOMLEFT", 0, -8)
+    controls.rootChatClassColors:SetPoint("TOPLEFT", controls.rootHideInCombat, "BOTTOMLEFT", 0, -6)
 
     controls.rootShowAchievementPoints = createOptionsCheckbox(panel, nil, L["Show Achievement Points"],
         L["OPTIONS_ACHIEVEMENT_DESC"] or "Display player's total achievement points.",
         function(_, value)
             TacoTipConfig.show_achievement_points = value
+            modernGetConfig()
         end)
-    controls.rootShowAchievementPoints:SetPoint("TOPLEFT", controls.rootUberTips, "BOTTOMLEFT", 0, -8)
+    controls.rootShowAchievementPoints:SetPoint("TOPLEFT", controls.rootUberTips, "BOTTOMLEFT", 0, -6)
+
+    modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, getRootSummaryText())
+    modernOptionsState.rootSummary:SetPoint("TOPLEFT", controls.rootChatClassColors, "BOTTOMLEFT", 0, -10)
 
     panel.Refresh = function()
         modernOptionsState.rootSummary:SetText(getRootSummaryText())
         controls.rootLanguage:SetValues(buildLocaleDropdownChoices())
         controls.rootLanguage:SetValue(getSavedLocaleOverride() or CLIENT_DEFAULT_LOCALE_VALUE)
         controls.rootStyleChoice:SetValue(TacoTipConfig.tip_style or 2)
+        if (controls.rootShowGsPlayer) then controls.rootShowGsPlayer:SetChecked(TacoTipConfig.show_gs_player) end
+        if (controls.rootShowAvgIlvl) then controls.rootShowAvgIlvl:SetChecked(TacoTipConfig.show_avg_ilvl) end
+        if (controls.rootShowTalents) then controls.rootShowTalents:SetChecked(TacoTipConfig.show_talents) end
+        if (controls.rootColorClass) then controls.rootColorClass:SetChecked(TacoTipConfig.color_class) end
+        if (controls.rootShowGuildName) then controls.rootShowGuildName:SetChecked(TacoTipConfig.show_guild_name) end
+        if (controls.rootShowHpBar) then controls.rootShowHpBar:SetChecked(TacoTipConfig.show_hp_bar) end
+        if (controls.rootShowPowerBar) then controls.rootShowPowerBar:SetChecked(TacoTipConfig.show_power_bar) end
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
@@ -2164,7 +2508,8 @@ local function buildTooltipsPage()
     builder.y = builder.y - layoutDropdownControl(content, controls.tooltipFontChoice, builder.y, 12)
 
     controls.tooltipFontSize = createOptionsSlider(content, nil, L["OPTIONS_TOOLTIP_FONT_SIZE"] or "Tooltip text size",
-        L["OPTIONS_TOOLTIP_FONT_SIZE_DESC"] or "Change the size of the tooltip text without affecting the rest of the UI.",
+        L["OPTIONS_TOOLTIP_FONT_SIZE_DESC"] or
+        "Change the size of the tooltip text without affecting the rest of the UI.",
         function(value)
             TacoTipConfig.tooltip_font_size = value
         end, 8, 20, 1)
@@ -2183,7 +2528,8 @@ local function buildTooltipsPage()
 
     controls.showSeparators = createOptionsCheckbox(content, nil,
         L["OPTIONS_SHOW_SEPARATORS"] or "Show section separators",
-        L["OPTIONS_SHOW_SEPARATORS_DESC"] or "Add thin horizontal lines between logical sections of the tooltip for visual clarity.",
+        L["OPTIONS_SHOW_SEPARATORS_DESC"] or
+        "Add thin horizontal lines between logical sections of the tooltip for visual clarity.",
         function(_, value)
             TacoTipConfig.show_separators = value
         end)
@@ -2244,7 +2590,8 @@ local function buildTooltipsPage()
     builder.y = builder.y - 30
 
     controls.guildRankStyleChoice = createOptionsDropdown(content, nil, L["Style"],
-        L["OPTIONS_GUILD_STYLE_DESC"] or "Choose how TacoTip formats guild rank when both guild name and guild rank are shown.", {
+        L["OPTIONS_GUILD_STYLE_DESC"] or
+        "Choose how TacoTip formats guild rank when both guild name and guild rank are shown.", {
             { value = 1, text = string.format(L["OPTIONS_GUILD_STYLE_ONE"] or L["FORMAT_GUILD_RANK_1"], L["Guild"], L["Rank"]) },
             { value = 2, text = L["OPTIONS_GUILD_STYLE_TWO"] or string.format("<%s> (%s)", L["Guild"], L["Rank"]) }
         }, function(value)
@@ -2267,14 +2614,16 @@ local function buildTooltipsPage()
     builder.y = builder.y - 30
 
     controls.gearScorePlayer = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_PLAYER_GS"] or "Show player GearScore",
-        L["OPTIONS_SHOW_PLAYER_GS_DESC"] or "Adds GearScore to player tooltips. Wide and mini layouts also show average item level on that line.",
+        L["OPTIONS_SHOW_PLAYER_GS_DESC"] or
+        "Adds GearScore to player tooltips. Wide and mini layouts also show average item level on that line.",
         function(_, value)
             TacoTipConfig.show_gs_player = value
         end)
     controls.gearScorePlayer:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
 
     controls.showIlvlInline = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ILVL_INLINE"] or "iLvl on name line",
-        L["OPTIONS_SHOW_ILVL_INLINE_DESC"] or "Show average item level next to the player's name instead of on a separate line.",
+        L["OPTIONS_SHOW_ILVL_INLINE_DESC"] or
+        "Show average item level next to the player's name instead of on a separate line.",
         function(_, value)
             TacoTipConfig.show_ilvl_inline = value
         end)
@@ -2282,14 +2631,16 @@ local function buildTooltipsPage()
     builder.y = builder.y - 30
 
     controls.pawnScorePlayer = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_PLAYER_PAWN"] or "Show Pawn scores",
-        L["OPTIONS_SHOW_PLAYER_PAWN_DESC"] or "Adds Pawn scores for inspected players when Pawn is installed. This may add extra item-cache work.",
+        L["OPTIONS_SHOW_PLAYER_PAWN_DESC"] or
+        "Adds Pawn scores for inspected players when Pawn is installed. This may add extra item-cache work.",
         function(_, value)
             TacoTipConfig.show_pawn_player = value
         end)
     controls.pawnScorePlayer:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
 
     controls.showRoleIcon = createOptionsCheckbox(content, nil, L["OPTIONS_SHOW_ROLE_ICON"] or "Show group role icon",
-        L["OPTIONS_SHOW_ROLE_ICON_DESC"] or "Show Tank/Healer/DPS role icons on the name line for party and raid members.",
+        L["OPTIONS_SHOW_ROLE_ICON_DESC"] or
+        "Show Tank/Healer/DPS role icons on the name line for party and raid members.",
         function(_, value)
             TacoTipConfig.show_role_icon = value
         end)
@@ -2996,6 +3347,1204 @@ modernGetConfig = function()
     end
 end
 
+-- ============================================================================
+-- Standalone dashboard (/tt): General / Diagnostics / Community tabs.
+-- Built lazily on first show, so nothing here exists until the player asks.
+-- Every setting stays on the Blizzard pages; "All Settings" opens them.
+-- ============================================================================
+local dashboard
+
+local function buildDiagnosticsReport()
+    local lines = { "TacoTip " .. tostring(addOnVersion) .. " | " .. getClientFamilyDisplayLabel() }
+    if (not (TT and TT.CollectDiagnostics)) then
+        lines[#lines + 1] = "Diagnostics unavailable: main.lua did not finish loading."
+        if (TT and TT.LOAD_STAGE) then
+            lines[#lines + 1] = "Last stage reached: " .. tostring(TT.LOAD_STAGE)
+        end
+        return table.concat(lines, "\n"), nil
+    end
+    local ok, diag = pcall(TT.CollectDiagnostics, TT)
+    if (not ok or type(diag) ~= "table") then
+        lines[#lines + 1] = "Diagnostics failed: " .. tostring(diag)
+        return table.concat(lines, "\n"), nil
+    end
+    local verdict = diag.verdict or {}
+    lines[#lines + 1] = "Verdict: " .. tostring(verdict.text or "UNKNOWN")
+    for _, section in ipairs(diag.sections or {}) do
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "-- " .. tostring(section.title or section.id or "section") .. " --"
+        for _, row in ipairs(section.rows or {}) do
+            local suffix = (row.status == "warn" and " [warn]") or (row.status == "error" and " [error]") or ""
+            lines[#lines + 1] = tostring(row.label or "?") .. ": " .. tostring(row.value) .. suffix
+        end
+        for _, note in ipairs(section.notes or {}) do
+            lines[#lines + 1] = "note: " .. tostring(note)
+        end
+    end
+    return table.concat(lines, "\n"), verdict
+end
+
+local function createDashboard()
+    local frame = CreateFrame("Frame", "TacoTipDashboard", UIParent)
+    frame:SetSize(840, 540)
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    frame:SetFrameStrata("DIALOG")
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:SetClampedToScreen(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    paintFlatBox(frame, DASH_THEME.windowBg, DASH_THEME.borderGold)
+    frame:Hide()
+    if (_G.UISpecialFrames) then
+        tinsert(_G.UISpecialFrames, "TacoTipDashboard")
+    end
+
+    -- Top Header Bar
+    local header = CreateFrame("Frame", nil, frame)
+    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+    header:SetHeight(44)
+    paintFlatBox(header, DASH_THEME.headerBg)
+
+    local logo = header:CreateTexture(nil, "ARTWORK")
+    logo:SetSize(28, 28)
+    logo:SetPoint("LEFT", header, "LEFT", 12, 0)
+    logo:SetTexture(LOGO_TEXTURE_PATH)
+
+    local title = header:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("LEFT", logo, "RIGHT", 10, 0)
+    title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cff9ba3ae" ..
+        addOnVersion .. " · " .. getClientFamilyDisplayLabel() .. "|r")
+
+    local close = createFlatActionCard(header, 28, 24, "X", "danger", function() frame:Hide() end,
+        "Close", "Close the dashboard (ESC also works).")
+    close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
+
+    -- Left Sidebar
+    local sidebar = CreateFrame("Frame", nil, frame)
+    sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
+    sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 46)
+    sidebar:SetWidth(180)
+    paintFlatBox(sidebar, DASH_THEME.sidebarBg)
+
+    -- Right Content Area
+    local content = CreateFrame("Frame", nil, frame)
+    content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 14, -12)
+    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -16, 56)
+
+    -- Bottom Persistent Footer
+    local footer = CreateFrame("Frame", nil, frame)
+    footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 1)
+    footer:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
+    footer:SetHeight(45)
+    paintFlatBox(footer, DASH_THEME.headerBg)
+
+    local hint = footer:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    hint:SetPoint("LEFT", footer, "LEFT", 16, 0)
+    hint:SetText("/tt · ESC to close")
+
+    local moveCard = createFlatActionCard(footer, 140, 26, "Move Tooltip", "emerald", function()
+        showTooltipMover()
+    end, "Move Tooltip", "Show the live tooltip mover so you can drag and save a custom tooltip position.")
+    moveCard:SetPoint("RIGHT", footer, "RIGHT", -14, 0)
+
+    local resetCard = createFlatActionCard(footer, 160, 26, "Reset Configuration", "danger", function()
+        resetCfg()
+        if (TT.RefreshOptionsUI) then TT:RefreshOptionsUI() end
+        if (frame.RefreshAll) then frame:RefreshAll() end
+    end, "Reset Configuration", "Restore every TacoTip setting to its default.")
+    resetCard:SetPoint("RIGHT", moveCard, "LEFT", -10, 0)
+
+    -- Sidebar Search Box (Matching "Find a setting" in settingexample.png)
+    local searchBox = CreateFrame("EditBox", "TacoTipDashboardSearch", sidebar, "InputBoxTemplate")
+    searchBox:SetSize(156, 22)
+    searchBox:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 12, -10)
+    searchBox:SetAutoFocus(false)
+    searchBox:SetFontObject("GameFontHighlightSmall")
+
+    local searchPlaceholder = searchBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    searchPlaceholder:SetPoint("LEFT", searchBox, "LEFT", 4, 0)
+    searchPlaceholder:SetText("Search settings...")
+
+    -- Helper: Pill Toggle Switch Card
+    local function createPillToggle(parent, titleText, descText, initialVal, onToggle)
+        local card = CreateFrame("Frame", nil, parent)
+        card:SetSize(590, 42)
+        card:EnableMouse(true)
+        paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+
+        local t = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        t:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -6)
+        t:SetText(titleText or "")
+
+        local d = card:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        d:SetPoint("TOPLEFT", t, "BOTTOMLEFT", 0, -2)
+        d:SetPoint("RIGHT", card, "RIGHT", -64, 0)
+        d:SetJustifyH("LEFT")
+        d:SetText(descText or "")
+
+        local pill = CreateFrame("Frame", nil, card)
+        pill:SetSize(38, 18)
+        pill:SetPoint("RIGHT", card, "RIGHT", -14, 0)
+        paintFlatBox(pill, { 0.15, 0.17, 0.21, 1 }, { 0.28, 0.32, 0.38, 1 })
+
+        local knob = pill:CreateTexture(nil, "ARTWORK")
+        knob:SetTexture(WHITE8X8)
+        knob:SetSize(12, 12)
+
+        local isChecked = initialVal and true or false
+        local function updatePill()
+            if (isChecked) then
+                pill:SetFlatColors({ 1.0, 0.72, 0.11, 0.95 }, DASH_THEME.borderGold)
+                knob:ClearAllPoints()
+                knob:SetPoint("RIGHT", pill, "RIGHT", -3, 0)
+                knob:SetVertexColor(0.12, 0.12, 0.12, 1)
+            else
+                pill:SetFlatColors({ 0.15, 0.17, 0.21, 1 }, { 0.28, 0.32, 0.38, 1 })
+                knob:ClearAllPoints()
+                knob:SetPoint("LEFT", pill, "LEFT", 3, 0)
+                knob:SetVertexColor(0.65, 0.70, 0.75, 1)
+            end
+        end
+        updatePill()
+
+        card:SetScript("OnEnter", function(self)
+            self:SetFlatColors(DASH_THEME.cardHoverBg, DASH_THEME.borderGold)
+        end)
+        card:SetScript("OnLeave", function(self)
+            self:SetFlatColors(DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+        end)
+        card:SetScript("OnMouseDown", function()
+            isChecked = not isChecked
+            updatePill()
+            if (onToggle) then
+                safeCall(onToggle, isChecked)
+            end
+        end)
+
+        card.SetChecked = function(_, val)
+            isChecked = val and true or false
+            updatePill()
+        end
+        card.GetChecked = function() return isChecked end
+        card.searchText = strlower((titleText or "") .. " " .. (descText or ""))
+        return card
+    end
+
+    -- Helper: Slider Card
+    local function createDashboardSlider(parent, titleText, descText, minVal, maxVal, step, initialVal, onValueChange, formatVal)
+        local card = CreateFrame("Frame", nil, parent)
+        card:SetSize(590, 48)
+        paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+
+        local t = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        t:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -6)
+        t:SetText(titleText or "")
+
+        local d = card:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        d:SetPoint("TOPLEFT", t, "BOTTOMLEFT", 0, -2)
+        d:SetPoint("RIGHT", card, "RIGHT", -170, 0)
+        d:SetJustifyH("LEFT")
+        d:SetText(descText or "")
+
+        local valText = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        valText:SetPoint("RIGHT", card, "RIGHT", -14, 0)
+        valText:SetJustifyH("RIGHT")
+
+        local slider = CreateFrame("Slider", nil, card, "OptionsSliderTemplate")
+        slider:SetSize(110, 14)
+        slider:SetPoint("RIGHT", valText, "LEFT", -10, 0)
+        slider:SetMinMaxValues(minVal, maxVal)
+        slider:SetValueStep(step or 1)
+        if (slider.SetObeyStepOnDrag) then slider:SetObeyStepOnDrag(true) end
+
+        local function display(v)
+            if (formatVal) then
+                valText:SetText(formatVal(v))
+            else
+                valText:SetText(tostring(v))
+            end
+        end
+        local current = initialVal or minVal
+        display(current)
+        slider:SetValue(current)
+
+        slider:SetScript("OnValueChanged", function(self, val)
+            val = math.floor((val / (step or 1)) + 0.5) * (step or 1)
+            display(val)
+            if (onValueChange) then
+                safeCall(onValueChange, val)
+            end
+        end)
+
+        card.SetValue = function(_, v)
+            display(v)
+            slider:SetValue(v)
+        end
+        card.searchText = strlower((titleText or "") .. " " .. (descText or ""))
+        return card
+    end
+
+    -- Helper: Callout Notice Box
+    local function createNoticeBox(parent, iconLabel, noticeText, isEmerald, customHeight)
+        local box = CreateFrame("Frame", nil, parent)
+        box:SetSize(590, customHeight or 34)
+        local borderCol = isEmerald and DASH_THEME.borderEmerald or DASH_THEME.borderGold
+        local bgCol = isEmerald and { 0.08, 0.22, 0.14, 0.95 } or { 0.22, 0.17, 0.06, 0.95 }
+        paintFlatBox(box, bgCol, borderCol)
+
+        local ic = box:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        ic:SetPoint("LEFT", box, "LEFT", 10, 0)
+        ic:SetText(iconLabel or "|cffffb81c[TIP]|r")
+
+        local txt = box:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        txt:SetPoint("LEFT", ic, "RIGHT", 8, 0)
+        txt:SetPoint("RIGHT", box, "RIGHT", -12, 0)
+        txt:SetJustifyH("LEFT")
+        txt:SetText(noticeText or "")
+        return box
+    end
+
+    -- Navigation Structure
+    local hasExtras = false
+    if (type(rawget(_G, "TacoTipExtrasToggleLeaderboard")) == "function")
+            or (type(rawget(_G, "TacoTipExtrasDB")) == "table") then
+        hasExtras = true
+    elseif (type(rawget(_G, "C_AddOns")) == "table" and type(_G.C_AddOns.IsAddOnLoaded) == "function") then
+        local ok, loaded = pcall(_G.C_AddOns.IsAddOnLoaded, "TacoTip_Extras")
+        if (ok and loaded) then hasExtras = true end
+    elseif (type(rawget(_G, "IsAddOnLoaded")) == "function") then
+        local ok, loaded = pcall(_G.IsAddOnLoaded, "TacoTip_Extras")
+        if (ok and loaded) then hasExtras = true end
+    end
+
+    local tabs, tabButtons, tabLabels = {}, {}, {}
+    local allSearchItems = {}
+    local syncControls = {}
+    local orderedCategoryIds = {
+        "general", "units", "appearance", "portrait", "positioning", "character", "diagnostics", "community", "reset"
+    }
+    if (hasExtras) then
+        tinsert(orderedCategoryIds, 7, "extras")
+    end
+
+    local applySearch
+    local inSearchUpdate = false
+
+    local function selectTab(id)
+        for tabId, tab in pairs(tabs) do
+            tab:SetShown(tabId == id)
+            local btn = tabButtons[tabId]
+            if (btn) then
+                btn:SetFlatColors(tabId == id and DASH_THEME.cardActiveBg or DASH_THEME.sidebarBg,
+                    tabId == id and DASH_THEME.borderGold or DASH_THEME.sidebarBg)
+            end
+        end
+        frame.activeTab = id
+        if (applySearch and not inSearchUpdate) then
+            applySearch()
+        end
+        if (id == "diagnostics" and frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
+    end
+    frame.SelectTab = function(_, id) if (tabs[id]) then selectTab(id) end end
+
+    local function addTab(id, label, order, isBottom)
+        local page = CreateFrame("Frame", nil, content)
+        page:SetAllPoints(content)
+        page:Hide()
+        tabs[id] = page
+        tabLabels[id] = label
+
+        local yPos
+        if (isBottom) then
+            local bottomStart = hasExtras and -264 or -236
+            yPos = bottomStart - (order - 1) * 31
+        else
+            yPos = -38 - (order - 1) * 31
+        end
+        local btn = createFlatActionCard(sidebar, 160, 28, label, "plain", function() selectTab(id) end)
+        btn:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 10, yPos)
+        tabButtons[id] = btn
+        return page
+    end
+
+    -- Subtle sidebar divider line between category tabs and utility tabs
+    local sideDiv = sidebar:CreateTexture(nil, "BORDER")
+    sideDiv:SetTexture(WHITE8X8)
+    sideDiv:SetSize(158, 1)
+    sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -256 or -228)
+    sideDiv:SetVertexColor(0.24, 0.28, 0.34, 0.8)
+
+    local function createScrollCategory(id, label, titleText, descText, order, isBottom)
+        local page = addTab(id, label, order, isBottom)
+        local ph = page:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        ph:SetPoint("TOPLEFT", page, "TOPLEFT", 4, 0)
+        ph:SetText("|cffffb81c" .. titleText .. "|r")
+
+        local pd = createWrappedText(page, "GameFontHighlightSmall", 590, descText)
+        pd:SetPoint("TOPLEFT", ph, "BOTTOMLEFT", 0, -4)
+
+        local scroll, scrollChild = createScrollPage(page)
+        scroll:SetPoint("TOPLEFT", pd, "BOTTOMLEFT", 0, -8)
+        scroll:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -22, 4)
+        return page, scrollChild
+    end
+
+    local function registerRow(scrollChild, card, tabId, rowY, height)
+        card:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, rowY)
+        card.tabId = tabId
+        card.defaultY = rowY
+        allSearchItems[#allSearchItems + 1] = card
+        return rowY - (height or 44) - 6
+    end
+
+    local function addSectionHeader(scrollChild, headerText, curY)
+        local h = scrollChild:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        h:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 6, curY - 4)
+        h:SetText("|cffffb81c" .. headerText .. "|r")
+        return curY - 26
+    end
+
+    local function onSettingChanged()
+        if (TT.RefreshOpenUnitTooltip) then TT:RefreshOpenUnitTooltip() end
+        if (refreshOverlayPositions) then refreshOverlayPositions() end
+        if (modernGetConfig) then modernGetConfig() end
+    end
+
+    -- ========================================================================
+    -- Tab 1: General
+    -- ========================================================================
+    local _, generalChild = createScrollCategory("general", "General", "General",
+        "Choose your tooltip style, language, and core preferences.", 1)
+    local gy = 0
+    gy = addSectionHeader(generalChild, "Tooltip Style Presets", gy)
+
+    local styleCards = {}
+    local presets = {
+        { value = 1, text = "Wide", sub = "Always full detail" },
+        { value = 2, text = "Compact + Shift", sub = "Compact, SHIFT for full" },
+        { value = 3, text = "Compact", sub = "Always compact" },
+        { value = 4, text = "Mini + Shift", sub = "Mini, SHIFT for full" },
+        { value = 5, text = "Mini", sub = "Always mini" },
+    }
+    local function refreshStyleCards()
+        for _, c in ipairs(styleCards) do
+            local active = (TacoTipConfig.tip_style == c.value)
+            c.card:SetFlatColors(active and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
+                active and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+            c.radio:SetText(active and "|cffffb81c[X]|r" or "|cff5c6370[ ]|r")
+        end
+    end
+    for i, preset in ipairs(presets) do
+        local card = CreateFrame("Frame", nil, generalChild)
+        card:SetSize(190, 50)
+        card:EnableMouse(true)
+        paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+
+        local rad = card:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        rad:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -8)
+        rad:SetText("|cff5c6370[ ]|r")
+
+        local lbl = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        lbl:SetPoint("LEFT", rad, "RIGHT", 6, 0)
+        lbl:SetText(preset.text)
+
+        local sub = card:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        sub:SetPoint("TOPLEFT", rad, "BOTTOMLEFT", 0, -4)
+        sub:SetPoint("RIGHT", card, "RIGHT", -6, 0)
+        sub:SetJustifyH("LEFT")
+        sub:SetText(preset.sub)
+
+        card:SetScript("OnEnter", function(self)
+            if (TacoTipConfig.tip_style ~= preset.value) then
+                self:SetFlatColors(DASH_THEME.cardHoverBg, DASH_THEME.borderGold)
+            end
+        end)
+        card:SetScript("OnLeave", function(self)
+            local active = (TacoTipConfig.tip_style == preset.value)
+            self:SetFlatColors(active and DASH_THEME.cardActiveBg or DASH_THEME.cardBg,
+                active and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+        end)
+        card:SetScript("OnMouseDown", function()
+            TacoTipConfig.tip_style = preset.value
+            onSettingChanged()
+            refreshStyleCards()
+        end)
+
+        local col = (i - 1) % 3
+        local row = math.floor((i - 1) / 3)
+        card:SetPoint("TOPLEFT", generalChild, "TOPLEFT", col * 200, gy - row * 56)
+        styleCards[i] = { value = preset.value, card = card, radio = rad }
+    end
+    gy = gy - 118
+
+    local noticeShift = createNoticeBox(generalChild, "|cffffb81c[TIP]|r",
+        "Holding SHIFT dynamically expands Compact and Mini tooltips to full Wide detail.")
+    noticeShift:SetPoint("TOPLEFT", generalChild, "TOPLEFT", 0, gy)
+    gy = gy - 42
+
+    gy = addSectionHeader(generalChild, "Core Behavior", gy)
+
+    syncControls.hide_in_combat = createPillToggle(generalChild, "Hide in Combat",
+        "Hide unit tooltips while you are engaged in combat.", TacoTipConfig.hide_in_combat, function(v)
+            TacoTipConfig.hide_in_combat = v
+            onSettingChanged()
+        end)
+    gy = registerRow(generalChild, syncControls.hide_in_combat, "general", gy)
+
+    syncControls.show_separators = createPillToggle(generalChild, "Section Separators",
+        "Draw thin divider lines between logical sections of the tooltip.", TacoTipConfig.show_separators, function(v)
+            TacoTipConfig.show_separators = v
+            onSettingChanged()
+        end)
+    gy = registerRow(generalChild, syncControls.show_separators, "general", gy)
+
+    syncControls.instant_fade = createPillToggle(generalChild, "Instant Fade",
+        "Fade out unit tooltips immediately when cursor leaves a unit.", TacoTipConfig.instant_fade, function(v)
+            TacoTipConfig.instant_fade = v
+            onSettingChanged()
+        end)
+    gy = registerRow(generalChild, syncControls.instant_fade, "general", gy)
+
+    syncControls.tooltip_scale = createDashboardSlider(generalChild, "Tooltip Scale",
+        "Adjust the overall scale of unit tooltips (50% to 150%).", 0.5, 1.5, 0.05,
+        TacoTipConfig.tooltip_scale or 1.0, function(v)
+            TacoTipConfig.tooltip_scale = v
+            onSettingChanged()
+        end, function(v) return math.floor(v * 100 + 0.5) .. "%" end)
+    gy = registerRow(generalChild, syncControls.tooltip_scale, "general", gy, 48)
+
+    syncControls.tooltip_delay = createDashboardSlider(generalChild, "Tooltip Delay",
+        "Delay in milliseconds before showing unit tooltips.", 0, 1000, 50,
+        math.floor((TacoTipConfig.tooltip_delay or 0) * 1000 + 0.5), function(v)
+            TacoTipConfig.tooltip_delay = v / 1000
+            onSettingChanged()
+        end, function(v) return tostring(v) .. " ms" end)
+    gy = registerRow(generalChild, syncControls.tooltip_delay, "general", gy, 48)
+
+    local allCard = createFlatActionCard(generalChild, 240, 28, "All Settings (Blizzard panel)", "gold", function()
+        frame:Hide()
+        openOptionsPanel()
+    end, "All Settings", "Open every TacoTip option in Esc > Options > AddOns.")
+    allCard:SetPoint("TOPLEFT", generalChild, "TOPLEFT", 0, gy - 6)
+    gy = gy - 42
+    generalChild:SetHeight(math.abs(gy) + 20)
+
+    -- ========================================================================
+    -- Tab 2: Unit Content
+    -- ========================================================================
+    local _, unitsChild = createScrollCategory("units", "Unit Content", "Unit Content",
+        "Customize player, NPC, and pet details displayed on tooltips.", 2)
+    local uy = 0
+    uy = addSectionHeader(unitsChild, "Player & Guild Information", uy)
+
+    syncControls.show_guild_name = createPillToggle(unitsChild, "Show Guild Name",
+        "Display guild name on player tooltips.", TacoTipConfig.show_guild_name, function(v)
+            TacoTipConfig.show_guild_name = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_guild_name, "units", uy)
+
+    syncControls.show_guild_rank = createPillToggle(unitsChild, "Show Guild Rank",
+        "Display guild rank title alongside the guild name.", TacoTipConfig.show_guild_rank, function(v)
+            TacoTipConfig.show_guild_rank = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_guild_rank, "units", uy)
+
+    syncControls.guild_rank_alt_style = createPillToggle(unitsChild, "Detailed Guild Rank Format",
+        "Display rank format as '<Rank> of <Guild>' instead of '<Guild> (<Rank>)'.", TacoTipConfig.guild_rank_alt_style, function(v)
+            TacoTipConfig.guild_rank_alt_style = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.guild_rank_alt_style, "units", uy)
+
+    syncControls.show_titles = createPillToggle(unitsChild, "Show Player Titles",
+        "Display earned player titles in the name line.", TacoTipConfig.show_titles, function(v)
+            TacoTipConfig.show_titles = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_titles, "units", uy)
+
+    syncControls.show_realm = createPillToggle(unitsChild, "Show Realm Name",
+        "Display server realm name for players from other connected servers.", TacoTipConfig.show_realm, function(v)
+            TacoTipConfig.show_realm = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_realm, "units", uy)
+
+    uy = addSectionHeader(unitsChild, "Targeting & Alignment", uy)
+
+    syncControls.show_target = createPillToggle(unitsChild, "Show Target",
+        "Display who the inspected player or creature is currently targeting.", TacoTipConfig.show_target, function(v)
+            TacoTipConfig.show_target = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_target, "units", uy)
+
+    syncControls.show_team = createPillToggle(unitsChild, "Show Faction Name & Crest",
+        "Display Horde or Alliance faction name and crest icon.", TacoTipConfig.show_team, function(v)
+            TacoTipConfig.show_team = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_team, "units", uy)
+
+    syncControls.show_pvp_icon = createPillToggle(unitsChild, "Show PvP Badge",
+        "Display PvP rank or faction badge when flagged for PvP.", TacoTipConfig.show_pvp_icon, function(v)
+            TacoTipConfig.show_pvp_icon = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_pvp_icon, "units", uy)
+
+    syncControls.show_honor_rank = createPillToggle(unitsChild, "Show Classic Honor Rank",
+        "Display Classic PvP rank title (e.g. Private, Grand Marshal).", TacoTipConfig.show_honor_rank, function(v)
+            TacoTipConfig.show_honor_rank = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.show_honor_rank, "units", uy)
+
+    uy = addSectionHeader(unitsChild, "Class Colors", uy)
+
+    syncControls.color_class = createPillToggle(unitsChild, "Class Colors",
+        "Color player names, class names, and power bars by class color.", TacoTipConfig.color_class, function(v)
+            TacoTipConfig.color_class = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.color_class, "units", uy)
+
+    syncControls.shaman_blue = createPillToggle(unitsChild, "Shaman Blue",
+        "Use Shaman blue instead of pink for Shaman class colors.", TacoTipConfig.shaman_blue, function(v)
+            TacoTipConfig.shaman_blue = v
+            onSettingChanged()
+        end)
+    uy = registerRow(unitsChild, syncControls.shaman_blue, "units", uy)
+    unitsChild:SetHeight(math.abs(uy) + 20)
+
+    -- ========================================================================
+    -- Tab 3: Appearance & Bars
+    -- ========================================================================
+    local _, appChild = createScrollCategory("appearance", "Appearance & Bars", "Appearance & Bars",
+        "Customize health and power bars, text size, and tooltip dimensions.", 3)
+    local ay = 0
+    ay = addSectionHeader(appChild, "Status Bars", ay)
+
+    syncControls.show_hp_bar = createPillToggle(appChild, "Show Health Bar",
+        "Display unit health status bar under the tooltip.", TacoTipConfig.show_hp_bar, function(v)
+            TacoTipConfig.show_hp_bar = v
+            onSettingChanged()
+        end)
+    ay = registerRow(appChild, syncControls.show_hp_bar, "appearance", ay)
+
+    syncControls.show_power_bar = createPillToggle(appChild, "Show Power Bar",
+        "Display mana, rage, energy, or focus bar under the health bar.", TacoTipConfig.show_power_bar, function(v)
+            TacoTipConfig.show_power_bar = v
+            onSettingChanged()
+        end)
+    ay = registerRow(appChild, syncControls.show_power_bar, "appearance", ay)
+
+    syncControls.tooltip_border_use_class = createPillToggle(appChild, "Class-Colored Border",
+        "Color the tooltip border according to the unit's class or NPC reaction.", TacoTipConfig.tooltip_border_use_class, function(v)
+            TacoTipConfig.tooltip_border_use_class = v
+            onSettingChanged()
+        end)
+    ay = registerRow(appChild, syncControls.tooltip_border_use_class, "appearance", ay)
+
+    syncControls.tooltip_background_use_class = createPillToggle(appChild, "Class-Colored Background",
+        "Tint the tooltip background according to the unit's class or NPC reaction.", TacoTipConfig.tooltip_background_use_class, function(v)
+            TacoTipConfig.tooltip_background_use_class = v
+            onSettingChanged()
+        end)
+    ay = registerRow(appChild, syncControls.tooltip_background_use_class, "appearance", ay)
+
+    ay = addSectionHeader(appChild, "Text Sizing & Dimensions", ay)
+
+    syncControls.tooltip_font_size = createDashboardSlider(appChild, "Tooltip Text Size",
+        "Change text size across all tooltip lines (8 to 20 pt).", 8, 20, 1,
+        TacoTipConfig.tooltip_font_size or 12, function(v)
+            TacoTipConfig.tooltip_font_size = v
+            onSettingChanged()
+        end, function(v) return tostring(v) .. " pt" end)
+    ay = registerRow(appChild, syncControls.tooltip_font_size, "appearance", ay, 48)
+
+    syncControls.tooltip_max_width = createDashboardSlider(appChild, "Tooltip Maximum Width",
+        "Cap tooltip width to prevent excessively wide text (0 = uncapped).", 0, 500, 10,
+        TacoTipConfig.tooltip_max_width or 0, function(v)
+            TacoTipConfig.tooltip_max_width = v
+            onSettingChanged()
+        end, function(v) return (v == 0 and "Uncapped") or (tostring(v) .. " px") end)
+    ay = registerRow(appChild, syncControls.tooltip_max_width, "appearance", ay, 48)
+    appChild:SetHeight(math.abs(ay) + 20)
+
+    -- ========================================================================
+    -- Tab 4: Portrait & Icons
+    -- ========================================================================
+    local _, portChild = createScrollCategory("portrait", "Portrait & Icons", "Portrait & Icons",
+        "Configure 3D character portraits, class badges, and specialization icons.", 4)
+    local py = 0
+    py = addSectionHeader(portChild, "Unit Portrait", py)
+
+    syncControls.tooltip_portrait = createPillToggle(portChild, "Show Unit Portrait",
+        "Display a portrait frame attached to the tooltip for players and NPCs.", TacoTipConfig.tooltip_portrait, function(v)
+            TacoTipConfig.tooltip_portrait = v
+            onSettingChanged()
+        end)
+    py = registerRow(portChild, syncControls.tooltip_portrait, "portrait", py)
+
+    syncControls.tooltip_portrait_3d = createPillToggle(portChild, "3D Animated Model",
+        "Display an animated 3D character model instead of a flat 2D icon.", TacoTipConfig.tooltip_portrait_3d, function(v)
+            TacoTipConfig.tooltip_portrait_3d = v
+            onSettingChanged()
+        end)
+    py = registerRow(portChild, syncControls.tooltip_portrait_3d, "portrait", py)
+
+    syncControls.tooltip_portrait_invert_side = createPillToggle(portChild, "Flip Portrait Side",
+        "Position the portrait frame on the left side instead of the right.", TacoTipConfig.tooltip_portrait_invert_side, function(v)
+            TacoTipConfig.tooltip_portrait_invert_side = v
+            onSettingChanged()
+        end)
+    py = registerRow(portChild, syncControls.tooltip_portrait_invert_side, "portrait", py)
+
+    py = addSectionHeader(portChild, "Portrait Sizing & Camera", py)
+
+    syncControls.tooltip_portrait_scale = createDashboardSlider(portChild, "Portrait Scale",
+        "Scale the portrait frame size relative to the tooltip.", 0.5, 1.5, 0.05,
+        TacoTipConfig.tooltip_portrait_scale or 1.0, function(v)
+            TacoTipConfig.tooltip_portrait_scale = v
+            onSettingChanged()
+        end, function(v) return math.floor(v * 100 + 0.5) .. "%" end)
+    py = registerRow(portChild, syncControls.tooltip_portrait_scale, "portrait", py, 48)
+
+    syncControls.tooltip_portrait_zoom = createDashboardSlider(portChild, "3D Camera Zoom",
+        "Adjust the camera zoom level for 3D character models.", 0.1, 1.0, 0.05,
+        TacoTipConfig.tooltip_portrait_zoom or 0.7, function(v)
+            TacoTipConfig.tooltip_portrait_zoom = v
+            onSettingChanged()
+        end, function(v) return math.floor(v * 100 + 0.5) .. "%" end)
+    py = registerRow(portChild, syncControls.tooltip_portrait_zoom, "portrait", py, 48)
+
+    py = addSectionHeader(portChild, "Badges & Icons", py)
+
+    syncControls.show_class_icon = createPillToggle(portChild, "Show Class Icon",
+        "Display class badge next to player name.", TacoTipConfig.show_class_icon, function(v)
+            TacoTipConfig.show_class_icon = v
+            onSettingChanged()
+        end)
+    py = registerRow(portChild, syncControls.show_class_icon, "portrait", py)
+
+    syncControls.show_role_icon = createPillToggle(portChild, "Show Dungeon Role Icon",
+        "Display Tank, Healer, or Damage dungeon role badge.", TacoTipConfig.show_role_icon, function(v)
+            TacoTipConfig.show_role_icon = v
+            onSettingChanged()
+        end)
+    py = registerRow(portChild, syncControls.show_role_icon, "portrait", py)
+
+    syncControls.class_icon_size = createDashboardSlider(portChild, "Class Icon Size",
+        "Pixel size of class badges in tooltip headers (10 to 36 px).", 10, 36, 2,
+        TacoTipConfig.class_icon_size or 20, function(v)
+            TacoTipConfig.class_icon_size = v
+            onSettingChanged()
+        end, function(v) return tostring(v) .. " px" end)
+    py = registerRow(portChild, syncControls.class_icon_size, "portrait", py, 48)
+    portChild:SetHeight(math.abs(py) + 20)
+
+    -- ========================================================================
+    -- Tab 5: Positioning & Anchors
+    -- ========================================================================
+    local _, posChild = createScrollCategory("positioning", "Positioning", "Positioning & Anchors",
+        "Control where tooltips appear and configure custom anchors.", 5)
+    local posy = 0
+
+    local noticePos = createNoticeBox(posChild, "|cffffb81c[TIP]|r",
+        "Click 'Move Tooltip' below or in the footer to position and lock the tooltip anywhere on your screen.")
+    noticePos:SetPoint("TOPLEFT", posChild, "TOPLEFT", 0, posy)
+    posy = posy - 42
+
+    local launchMover = createFlatActionCard(posChild, 180, 28, "Launch Tooltip Mover", "emerald", function()
+        showTooltipMover()
+    end, "Move Tooltip", "Show the live drag handle to position your tooltip on screen.")
+    launchMover:SetPoint("TOPLEFT", posChild, "TOPLEFT", 0, posy)
+    posy = posy - 40
+
+    posy = addSectionHeader(posChild, "Anchor Modes", posy)
+
+    syncControls.custom_position = createPillToggle(posChild, "Custom Tooltip Position",
+        "Unlock and place the tooltip at your saved custom coordinates.", TacoTipConfig.custom_pos ~= nil, function(v)
+            if (not v) then
+                TacoTipConfig.custom_pos = nil
+            elseif (not TacoTipConfig.custom_pos) then
+                TacoTipConfig.custom_pos = { "BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y }
+            end
+            onSettingChanged()
+        end)
+    posy = registerRow(posChild, syncControls.custom_position, "positioning", posy)
+
+    syncControls.anchor_mouse = createPillToggle(posChild, "Anchor to Mouse Cursor",
+        "Attach unit tooltips directly to your mouse pointer.", TacoTipConfig.anchor_mouse, function(v)
+            TacoTipConfig.anchor_mouse = v
+            onSettingChanged()
+        end)
+    posy = registerRow(posChild, syncControls.anchor_mouse, "positioning", posy)
+
+    syncControls.anchor_mouse_world = createPillToggle(posChild, "Mouse Anchor World Units Only",
+        "Anchor mouse only for units in the 3D world (keeps default anchor for frames).", TacoTipConfig.anchor_mouse_world, function(v)
+            TacoTipConfig.anchor_mouse_world = v
+            onSettingChanged()
+        end)
+    posy = registerRow(posChild, syncControls.anchor_mouse_world, "positioning", posy)
+
+    syncControls.anchor_mouse_spells = createPillToggle(posChild, "Anchor Spells to Mouse",
+        "Anchor action bar and spell tooltips to mouse cursor.", TacoTipConfig.anchor_mouse_spells, function(v)
+            TacoTipConfig.anchor_mouse_spells = v
+            onSettingChanged()
+        end)
+    posy = registerRow(posChild, syncControls.anchor_mouse_spells, "positioning", posy)
+    posChild:SetHeight(math.abs(posy) + 20)
+
+    -- ========================================================================
+    -- Tab 6: Character & Inspect
+    -- ========================================================================
+    local _, charChild = createScrollCategory("character", "Character & Inspect", "Character & Inspect",
+        "Configure GearScore, Item Level, Talents, Gems, Enchants, and Pawn.", 6)
+    local cy = 0
+
+    local noticeChar = createNoticeBox(charChild, "|cff2ecc71[READY]|r",
+        "Real-time GearScore and talent inspection active with automatic throttling and caching.", true)
+    noticeChar:SetPoint("TOPLEFT", charChild, "TOPLEFT", 0, cy)
+    cy = cy - 42
+
+    cy = addSectionHeader(charChild, "Tooltip Gear & Talents", cy)
+
+    syncControls.show_gs_player = createPillToggle(charChild, "Show Player GearScore",
+        "Display calculated GearScore on player tooltips.", TacoTipConfig.show_gs_player, function(v)
+            TacoTipConfig.show_gs_player = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_gs_player, "character", cy)
+
+    syncControls.show_item_level = createPillToggle(charChild, "Show Average Item Level (iLvl)",
+        "Display average equipped item level on player tooltips.", TacoTipConfig.show_item_level, function(v)
+            TacoTipConfig.show_item_level = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_item_level, "character", cy)
+
+    syncControls.show_ilvl_inline = createPillToggle(charChild, "Inline iLvl with GearScore",
+        "Display iLvl alongside GearScore on the same tooltip line.", TacoTipConfig.show_ilvl_inline, function(v)
+            TacoTipConfig.show_ilvl_inline = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_ilvl_inline, "character", cy)
+
+    syncControls.show_talents = createPillToggle(charChild, "Show Talents & Specialization",
+        "Display talent point distribution and active specialization.", TacoTipConfig.show_talents, function(v)
+            TacoTipConfig.show_talents = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_talents, "character", cy)
+
+    syncControls.show_pawn_player = createPillToggle(charChild, "Show Pawn Stat Weights",
+        "Display Pawn scale scores on item tooltips (requires Pawn addon).", TacoTipConfig.show_pawn_player, function(v)
+            TacoTipConfig.show_pawn_player = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_pawn_player, "character", cy)
+
+    syncControls.show_gs_items = createPillToggle(charChild, "Show Item GearScore",
+        "Display calculated GearScore on item tooltips.", TacoTipConfig.show_gs_items, function(v)
+            TacoTipConfig.show_gs_items = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_gs_items, "character", cy)
+
+    syncControls.show_gs_items_hs = createPillToggle(charChild, "HunterScore on Ranged Weapons",
+        "Display HunterScore formula weighting on ranged weapon tooltips.", TacoTipConfig.show_gs_items_hs, function(v)
+            TacoTipConfig.show_gs_items_hs = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_gs_items_hs, "character", cy)
+
+    cy = addSectionHeader(charChild, "PaperDoll & Inspect Frame Overlays", cy)
+
+    syncControls.show_gs_character = createPillToggle(charChild, "Show PaperDoll GearScore Overlays",
+        "Display GearScore overlay text directly on Character and Inspect windows.", TacoTipConfig.show_gs_character, function(v)
+            TacoTipConfig.show_gs_character = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_gs_character, "character", cy)
+
+    syncControls.show_avg_ilvl = createPillToggle(charChild, "Show PaperDoll Average iLvl Overlays",
+        "Display average item level overlay on Character and Inspect windows.", TacoTipConfig.show_avg_ilvl, function(v)
+            TacoTipConfig.show_avg_ilvl = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.show_avg_ilvl, "character", cy)
+
+    syncControls.unlock_info_position = createPillToggle(charChild, "Enable Manual Overlay Movers",
+        "Show drag handles on frame overlays to position them manually.", TacoTipConfig.unlock_info_position, function(v)
+            TacoTipConfig.unlock_info_position = v
+            onSettingChanged()
+        end)
+    cy = registerRow(charChild, syncControls.unlock_info_position, "character", cy)
+    charChild:SetHeight(math.abs(cy) + 20)
+
+    -- ========================================================================
+    -- Tab: TacoTip Extras (Only when TacoTip_Extras is installed and loaded)
+    -- ========================================================================
+    if (hasExtras) then
+        local _, extrasChild = createScrollCategory("extras", "Extras", "TacoTip Extras",
+            "Server leaderboard, peer-to-peer sync, and advanced equipment auditing.", 7)
+        local ey = 0
+
+        local noticeExtras = createNoticeBox(extrasChild, "|cff2ecc71[CONNECTED]|r",
+            "TacoTip Extras is active. Peer-to-peer synchronization and server rankings are running.", true)
+        noticeExtras:SetPoint("TOPLEFT", extrasChild, "TOPLEFT", 0, ey)
+        ey = ey - 44
+
+        ey = addSectionHeader(extrasChild, "Leaderboard & Server Rankings", ey)
+
+        -- Action Card: Open Leaderboard
+        local lbCard = CreateFrame("Frame", nil, extrasChild)
+        lbCard:SetSize(590, 52)
+        paintFlatBox(lbCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+        lbCard.searchText = "server leaderboard rankings gearscore ranks ex"
+
+        local lbIcon = lbCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        lbIcon:SetPoint("LEFT", lbCard, "LEFT", 14, 0)
+        lbIcon:SetText("|cffffb81c[TOP]|r")
+
+        local lbTitle = lbCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        lbTitle:SetPoint("TOPLEFT", lbIcon, "TOPRIGHT", 10, 4)
+        lbTitle:SetText("Server Leaderboard (/ex ranks)")
+
+        local lbDesc = lbCard:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        lbDesc:SetPoint("TOPLEFT", lbTitle, "BOTTOMLEFT", 0, -2)
+        lbDesc:SetPoint("RIGHT", lbCard, "RIGHT", -120, 0)
+        lbDesc:SetJustifyH("LEFT")
+        lbDesc:SetText("Browse realm-wide GearScore rankings, equipment stats, and top-geared players.")
+
+        local lbBtn = createFlatActionCard(lbCard, 100, 26, "Open Ranks", "gold", function()
+            local toggle = rawget(_G, "TacoTipExtrasToggleLeaderboard")
+            if (type(toggle) == "function") then
+                pcall(toggle)
+            elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TACOTIPEXTRAS) == "function") then
+                pcall(_G.SlashCmdList.TACOTIPEXTRAS, "ranks")
+            end
+        end, "Open Leaderboard", "Open the server-wide GearScore leaderboard.")
+        lbBtn:SetPoint("RIGHT", lbCard, "RIGHT", -12, 0)
+
+        ey = registerRow(extrasChild, lbCard, "extras", ey, 52)
+
+        ey = addSectionHeader(extrasChild, "Peer-to-Peer Database Synchronization", ey)
+
+        -- Action Card: Sync Now
+        local syncCard = CreateFrame("Frame", nil, extrasChild)
+        syncCard:SetSize(590, 56)
+        paintFlatBox(syncCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+        syncCard.searchText = "sync now database peer p2p ttgssync broadcast"
+
+        local syncIcon = syncCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        syncIcon:SetPoint("LEFT", syncCard, "LEFT", 14, 0)
+        syncIcon:SetText("|cff3498db[P2P]|r")
+
+        local syncTitle = syncCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        syncTitle:SetPoint("TOPLEFT", syncIcon, "TOPRIGHT", 10, 4)
+        syncTitle:SetText("Sync Database Now (/ttgssync)")
+
+        local syncDesc = syncCard:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        syncDesc:SetPoint("TOPLEFT", syncTitle, "BOTTOMLEFT", 0, -2)
+        syncDesc:SetPoint("RIGHT", syncCard, "RIGHT", -120, 0)
+        syncDesc:SetJustifyH("LEFT")
+        syncDesc:SetText("Broadcast sync queries to guild, party, and background sync channel.")
+
+        local syncStatusText = extrasChild:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+
+        local syncBtn = createFlatActionCard(syncCard, 100, 26, "Sync Now", "emerald", function()
+            local syncNow = rawget(_G, "TacoTipExtrasSyncNow")
+            if (type(syncNow) == "function") then
+                pcall(syncNow, true)
+            elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TTGSSYNC) == "function") then
+                pcall(_G.SlashCmdList.TTGSSYNC, "")
+            end
+            syncStatusText:SetText("|cff2ecc71✓ Sync request broadcast to peers!|r")
+        end, "Sync Now", "Trigger an immediate peer-to-peer sync with guild, party, and sync channel.")
+        syncBtn:SetPoint("RIGHT", syncCard, "RIGHT", -12, 0)
+
+        ey = registerRow(extrasChild, syncCard, "extras", ey, 56)
+
+        syncStatusText:SetPoint("TOPLEFT", syncCard, "BOTTOMLEFT", 6, -3)
+        ey = ey - 18
+
+        -- Action Card: Open Extras Settings
+        local optCard = CreateFrame("Frame", nil, extrasChild)
+        optCard:SetSize(590, 52)
+        paintFlatBox(optCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+        optCard.searchText = "extras settings options configuration ex tte"
+
+        local optIcon = optCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        optIcon:SetPoint("LEFT", optCard, "LEFT", 14, 0)
+        optIcon:SetText("|cff9ba3ae[CFG]|r")
+
+        local optTitle = optCard:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        optTitle:SetPoint("TOPLEFT", optIcon, "TOPRIGHT", 10, 4)
+        optTitle:SetText("Extras Settings Panel (/ex)")
+
+        local optDesc = optCard:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        optDesc:SetPoint("TOPLEFT", optTitle, "BOTTOMLEFT", 0, -2)
+        optDesc:SetPoint("RIGHT", optCard, "RIGHT", -120, 0)
+        optDesc:SetJustifyH("LEFT")
+        optDesc:SetText("Configure advanced tooltip formatting, minimap icon, and equipment auditing.")
+
+        local optBtn = createFlatActionCard(optCard, 100, 26, "Open Config", "plain", function()
+            local openOpt = rawget(_G, "TacoTipExtrasOpenOptions")
+            if (type(openOpt) == "function") then
+                pcall(openOpt)
+            elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TACOTIPEXTRAS) == "function") then
+                pcall(_G.SlashCmdList.TACOTIPEXTRAS, "")
+            end
+        end, "Open Settings", "Open TacoTip Extras configuration panel.")
+        optBtn:SetPoint("RIGHT", optCard, "RIGHT", -12, 0)
+
+        ey = registerRow(extrasChild, optCard, "extras", ey, 52)
+
+        ey = addSectionHeader(extrasChild, "Architecture & Privacy Notice", ey)
+
+        local infoBox = createNoticeBox(extrasChild, "|cffffb81c[INFO]|r",
+            "No remote server or external database is used. All leaderboard rankings and gear records are synced peer-to-peer (P2P) in-game via WoW addon messages and saved directly to your local SavedVariables.", false, 50)
+        infoBox:SetPoint("TOPLEFT", extrasChild, "TOPLEFT", 0, ey)
+        ey = ey - 58
+
+        extrasChild:SetHeight(math.abs(ey) + 20)
+    end
+
+    -- ========================================================================
+    -- Tab 7: Diagnostics
+    -- ========================================================================
+    local diag = addTab("diagnostics", "Diagnostics", 1, true)
+    local dh = diag:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    dh:SetPoint("TOPLEFT", diag, "TOPLEFT", 0, 0)
+    dh:SetText("|cffffb81cSystem Diagnostics|r")
+
+    local verdictText = diag:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    verdictText:SetPoint("TOPLEFT", dh, "BOTTOMLEFT", 0, -6)
+
+    local diagScroll = CreateFrame("ScrollFrame", "TacoTipDashboardDiagScroll", diag, "UIPanelScrollFrameTemplate")
+    diagScroll:SetPoint("TOPLEFT", verdictText, "BOTTOMLEFT", 0, -8)
+    diagScroll:SetPoint("BOTTOMRIGHT", diag, "BOTTOMRIGHT", -26, 34)
+
+    local diagBox = CreateFrame("EditBox", nil, diagScroll)
+    diagBox:SetMultiLine(true)
+    diagBox:SetAutoFocus(false)
+    diagBox:SetFontObject("GameFontHighlightSmall")
+    diagBox:SetWidth(580)
+    diagBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    diagScroll:SetScrollChild(diagBox)
+
+    frame.RefreshDiagnostics = function()
+        local report, verdict = buildDiagnosticsReport()
+        local color = "|cff2ecc71"
+        if (not verdict) then
+            color = "|cffe74c3c"
+        elseif (not verdict.healthy) then
+            color = (verdict.severity == "error") and "|cffe74c3c" or "|cffe67e22"
+        end
+        verdictText:SetText("Status: " .. color .. tostring(verdict and verdict.text or "UNAVAILABLE") .. "|r")
+        diagBox:SetText(report)
+    end
+
+    local copyCard = createFlatActionCard(diag, 180, 26, "Select Report (Ctrl+C)", "emerald", function()
+        diagBox:SetFocus()
+        diagBox:HighlightText()
+    end, "Copy report", "Selects the whole report. Press Ctrl+C, then paste it into Discord or a bug report.")
+    copyCard:SetPoint("BOTTOMLEFT", diag, "BOTTOMLEFT", 0, 0)
+
+    local refreshCard = createFlatActionCard(diag, 100, 26, "Refresh", "plain", function()
+        frame:RefreshDiagnostics()
+    end)
+    refreshCard:SetPoint("LEFT", copyCard, "RIGHT", 8, 0)
+
+    -- ========================================================================
+    -- Tab 8: Community Hub
+    -- ========================================================================
+    local community = addTab("community", "Community", 2, true)
+    local ch = community:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    ch:SetPoint("TOPLEFT", community, "TOPLEFT", 0, 0)
+    ch:SetText("|cffffb81cCommunity Hub|r")
+
+    local cd = createWrappedText(community, "GameFontHighlightSmall", 590,
+        "|cffffb81c200,000+ downloads|r - thank you for helping TacoTip grow! Join our Discord community for live support, " ..
+        "feedback, and updates. Select the link, press Ctrl+C, and paste it into your browser.")
+    cd:SetPoint("TOPLEFT", ch, "BOTTOMLEFT", 0, -6)
+
+    local function linkRow(anchor, label, url)
+        local lbl = community:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        lbl:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -16)
+        lbl:SetText(label)
+        local edit = CreateFrame("EditBox", nil, community, "InputBoxTemplate")
+        edit:SetAutoFocus(false)
+        edit:SetSize(540, 24)
+        edit:SetPoint("TOPLEFT", lbl, "BOTTOMLEFT", 6, -4)
+        edit:SetText(url)
+        edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+        edit:SetScript("OnTextChanged", function(self) if (self:GetText() ~= url) then self:SetText(url) end end)
+        edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        return edit
+    end
+    local d1 = linkRow(cd, "|cff5865f2Discord Invite|r", DISCORD_INVITE_URL)
+    local d2 = linkRow(d1, "|cff59f0dcCurseForge|r", CURSEFORGE_URL)
+    linkRow(d2, "|cffe67e22TacoTip Extras|r", EXTRAS_URL)
+
+    -- ========================================================================
+    -- Tab 9: Reset Defaults
+    -- ========================================================================
+    local resetPage = addTab("reset", "Reset Defaults", 3, true)
+    local rh = resetPage:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    rh:SetPoint("TOPLEFT", resetPage, "TOPLEFT", 0, 0)
+    rh:SetText("|cffffb81cReset Configuration|r")
+
+    local rd = createWrappedText(resetPage, "GameFontHighlightSmall", 590,
+        "Restore all TacoTip settings back to their default recommended values.")
+    rd:SetPoint("TOPLEFT", rh, "BOTTOMLEFT", 0, -6)
+
+    local rNotice = createNoticeBox(resetPage, "|cffe74c3c[RESET]|r",
+        "Warning: This will restore all tooltip styles, colors, positioning offsets, and toggles back to defaults.")
+    rNotice:SetPoint("TOPLEFT", rd, "BOTTOMLEFT", 0, -14)
+
+    local rConfirm = resetPage:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    rConfirm:SetPoint("TOPLEFT", rNotice, "BOTTOMLEFT", 0, -16)
+    rConfirm:SetText("Are you sure you want to reset all settings to defaults?")
+
+    local rStatus = resetPage:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    rStatus:SetPoint("TOPLEFT", rConfirm, "BOTTOMLEFT", 0, -12)
+    rStatus:SetText("")
+
+    local rDoBtn = createFlatActionCard(resetPage, 220, 28, "Restore Defaults Now", "danger", function()
+        resetCfg()
+        if (TT.RefreshOptionsUI) then TT:RefreshOptionsUI() end
+        if (frame.RefreshAll) then frame:RefreshAll() end
+        rStatus:SetText("|cff2ecc71✓ Configuration restored to defaults.|r")
+    end, "Reset", "Restore all settings to default.")
+    rDoBtn:SetPoint("TOPLEFT", rStatus, "BOTTOMLEFT", 0, -8)
+
+    -- Refresh all dashboard controls from TacoTipConfig
+    frame.RefreshAll = function()
+        refreshStyleCards()
+        for k, ctl in pairs(syncControls) do
+            if (ctl.SetChecked and TacoTipConfig[k] ~= nil) then
+                ctl:SetChecked(TacoTipConfig[k])
+            end
+        end
+        if (syncControls.custom_position) then
+            syncControls.custom_position:SetChecked(TacoTipConfig.custom_pos ~= nil)
+        end
+        if (syncControls.tooltip_scale) then
+            syncControls.tooltip_scale:SetValue(TacoTipConfig.tooltip_scale or 1.0)
+        end
+        if (syncControls.tooltip_delay) then
+            syncControls.tooltip_delay:SetValue(math.floor((TacoTipConfig.tooltip_delay or 0) * 1000 + 0.5))
+        end
+        if (syncControls.tooltip_font_size) then
+            syncControls.tooltip_font_size:SetValue(TacoTipConfig.tooltip_font_size or 12)
+        end
+        if (syncControls.tooltip_max_width) then
+            syncControls.tooltip_max_width:SetValue(TacoTipConfig.tooltip_max_width or 0)
+        end
+        if (syncControls.tooltip_portrait_scale) then
+            syncControls.tooltip_portrait_scale:SetValue(TacoTipConfig.tooltip_portrait_scale or 1.0)
+        end
+        if (syncControls.tooltip_portrait_zoom) then
+            syncControls.tooltip_portrait_zoom:SetValue(TacoTipConfig.tooltip_portrait_zoom or 0.7)
+        end
+        if (syncControls.class_icon_size) then
+            syncControls.class_icon_size:SetValue(TacoTipConfig.class_icon_size or 20)
+        end
+        if (frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
+    end
+
+    -- Real-time Search Filter Engine
+    applySearch = function()
+        inSearchUpdate = true
+        local query = strlower(searchBox:GetText() or "")
+        query = query:match("^%s*(.-)%s*$") or ""
+        if (query == "") then
+            searchPlaceholder:Show()
+            for _, item in ipairs(allSearchItems) do
+                item:Show()
+            end
+            for tabId, btn in pairs(tabButtons) do
+                btn.text:SetText(tabLabels[tabId] or tabId)
+            end
+        else
+            searchPlaceholder:Hide()
+            local tabCounts = {}
+            for _, item in ipairs(allSearchItems) do
+                local matches = strfind(item.searchText or "", query, 1, true) ~= nil
+                if (matches) then
+                    tabCounts[item.tabId] = (tabCounts[item.tabId] or 0) + 1
+                end
+                if (item.tabId == frame.activeTab) then
+                    item:SetShown(matches)
+                else
+                    item:Hide()
+                end
+            end
+            if ((tabCounts[frame.activeTab] or 0) == 0) then
+                for _, tabId in ipairs(orderedCategoryIds) do
+                    if ((tabCounts[tabId] or 0) > 0) then
+                        selectTab(tabId)
+                        break
+                    end
+                end
+            end
+            for tabId, btn in pairs(tabButtons) do
+                local count = tabCounts[tabId] or 0
+                local base = tabLabels[tabId] or tabId
+                if (count > 0) then
+                    btn.text:SetText(base .. " |cffffb81c(" .. count .. ")|r")
+                else
+                    btn.text:SetText(base)
+                end
+            end
+        end
+        inSearchUpdate = false
+    end
+
+    searchBox:SetScript("OnTextChanged", function() applySearch() end)
+    searchBox:SetScript("OnEditFocusGained", function() searchPlaceholder:Hide() end)
+    searchBox:SetScript("OnEditFocusLost", function(self)
+        if ((self:GetText() or "") == "") then searchPlaceholder:Show() end
+    end)
+    searchBox:SetScript("OnEscapePressed", function(self)
+        self:SetText("")
+        self:ClearFocus()
+        applySearch()
+    end)
+
+    frame:SetScript("OnShow", function(self)
+        if (self.RefreshAll) then self:RefreshAll() end
+    end)
+
+    selectTab("general")
+    return frame
+end
+
+function TT:ShowStandaloneDashboard(tab)
+    if (not dashboard) then
+        dashboard = createDashboard()
+    end
+    dashboard:Show()
+    dashboard:SelectTab(tab or dashboard.activeTab or "general")
+end
+
+function TT:ToggleStandaloneDashboard()
+    if (dashboard and dashboard:IsShown()) then
+        dashboard:Hide()
+    else
+        TT:ShowStandaloneDashboard()
+    end
+end
+
 local function ensureModernOptionsBuilt()
     if (modernOptionsState.built) then
         return
@@ -3016,6 +4565,9 @@ end
 TT.RefreshOptionsUI = function(self)
     ensureModernOptionsBuilt()
     modernGetConfig()
+    if (dashboard and dashboard:IsShown() and dashboard.RefreshAll) then
+        dashboard:RefreshAll()
+    end
 end
 
 local function onPageShow(panel)

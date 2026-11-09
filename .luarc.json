@@ -218,7 +218,10 @@
         "dofile",
         "loadfile",
         "os",
-        "io"
+        "io",
+        "ZONE",
+        "clearGearScoreRetry",
+        "clearGearScoreMemo"
     ],
     "Lua.runtime.builtin": {
         "basic": "disable",

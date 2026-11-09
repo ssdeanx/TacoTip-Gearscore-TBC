@@ -1789,8 +1789,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.4",
-    "TOC ## Version is 1.2.4", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.5",
+    "TOC ## Version is 1.2.5", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -9869,25 +9869,26 @@ do
     local styled = { text = nil, disabled = false, alpha = nil, scripts = {} }
     function styled:SetText(text) self.text = text end
     function styled:Disable() self.disabled = true end
+    function styled:Enable() self.disabled = false end
     function styled:SetAlpha(value) self.alpha = value end
     function styled:SetScript(name, fn) self.scripts[name] = fn end
     local styleOK, styleErr = pcall(BrowserX.StyleScanButton, styled, false)
     check(styleOK == true,
         "the shared scan styler does not raise", tostring(styleErr))
     check(type(styled.text) == "string"
-            and styled.text:lower():find("disabled", 1, true) ~= nil,
-        "the scan button says it is disabled", tostring(styled.text))
-    check(styled.disabled == true,
-        "the scan button is disabled", tostring(styled.disabled))
-    check(type(styled.alpha) == "number" and styled.alpha < 1,
-        "the scan button is greyed out (alpha below 1)", tostring(styled.alpha))
+            and styled.text:lower():find("sync", 1, true) ~= nil,
+        "the scan button carries the sync label", tostring(styled.text))
+    check(styled.disabled == false,
+        "the scan button is enabled", tostring(styled.disabled))
+    check(type(styled.alpha) == "number" and styled.alpha == 1,
+        "the scan button has full alpha (1)", tostring(styled.alpha))
     check(type(styled.scripts.OnClick) == "function",
         "the scan button's click handler was replaced",
         type(styled.scripts.OnClick))
     if type(styled.scripts.OnClick) == "function" then
         local clickOK, clickResult = pcall(styled.scripts.OnClick, styled)
-        check(clickOK and clickResult == false,
-            "clicking the disabled scan button does nothing",
+        check(clickOK,
+            "clicking the sync button does not raise",
             tostring(clickResult))
     end
     check(BrowserX.StyleScanButton(nil) == false,
@@ -9900,16 +9901,16 @@ do
         "the Options page scan button was created by name",
         type(optionsButton))
     if type(optionsButton) == "table" then
-        check(optionsButton:GetText():lower():find("disabled", 1, true) ~= nil,
-            "the Options scan button carries the disabled label",
+        check(optionsButton:GetText():lower():find("sync", 1, true) ~= nil,
+            "the Options scan button carries the sync label",
             optionsButton:GetText())
     end
     local rankFrameX = RAWL.TacoTipRankFrame
     if type(rankFrameX) == "table"
         and type(rankFrameX.scanButton) == "table"
         and type(rankFrameX.scanButton.GetText) == "function" then
-        check(rankFrameX.scanButton:GetText():lower():find("disabled", 1, true) ~= nil,
-            "the leaderboard scan button carries the disabled label",
+        check(rankFrameX.scanButton:GetText():lower():find("sync", 1, true) ~= nil,
+            "the leaderboard scan button carries the sync label",
             rankFrameX.scanButton:GetText())
     end
 end

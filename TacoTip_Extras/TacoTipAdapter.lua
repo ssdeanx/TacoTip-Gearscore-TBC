@@ -1736,6 +1736,11 @@ local function recoverInterruptedLease()
         noteConflict("recovery-compatibility-unsupported")
         return false
     end
+    if not record then
+        clearJournal()
+        noteRecoveryOutcome("recovery-journal-mismatch")
+        return true
+    end
     local identity = journalIdentity(journal)
     if not journalIsOurs(identity)
         or record.forcedValue ~= false

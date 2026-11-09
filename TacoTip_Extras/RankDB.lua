@@ -202,6 +202,7 @@ end
 
 local function sanitizeString(val, maxLen)
     if type(val) ~= "string" then return nil end
+    if type(issecretvalue) == "function" and issecretvalue(val) then return nil end
     local s = val:gsub("[%c;]", ""):match("^%s*(.-)%s*$")
     if s == "" then return nil end
     if maxLen and #s > maxLen then
@@ -221,6 +222,7 @@ local function sanitizeString(val, maxLen)
 end
 
 local function sanitizeNumber(val, minVal, maxVal)
+    if type(issecretvalue) == "function" and issecretvalue(val) then return nil end
     local n = tonumber(val)
     if not n or n ~= n or n == math.huge or n == -math.huge then
         return nil
@@ -256,14 +258,18 @@ local function sanitizeDisplayString(val, maxLen)
     if s == nil then
         return nil
     end
-    s = s:gsub("|H.-|h", "")           -- hyperlink
-    s = s:gsub("|T.-|t", "")           -- texture
-    s = s:gsub("|A.-|a", "")           -- atlas
-    s = s:gsub("|c%x%x%x%x%x%x%x%x", "") -- colour
-    s = s:gsub("|r", "")               -- colour reset
-    s = s:gsub("|n", "")               -- newline
-    s = s:gsub("|", "")                -- any escape character left over
-    s = s:gsub("%%", "")               -- string.format's conversion character
+    if s:find("|", 1, true) then
+        s = s:gsub("|H.-|h", "")           -- hyperlink
+        s = s:gsub("|T.-|t", "")           -- texture
+        s = s:gsub("|A.-|a", "")           -- atlas
+        s = s:gsub("|c%x%x%x%x%x%x%x%x", "") -- colour
+        s = s:gsub("|r", "")               -- colour reset
+        s = s:gsub("|n", "")               -- newline
+        s = s:gsub("|", "")                -- any escape character left over
+    end
+    if s:find("%", 1, true) then
+        s = s:gsub("%%", "")               -- string.format's conversion character
+    end
     s = s:match("^%s*(.-)%s*$")
     if s == "" then
         return nil
@@ -483,13 +489,19 @@ local function sortComparator(a, b)
     if a.gs ~= b.gs then
         return a.gs > b.gs
     end
-    if a.ilvl ~= b.ilvl then
-        return a.ilvl > b.ilvl
+    local aIlvl = a.ilvl or 0
+    local bIlvl = b.ilvl or 0
+    if aIlvl ~= bIlvl then
+        return aIlvl > bIlvl
     end
-    if a.timestamp ~= b.timestamp then
-        return a.timestamp > b.timestamp
+    local aTs = a.timestamp or 0
+    local bTs = b.timestamp or 0
+    if aTs ~= bTs then
+        return aTs > bTs
     end
-    return a.name < b.name
+    local aName = a.name or ""
+    local bName = b.name or ""
+    return aName < bName
 end
 
 function RankDB.BuildSortedIndices(realm)
@@ -659,6 +671,14 @@ function RankDB.GetLeaderboard(realm, tab, classFilter, searchQuery, guildFilter
         return sourceList, #sourceList
     end
 
+    if t == "all" and hasClass and not hasQuery and not hasGuild then
+        local cList = indices.byClass and indices.byClass[classFilter]
+        if cList then
+            return cList, #cList
+        end
+        return {}, 0
+    end
+
     local filtered = {}
     for i = 1, #sourceList do
         local entry = sourceList[i]
@@ -813,12 +833,13 @@ local function localPlayerGUID()
     return nil
 end
 
+local GEAR_SLOT_ALLOWED = {}
+for _, slot in ipairs(RankDB.GEAR_SLOTS) do
+    GEAR_SLOT_ALLOWED[slot] = true
+end
+
 local function gearSlotAllowed()
-    local allowed = {}
-    for _, slot in ipairs(RankDB.GEAR_SLOTS) do
-        allowed[slot] = true
-    end
-    return allowed
+    return GEAR_SLOT_ALLOWED
 end
 
 -- Parse a sparse slot=itemID run into canonical order. Strict per pair:
@@ -947,13 +968,14 @@ function RankDB.StoreGear(guid, t, ids, realm)
             return false, "stale"
         end
         if stamp == existing.t and type(existing.ids) == "string" then
-            local slotMap = mapGearRun(existing.ids)
+            local slotMap = mapGearRun(existing.ids) or {}
             local changed = false
             for _, pair in ipairs(ordered) do
                 local slotText, itemText = pair:match("^(%d+)=(%d+)$")
                 local slot = tonumber(slotText)
-                if slotMap[slot] == nil then
-                    slotMap[slot] = tonumber(itemText)
+                local itemID = tonumber(itemText)
+                if slot and itemID and slotMap[slot] == nil then
+                    slotMap[slot] = itemID
                     changed = true
                 end
             end
@@ -1079,14 +1101,7 @@ local function pruneGearRealm(realmKey, gearRoot, maxAgeDays, cap)
     local now = GetServerTime and GetServerTime() or 0
     local ageLimit = (maxAgeDays or 60) * 24 * 3600
     local cutoff = now > ageLimit and (now - ageLimit) or 0
-    local localGuid = nil
-    local unitGuid = rawget(_G, "UnitGUID")
-    if type(unitGuid) == "function" then
-        local ok, guid = pcall(unitGuid, "player")
-        if ok and type(guid) == "string" and guid ~= "" then
-            localGuid = guid
-        end
-    end
+    local localGuid = localPlayerGUID()
 
     local removed = 0
     local survivors = {}

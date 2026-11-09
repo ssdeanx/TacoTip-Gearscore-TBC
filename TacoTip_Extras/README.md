@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.2.4
+version: 1.2.5
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT  # see LICENSE
@@ -23,7 +23,7 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
 status: released
-updated: 2026-10-30
+updated: 2026-11-08
 ```
 
 
@@ -34,7 +34,7 @@ updated: 2026-10-30
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing. It is not a fork of TacoTip, and it implies no endorsement by either.
 
-**Version:** 1.2.4
+**Version:** 1.2.5
 **Author:** AcidBomb (Pilsung)
 
 ## Requirements
@@ -57,9 +57,11 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 
 ## Features
 
-- Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with dedicated background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
+- Server-wide GearScore Leaderboard & P2P Sync Engine (HonorSpy style) with private background channel `ttgssync` and GUILD/PARTY/RAID broadcast fallbacks.
 - Interactive Leaderboard window (`/ex ranks`, also `/ex lb`, `/ex rank`, `/ex leaderboard`) covering the **whole realm**, opening centred on your own rank, with class and guild filtering, live search, a sortable level column, `▲ Top` / `▼ My Rank` navigation, keyboard navigation, a Comfortable-rows density option, and personal rank standing.
-- The leaderboard header and the Options page carry the shared **Scan disabled** control. The realm scan is blocked until the crash it caused in the inspect engine is fixed; the button is greyed out and explains itself on hover. Gear inspection, the inspect-frame summary and tooltip scores are unaffected.
+- Active **Sync Now** control on both the leaderboard header and the Options page, enabling immediate peer-to-peer record exchange across Group, Guild, and the private background channel with rate-limited token bucket protection.
+- Stealth channel operation: `/ttgssync` is private with a password, completely filtered from standard chat frames, hidden from channel lists, and prevented from taking numbered slots.
+- Direct integration with TacoTip's standalone dashboard (`/tt`), providing 1-click launchers for the Leaderboard, Sync Now, and Settings.
 - Automatic tooltip rank display (`GS Rank: #14 [#2 Warrior]`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
@@ -199,7 +201,7 @@ Per-slot equipment detail renders live while a fresh scanner revision exists; pe
 
 ## Known limitations
 
-- **Release status.** Version **1.2.4** is the current build in this repository; the CurseForge listing is the published distribution channel for the add-on.
+- **Release status.** Version **1.2.5** is the current build in this repository; the CurseForge listing is the published distribution channel for the add-on.
 - **The Options page's integration and enhancement status lines, and the gear panel's "Last synced" note, are still English only.** The three status lines under the Options page — "TacoTip integration: …", "Remote enhancement analysis: …" and "Remote enhancement blocker: Slot …" — and the forty-seven sentences they can expand into (the compatible / incompatible / not-loaded reasons and the remote complete / unavailable / pending / suppressed / not-observed reasons) are written in English in the source, as are the **Reset summary positions** button label, the **How these scores work** heading, the equipment windows' **Drag** handle label and the gear panel's **Last synced …** and **Synced gear (item IDs only)** notes. Everything else on those surfaces is translated. Localizing them is a separate translation pass, not a code change: the strings are hardcoded English today, and the locale keys that once existed for them were never read by any code path, so they have been removed rather than left as dead weight.
 - **The level-70 restriction is a display rule.** While **Restrict Potential, Completion, and warnings to level 70** is on (the default), Potential GS, Delta, and Completion are not shown for a character below level 70 and the related warnings are held back; Current GS, Unenhanced GS, and Average iLvl still show. Turning the setting off shows the same three values at any level. On Classic Era, TBC Anniversary, and Titanforge those three metrics stay unavailable regardless of the setting, because the client does not expose the socket data they need (see the `GetItemStats` note below).
 - **The socket count comes from the documented API, and a count that contradicts the item's own gems is withheld rather than published.** On Retail and WoW Forever the number of socket slots is read from `C_Item.GetItemNumSockets` — the socket-count API Blizzard's own character frame uses, which passes the raw item link straight into it (`PaperDollFrame.lua:2775`, fed by `GetInventoryItemLink` at `:1728`; documented at `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua:854` on `origin/live`, `:876` on `origin/forever`). The add-on still cross-checks that count against the item's own gem list, parsed from the item link, and now in **both** directions: a count that is too small for the item's gems and a count that is too large for them both leave the socket-based metrics **unavailable rather than guessed** on that item.

@@ -1764,9 +1764,14 @@ local function createPanel()
     -- returns with the feature.
     controls.scanNow = createActionButton(
         addonName .. "ScanNowButton",
-        "Scan disabled",
+        "Sync Now",
         16,
         function()
+            local sync = namespace.RankSync
+            if type(sync) == "table" and type(sync.SyncNow) == "function" then
+                local ok, res = pcall(sync.SyncNow, true)
+                if ok then return res end
+            end
             return false
         end,
         "scanNow",
@@ -1776,10 +1781,7 @@ local function createPanel()
         local browser = namespace.RankBrowser
         if type(browser) == "table"
             and type(browser.StyleScanButton) == "function" then
-            pcall(browser.StyleScanButton, controls.scanNow, false)
-        elseif controls.scanNow
-            and type(controls.scanNow.Disable) == "function" then
-            pcall(controls.scanNow.Disable, controls.scanNow)
+            pcall(browser.StyleScanButton, controls.scanNow, true)
         end
     end
 
@@ -2387,3 +2389,8 @@ function Options.Refresh()
     refreshStatus()
     return true
 end
+
+local function openOptionsGlobal()
+    return Options.Open()
+end
+rawset(_G, "TacoTipExtrasOpenOptions", openOptionsGlobal)

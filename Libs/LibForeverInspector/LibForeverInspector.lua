@@ -75,6 +75,24 @@ local function uptimeSeconds()
     return (type(GetTime) == "function") and GetTime() or 0
 end
 
+local function isSecretValue(v)
+    return (type(issecretvalue) == "function" and issecretvalue(v))
+end
+
+local function safeEquals(a, b)
+    if (a == nil or b == nil or isSecretValue(a) or isSecretValue(b)) then
+        return false
+    end
+    return a == b
+end
+
+local function safeUnitGUID(unit)
+    if (not unit or type(UnitGUID) ~= "function") then return nil end
+    local guid = UnitGUID(unit)
+    if (not guid or isSecretValue(guid)) then return nil end
+    return guid
+end
+
 local frame = lib.frame or CreateFrame("Frame")
 lib.frame = frame
 
@@ -3059,7 +3077,7 @@ local defaultGetTalentInfoByClass = lib.GetTalentInfoByClass
 local specIconByClassTab = {}
 
 local function getPlayerGUID(arg)
-    if (not arg) then return nil end
+    if (not arg or isSecretValue(arg)) then return nil end
     if (type(arg) == "string") then
         if (string.find(arg, "Player-", 1, true) == 1) then
             return arg
@@ -3073,7 +3091,7 @@ local function getPlayerGUID(arg)
     -- so the call is flagged as a redundant-parameter warning.
     ---@diagnostic disable-next-line: redundant-parameter
     if (type(UnitIsPlayer) == "function" and UnitIsPlayer(arg)) then
-        return UnitGUID(arg)
+        return safeUnitGUID(arg)
     end
     return nil
 end
@@ -4027,7 +4045,7 @@ local function evictCacheEntries(currentGuid, now)
     local victims = {}
     for guid, entry in pairs(lib.cache) do
         local retrying = (type(entry) == "table") and entry.incomplete and entry.retryPending
-        if (guid ~= currentGuid and type(entry) == "table" and not retrying) then
+        if (not safeEquals(guid, currentGuid) and type(entry) == "table" and not retrying) then
             local stamp = entry.time or entry.lastAttempt
             if (stamp and (now - stamp) > CACHE_EVICT_AGE
                     and not lib:PlayerGUIDToUnitToken(guid)) then
@@ -4045,7 +4063,7 @@ local function evictCacheEntries(currentGuid, now)
 end
 
 local function cacheUnitData(unit, guid, isRetry)
-    if (not unit or not guid) then return end
+    if (not unit or not guid or isSecretValue(guid)) then return end
     local now = uptimeSeconds()
     local data = lib.cache[guid] or {}
     data.stale = nil
@@ -4146,7 +4164,7 @@ local function cacheUnitData(unit, guid, isRetry)
                 data.retryPending = false
                 local targetUnit = unit
                 if (not targetUnit or not (type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit))
-                        or not (type(_G.UnitGUID) == "function" and _G.UnitGUID(targetUnit) == guid)) then
+                        or not safeEquals(safeUnitGUID(targetUnit), guid)) then
                     if (lib.PlayerGUIDToUnitToken) then
                         targetUnit = lib:PlayerGUIDToUnitToken(guid)
                     end
@@ -4226,13 +4244,15 @@ local function cacheUnitData(unit, guid, isRetry)
     -- Fresh inspection: rebuild. Item-data retries keep the record already
     -- produced by this inspection, so the inactive-group probe does not run
     -- once per retry step.
-    if (isForever and guid ~= UnitGUID("player")
+    if (isForever and not safeEquals(guid, safeUnitGUID("player"))
             and ((not isRetry) or not data.foreverTalents)) then
         data.foreverTalents = buildInspectForeverTalents(unit)
     end
 
-    lib.cache[guid] = data
-    evictCacheEntries(guid, now)
+    if (not isSecretValue(guid)) then
+        lib.cache[guid] = data
+        evictCacheEntries(guid, now)
+    end
     if (lib.inspectStats) then lib.inspectStats.ready = (lib.inspectStats.ready or 0) + 1 end
     lib.callbacks:Fire("INVENTORY_READY", guid, true, unit)
     lib.callbacks:Fire("TALENTS_READY", guid, unit)
@@ -4274,23 +4294,24 @@ local pendingRefusal
 frame:SetScript("OnEvent", function(_, event, ...)
     if (event == "INSPECT_READY") then
         local guid = ...
+        if (isSecretValue(guid)) then guid = nil end
         if (not guid and inspectPendingUnit and UnitExists and UnitExists(inspectPendingUnit)) then
-            guid = UnitGUID(inspectPendingUnit)
+            guid = safeUnitGUID(inspectPendingUnit)
         end
         local unit = inspectPendingUnit
-        if (not unit or not UnitExists or not UnitExists(unit) or UnitGUID(unit) ~= guid) then
+        if (not unit or not UnitExists or not UnitExists(unit) or not safeEquals(safeUnitGUID(unit), guid)) then
             local insFrame = rawget(_G, "InspectFrame")
-            if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and UnitGUID(insFrame.unit) == guid) then
+            if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
                 unit = insFrame.unit
-            elseif (UnitExists and UnitExists("target") and UnitGUID("target") == guid) then
+            elseif (UnitExists and UnitExists("target") and safeEquals(safeUnitGUID("target"), guid)) then
                 unit = "target"
-            elseif (UnitExists and UnitExists("mouseover") and UnitGUID("mouseover") == guid) then
+            elseif (UnitExists and UnitExists("mouseover") and safeEquals(safeUnitGUID("mouseover"), guid)) then
                 unit = "mouseover"
             else
                 unit = nil
             end
         end
-        if (unit and guid) then
+        if (unit and guid and not isSecretValue(guid)) then
             cacheUnitData(unit, guid)
         end
         -- Release the pending slot only when THIS event is its answer.
@@ -4302,17 +4323,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
         -- data was discarded and requested again later. Released when the answer
         -- is for the pending unit, when that unit is gone (nothing left to wait
         -- for), or when the event carries no GUID at all to compare.
-        local pendingGUID = (inspectPendingUnit and type(UnitGUID) == "function")
-            and UnitGUID(inspectPendingUnit) or nil
-        if (inspectPendingUnit and (pendingGUID == nil or guid == nil or pendingGUID == guid)) then
+        local pendingGUID = (inspectPendingUnit and safeUnitGUID(inspectPendingUnit)) or nil
+        if (inspectPendingUnit and (pendingGUID == nil or guid == nil or safeEquals(pendingGUID, guid))) then
             inspectPendingUnit = nil
             inspectPendingSince = 0
         end
         -- Same rule for the guard's attribution: cleared for its own answer, for a
         -- unit that is gone, or for a GUID-less event -- never for someone else's.
         if (pendingRefusal ~= nil) then
-            local refusalGUID = (type(UnitGUID) == "function") and UnitGUID(pendingRefusal.unit) or nil
-            if (refusalGUID == nil or guid == nil or refusalGUID == guid) then
+            local refusalGUID = safeUnitGUID(pendingRefusal.unit)
+            if (refusalGUID == nil or guid == nil or safeEquals(refusalGUID, guid)) then
                 pendingRefusal = nil
             end
         end
@@ -4348,8 +4368,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if (unit and type(UnitExists) == "function" and UnitExists(unit)
                 and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
                 and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
-            local guid = type(UnitGUID) == "function" and UnitGUID(unit)
-            if (guid and lib.cache[guid]) then
+            local guid = safeUnitGUID(unit)
+            if (guid and not isSecretValue(guid) and lib.cache[guid]) then
                 -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
                 -- means "no data" and hides GearScore/iLvl, so zeroing made
                 -- them vanish until (and unless) the re-inspect succeeded.
@@ -4426,14 +4446,14 @@ end
 -- record for (a never-inspected unit is unknown, not stale).
 function lib:IsCacheFresh(unitorguid)
     local guid = getPlayerGUID(unitorguid)
-    if (not guid) then return false end
-    if (guid == UnitGUID("player")) then return true end
+    if (not guid or isSecretValue(guid)) then return false end
+    if (safeEquals(guid, safeUnitGUID("player"))) then return true end
     return isCacheFresh(lib.cache[guid])
 end
 
 function lib:IsCacheStale(unitorguid)
     local guid = getPlayerGUID(unitorguid)
-    if (not guid or guid == UnitGUID("player")) then return false end
+    if (not guid or isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return false end
     local cached = lib.cache[guid]
     if (not cached) then return false end
     return (not isCacheFresh(cached))
@@ -4589,24 +4609,24 @@ function lib:CanInspect(unit)
 end
 
 function lib:PlayerGUIDToUnitToken(guid)
-    if (not guid) then return nil end
+    if (not guid or isSecretValue(guid)) then return nil end
     if (type(UnitGUID) == "function") then
-        if (UnitGUID("player") == guid) then return "player" end
-        if (UnitGUID("target") == guid) then return "target" end
-        if (UnitGUID("focus") == guid) then return "focus" end
-        if (UnitGUID("mouseover") == guid) then return "mouseover" end
+        if (safeEquals(safeUnitGUID("player"), guid)) then return "player" end
+        if (safeEquals(safeUnitGUID("target"), guid)) then return "target" end
+        if (safeEquals(safeUnitGUID("focus"), guid)) then return "focus" end
+        if (safeEquals(safeUnitGUID("mouseover"), guid)) then return "mouseover" end
         local insFrame = rawget(_G, "InspectFrame")
-        if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and UnitGUID(insFrame.unit) == guid) then
+        if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
             return insFrame.unit
         end
         if (type(IsInGroup) == "function" and IsInGroup()) then
             if (type(IsInRaid) == "function" and IsInRaid()) then
                 for i = 1, 40 do
-                    if (UnitGUID("raid" .. i) == guid) then return "raid" .. i end
+                    if (safeEquals(safeUnitGUID("raid" .. i), guid)) then return "raid" .. i end
                 end
             else
                 for i = 1, 4 do
-                    if (UnitGUID("party" .. i) == guid) then return "party" .. i end
+                    if (safeEquals(safeUnitGUID("party" .. i), guid)) then return "party" .. i end
                 end
             end
         end
@@ -4738,8 +4758,8 @@ local function noteInspectRejectedImpl(unit, yards, err)
         lib.inspectStats.lastRejectedDistance = yards
         lib.inspectStats.lastRejectedTime = (type(GetTime) == "function") and GetTime() or 0
     end
-    local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
-    if (guid) then
+    local guid = safeUnitGUID(unit)
+    if (guid and not isSecretValue(guid)) then
         lib.inspectRejected = lib.inspectRejected or {}
         lib.inspectRejected[guid] = (type(GetTime) == "function") and GetTime() or 0
     end
@@ -4756,7 +4776,7 @@ local function noteInspectRejectedImpl(unit, yards, err)
     -- known to be out of range is instead blocked until the distance signal
     -- actually flips back (isInspectCoolingDown consults this), so the repeat
     -- noise is zero while the recovery path stays instant.
-    if (guid and isRangeRejection(err)) then
+    if (guid and not isSecretValue(guid) and isRangeRejection(err)) then
         lib.inspectOutOfRange = lib.inspectOutOfRange or {}
         -- Store the distance at refusal time so the lift condition can require
         -- the unit to have actually moved closer, not just "still within 20yd".
@@ -4789,8 +4809,8 @@ end
 --                               not it had moved, so a target that stayed far away
 --                               cost one server error every 10s, forever.
 local function isInspectCoolingDownImpl(unit)
-    local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
-    if (not guid) then return false end
+    local guid = safeUnitGUID(unit)
+    if (not guid or isSecretValue(guid)) then return false end
     local now = (type(GetTime) == "function") and GetTime() or 0
 
     -- Out-of-range memory. Released the moment the unit is measurable AND the
@@ -4865,6 +4885,7 @@ exceedsLearnedRange = exceedsLearnedRangeImpl
 
 local function requestInspectImpl(unit)
     if (type(_G.NotifyInspect) ~= "function") then return false end
+    if (not safeUnitGUID(unit)) then return false end
     if (isInspectCoolingDown(unit) or exceedsLearnedRange(unit)) then return false end
     -- Measure before the request: afterwards the unit may be gone.
     local yards = inspectDistance(unit)
@@ -4893,7 +4914,10 @@ local function requestInspectImpl(unit)
     -- `CanInspect` is the call that displays the message is not shown by the
     -- mirror either way, so it must not be asked about a unit a cheaper check has
     -- already rejected. The other four clients keep the order they shipped with.
-    local canOk, canAllowed = true, nil
+    ---@type boolean|nil
+    local canOk = true
+    ---@type boolean|nil
+    local canAllowed = nil
     if (isClassic or isTBC) then
         if (type(_G.CheckInteractDistance) == "function") then
             if (not probeInteractDistance(unit)) then
@@ -5410,14 +5434,14 @@ isCloseEnoughToAsk = function(unit)
 end
 
 function lib:DoInspect(unitorguid)
-    if (not unitorguid) then return false end
+    if (not unitorguid or isSecretValue(unitorguid)) then return false end
     local unit = unitorguid
     if (type(unitorguid) == "string" and unitorguid:find("^Player%-")) then
         unit = lib:PlayerGUIDToUnitToken(unitorguid)
     end
     if (not unit) then return false end
-    local guid = type(UnitGUID) == "function" and UnitGUID(unit)
-    if (not guid or guid == UnitGUID("player")) then
+    local guid = safeUnitGUID(unit)
+    if (not guid or safeEquals(guid, safeUnitGUID("player"))) then
         return false
     end
 
@@ -5522,8 +5546,8 @@ inspectQueueTick = function()
     -- a settled target is the difference between a tick that costs nothing and one
     -- that costs engine calls for as long as the player stands there.
     if (type(UnitExists) == "function" and UnitExists("target")) then
-        local guid = (type(UnitGUID) == "function") and UnitGUID("target") or nil
-        if (guid and not isCacheFresh(lib.cache[guid])
+        local guid = safeUnitGUID("target")
+        if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                 and isCloseEnoughToAsk("target") and lib:CanInspect("target")) then
             if (requestInspect("target")) then
                 return
@@ -5537,14 +5561,15 @@ inspectQueueTick = function()
             local item = queue[i]
             table.remove(queue, i)
             local guid = type(item) == "table" and item.guid or item
+            if (isSecretValue(guid)) then guid = nil end
             local unitHint = type(item) == "table" and item.unit or nil
             local unit
-            if (unitHint and type(UnitExists) == "function" and UnitExists(unitHint) and type(UnitGUID) == "function" and UnitGUID(unitHint) == guid) then
+            if (unitHint and type(UnitExists) == "function" and UnitExists(unitHint) and safeEquals(safeUnitGUID(unitHint), guid)) then
                 unit = unitHint
             else
-                unit = lib:PlayerGUIDToUnitToken(guid)
+                unit = guid and lib:PlayerGUIDToUnitToken(guid)
             end
-            if (unit and not isCacheFresh(lib.cache[guid])
+            if (unit and guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                     and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
                 if (requestInspect(unit)) then
                     return
@@ -5569,8 +5594,8 @@ inspectQueueTick = function()
                     -- 40-man raid with everyone cached is the steady state, so the
                     -- old order spent ~40 distance probes plus ~80 classic-family
                     -- probes per tick to discover that nothing needed doing.
-                    local guid = (type(UnitGUID) == "function") and UnitGUID(u) or nil
-                    if (guid and not isCacheFresh(lib.cache[guid])
+                    local guid = safeUnitGUID(u)
+                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                             and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
                         if (requestInspect(u)) then
                             return
@@ -5582,8 +5607,8 @@ inspectQueueTick = function()
             for i = 1, 4 do
                 local u = "party" .. i
                 if (UnitExists(u)) then
-                    local guid = (type(UnitGUID) == "function") and UnitGUID(u) or nil
-                    if (guid and not isCacheFresh(lib.cache[guid])
+                    local guid = safeUnitGUID(u)
+                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                             and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
                         if (requestInspect(u)) then
                             return
@@ -5617,8 +5642,8 @@ local function scanCandidate(unit)
         end
         return false
     end
-    local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
-    if (not guid or guid == UnitGUID("player")) then return false end
+    local guid = safeUnitGUID(unit)
+    if (not guid or safeEquals(guid, safeUnitGUID("player"))) then return false end
     if (isCacheFresh(lib.cache and lib.cache[guid])) then return false end
     if (not lib:DoInspect(unit)) then return false end
     if (lib.inspectStats) then
@@ -5682,8 +5707,8 @@ local function scanNearby()
             if (type(unit) == "string" and type(UnitExists) == "function" and UnitExists(unit)) then
                 if (type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
                         and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
-                    local guid = (type(UnitGUID) == "function") and UnitGUID(unit) or nil
-                    if (guid and guid ~= UnitGUID("player")) then
+                    local guid = safeUnitGUID(unit)
+                    if (guid and not safeEquals(guid, safeUnitGUID("player"))) then
                         platesWithUnit = platesWithUnit + 1
                         local cached = lib.cache and lib.cache[guid]
                         local fresh = isCacheFresh(cached)
@@ -5749,7 +5774,7 @@ end
 -- not this.
 function lib:GetLastCacheTime(unitorguid)
     local guid = getPlayerGUID(unitorguid)
-    if (guid and guid == UnitGUID("player")) then
+    if (guid and safeEquals(guid, safeUnitGUID("player"))) then
         local n = uptimeSeconds()
         return n, n
     end
@@ -5773,7 +5798,7 @@ function lib:GetInventoryItemMixin(unitorguid, slot)
     local guid = getPlayerGUID(unitorguid)
     if (not guid or not slot) then return nil end
     local link
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         -- pcall'd, and looked up as a function rather than merely non-nil.
         -- Whatever the engine exposes this as, the call is not allowed to raise
         -- on the tooltip path, and the argument list must not be resolved
@@ -5808,7 +5833,7 @@ function lib:GetSpecialization(unitorguid, groupIndex)
         return nil
     end
 
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         if (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) then
             local modern = getModernSpecData("player", groupIndex)
             if (modern) then
@@ -5861,7 +5886,7 @@ function lib:GetLocalizedSpecName(unitorguid, groupIndex)
     if (not guid) then return nil end
     groupIndex = groupIndex or 1
 
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         if (C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization) then
             local modern = getModernSpecData("player", groupIndex)
             if (modern) then
@@ -5880,7 +5905,7 @@ function lib:GetLocalizedSpecIcon(unitorguid, groupIndex)
     if (not guid) then return nil end
     groupIndex = groupIndex or 1
 
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         if (C_SpecializationInfo and C_SpecializationInfo.GetInspectSpecialization) then
             local modern = getModernSpecData("player", groupIndex)
             if (modern) then
@@ -5987,7 +6012,7 @@ function lib:GetTalentPoints(unitorguid, groupIndex)
         return 0, 0, 0
     end
 
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         if (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) then
             local modern = getModernSpecData("player", groupIndex)
             if (modern) then
@@ -6019,7 +6044,7 @@ end
 function lib:GetActiveTalentGroup(unitorguid)
     local guid = getPlayerGUID(unitorguid)
     if (not guid) then return 1 end
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         return GetActiveSpecGroupFor(false)
     end
     local cached = lib.cache[guid]
@@ -6042,7 +6067,7 @@ function lib:GetForeverTalentData(unitorguid)
     if (not isForever) then return nil end
     local guid = getPlayerGUID(unitorguid)
     if (not guid) then return nil end
-    if (guid == UnitGUID("player")) then
+    if (safeEquals(guid, safeUnitGUID("player"))) then
         local active = GetActiveSpecGroupFor(false)
         local now = uptimeSeconds()
         local memo = lib.foreverPlayerTalentMemo
@@ -6076,7 +6101,7 @@ end
 
 function lib:GetTotalAchievementPoints(unitorguid)
     local guid = getPlayerGUID(unitorguid)
-    if (guid and guid == UnitGUID("player") and GetTotalAchievementPoints) then
+    if (guid and safeEquals(guid, safeUnitGUID("player")) and GetTotalAchievementPoints) then
         return GetTotalAchievementPoints()
     end
     local cached = guid and lib.cache[guid]
