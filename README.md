@@ -86,6 +86,8 @@ updated: 2026-11-09
 | Feature | Classic Era / TBC / Titanforge | WoW Forever (Camelot) | Retail Live |
 | :--- | :---: | :---: | :---: |
 | **Classic GearScore & Average iLvl** | ✅ Fully Supported | ✅ Fully Supported | ✅ Fully Supported |
+| **Personal Progression & Gear Leveling** | ✅ Level 1-60+ & Trophies | ✅ Level 1-60+ & Trophies | ✅ Level 1-60+ & Trophies |
+| **Equipment Upgrade Chronicle** | ✅ 500-Item History | ✅ 500-Item History | ✅ 500-Item History |
 | **Pawn Dual-Spec Pre-Calculation** | ✅ Instant Spec Switching | ✅ Instant Spec Switching | ✅ Instant Spec Switching |
 | **Specialization & Talents Breakdown** | ✅ `[p1/p2/p3]` Trees + Icons | ✅ Dual-Spec Trait Trees | ✅ Modern Spec & Icon |
 | **3D Character Model Portraits** | ✅ Fully Stabilized | ✅ Fully Stabilized | ✅ Fully Stabilized |
@@ -112,6 +114,9 @@ updated: 2026-11-09
 ---
 
 ## <span style="color:#e67e23">What's New in v1.0.0 Milestone Release</span>
+
+- 🎮 **<span style="color:#b4e634">Personal Progression & Gear Rank Leveling Mini-Game:</span>** Introducing a gamified local character progression engine with its own dedicated dashboard tab! Level up your character's Gear Rank (Levels 1 to 60+) with prestigious titles ranging from *Novice* to *Immortal Legend*, track live progress with an animated emerald XP bar, collect 10 milestone trophy achievements with unlock timestamps, and browse a searchable 500-entry Equipment Upgrade Chronicle with slot filters (*All*, *Weapons*, *Armor*, *Accessories*), delta badges, item hyperlinks, and Shift-click chat linking. Includes optional private local level-up chat alerts and fanfare sounds.
+- 🎨 **<span style="color:#b4e634">Shaman Blue Toggle Classic Era Restriction:</span>** Gated the "Shaman Blue" toggle across the Blizzard Settings panel, the standalone dashboard, and TacoTip Extras so it only appears on **Classic Era** (`11509`), where Blizzard's original pink class color was used. Cleanly hidden on TBC, Titanforge, WoW Forever, and Retail where Shaman is natively blue.
 
 - 🌟 **<span style="color:#b4e634">Enterprise Standalone Dashboard Expansion (`920×590`):</span>** Expanded the settings dashboard for better spacing, readability, and information density with clean 52px margins on standard 1024×768 displays. Reduced the navigation sidebar width to 165px (action buttons to 145px) giving the main settings canvas 725px of usable width, and streamlined the footer to 30px (`y = 36`) for 20px extra vertical scroll space.
 - 🏆 **<span style="color:#b4e634">Directly Embedded Server Leaderboard & Quality Range Bands:</span>** When companion addon `TacoTip_Extras` is installed, the dashboard's "Extras" tab now embeds a complete 680×365px Server Leaderboard directly inside the window! Includes 3-way faction filters (`[All Realm]`, `[Alliance]`, `[Horde]`), live search, 10 styled rows, mouse-wheel scrolling, and 1-click `[My Rank]` jump button. Scores are dynamically styled using authentic GearScore quality range bands (`TT_GS:GetQuality`) and standing colors (#1 Gold, #2 Silver, #3 Bronze, Top 5% Gold, quality brackets).

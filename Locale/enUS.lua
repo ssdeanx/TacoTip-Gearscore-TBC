@@ -200,8 +200,6 @@ local defaults = {
     ["OPTIONS_TOOLTIP_DELAY_DESC"] = "Add a short delay before the tooltip appears. 0 = no delay.",
     ["Honor Rank"] = "Honor Rank",
     ["Realm"] = "Realm",
-
-
     ["OPTIONS_TOOLTIP_FONT"] = "Tooltip font",
     ["OPTIONS_TOOLTIP_FONT_DESC"] =
     "Choose the font used by tooltip text. SharedMedia fonts from packs such as Merfin Plus are included automatically when available.",
@@ -244,7 +242,6 @@ local defaults = {
     ["OPTIONS_CHARACTER_ILVL_OFFSETS"] = "Character iLvl offsets",
     ["OPTIONS_INSPECT_GS_OFFSETS"] = "Inspect GearScore offsets",
     ["OPTIONS_INSPECT_ILVL_OFFSETS"] = "Inspect iLvl offsets",
-
     ["OPTIONS_HIDE_IN_COMBAT_LABEL"] = "Suppress inspection details in combat",
     ["OPTIONS_HIDE_IN_COMBAT_DESC"] =
     "Skips TacoTip's talents and GearScore-style player additions while you are in combat.",

@@ -2771,13 +2771,13 @@ local function onTooltipSetUnit(tooltip, data)
     end
 
     if (UnitIsPlayer(tooltipUnit)) then
-        local localizedClass, class = UnitClass(tooltipUnit)
-        local localizedRace = UnitRace(tooltipUnit)
-        local level = UnitLevel(tooltipUnit)
-        if (isSecretValue(localizedClass)) then localizedClass = nil end
-        if (isSecretValue(class)) then class = nil end
-        if (isSecretValue(localizedRace)) then localizedRace = nil end
-        if (isSecretValue(level)) then level = nil end
+        local rawLocClass, rawClass = UnitClass(tooltipUnit)
+        local rawLocRace = UnitRace(tooltipUnit)
+        local rawLevel = UnitLevel(tooltipUnit)
+        local localizedClass = not isSecretValue(rawLocClass) and rawLocClass or nil
+        local class = not isSecretValue(rawClass) and rawClass or nil
+        local localizedRace = not isSecretValue(rawLocRace) and rawLocRace or nil
+        local level = not isSecretValue(rawLevel) and rawLevel or nil
 
         if (not TacoTipConfig.show_titles and name and string.find(text[1], name, 1, true)) then
             text[1] = name
@@ -2791,10 +2791,10 @@ local function onTooltipSetUnit(tooltip, data)
 
         local guildName, guildRankName
         if (GetGuildInfo) then
-            guildName, guildRankName = GetGuildInfo(tooltipUnit)
+            local rawGName, rawGRank = GetGuildInfo(tooltipUnit)
+            guildName = not isSecretValue(rawGName) and rawGName or nil
+            guildRankName = not isSecretValue(rawGRank) and rawGRank or nil
         end
-        if (isSecretValue(guildName)) then guildName = nil end
-        if (isSecretValue(guildRankName)) then guildRankName = nil end
         if (not guildName) then
             for i = 2, #text do
                 if (text[i]) then
@@ -4888,7 +4888,7 @@ local function collectActiveUnitSection()
         local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
         local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
         local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
-        if (isSecretValue(canInspect)) then canInspect = "<secret>" end
+        local canInspectStr = isSecretValue(canInspect) and "<secret>" or tostring(canInspect)
         -- CheckInteractDistance is protected on the mainline clients. Calling it
         -- from the tainted slash-command diagnostics path raises
         -- ADDON_ACTION_BLOCKED ('UNKNOWN()'); report it as not applicable there
@@ -4898,15 +4898,15 @@ local function collectActiveUnitSection()
             interactDist = tostring(fnCheckInteractDistance(activeUnit, 1))
         end
         local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
-        if (isSecretValue(isVisible)) then isVisible = "<secret>" end
+        local isVisibleStr = isSecretValue(isVisible) and "<secret>" or tostring(isVisible)
         local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
-        if (isSecretValue(isConnected)) then isConnected = "<secret>" end
+        local isConnectedStr = isSecretValue(isConnected) and "<secret>" or tostring(isConnected)
         local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
-        if (isSecretValue(canAttack)) then canAttack = "<secret>" end
+        local canAttackStr = isSecretValue(canAttack) and "<secret>" or tostring(canAttack)
         diagRow(s, "inspectable",
             string.format("CanInspect=%s | InteractDist(1)=%s | Visible=%s | Connected=%s | Hostile=%s",
-                tostring(canInspect), tostring(interactDist), tostring(isVisible), tostring(isConnected),
-                tostring(canAttack)), "info")
+                canInspectStr, tostring(interactDist), isVisibleStr, isConnectedStr,
+                canAttackStr), "info")
         local distStr = nil
         if (type(_G.UnitDistanceSquared) == "function") then
             local okDist, d2, chk = pcall(_G.UnitDistanceSquared, activeUnit)
@@ -5506,6 +5506,394 @@ function TT:FormatDiagnosticExport()
     return table.concat(lines, "\n")
 end
 
+-- ============================================================================
+-- PROGRESSION & GEAR LEVELING SYSTEM
+-- ============================================================================
+
+local GEAR_SLOT_NAMES = {
+    [1] = "Head",
+    [2] = "Neck",
+    [3] = "Shoulder",
+    [5] = "Chest",
+    [6] = "Waist",
+    [7] = "Legs",
+    [8] = "Feet",
+    [9] = "Wrist",
+    [10] = "Hands",
+    [11] = "Ring 1",
+    [12] = "Ring 2",
+    [13] = "Trinket 1",
+    [14] = "Trinket 2",
+    [15] = "Back",
+    [16] = "Main Hand",
+    [17] = "Off Hand",
+    [18] = "Ranged / Relic",
+}
+
+local GEAR_SLOTS_ORDERED = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 }
+
+local TROPHY_DEFINITIONS = {
+    { id = "first_steps", name = "First Steps", desc = "Equip armor in all primary combat slots", icon = 132646 },
+    { id = "level_10", name = "Rising Star", desc = "Reach Gear Level 10", icon = 134420 },
+    { id = "level_20", name = "Dungeon Delver", desc = "Reach Gear Level 20", icon = 132341 },
+    { id = "level_30", name = "Raid Ready", desc = "Reach Gear Level 30", icon = 132338 },
+    { id = "level_40", name = "Heroic Champion", desc = "Reach Gear Level 40", icon = 132347 },
+    { id = "level_50", name = "Legendary Vanguard", desc = "Reach Gear Level 50", icon = 132333 },
+    { id = "giant_leap", name = "Giant Leap", desc = "Equip an upgrade with +40 or more GearScore", icon = 132349 },
+    { id = "purple_reign", name = "Purple Reign", desc = "Equip full Epic or Legendary items in all slots", icon = 132847 },
+    { id = "upgrade_hunter", name = "Gear Collector", desc = "Record 25 equipment upgrades in your chronicle", icon = 133580 },
+    { id = "century_club", name = "Century Club", desc = "Record 100 equipment upgrades in your chronicle", icon = 133582 },
+}
+
+local function getProgressionCharKey()
+    local name = (type(UnitName) == "function" and UnitName("player")) or nil
+    local realm = (type(GetRealmName) == "function" and GetRealmName()) or nil
+    if (name and not isSecretValue(name) and realm and not isSecretValue(realm) and name ~= "" and realm ~= "") then
+        return name .. "-" .. realm
+    end
+    return "Default-Character"
+end
+
+function TT:GetGearLevelStepSize()
+    if (CI and CI.IsRetail and CI:IsRetail()) then
+        return 150
+    elseif (CI and CI.IsWotlk and CI:IsWotlk()) then
+        return 100
+    elseif (CI and CI.IsTBC and CI:IsTBC()) then
+        return 60
+    else
+        return 25
+    end
+end
+
+function TT:GetGearLevelInfo(score)
+    score = (type(score) == "number" and score > 0) and score or 0
+    local step = TT:GetGearLevelStepSize()
+    local level = math.floor(score / step) + 1
+    local currentFloor = (level - 1) * step
+    local nextThreshold = level * step
+    local progressInLevel = score - currentFloor
+    local percent = math.min(100, math.max(0, math.floor((progressInLevel / step) * 100 + 0.5)))
+    local remaining = math.max(0, nextThreshold - score)
+
+    local title, tierColorHex
+    if (level <= 5) then
+        title = "Novice"
+        tierColorHex = "FFFFFFFF"
+    elseif (level <= 10) then
+        title = "Apprentice"
+        tierColorHex = "FF1EFF00"
+    elseif (level <= 15) then
+        title = "Scout"
+        tierColorHex = "FF1EFF00"
+    elseif (level <= 20) then
+        title = "Adventurer"
+        tierColorHex = "FF0070DD"
+    elseif (level <= 25) then
+        title = "Veteran"
+        tierColorHex = "FF0070DD"
+    elseif (level <= 30) then
+        title = "Gladiator"
+        tierColorHex = "FFA335EE"
+    elseif (level <= 35) then
+        title = "Champion"
+        tierColorHex = "FFA335EE"
+    elseif (level <= 40) then
+        title = "Hero of the Realm"
+        tierColorHex = "FFA335EE"
+    elseif (level <= 45) then
+        title = "Conqueror"
+        tierColorHex = "FFFF8000"
+    elseif (level <= 50) then
+        title = "Warlord"
+        tierColorHex = "FFFF8000"
+    elseif (level <= 55) then
+        title = "Grand Champion"
+        tierColorHex = "FFE6CC80"
+    else
+        title = "Immortal Legend"
+        tierColorHex = "FFFFD100"
+    end
+
+    return {
+        level = level,
+        title = title,
+        tierColorHex = tierColorHex,
+        score = score,
+        step = step,
+        nextThreshold = nextThreshold,
+        currentFloor = currentFloor,
+        progress = progressInLevel,
+        percent = percent,
+        remaining = remaining,
+    }
+end
+
+function TT:GetTrophyDefinitions()
+    return TROPHY_DEFINITIONS
+end
+
+function TT:GetPlayerProgression()
+    if (not TacoTipConfig) then
+        TacoTipConfig = {}
+    end
+    if (type(TacoTipConfig.progression) ~= "table") then
+        TacoTipConfig.progression = {}
+    end
+    local key = getProgressionCharKey()
+    local rec = TacoTipConfig.progression[key]
+    if (type(rec) ~= "table") then
+        rec = {
+            currentScore = 0,
+            peakScore = 0,
+            peakDate = 0,
+            currentLevel = 1,
+            snapshots = {},
+            history = {},
+            trophies = {},
+        }
+        TacoTipConfig.progression[key] = rec
+    end
+    if (type(rec.snapshots) ~= "table") then rec.snapshots = {} end
+    if (type(rec.history) ~= "table") then rec.history = {} end
+    if (type(rec.trophies) ~= "table") then rec.trophies = {} end
+    return rec, key
+end
+
+function TT:CheckTrophies(rec, currentScore, levelInfo, isSilent)
+    local newlyUnlocked = {}
+    local historyCount = #rec.history
+
+    local allSlotsFilled = true
+    local allSlotsEpic = true
+    for _, slotID in ipairs(GEAR_SLOTS_ORDERED) do
+        local snap = rec.snapshots[slotID]
+        if (not snap or not snap.link or snap.link == "") then
+            allSlotsFilled = false
+            allSlotsEpic = false
+        elseif (snap.rarity and snap.rarity < 4) then
+            allSlotsEpic = false
+        end
+    end
+
+    local checks = {
+        first_steps = allSlotsFilled,
+        level_10 = levelInfo.level >= 10,
+        level_20 = levelInfo.level >= 20,
+        level_30 = levelInfo.level >= 30,
+        level_40 = levelInfo.level >= 40,
+        level_50 = levelInfo.level >= 50,
+        purple_reign = allSlotsEpic and allSlotsFilled,
+        upgrade_hunter = historyCount >= 25,
+        century_club = historyCount >= 100,
+    }
+
+    local now = (type(GetServerTime) == "function" and GetServerTime()) or time()
+    for _, def in ipairs(TROPHY_DEFINITIONS) do
+        local earned = checks[def.id]
+        if (earned and not rec.trophies[def.id]) then
+            rec.trophies[def.id] = {
+                unlockedAt = now,
+                score = currentScore,
+                level = levelInfo.level,
+            }
+            if (not isSilent) then
+                newlyUnlocked[#newlyUnlocked + 1] = def
+            end
+        end
+    end
+
+    return newlyUnlocked
+end
+
+function TT:EvaluatePlayerEquipment(isSilent)
+    if (not TT_GS or type(TT_GS.GetScore) ~= "function") then
+        return
+    end
+
+    local rec, _ = TT:GetPlayerProgression()
+    local currentScore, avgILvl = TT_GS:GetScore("player")
+    currentScore = tonumber(currentScore) or 0
+    avgILvl = tonumber(avgILvl) or 0
+    if (currentScore <= 0) then
+        return
+    end
+
+    local levelInfo = TT:GetGearLevelInfo(currentScore)
+    local previousLevel = rec.currentLevel or 1
+    local now = (type(GetServerTime) == "function" and GetServerTime()) or time()
+
+    local getLink = _G.GetInventoryItemLink
+
+    local chat = _G.DEFAULT_CHAT_FRAME
+    local playSound = _G.PlaySound
+    local soundKit = _G.SOUNDKIT
+
+    for _, slotID in ipairs(GEAR_SLOTS_ORDERED) do
+        local link = (type(getLink) == "function") and getLink("player", slotID) or nil
+        local oldSnap = rec.snapshots[slotID]
+        local oldLink = oldSnap and oldSnap.link
+
+        if (link and link ~= oldLink) then
+            local slotGS, slotILvl, itemRarity = 0, 0, 1
+            if (TT_GS.GetItemScore) then
+                local gs, ilvl = TT_GS:GetItemScore(link)
+                slotGS = tonumber(gs) or 0
+                slotILvl = tonumber(ilvl) or 0
+            end
+            if (type(GetItemInfo) == "function") then
+                local _, _, r = GetItemInfo(link)
+                if (r) then itemRarity = r end
+            end
+
+            local oldGS = oldSnap and oldSnap.gs or 0
+            local oldILvl = oldSnap and oldSnap.ilvl or 0
+
+            if (not isSilent and oldSnap and slotGS > oldGS and oldGS > 0) then
+                local deltaGS = slotGS - oldGS
+                local deltaILvl = math.max(0, slotILvl - oldILvl)
+                table.insert(rec.history, 1, {
+                    time = now,
+                    slotID = slotID,
+                    slotName = GEAR_SLOT_NAMES[slotID] or ("Slot " .. slotID),
+                    oldLink = oldLink,
+                    newLink = link,
+                    oldILvl = oldILvl,
+                    newILvl = slotILvl,
+                    oldGS = oldGS,
+                    newGS = slotGS,
+                    deltaGS = deltaGS,
+                    deltaILvl = deltaILvl,
+                    totalGS = currentScore,
+                    level = levelInfo.level,
+                })
+
+                if (deltaGS >= 40 and not rec.trophies["giant_leap"]) then
+                    rec.trophies["giant_leap"] = {
+                        unlockedAt = now,
+                        score = currentScore,
+                        level = levelInfo.level,
+                    }
+                    if (TacoTipConfig.progression_chat ~= false and chat and chat.AddMessage) then
+                        chat:AddMessage(string.format(
+                            "|cFFFFB81C[TacoTip]|r |cFFB4E634🏆 Achievement Unlocked:|r |cFFFFD100Giant Leap|r (+%d GearScore upgrade)!",
+                            deltaGS))
+                    end
+                end
+
+                local maxHist = TacoTipConfig.progression_history_cap or 500
+                while (#rec.history > maxHist) do
+                    table.remove(rec.history)
+                end
+            end
+
+            rec.snapshots[slotID] = {
+                link = link,
+                gs = slotGS,
+                ilvl = slotILvl,
+                rarity = itemRarity,
+            }
+        elseif (not link and oldLink) then
+            rec.snapshots[slotID] = nil
+        end
+    end
+
+    rec.currentScore = currentScore
+    rec.avgItemLevel = avgILvl
+    if (currentScore > (rec.peakScore or 0)) then
+        rec.peakScore = currentScore
+        rec.peakDate = now
+    end
+
+    -- Level-up detection
+    if (not isSilent and levelInfo.level > previousLevel and previousLevel > 0) then
+        rec.currentLevel = levelInfo.level
+        if (TacoTipConfig.progression_chat ~= false and chat and chat.AddMessage) then
+            chat:AddMessage(string.format(
+                "|cFFFFB81C[TacoTip]|r |cFFB4E634★ LEVEL UP! ★|r You reached |c%sGear Level %d: %s|r (|cFFFFD100%d GS|r)!",
+                levelInfo.tierColorHex or "FFFFD100",
+                levelInfo.level, levelInfo.title, currentScore))
+        end
+        if (TacoTipConfig.progression_sound ~= false and playSound) then
+            if (soundKit and soundKit.UI_EPICLOOT_TOAST) then
+                pcall(playSound, soundKit.UI_EPICLOOT_TOAST)
+            elseif (soundKit and soundKit.LEVEL_UP) then
+                pcall(playSound, soundKit.LEVEL_UP)
+            else
+                pcall(playSound, 888)
+            end
+        end
+    else
+        rec.currentLevel = levelInfo.level
+    end
+
+    local newlyUnlocked = TT:CheckTrophies(rec, currentScore, levelInfo, isSilent)
+    if (not isSilent and #newlyUnlocked > 0 and TacoTipConfig.progression_chat ~= false) then
+        for _, trophy in ipairs(newlyUnlocked) do
+            if (chat and chat.AddMessage) then
+                chat:AddMessage(string.format(
+                    "|cFFFFB81C[TacoTip]|r |cFFB4E634🏆 Achievement Unlocked:|r |cFFFFD100%s|r - %s",
+                    trophy.name, trophy.desc))
+            end
+        end
+    end
+
+    if (TT.RefreshProgressionDashboard) then
+        TT:RefreshProgressionDashboard()
+    end
+end
+
+function TT:ClearPlayerProgression()
+    local rec, _ = TT:GetPlayerProgression()
+    rec.history = {}
+    rec.trophies = {}
+    rec.peakScore = rec.currentScore or 0
+    rec.peakDate = (type(GetServerTime) == "function" and GetServerTime()) or time()
+    TT:EvaluatePlayerEquipment(true)
+end
+
+function TT:ExportProgressionReport()
+    local rec, key = TT:GetPlayerProgression()
+    local info = TT:GetGearLevelInfo(rec.currentScore or 0)
+    local lines = {}
+    lines[#lines + 1] = string.format("# ⚡ TacoTip Progression Report — %s", tostring(key))
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = string.format("- **Gear Level:** Level %d (%s)", info.level, info.title)
+    lines[#lines + 1] = string.format("- **Current GearScore:** %d", info.score)
+    lines[#lines + 1] = string.format("- **All-Time Peak GearScore:** %d", rec.peakScore or info.score)
+    lines[#lines + 1] = string.format("- **Average Item Level:** %d", math.floor(rec.avgItemLevel or 0))
+    lines[#lines + 1] = string.format("- **Total Upgrades Recorded:** %d", #rec.history)
+
+    local unlockedCount = 0
+    for _ in pairs(rec.trophies) do unlockedCount = unlockedCount + 1 end
+    lines[#lines + 1] = string.format("- **Trophies Unlocked:** %d / %d", unlockedCount, #TROPHY_DEFINITIONS)
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "### 🏆 Unlocked Achievements"
+    for _, def in ipairs(TROPHY_DEFINITIONS) do
+        local tr = rec.trophies[def.id]
+        if (tr) then
+            lines[#lines + 1] = string.format("- [x] **%s** — %s", def.name, def.desc)
+        else
+            lines[#lines + 1] = string.format("- [ ] **%s** — %s", def.name, def.desc)
+        end
+    end
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "### 📜 Recent Equipment Upgrades"
+    local count = math.min(10, #rec.history)
+    if (count == 0) then
+        lines[#lines + 1] = "_No upgrades recorded yet._"
+    else
+        for i = 1, count do
+            local h = rec.history[i]
+            lines[#lines + 1] = string.format("%d. **%s** (%s) ➔ +%d GS (iLvl %d ➔ %d)",
+                i, h.slotName, h.newLink or "Unknown", h.deltaGS, h.oldILvl or 0, h.newILvl or 0)
+        end
+    end
+    lines[#lines + 1] = ""
+    return table.concat(lines, "\n")
+end
+
 local function onEvent(self, event, ...)
     if (event == "PLAYER_EQUIPMENT_CHANGED") then
         -- Self Pawn is cached live (no inspect record); a gear change makes the
@@ -5513,6 +5901,9 @@ local function onEvent(self, event, ...)
         TT._selfPawnMemo = nil
         if (PaperDollFrame and PaperDollFrame:IsShown()) then
             TT:RefreshCharacterFrame()
+        end
+        if (TT.EvaluatePlayerEquipment) then
+            TT:EvaluatePlayerEquipment(false)
         end
     elseif (event == "MODIFIER_STATE_CHANGED") then
         -- The wide/mini style only reads the shift key (IsShiftKeyDown in
@@ -5547,6 +5938,9 @@ local function onEvent(self, event, ...)
             end
             if (TT.ApplyTooltipScale) then
                 TT:ApplyTooltipScale()
+            end
+            if (TT.EvaluatePlayerEquipment) then
+                TT:EvaluatePlayerEquipment(true)
             end
             local first_login = (TacoTipConfig.conf_version ~= addOnVersion)
             if (first_login) then
@@ -5627,7 +6021,7 @@ local function onEvent(self, event, ...)
                 state.fadeTimer = timer
             end
         end
-    else -- INVENTORY_READY / TALENTS_READY
+    elseif (event == "INVENTORY_READY" or event == "TALENTS_READY") then
         if (TT.InitInspectFrame and InspectModelFrame and InspectPaperDollFrame) then
             TT:InitInspectFrame()
             TT.InitInspectFrame = nil
@@ -5664,6 +6058,10 @@ local function onEvent(self, event, ...)
                 end
             end
         end
+    elseif (event == "PLAYER_LOGIN") then
+        if (TT.EvaluatePlayerEquipment) then
+            TT:EvaluatePlayerEquipment(true)
+        end
     end
 end
 
@@ -5676,6 +6074,7 @@ do
     f:RegisterEvent("MODIFIER_STATE_CHANGED")
     f:RegisterEvent("UNIT_TARGET")
     f:RegisterEvent("ADDON_LOADED")
+    f:RegisterEvent("PLAYER_LOGIN")
     CI.RegisterCallback(addOnName, "INVENTORY_READY", function(...) return safeCall(onEvent, f, ...) end)
     CI.RegisterCallback(addOnName, "TALENTS_READY", function(...) return safeCall(onEvent, f, ...) end)
     TT.frame = f

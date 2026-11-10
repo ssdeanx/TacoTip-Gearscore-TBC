@@ -121,6 +121,8 @@ local DEFAULTS = {
     tooltip_delay = 0,
     tooltip_max_width = 0,
     custom_anchor = "TOPLEFT",
+    progression_chat = true,
+    progression_sound = true,
 }
 
 function TT:GetDefaults()
@@ -172,7 +174,8 @@ function TT:SafeSanitizeConfig(config)
         "instant_fade", "anchor_mouse", "anchor_mouse_world",
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_honor_rank", "show_ilvl_inline", "show_realm",
-        "show_role_icon", "show_separators"
+        "show_role_icon", "show_separators",
+        "progression_chat", "progression_sound"
     }
     for _, key in ipairs(booleanKeys) do
         local val = config[key]
@@ -3286,6 +3289,25 @@ local function buildCharacterInspectPage()
             modernGetConfig()
         end)
     controls.unlockInfoPosition:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+    builder.y = builder.y - 30
+
+    controls.progressionChat = createOptionsCheckbox(content, nil,
+        "Progression chat alerts",
+        "Print a private chat notification when gaining a gear level or unlocking a trophy.",
+        function(_, value)
+            TacoTipConfig.progression_chat = value
+            modernGetConfig()
+        end)
+    controls.progressionChat:SetPoint("TOPLEFT", content, "TOPLEFT", 14, builder.y)
+
+    controls.progressionSound = createOptionsCheckbox(content, nil,
+        "Progression level-up fanfare",
+        "Play a triumphant fanfare sound effect upon gaining a gear level.",
+        function(_, value)
+            TacoTipConfig.progression_sound = value
+            modernGetConfig()
+        end)
+    controls.progressionSound:SetPoint("TOPLEFT", content, "TOPLEFT", 274, builder.y)
     builder.y = builder.y - 42
 
     modernOptionsState.characterGsRow = createOffsetControlRow(content, builder,
@@ -3320,6 +3342,8 @@ local function buildCharacterInspectPage()
         controls.gearScoreCharacter:SetChecked(TacoTipConfig.show_gs_character)
         controls.averageItemLevel:SetChecked(TacoTipConfig.show_avg_ilvl)
         controls.unlockInfoPosition:SetChecked(TacoTipConfig.unlock_info_position)
+        if (controls.progressionChat) then controls.progressionChat:SetChecked(TacoTipConfig.progression_chat ~= false) end
+        if (controls.progressionSound) then controls.progressionSound:SetChecked(TacoTipConfig.progression_sound ~= false) end
 
         setOffsetValue("character_gs_offset_x", TacoTipConfig.character_gs_offset_x or 0, true)
         setOffsetValue("character_gs_offset_y", TacoTipConfig.character_gs_offset_y or 0, true)
@@ -3668,10 +3692,10 @@ local function createDashboard()
     local allSearchItems = {}
     local syncControls = {}
     local orderedCategoryIds = {
-        "general", "units", "appearance", "portrait", "positioning", "character", "diagnostics", "community", "reset"
+        "general", "units", "appearance", "portrait", "positioning", "character", "progression", "diagnostics", "community", "reset"
     }
     if (hasExtras) then
-        tinsert(orderedCategoryIds, 7, "extras")
+        tinsert(orderedCategoryIds, 8, "extras")
     end
 
     local applySearch
@@ -3692,6 +3716,7 @@ local function createDashboard()
         end
         if (id == "diagnostics" and frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
         if (id == "extras" and frame.RefreshEmbeddedLeaderboard) then frame:RefreshEmbeddedLeaderboard() end
+        if (id == "progression" and frame.RefreshProgression) then frame:RefreshProgression() end
     end
     frame.SelectTab = function(_, id) if (tabs[id]) then selectTab(id) end end
 
@@ -3704,7 +3729,7 @@ local function createDashboard()
 
         local yPos
         if (isBottom) then
-            local bottomStart = hasExtras and -280 or -250
+            local bottomStart = hasExtras and -308 or -276
             yPos = bottomStart - (order - 1) * 32
         else
             yPos = -38 - (order - 1) * 32
@@ -3719,7 +3744,7 @@ local function createDashboard()
     local sideDiv = sidebar:CreateTexture(nil, "BORDER")
     sideDiv:SetTexture(WHITE8X8)
     sideDiv:SetSize(143, 1)
-    sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -272 or -242)
+    sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -300 or -268)
     sideDiv:SetVertexColor(0.24, 0.28, 0.34, 0.8)
 
     local function createScrollCategory(id, label, titleText, descText, order, isBottom)
@@ -4246,11 +4271,509 @@ local function createDashboard()
     charChild:SetHeight(math.abs(cy) + 20)
 
     -- ========================================================================
+    -- Tab 7: Progression & Leveling
+    -- ========================================================================
+    local _, progChild = createScrollCategory("progression", "Progression", "Progression & Leveling",
+        "Track your character's gear rank, milestone achievements, and equipment upgrade chronicle.", 7)
+    local progy = 0
+
+    -- Hero Progression Card
+    local heroCard = CreateFrame("Frame", nil, progChild)
+    heroCard:SetSize(680, 96)
+    paintFlatBox(heroCard, DASH_THEME.cardBg, DASH_THEME.borderGold)
+    heroCard.searchText = "progression level rank gearscore xp trophies chronicle mini game"
+
+    local heroLevelText = heroCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    heroLevelText:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 14, -10)
+    heroLevelText:SetText("|cffffd100[LEVEL 1]|r Novice")
+
+    local heroGSText = heroCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+    heroGSText:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -14, -10)
+    heroGSText:SetText("GearScore: |cffffffff0|r")
+
+    local heroStatsText = heroCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    heroStatsText:SetPoint("TOPLEFT", heroLevelText, "BOTTOMLEFT", 0, -4)
+    heroStatsText:SetText("Peak: |cffffd1000|r  •  Average iLvl: |cffffffff0|r  •  Upgrades: |cff59f0dc0|r  •  Trophies: |cffb4e6340/10|r")
+
+    local xpBarBg = CreateFrame("Frame", nil, heroCard)
+    xpBarBg:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 12)
+    xpBarBg:SetSize(656, 20)
+    paintFlatBox(xpBarBg, { 0.08, 0.09, 0.11, 0.95 }, DASH_THEME.borderSubtle)
+
+    local xpBarFill = xpBarBg:CreateTexture(nil, "ARTWORK")
+    xpBarFill:SetPoint("TOPLEFT", xpBarBg, "TOPLEFT", 1, -1)
+    xpBarFill:SetPoint("BOTTOMLEFT", xpBarBg, "BOTTOMLEFT", 1, 1)
+    xpBarFill:SetWidth(10)
+    xpBarFill:SetTexture(WHITE8X8)
+    xpBarFill:SetVertexColor(0.18, 0.72, 0.40, 0.95)
+
+    local xpBarText = xpBarBg:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    xpBarText:SetPoint("CENTER", xpBarBg, "CENTER", 0, 0)
+    xpBarText:SetText("0 / 25 GS to Next Level (0%)")
+
+    progy = registerRow(progChild, heroCard, "progression", progy, 96)
+
+    -- Milestone Trophies Section
+    progy = addSectionHeader(progChild, "Milestone Trophies & Achievements", progy)
+
+    local trophyCard = CreateFrame("Frame", nil, progChild)
+    trophyCard:SetSize(680, 126)
+    paintFlatBox(trophyCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+    trophyCard.searchText = "trophies achievements milestones rewards badges"
+
+    local trophyButtons = {}
+    local trophyDefs = (TT and TT.GetTrophyDefinitions and TT:GetTrophyDefinitions()) or {}
+
+    for i, def in ipairs(trophyDefs) do
+        local col = ((i - 1) % 5)
+        local row = math.floor((i - 1) / 5)
+        local x = 10 + col * (126 + 8)
+        local y = -8 - row * (52 + 6)
+
+        local tBtn = CreateFrame("Frame", nil, trophyCard)
+        tBtn:SetSize(126, 52)
+        tBtn:SetPoint("TOPLEFT", trophyCard, "TOPLEFT", x, y)
+        paintFlatBox(tBtn, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+        tBtn:EnableMouse(true)
+        tBtn.def = def
+
+        local tIcon = tBtn:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        tIcon:SetPoint("TOPLEFT", tBtn, "TOPLEFT", 6, -6)
+        tIcon:SetText("|cff555555☆|r")
+        tBtn.icon = tIcon
+
+        local tName = tBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        tName:SetPoint("TOPLEFT", tIcon, "TOPRIGHT", 6, 2)
+        tName:SetPoint("RIGHT", tBtn, "RIGHT", -4, 0)
+        tName:SetJustifyH("LEFT")
+        tName:SetText(def.name)
+        tBtn.name = tName
+
+        local tStatus = tBtn:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        tStatus:SetPoint("TOPLEFT", tName, "BOTTOMLEFT", 0, -2)
+        tStatus:SetPoint("RIGHT", tBtn, "RIGHT", -4, 0)
+        tStatus:SetJustifyH("LEFT")
+        tStatus:SetText("Locked")
+        tBtn.status = tStatus
+
+        tBtn:SetScript("OnEnter", function(self)
+            self:SetFlatColors(DASH_THEME.cardActiveBg, DASH_THEME.borderGold)
+            if (self.def) then
+                local rec = TT and TT.GetPlayerProgression and TT:GetPlayerProgression()
+                local tr = rec and rec.trophies and rec.trophies[self.def.id]
+                local desc = self.def.desc or ""
+                if (tr and tr.unlockedAt) then
+                    local dateFn = _G.date
+                    local dateStr = (type(dateFn) == "function") and dateFn("%Y-%m-%d %H:%M", tr.unlockedAt) or tostring(tr.unlockedAt)
+                    desc = desc .. "\n\n|cffb4e634✓ Unlocked: " .. dateStr .. "|r"
+                    if (tr.score) then
+                        desc = desc .. string.format("\n|cffffd100GearScore at unlock: %d|r", tr.score)
+                    end
+                else
+                    desc = desc .. "\n\n|cff888888Status: Locked|r"
+                end
+                showHoverTooltip(self, "🏆 " .. self.def.name, desc)
+            end
+        end)
+        tBtn:SetScript("OnLeave", function(self)
+            local rec = TT and TT.GetPlayerProgression and TT:GetPlayerProgression()
+            local tr = rec and rec.trophies and rec.trophies[self.def.id]
+            if (tr) then
+                self:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderEmerald)
+            else
+                self:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+            end
+            if (GameTooltip) then
+                GameTooltip:Hide()
+            end
+        end)
+
+        trophyButtons[i] = tBtn
+    end
+
+    progy = registerRow(progChild, trophyCard, "progression", progy, 126)
+
+    -- Equipment Upgrade Chronicle Section
+    progy = addSectionHeader(progChild, "Equipment Upgrade Chronicle", progy)
+
+    local chronicleContainer = CreateFrame("Frame", nil, progChild)
+    chronicleContainer:SetSize(680, 260)
+    paintFlatBox(chronicleContainer, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+    chronicleContainer.searchText = "chronicle upgrade history equipment gear log items"
+
+    local currentFilter = "all"
+    local chronicleOffset = 0
+    local visibleChronicleRows = 6
+    local cachedHistoryList = {}
+
+    local filterAllBtn = createFlatActionCard(chronicleContainer, 72, 22, "All Slots", "gold")
+    filterAllBtn:SetPoint("TOPLEFT", chronicleContainer, "TOPLEFT", 10, -8)
+
+    local filterWeaponsBtn = createFlatActionCard(chronicleContainer, 76, 22, "Weapons", "plain")
+    filterWeaponsBtn:SetPoint("LEFT", filterAllBtn, "RIGHT", 6, 0)
+
+    local filterArmorBtn = createFlatActionCard(chronicleContainer, 66, 22, "Armor", "plain")
+    filterArmorBtn:SetPoint("LEFT", filterWeaponsBtn, "RIGHT", 6, 0)
+
+    local filterAccBtn = createFlatActionCard(chronicleContainer, 88, 22, "Accessories", "plain")
+    filterAccBtn:SetPoint("LEFT", filterArmorBtn, "RIGHT", 6, 0)
+
+    local chronicleCountText = chronicleContainer:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    chronicleCountText:SetPoint("RIGHT", chronicleContainer, "RIGHT", -12, 0)
+    chronicleCountText:SetPoint("CENTER", filterAllBtn, "CENTER", 0, 0)
+    chronicleCountText:SetText("|cff9ba3ae0 upgrades recorded|r")
+
+    -- Column Header Bar
+    local colBar = CreateFrame("Frame", nil, chronicleContainer)
+    colBar:SetSize(660, 20)
+    colBar:SetPoint("TOPLEFT", chronicleContainer, "TOPLEFT", 10, -36)
+    paintFlatBox(colBar, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+
+    local cHeadTime = colBar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    cHeadTime:SetPoint("LEFT", colBar, "LEFT", 8, 0)
+    cHeadTime:SetText("|cffffd100Date/Time|r")
+
+    local cHeadSlot = colBar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    cHeadSlot:SetPoint("LEFT", colBar, "LEFT", 110, 0)
+    cHeadSlot:SetText("|cffffd100Slot|r")
+
+    local cHeadPath = colBar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    cHeadPath:SetPoint("LEFT", colBar, "LEFT", 210, 0)
+    cHeadPath:SetText("|cffffd100Equipment Upgrade Path|r")
+
+    local cHeadDelta = colBar:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    cHeadDelta:SetPoint("RIGHT", colBar, "RIGHT", -20, 0)
+    cHeadDelta:SetText("|cffffd100Delta|r")
+
+    -- 6 Rows
+    local chronicleRows = {}
+    for r = 1, visibleChronicleRows do
+        local row = CreateFrame("Button", nil, chronicleContainer)
+        row:SetSize(640, 26)
+        row:SetPoint("TOPLEFT", chronicleContainer, "TOPLEFT", 10, -58 - (r - 1) * 28)
+
+        local rbg = row:CreateTexture(nil, "BACKGROUND")
+        rbg:SetAllPoints()
+        if (r % 2 == 0) then
+            rbg:SetColorTexture(1, 1, 1, 0.03)
+        else
+            rbg:SetColorTexture(0, 0, 0, 0.20)
+        end
+        row.bg = rbg
+
+        local rTime = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        rTime:SetPoint("LEFT", row, "LEFT", 8, 0)
+        rTime:SetWidth(96)
+        rTime:SetJustifyH("LEFT")
+        row.timeTxt = rTime
+
+        local rSlot = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        rSlot:SetPoint("LEFT", row, "LEFT", 110, 0)
+        rSlot:SetWidth(90)
+        rSlot:SetJustifyH("LEFT")
+        row.slotTxt = rSlot
+
+        local rPath = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        rPath:SetPoint("LEFT", row, "LEFT", 210, 0)
+        rPath:SetPoint("RIGHT", row, "RIGHT", -90, 0)
+        rPath:SetJustifyH("LEFT")
+        row.pathTxt = rPath
+
+        local rDelta = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        rDelta:SetPoint("RIGHT", row, "RIGHT", -16, 0)
+        rDelta:SetWidth(70)
+        rDelta:SetJustifyH("RIGHT")
+        row.deltaTxt = rDelta
+
+        row:SetScript("OnEnter", function(self)
+            self.bg:SetColorTexture(1.0, 0.78, 0.12, 0.15)
+            if (self.entry and GameTooltip) then
+                if (self.entry.newLink and type(GameTooltip.SetHyperlink) == "function") then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:ClearLines()
+                    local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, self.entry.newLink)
+                    if (ok) then
+                        GameTooltip:Show()
+                        return
+                    end
+                end
+                showHoverTooltip(self, self.entry.slotName or "Equipment Upgrade",
+                    string.format("Item: %s\nGearScore: %d (%+d GS)\niLvl: %d",
+                        self.entry.newLink or "Unknown",
+                        self.entry.newGS or 0,
+                        self.entry.deltaGS or 0,
+                        self.entry.newILvl or 0))
+            end
+        end)
+        row:SetScript("OnLeave", function(self)
+            if (r % 2 == 0) then
+                self.bg:SetColorTexture(1, 1, 1, 0.03)
+            else
+                self.bg:SetColorTexture(0, 0, 0, 0.20)
+            end
+            if (GameTooltip) then
+                GameTooltip:Hide()
+            end
+        end)
+        row:SetScript("OnClick", function(self)
+            if (IsShiftKeyDown() and self.entry and self.entry.newLink) then
+                local insertFn = _G.ChatEdit_InsertLink
+                if (type(insertFn) == "function") then
+                    pcall(insertFn, self.entry.newLink)
+                end
+            end
+        end)
+
+        chronicleRows[r] = row
+    end
+
+    -- Scrollbar for Chronicle
+    local cScrollBar = CreateFrame("Slider", nil, chronicleContainer)
+    cScrollBar:SetPoint("TOPRIGHT", chronicleContainer, "TOPRIGHT", -8, -58)
+    cScrollBar:SetPoint("BOTTOMRIGHT", chronicleContainer, "BOTTOMRIGHT", -8, 12)
+    cScrollBar:SetWidth(12)
+    cScrollBar:SetOrientation("VERTICAL")
+    cScrollBar:SetMinMaxValues(0, 0)
+    cScrollBar:SetValue(0)
+    cScrollBar:SetValueStep(1)
+    paintFlatBox(cScrollBar, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+
+    local cThumb = cScrollBar:CreateTexture(nil, "OVERLAY")
+    cThumb:SetTexture(WHITE8X8)
+    cThumb:SetSize(10, 24)
+    cThumb:SetVertexColor(0.85, 0.65, 0.15, 0.8)
+    cScrollBar:SetThumbTexture(cThumb)
+
+    cScrollBar:SetScript("OnValueChanged", function(_, val)
+        chronicleOffset = math.floor(val)
+        if (frame.RefreshChronicleList) then
+            frame:RefreshChronicleList()
+        end
+    end)
+
+    chronicleContainer:EnableMouseWheel(true)
+    chronicleContainer:SetScript("OnMouseWheel", function(_, delta)
+        local cur = cScrollBar:GetValue()
+        local minVal, maxVal = cScrollBar:GetMinMaxValues()
+        if (delta > 0) then
+            cScrollBar:SetValue(math.max(minVal, cur - 1))
+        else
+            cScrollBar:SetValue(math.min(maxVal, cur + 1))
+        end
+    end)
+
+    progy = registerRow(progChild, chronicleContainer, "progression", progy, 260)
+
+    -- Progression Preferences & Actions
+    progy = addSectionHeader(progChild, "Progression Settings & Actions", progy)
+
+    syncControls.progression_chat = createPillToggle(progChild, "Chat Level-Up & Trophy Alerts",
+        "Print a private notification to your chat window whenever your gear rank levels up or you unlock a trophy.",
+        TacoTipConfig.progression_chat, function(v)
+            TacoTipConfig.progression_chat = v
+            onSettingChanged()
+        end)
+    progy = registerRow(progChild, syncControls.progression_chat, "progression", progy)
+
+    syncControls.progression_sound = createPillToggle(progChild, "Level-Up Sound Fanfare",
+        "Play a triumphant fanfare sound effect upon gaining a gear level.",
+        TacoTipConfig.progression_sound, function(v)
+            TacoTipConfig.progression_sound = v
+            onSettingChanged()
+        end)
+    progy = registerRow(progChild, syncControls.progression_sound, "progression", progy)
+
+    -- Action bar with 3 buttons
+    local progActionCard = CreateFrame("Frame", nil, progChild)
+    progActionCard:SetSize(680, 48)
+    paintFlatBox(progActionCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+    progActionCard.searchText = "snapshot export reset clear progression gear history"
+
+    local snapBtn = createFlatActionCard(progActionCard, 150, 26, "Snapshot Current Gear", "emerald", function()
+        if (TT and TT.EvaluatePlayerEquipment) then
+            TT:EvaluatePlayerEquipment(false)
+            if (frame.RefreshProgression) then frame:RefreshProgression() end
+            print("|cFFFFB81C[TacoTip]|r |cFFB4E634Equipment snapshot evaluated!|r")
+        end
+    end, "Snapshot Gear", "Immediately scan your currently equipped gear and log any upgrades.")
+    snapBtn:SetPoint("LEFT", progActionCard, "LEFT", 12, 0)
+
+    local exportProgBtn = createFlatActionCard(progActionCard, 140, 26, "Export Progress Log", "gold", function()
+        if (TT and TT.ExportProgressionReport) then
+            local rep = TT:ExportProgressionReport()
+            if (frame.SelectTab) then
+                frame:SelectTab("diagnostics")
+            end
+            local diagB = _G.TacoTipDashboardDiagScroll and _G.TacoTipDashboardDiagScroll:GetScrollChild()
+            if (diagB and diagB.SetText) then
+                diagB:SetText(rep)
+                diagB:SetFocus()
+                diagB:HighlightText()
+                print("|cFFFFB81C[TacoTip]|r Progression log generated in Diagnostics tab. Press |cFFFFD100Ctrl+C|r to copy!")
+            end
+        end
+    end, "Export Log", "Generate a markdown summary of your gear progression, trophies, and upgrades.")
+    exportProgBtn:SetPoint("LEFT", snapBtn, "RIGHT", 10, 0)
+
+    local resetConfirm = false
+    local clearProgBtn = createFlatActionCard(progActionCard, 130, 26, "Clear History", "danger", function(self)
+        if (not resetConfirm) then
+            resetConfirm = true
+            self.text:SetText("Confirm Reset?")
+            self:SetFlatColors({ 0.35, 0.10, 0.10, 1.0 }, DASH_THEME.borderAmber)
+        else
+            resetConfirm = false
+            self.text:SetText("Clear History")
+            self:SetFlatColors(DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+            if (TT and TT.ClearPlayerProgression) then
+                TT:ClearPlayerProgression()
+                if (frame.RefreshProgression) then frame:RefreshProgression() end
+                print("|cFFFFB81C[TacoTip]|r Progression chronicle cleared for this character.")
+            end
+        end
+    end, "Reset History", "Clear the upgrade chronicle and trophy progress for this character.")
+    clearProgBtn:SetPoint("LEFT", exportProgBtn, "RIGHT", 10, 0)
+
+    progy = registerRow(progChild, progActionCard, "progression", progy, 48)
+    progChild:SetHeight(math.abs(progy) + 20)
+
+    -- Filter and refresh helpers
+    local function filterChronicle(list, filter)
+        local out = {}
+        for _, entry in ipairs(list) do
+            local sID = entry.slotID
+            local match = true
+            if (filter == "weapons") then
+                match = (sID == 16 or sID == 17 or sID == 18)
+            elseif (filter == "armor") then
+                match = (sID == 1 or sID == 3 or sID == 5 or sID == 6 or sID == 7 or sID == 8 or sID == 9 or sID == 10)
+            elseif (filter == "acc") then
+                match = (sID == 2 or sID == 11 or sID == 12 or sID == 13 or sID == 14 or sID == 15)
+            end
+            if (match) then
+                out[#out + 1] = entry
+            end
+        end
+        return out
+    end
+
+    local function updateFilterButtons(active)
+        currentFilter = active
+        local activeBg = DASH_THEME.cardActiveBg
+        local idleBg = DASH_THEME.cardBg
+        filterAllBtn:SetFlatColors(active == "all" and activeBg or idleBg, active == "all" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+        filterWeaponsBtn:SetFlatColors(active == "weapons" and activeBg or idleBg, active == "weapons" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+        filterArmorBtn:SetFlatColors(active == "armor" and activeBg or idleBg, active == "armor" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+        filterAccBtn:SetFlatColors(active == "acc" and activeBg or idleBg, active == "acc" and DASH_THEME.borderGold or DASH_THEME.borderSubtle)
+        cScrollBar:SetValue(0)
+        if (frame.RefreshProgression) then frame:RefreshProgression() end
+    end
+
+    filterAllBtn:SetScript("OnMouseDown", function() updateFilterButtons("all") end)
+    filterWeaponsBtn:SetScript("OnMouseDown", function() updateFilterButtons("weapons") end)
+    filterArmorBtn:SetScript("OnMouseDown", function() updateFilterButtons("armor") end)
+    filterAccBtn:SetScript("OnMouseDown", function() updateFilterButtons("acc") end)
+
+    frame.RefreshChronicleList = function()
+        local total = #cachedHistoryList
+        local maxOffset = math.max(0, total - visibleChronicleRows)
+        cScrollBar:SetMinMaxValues(0, maxOffset)
+
+        for r = 1, visibleChronicleRows do
+            local idx = chronicleOffset + r
+            local row = chronicleRows[r]
+            local entry = cachedHistoryList[idx]
+            if (entry and row) then
+                row.entry = entry
+                row:Show()
+                local dateFn = _G.date
+                local tStr = entry.time and ((type(dateFn) == "function") and dateFn("%m/%d %H:%M", entry.time) or tostring(entry.time)) or "--"
+                row.timeTxt:SetText(tStr)
+                row.slotTxt:SetText(string.format("|cffffd100%s|r", entry.slotName or "Slot"))
+
+                local oldTxt = entry.oldLink or (entry.oldGS and entry.oldGS > 0 and ("GS " .. tostring(entry.oldGS)) or "None")
+                local newTxt = entry.newLink or ("GS " .. tostring(entry.newGS or 0))
+                row.pathTxt:SetText(string.format("%s |cff888888→|r %s", oldTxt, newTxt))
+
+                local dGS = entry.deltaGS or 0
+                if (dGS > 0) then
+                    row.deltaTxt:SetText(string.format("|cffb4e634+%d GS|r", dGS))
+                elseif (dGS < 0) then
+                    row.deltaTxt:SetText(string.format("|cffff4d4d%d GS|r", dGS))
+                else
+                    row.deltaTxt:SetText("|cffffff00NEW|r")
+                end
+            elseif (row) then
+                row.entry = nil
+                row:Hide()
+            end
+        end
+    end
+
+    frame.RefreshProgression = function()
+        if (not TT or not TT.GetPlayerProgression) then return end
+        local rec = TT:GetPlayerProgression()
+        local currentScore = rec.currentScore or 0
+        local levelInfo = TT:GetGearLevelInfo(currentScore)
+
+        -- Update Hero Card
+        local tierHex = levelInfo.tierColorHex or "FFFFD100"
+        heroLevelText:SetText(string.format("|c%s[LEVEL %d]|r %s", tierHex, levelInfo.level, levelInfo.title))
+        heroGSText:SetText(string.format("GearScore: |c%s%s|r", tierHex, tostring(currentScore)))
+
+        local unlockedCount = 0
+        for _ in pairs(rec.trophies) do unlockedCount = unlockedCount + 1 end
+        heroStatsText:SetText(string.format("Peak: |cffffd100%d|r  •  Average iLvl: |cffffffff%d|r  •  Upgrades: |cff59f0dc%d|r  •  Trophies: |cffb4e634%d/%d|r",
+            rec.peakScore or currentScore,
+            math.floor(rec.avgItemLevel or 0),
+            #rec.history,
+            unlockedCount,
+            #trophyDefs))
+
+        -- Update XP bar
+        local pct = math.min(100, math.max(0, levelInfo.percent or 0))
+        local fillW = math.max(1, math.floor(654 * (pct / 100)))
+        xpBarFill:SetWidth(fillW)
+        xpBarText:SetText(string.format("%d / %d GS to Level %d (%d%%)",
+            levelInfo.progress, levelInfo.step, levelInfo.level + 1, pct))
+
+        -- Update Trophies
+        for _, tBtn in ipairs(trophyButtons) do
+            local def = tBtn.def
+            if (def) then
+                local tr = rec.trophies[def.id]
+                if (tr) then
+                    tBtn.icon:SetText("|cffffd100★|r")
+                    tBtn.name:SetText(string.format("|cffffd100%s|r", def.name))
+                    tBtn.status:SetText("|cffb4e634UNLOCKED|r")
+                    tBtn:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderEmerald)
+                else
+                    tBtn.icon:SetText("|cff555555☆|r")
+                    tBtn.name:SetText(string.format("|cff888888%s|r", def.name))
+                    tBtn.status:SetText("|cff666666Locked|r")
+                    tBtn:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+                end
+            end
+        end
+
+        -- Update Chronicle
+        cachedHistoryList = filterChronicle(rec.history or {}, currentFilter)
+        chronicleCountText:SetText(string.format("|cff9ba3aeShowing %d of %d upgrades|r", #cachedHistoryList, #(rec.history or {})))
+        frame:RefreshChronicleList()
+    end
+
+    TT.RefreshProgressionDashboard = function()
+        if (frame:IsShown() and frame.activeTab == "progression" and frame.RefreshProgression) then
+            frame:RefreshProgression()
+        end
+    end
+
+    -- ========================================================================
     -- Tab: TacoTip Extras (Only when TacoTip_Extras is installed and loaded)
     -- ========================================================================
     if (hasExtras) then
         local _, extrasChild = createScrollCategory("extras", "Extras", "TacoTip Extras",
-            "Server leaderboard, peer-to-peer sync, and advanced equipment auditing.", 7)
+            "Server leaderboard, peer-to-peer sync, and advanced equipment auditing.", 8)
         local ey = 0
 
         local noticeExtras = createNoticeBox(extrasChild, "|cffb4e634[CONNECTED]|r",
@@ -4958,6 +5481,7 @@ local function createDashboard()
             syncControls.class_icon_size:SetValue(TacoTipConfig.class_icon_size or 20)
         end
         if (frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
+        if (frame.RefreshProgression and frame.activeTab == "progression") then frame:RefreshProgression() end
     end
 
     -- Real-time Search Filter Engine
