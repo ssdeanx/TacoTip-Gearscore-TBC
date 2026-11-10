@@ -1141,6 +1141,12 @@ local function ensureTooltipPortrait(tooltip)
                 tooltip.TacoTipPortrait3D = model
                 tooltip.TacoTipPortrait3D:SetFrameLevel(tooltip:GetFrameLevel() + 1)
                 tooltip.TacoTipPortrait3D:EnableMouse(false)
+                if (type(model.SetScript) == "function") then
+                    pcall(model.SetScript, model, "OnModelLoaded", function(self)
+                        local zoom = (TacoTipConfig and TacoTipConfig.tooltip_portrait_zoom) or 0.7
+                        pcall(self.SetPortraitZoom, self, zoom)
+                    end)
+                end
                 -- No OnUpdate. It used to run every 0.05s forever, on every
                 -- tooltip frame, for one job: copying the parent's alpha. The
                 -- portrait no longer mirrors the tooltip's alpha, so the script
@@ -1556,10 +1562,16 @@ local function anchorTooltipPortrait(tooltip, portrait, fromShow)
     else
         -- Unconfigured default (first run, docked to bottom-right corner of screen):
         -- place on the left only if placing on the right would push it off-screen.
-        local screenWidth = (UIParent and UIParent:GetRight())
-            or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
-        local fitsRight = tooltipRight > 0 and (tooltipRight + portraitW + 8) <= screenWidth
-        cachedSide = (tooltipRight > 0 and not fitsRight) and "left" or "right"
+        if (tooltipRight > 0) then
+            local screenWidth = (UIParent and UIParent:GetRight())
+                or (_G["GetScreenWidth"] and _G["GetScreenWidth"]()) or 1000
+            local fitsRight = (tooltipRight + portraitW + 8) <= screenWidth
+            cachedSide = fitsRight and "right" or "left"
+        else
+            -- If the frame has not laid out yet (tooltipRight == 0), preserve
+            -- the previously anchored/cached side so rapid re-hover does not jump.
+            cachedSide = portrait._tacoTipAnchorSide or state.portraitSide or "right"
+        end
     end
     -- Inverted before the side-to-anchor mapping below, so that mapping stays
     -- in one place. Off by default, so nobody who never touches it sees change.
@@ -5061,13 +5073,14 @@ local function collectActiveUnitSection()
         local okCan, rawCan = pcall(fnCanInspect, activeUnit)
         local canInspect = (type(fnCanInspect) == "function" and okCan) and rawCan or false
         local canInspectStr = isSecretValue(canInspect) and "<secret>" or tostring(canInspect)
-        -- CheckInteractDistance is protected on the mainline clients. Calling it
-        -- from the tainted slash-command diagnostics path raises
-        -- ADDON_ACTION_BLOCKED ('UNKNOWN()'); report it as not applicable there
-        -- and only probe it on the Classic families.
-        local interactDist = "n/a (protected on this client)"
-        if (not (isForever or isRetail) and type(fnCheckInteractDistance) == "function") then
-            interactDist = tostring(fnCheckInteractDistance(activeUnit, 1))
+        local interactDist = "n/a"
+        if (type(fnCheckInteractDistance) == "function" and activeUnit and not isSecretValue(activeUnit)) then
+            local okID, idVal = pcall(fnCheckInteractDistance, activeUnit, 1)
+            if (okID) then
+                interactDist = isSecretValue(idVal) and "<secret>" or tostring(idVal)
+            else
+                interactDist = "protected"
+            end
         end
         local isVisible = false
         if (type(_G.UnitIsVisible) == "function" and activeUnit and not isSecretValue(activeUnit)) then
@@ -5100,6 +5113,22 @@ local function collectActiveUnitSection()
                 elseif (chk and type(d2) == "number" and d2 >= 0) then
                     distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
                 end
+            end
+        end
+        if (not distStr and type(fnCheckInteractDistance) == "function" and activeUnit and not isSecretValue(activeUnit)) then
+            -- Fallback tiered range estimation via CheckInteractDistance indices:
+            -- 3: Duel (~10yd), 2: Trade (~11yd), 1: Inspect (~28yd)
+            local okDuel, inDuel = pcall(fnCheckInteractDistance, activeUnit, 3)
+            local okTrade, inTrade = pcall(fnCheckInteractDistance, activeUnit, 2)
+            local okInspect, inInspect = pcall(fnCheckInteractDistance, activeUnit, 1)
+            if (okDuel and inDuel and not isSecretValue(inDuel)) then
+                distStr = "<= 10yd (close/duel range)"
+            elseif (okTrade and inTrade and not isSecretValue(inTrade)) then
+                distStr = "<= 11yd (trade range)"
+            elseif (okInspect and inInspect and not isSecretValue(inInspect)) then
+                distStr = "<= 28yd (inspect range)"
+            elseif (okInspect and inInspect == false and not isSecretValue(inInspect)) then
+                distStr = "> 28yd (out of inspect range)"
             end
         end
         diagRow(s, "distance", distStr or "unknown", "info")

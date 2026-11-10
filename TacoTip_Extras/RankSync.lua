@@ -770,20 +770,59 @@ local function recordIsSameRealm(record)
     if mine and guid == mine then
         return true
     end
+
+    -- 1. Modern client: C_PlayerInfo.UnitIsSameServer with PlayerLocation
+    local plObj = rawget(_G, "PlayerLocation")
+    local cPlayerInfo = rawget(_G, "C_PlayerInfo")
+    if type(cPlayerInfo) == "table" and type(cPlayerInfo.UnitIsSameServer) == "function"
+            and type(plObj) == "table" and type(plObj.CreateFromGUID) == "function" then
+        local okLoc, loc = pcall(plObj.CreateFromGUID, plObj, guid)
+        if okLoc and loc and type(loc.IsValid) == "function" and loc:IsValid() then
+            local okSame, isSame = pcall(cPlayerInfo.UnitIsSameServer, loc)
+            if okSame and type(isSame) == "boolean" and not Core.IsSecretValue(isSame) then
+                return isSame == true
+            end
+        end
+    end
+
+    -- 2. Global UnitIsSameServer and UnitTokenFromGUID
     local resolve = rawget(_G, "UnitTokenFromGUID")
     local sameServer = rawget(_G, "UnitIsSameServer")
-    if type(resolve) ~= "function" or type(sameServer) ~= "function" then
-        return true
+    if type(resolve) == "function" and type(sameServer) == "function" then
+        local ok, unit = pcall(resolve, guid)
+        if ok and type(unit) == "string" and unit ~= "" then
+            local uName = rawget(_G, "UnitName")
+            local targetName = nil
+            if type(uName) == "function" then
+                local okName, name, realm = pcall(uName, unit)
+                if okName and type(realm) == "string" and realm ~= "" then
+                    local getNormRealm = rawget(_G, "GetNormalizedRealmName")
+                    local localRealm = (type(getNormRealm) == "function" and getNormRealm())
+                        or (rawget(_G, "GetRealmName") and _G.GetRealmName()) or nil
+                    if localRealm and localRealm ~= "" and realm ~= localRealm then
+                        return false
+                    end
+                end
+                if okName and type(name) == "string" and name ~= "" then
+                    targetName = name
+                end
+            end
+            if not targetName and type(record.name) == "string" and record.name ~= "" and record.name ~= "Unknown" then
+                targetName = record.name
+            end
+
+            -- Pass actual character name if known (PlayerScriptDocumentation on Forever), fallback to unit token
+            local okSame, verdict = pcall(sameServer, targetName or unit)
+            if (not okSame or verdict == nil) and targetName then
+                okSame, verdict = pcall(sameServer, unit)
+            end
+            if okSame and type(verdict) == "boolean" and not Core.IsSecretValue(verdict) then
+                return verdict == true
+            end
+        end
     end
-    local ok, unit = pcall(resolve, guid)
-    if not ok or type(unit) ~= "string" or unit == "" then
-        return true
-    end
-    local okSame, verdict = pcall(sameServer, unit)
-    if not okSame or type(verdict) ~= "boolean" or Core.IsSecretValue(verdict) then
-        return true
-    end
-    return verdict == true
+
+    return true
 end
 
 function RankSync.QueueInspectRecord(record)
