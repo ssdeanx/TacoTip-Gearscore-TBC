@@ -384,6 +384,7 @@ else
 end
 
 local inspectPendingUnit = nil
+local inspectPendingGUID = nil
 local inspectPendingSince = 0
 local queue = {}
 
@@ -465,6 +466,7 @@ function lib:GetInspectStats()
         stats.learnedRange = lib.inspectRangeLimit and lib.inspectRangeLimit[lib.family] or nil
         stats.queueLength = (type(queue) == "table") and #queue or 0
         stats.pendingUnit = inspectPendingUnit
+        stats.pendingGUID = inspectPendingGUID
         local now = (type(GetTime) == "function") and GetTime() or 0
         stats.pendingDuration = (inspectPendingUnit and inspectPendingSince and inspectPendingSince > 0)
             and (now - inspectPendingSince) or 0
@@ -4401,6 +4403,7 @@ end
 
 local nextInspectTime = 0
 inspectPendingSince = 0
+inspectPendingGUID = nil
 
 local inspectQueueTick
 
@@ -4464,9 +4467,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
         -- data was discarded and requested again later. Released when the answer
         -- is for the pending unit, when that unit is gone (nothing left to wait
         -- for), or when the event carries no GUID at all to compare.
-        local pendingGUID = (inspectPendingUnit and safeUnitGUID(inspectPendingUnit)) or nil
+        local pendingGUID = inspectPendingGUID or (inspectPendingUnit and safeUnitGUID(inspectPendingUnit)) or nil
         if (inspectPendingUnit and (pendingGUID == nil or guid == nil or safeEquals(pendingGUID, guid))) then
             inspectPendingUnit = nil
+            inspectPendingGUID = nil
             inspectPendingSince = 0
         end
         -- Same rule for the guard's attribution: cleared for its own answer, for a
@@ -4548,7 +4552,7 @@ local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
 -- inspects; and a unit that never answers (throttled, disconnected, or silently
 -- refused on a client with no guard) was re-requested at nearly twice the
 -- intended rate, forever, for as long as it stayed targeted.
-local INSPECT_PENDING_TIMEOUT = 3.0
+local INSPECT_PENDING_TIMEOUT = (isRetail or isForever) and 1.2 or 3.0
 local CACHE_REFRESH_DELAY = 300
 queue = {}
 
@@ -4935,6 +4939,7 @@ local function noteInspectRejectedImpl(unit, yards, err)
         }
     end
     inspectPendingUnit = nil
+    inspectPendingGUID = nil
     inspectPendingSince = 0
     -- The refusal (or the general rejection) answered the outstanding request.
     pendingRefusal = nil
@@ -5115,6 +5120,7 @@ local function requestInspectImpl(unit)
         return false
     end
     inspectPendingUnit = unit
+    inspectPendingGUID = safeUnitGUID(unit)
     local now = (type(GetTime) == "function") and GetTime() or 0
     -- Optimistic arming. If this request is refused, the refusal arrives through
     -- the probe guard's sink, which charges it to this unit (pendingRefusal),
@@ -5623,8 +5629,16 @@ function lib:DoInspect(unitorguid)
     end
 
     local now = type(GetTime) == "function" and GetTime() or 0
-    if (now >= nextInspectTime and not inspectPendingUnit) then
-        return requestInspect(unit)
+    if (now >= nextInspectTime) then
+        if (inspectPendingUnit == "mouseover" and inspectPendingGUID and not safeEquals(guid, inspectPendingGUID)) then
+            inspectPendingUnit = nil
+            inspectPendingGUID = nil
+            inspectPendingSince = 0
+            pendingRefusal = nil
+        end
+        if (not inspectPendingUnit) then
+            return requestInspect(unit)
+        end
     else
         for i = 1, #queue do
             local item = queue[i]
@@ -5679,11 +5693,19 @@ inspectQueueTick = function()
     -- number `/tacotip diag` prints is the number of requests that actually
     -- stalled.
     if (inspectPendingUnit) then
-        if (inspectPendingSince > 0 and now - inspectPendingSince > INSPECT_PENDING_TIMEOUT) then
+        local abandonedMouseover = false
+        if (inspectPendingUnit == "mouseover" and inspectPendingGUID) then
+            local currentMouseoverGUID = safeUnitGUID("mouseover")
+            if (not safeEquals(currentMouseoverGUID, inspectPendingGUID)) then
+                abandonedMouseover = true
+            end
+        end
+        if (abandonedMouseover or (inspectPendingSince > 0 and now - inspectPendingSince > INSPECT_PENDING_TIMEOUT)) then
             inspectPendingUnit = nil
+            inspectPendingGUID = nil
             inspectPendingSince = 0
             pendingRefusal = nil
-            if (lib.inspectStats) then
+            if (not abandonedMouseover and lib.inspectStats) then
                 lib.inspectStats.timeouts = (lib.inspectStats.timeouts or 0) + 1
             end
         else

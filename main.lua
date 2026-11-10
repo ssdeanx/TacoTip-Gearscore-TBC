@@ -1949,10 +1949,10 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
         local selfMemo = TT._selfPawnMemo
         if (selfMemo) then
             local groupMemo = selfMemo[activeGroup]
-            if (groupMemo and groupMemo.pawnScore) then
+            if (groupMemo and groupMemo.pawnScore ~= nil) then
                 return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
             end
-            if (selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore) then
+            if (selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore ~= nil) then
                 return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
             end
         end
@@ -1965,10 +1965,10 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
     local entry = memo and memo[guid]
     if (entry and entry.items == items) then
         local groupMemo = entry.pawnScores and entry.pawnScores[activeGroup]
-        if (groupMemo and groupMemo.pawnScore) then
+        if (groupMemo and groupMemo.pawnScore ~= nil) then
             return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
         end
-        if (entry.pawnGroup == activeGroup and entry.pawnScore) then
+        if (entry.pawnGroup == activeGroup and entry.pawnScore ~= nil) then
             return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
         end
     end
@@ -1976,7 +1976,7 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
 end
 
 function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number" or pawnScore <= 0) then
+    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number" or pawnScore < 0) then
         return
     end
     activeGroup = activeGroup or 1
@@ -3318,19 +3318,20 @@ local function onTooltipSetUnit(tooltip, data)
             if (needPawnScore) then
                 local activeGroup = (CI and CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
                 local pawnScore, specName, specColor = TT.getPawnScoreMemo(guid, items, activeGroup)
-                if (not pawnScore) then
+                if (pawnScore == nil) then
                     pawnScore, specName, specColor = 0, nil, nil
                     if (retryDue or isSelf) then
                         -- Pawn is an external addon. A throw here used to abort
                         -- the whole render before the write-back, taking the
                         -- already-queued GearScore/iLvl lines with it; isolate it.
-                        local pawnOk, pScore, pSpec, pColor = pcall(TT_PAWN.GetScore, TT_PAWN,
+                        local pawnOk, pScore, pSpec, pColor, pReady = pcall(TT_PAWN.GetScore, TT_PAWN,
                             guid, not needGsScore, activeGroup)
                         if (pawnOk) then
                             pawnScore, specName, specColor = pScore, pSpec, pColor
                         else
                             TT:RecordError("Pawn", pScore, "GetScore")
                             pawnScore = 0
+                            pReady = false
                         end
                         if (pawnScore and pawnScore > 0) then
                             if (not needGsScore) then
@@ -3344,17 +3345,25 @@ local function onTooltipSetUnit(tooltip, data)
                             if (numGroups > 1 and type(TT_PAWN.GetScore) == "function") then
                                 local altGroup = (activeGroup == 1) and 2 or 1
                                 local altScore = TT.getPawnScoreMemo(guid, items, altGroup)
-                                if (not altScore) then
-                                    local okAlt, aScore, aSpec, aColor = pcall(TT_PAWN.GetScore, TT_PAWN,
+                                if (altScore == nil) then
+                                    local okAlt, aScore, aSpec, aColor, aReady = pcall(TT_PAWN.GetScore, TT_PAWN,
                                         guid, false, altGroup)
                                     if (okAlt and aScore and aScore > 0) then
                                         TT.setPawnScoreMemo(guid, items, altGroup, aScore, aSpec, aColor)
+                                    elseif (okAlt and aReady == true) then
+                                        TT.setPawnScoreMemo(guid, items, altGroup, 0, aSpec or "", aColor or "|cffffffff")
                                     end
                                 end
                             end
-                        elseif (not retryNoted) then
-                            TT.noteGearScoreRetry(guid, scoreNow)
-                            TT:WarmGearItemData(guid)
+                        elseif (pReady == false) then
+                            if (not retryNoted) then
+                                TT.noteGearScoreRetry(guid, scoreNow)
+                                TT:WarmGearItemData(guid)
+                            end
+                        else
+                            -- All items were cached locally, but Pawn produced 0 (e.g. no scale for class/spec).
+                            -- Memoize 0 so we don't re-run the 18-slot check on every tooltip render tick!
+                            TT.setPawnScoreMemo(guid, items, activeGroup, 0, specName or "", specColor or "|cffffffff")
                         end
                     end
                 end
@@ -6251,6 +6260,9 @@ local function onEvent(self, event, ...)
             -- data; the next render may attempt immediately.
             TT.clearGearScoreRetry(guid)
             TT.clearGearScoreMemo(guid)
+            if (event == "INVENTORY_READY") then
+                TT:WarmGearItemData(guid)
+            end
             local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and TT.safeEquals(TT.safeUnitGUID(ttUnit), guid)) then
                 -- The library fires INVENTORY_READY and TALENTS_READY back to back

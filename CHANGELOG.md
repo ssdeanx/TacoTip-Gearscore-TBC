@@ -127,6 +127,19 @@ All notable changes to TacoTip are documented in this file.
   - Immunized `safeUnitGUID` and `safeEquals` comparisons against secret strings in combat.
   - Protected trait inspect pipeline and inspect queue against secret-value key lookups.
 
+- **RAPID HOVER & TARGET SWITCHING OPTIMIZATION**:
+  - In `LibForeverInspector`, added `inspectPendingGUID` tracking alongside `inspectPendingUnit` and implemented fast-release preemption for abandoned `mouseover` inspects, completely eliminating the 3.0-second queue freeze when sweeping the cursor between targets.
+  - Reduced `INSPECT_PENDING_TIMEOUT` on modern clients (WoW Forever and Retail) from 3.0s to 1.2s so dropped or stalled server inspect requests recover in 1.2s instead of 3.0s.
+
+- **PAWN ZERO-SCORE & CACHE READINESS REFINEMENT**:
+  - Upgraded `TT_PAWN:GetScore` to return its cache readiness state (`IsReady`) alongside the score. If all items are cached locally but Pawn produces 0 (e.g. classes or specs without an active Pawn scale), TacoTip now memoizes `pawnScore = 0` instead of continuously triggering retry backoffs and re-evaluating 18 inventory slots on every frame tick.
+
+- **BACKGROUND ITEM PRE-WARMING**:
+  - When `INVENTORY_READY` fires for any inspected unit (group members, target, or hovered player), TacoTip immediately begins asynchronous item data pre-warming via `C_Item.RequestLoadItemDataByID` so subsequent hovers render GearScore and Pawn instantaneously without delay.
+
+- **COMPANION ADDON INSTANCED COMBAT TAINT-PROOFING**:
+  - Completely hardened `TacoTip_Extras` (`Frames.lua`, `RankBrowser.lua`, `RankDB.lua`, `RankSync.lua`) against WoW Forever / Camelot instanced combat lockdown, protecting all unit checks, boolean tests, and GUID lookups against uncatchable secret value errors.
+
 - **MULTI-CLIENT ENGINE PARITY**:
   - Universal compatibility verified across Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`).
   - 100% test pass rate across all 72 test harness invocations and zero luacheck warnings.

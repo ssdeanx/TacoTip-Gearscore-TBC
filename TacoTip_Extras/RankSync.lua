@@ -780,10 +780,10 @@ local function recordIsSameRealm(record)
         return true
     end
     local okSame, verdict = pcall(sameServer, unit)
-    if not okSame or type(verdict) ~= "boolean" then
+    if not okSame or type(verdict) ~= "boolean" or Core.IsSecretValue(verdict) then
         return true
     end
-    return verdict
+    return verdict == true
 end
 
 function RankSync.QueueInspectRecord(record)

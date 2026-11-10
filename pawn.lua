@@ -81,24 +81,28 @@ local function isSecretValue(v)
     if (v == nil) then return false end
     if (type(issecretvalue) == "function") then
         local okSecret, isSec = pcall(issecretvalue, v)
-        if (okSecret and isSec) then return true end
+        if (not okSecret or isSec == true) then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
     if (type(canaccess) == "function") then
         local okAccess, canAcc = pcall(canaccess, v)
-        if (okAccess and not canAcc) then return true end
+        if (not okAccess or canAcc == false) then return true end
     end
     return false
 end
 
 local function getPlayerGUID(arg)
     if (arg and not isSecretValue(arg)) then
-        if (GUIDIsPlayer(arg)) then
+        local okGIP, isPG = pcall(GUIDIsPlayer, arg)
+        if (okGIP and isPG == true) then
             return arg
-        elseif (UnitIsPlayer(arg)) then
-            local okUG, ug = pcall(UnitGUID, arg)
-            if (okUG and ug and not isSecretValue(ug)) then
-                return ug
+        elseif (type(UnitIsPlayer) == "function") then
+            local okUIP, isPl = pcall(UnitIsPlayer, arg)
+            if (okUIP and isPl == true) then
+                local okUG, ug = pcall(UnitGUID, arg)
+                if (okUG and ug and not isSecretValue(ug)) then
+                    return ug
+                end
             end
         end
     end
@@ -116,14 +120,16 @@ function TT_PAWN:GetItemScore(itemLink, class, specIndex, scaleName)
                 if (not scaleName) then
                     scaleName = "\"MrRobot\":" .. class .. specIndex
                     local okScore, _, score = pcall(PawnGetSingleValueFromItem, item, scaleName)
-                    if (okScore and score and not isSecretValue(score) and tonumber(score)) then
-                        return tonumber(score) or 0
+                    if (okScore and score and not isSecretValue(score)) then
+                        local num = tonumber(score)
+                        if (num) then return num end
                     end
                     scaleName = "\"Classic\":" .. class .. specIndex
                 end
                 local okScore, _, score = pcall(PawnGetSingleValueFromItem, item, scaleName)
                 if (okScore and score and not isSecretValue(score)) then
-                    return tonumber(score) or 0
+                    local num = tonumber(score)
+                    if (num) then return num end
                 end
             end
         end
@@ -157,8 +163,15 @@ end
 function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
     local guid = getPlayerGUID(unitorguid)
     if (guid) then
-        local isSelf = (unitorguid == "player")
-            or (type(UnitIsUnit) == "function" and UnitIsUnit(unitorguid, "player"))
+        local isSelf = false
+        if (unitorguid == "player") then
+            isSelf = true
+        elseif (type(UnitIsUnit) == "function") then
+            local okUIU, isUnit = pcall(UnitIsUnit, unitorguid, "player")
+            if (okUIU and isUnit == true) then
+                isSelf = true
+            end
+        end
         if (not isSelf) then
             local okP, playerGUID = pcall(UnitGUID, "player")
             if (okP and playerGUID and not isSecretValue(playerGUID) and not isSecretValue(guid)) then
@@ -166,9 +179,9 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
             end
         end
         if (not isSelf) then
-            local _, invTime = CI:GetLastCacheTime(guid)
-            if (invTime == 0) then
-                return 0, "", "|cffffffff"
+            local okCT, _, invTime = pcall(CI.GetLastCacheTime, CI, guid)
+            if (not okCT or not invTime or invTime == 0) then
+                return 0, "", "|cffffffff", false
             end
         end
 
@@ -254,8 +267,8 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
             else
                 pawnColor = nil
             end
-            return pawnScore, CI:GetSpecializationName(class, spec, true), pawnColor or "|cffffffff"
+            return pawnScore, CI:GetSpecializationName(class, spec, true), pawnColor or "|cffffffff", IsReady
         end
     end
-    return 0, "", "|cffffffff"
+    return 0, "", "|cffffffff", false
 end

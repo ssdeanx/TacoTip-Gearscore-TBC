@@ -19,12 +19,12 @@ local function isSecretValue(val)
     if val == nil then return false end
     if type(issecretvalue) == "function" then
         local ok, isSec = pcall(issecretvalue, val)
-        if ok and isSec then return true end
+        if not ok or isSec == true then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
     if type(canaccess) == "function" then
         local okAccess, canAcc = pcall(canaccess, val)
-        if okAccess and not canAcc then return true end
+        if not okAccess or canAcc == false then return true end
     end
     return false
 end
@@ -700,7 +700,7 @@ local function getPlayerGUID()
         return nil
     end
     local ok, guid = pcall(unitGUID, "player")
-    if ok and type(guid) == "string" and guid ~= "" then
+    if ok and type(guid) == "string" and guid ~= "" and not isSecretValue(guid) then
         return guid
     end
     return nil

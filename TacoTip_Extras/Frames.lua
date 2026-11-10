@@ -274,6 +274,7 @@ end
 
 local function validateUnit(unit)
     if type(unit) ~= "string" or unit == ""
+        or Core.IsSecretValue(unit)
         or type(_G.UnitExists) ~= "function"
         or type(_G.UnitIsPlayer) ~= "function"
         or type(_G.UnitGUID) ~= "function" then
@@ -282,13 +283,13 @@ local function validateUnit(unit)
     local existsOK, exists = pcall(_G.UnitExists, unit)
     local playerOK, player = pcall(_G.UnitIsPlayer, unit)
     local guidOK, guid = pcall(_G.UnitGUID, unit)
-    if not existsOK or exists ~= true
-        or not playerOK or player ~= true
-        or not guidOK or not validPlayerGUID(guid) then
+    if not existsOK or Core.IsSecretValue(exists) or exists ~= true
+        or not playerOK or Core.IsSecretValue(player) or player ~= true
+        or not guidOK or Core.IsSecretValue(guid) or not validPlayerGUID(guid) then
         return nil
     end
     local confirmOK, confirmed = pcall(_G.UnitGUID, unit)
-    if not confirmOK or confirmed ~= guid then
+    if not confirmOK or Core.IsSecretValue(confirmed) or not Core.SafeEquals(confirmed, guid) then
         return nil
     end
     return guid
@@ -373,9 +374,9 @@ local function validColor(red, green, blue)
 end
 
 local function classColor(unit)
-    if type(_G.UnitClass) == "function" then
+    if type(_G.UnitClass) == "function" and not Core.IsSecretValue(unit) then
         local ok, _, classToken = pcall(_G.UnitClass, unit)
-        if ok and type(classToken) == "string" then
+        if ok and type(classToken) == "string" and not Core.IsSecretValue(classToken) then
             -- The CHAIN lives in Core (Core.GetClassColor), so this frame, the
             -- unit tooltip and the leaderboard row cannot drift apart. What
             -- stays here is this surface's own two rules: the colour must be
