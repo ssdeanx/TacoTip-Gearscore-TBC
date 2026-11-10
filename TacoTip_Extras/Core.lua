@@ -59,15 +59,15 @@ function Core.RunUntainted(fn, ...)
 end
 
 function Core.IsSecretValue(v)
-    if (v == nil) then return false end
+    if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
         local okSecret, isSec = pcall(issecretvalue, v)
-        if (okSecret and isSec) then return true end
+        if (not okSecret or isSec == true) then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
     if (type(canaccess) == "function") then
         local okAccess, canAcc = pcall(canaccess, v)
-        if (okAccess and not canAcc) then return true end
+        if (not okAccess or canAcc == false) then return true end
     end
     return false
 end

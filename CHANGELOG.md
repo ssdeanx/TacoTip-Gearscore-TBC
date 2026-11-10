@@ -50,6 +50,26 @@ All notable changes to TacoTip are documented in this file.
 - **LUA DIAGNOSTICS & TYPE SAFETY PURITY**:
   - Eliminated all Lua Language Server `cast-local-type` warnings in unit attribute reads and diagnostic inspectable status reporting.
 
+- **EXPANDED 1000×600 DASHBOARD & 48×48 LOGO**:
+  - Resized the standalone settings dashboard to `1000×600` (+80px width, +10px height) providing generous layout breathing room across all settings pages.
+  - Upgraded the dashboard brand logo from 32×32 to `48×48` and adjusted the header bar height to 54px for comfortable, polished vertical framing.
+  - Narrowed the left sidebar from 165px to 155px and trimmed sidebar category action buttons from 145px to 135px (search box to 131px), maximizing available configuration real estate.
+  - Expanded content cards, notice boxes, trophy shelves, upgrade chronicles, action bars, and embedded server leaderboard from 680px to `760px` width.
+  - Adjusted milestone trophy grid buttons to 140×52px with 8px horizontal gutters, accommodating longer achievement titles without clipping.
+
+- **PORTRAIT STABILITY & ZERO-JUMP RAPID RE-HOVER**:
+  - Streamlined portrait side determination: once a user sets a custom tooltip position (`custom_pos`), the portrait is anchored strictly on the right (or left if inverted) without checking if it would be off-screen.
+  - Unconfigured default positioning (docked to bottom-right corner) retains the off-screen check so the portrait automatically docks on the left.
+  - Avoid calling `ClearAllPoints()` when the 3D model is already anchored to the target side with valid points, preserving the camera projection viewport and completely eliminating portrait jumping when rapidly hovering and re-hovering over players or unit frames.
+
+- **INSTANCE COMBAT LOCKDOWN & DEEP SECRET-VALUE IMMUNITY**:
+  - Hardened against Blizzard's combat/instance lockdown on WoW Forever (`origin/forever`, Interface 16001 / Camelot engine) where player and item queries become restricted.
+  - Created centralized safe wrappers: `TT.safeUnitExists`, `TT.safeUnitIsPlayer`, `TT.safeUnitIsUnit`, `TT.safeUnitInParty`, `TT.safeUnitInRaid`, `TT.safeUnitGUID`, and `TT.safeEquals`.
+  - Inverted `isSecretValue` checks (`not okSecret or isSec == true`) to protect against Blizzard's `issecretvalue` global itself throwing `bad argument #1 ... AllowedWhenUntainted` when invoked from tainted execution.
+  - Fully wrapped `IsEquippableItem`, `GetItemInfo`, `GetItemInfoInstant`, `IsItemDataCached`, and `UnitDistanceSquared` with `pcall` and secret-value guards to prevent instance-combat crashes.
+  - Broadened `isForeverLootTooltip` to recognize all group roll frames (`GroupLootFrame1..4`, `BonusRollFrame`, `LootHistoryFrame`, `MasterLooterFrame`), preserving 100% native client tooltip rendering without added lines or taint.
+  - Added comprehensive API documentation reference in `docs/SECRET_VALUES_11_10_26.md`.
+
 - **ENTERPRISE SETTINGS DASHBOARD OVERHAUL (`/tt`)**:
   - Resized standalone dashboard to `920×590` (+70px width, +30px height) providing generous canvas space and clean 52px margins on standard 1024×768 displays.
   - Narrowed left navigation sidebar from 185px to 165px (action buttons trimmed from 160px to 145px, search box to 141px), expanding the main settings canvas to 725px of usable width.

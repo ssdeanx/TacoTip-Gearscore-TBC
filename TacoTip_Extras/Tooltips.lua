@@ -255,8 +255,11 @@ local function tooltipUnit(target)
     if type(tooltipUtil) == "table" and type(tooltipUtil.GetDisplayedUnit) == "function" then
         local ok, _, dispUnit, dispGUID = pcall(tooltipUtil.GetDisplayedUnit, target)
         if ok then
-            if type(dispUnit) == "string" and dispUnit ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(dispUnit) then
-                return dispUnit
+            if type(dispUnit) == "string" and dispUnit ~= "" and not Core.IsSecretValue(dispUnit) and type(_G.UnitExists) == "function" then
+                local okE, exists = pcall(_G.UnitExists, dispUnit)
+                if okE and not Core.IsSecretValue(exists) and exists == true then
+                    return dispUnit
+                end
             end
             if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function"
                 and not Core.IsSecretValue(dispGUID) then
@@ -275,12 +278,18 @@ local function tooltipUnit(target)
         if ok then
             -- In WoW API, GetUnit() returns (name, unit) on Classic and (name, unit, guid) on modern.
             -- When called via pcall(target.GetUnit, target), the return values are: ok, name, unit, guid.
-            if type(unit) == "string" and unit ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(unit) then
-                return unit
+            if type(unit) == "string" and unit ~= "" and not Core.IsSecretValue(unit) and type(_G.UnitExists) == "function" then
+                local okU, exists = pcall(_G.UnitExists, unit)
+                if okU and not Core.IsSecretValue(exists) and exists == true then
+                    return unit
+                end
             end
             -- If a mock or test returns the unit token as the single/first return value:
-            if type(name) == "string" and name ~= "" and type(_G.UnitExists) == "function" and _G.UnitExists(name) then
-                return name
+            if type(name) == "string" and name ~= "" and not Core.IsSecretValue(name) and type(_G.UnitExists) == "function" then
+                local okN, exists = pcall(_G.UnitExists, name)
+                if okN and not Core.IsSecretValue(exists) and exists == true then
+                    return name
+                end
             end
             -- If guid matches a known unit token:
             if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function"
@@ -295,10 +304,13 @@ local function tooltipUnit(target)
         end
     end
 
-    if type(target.IsUnit) == "function" and type(_G.UnitExists) == "function" and _G.UnitExists("mouseover") then
-        local ok, isMouseover = pcall(target.IsUnit, target, "mouseover")
-        if ok and isMouseover then
-            return "mouseover"
+    if type(target.IsUnit) == "function" and type(_G.UnitExists) == "function" then
+        local okE, exists = pcall(_G.UnitExists, "mouseover")
+        if okE and not Core.IsSecretValue(exists) and exists == true then
+            local ok, isMouseover = pcall(target.IsUnit, target, "mouseover")
+            if ok and not Core.IsSecretValue(isMouseover) and isMouseover == true then
+                return "mouseover"
+            end
         end
     end
 
@@ -308,6 +320,7 @@ end
 local function validatePlayerUnit(target)
     local unit = tooltipUnit(target)
     if not unit
+        or Core.IsSecretValue(unit)
         or type(_G.UnitExists) ~= "function"
         or type(_G.UnitIsPlayer) ~= "function"
         or type(_G.UnitGUID) ~= "function" then
@@ -317,9 +330,9 @@ local function validatePlayerUnit(target)
     local existsOK, exists = pcall(_G.UnitExists, unit)
     local playerOK, player = pcall(_G.UnitIsPlayer, unit)
     local guidOK, guid = pcall(_G.UnitGUID, unit)
-    if not existsOK or not exists
-        or not playerOK or not player
-        or not guidOK or not validPlayerGUID(guid) then
+    if not existsOK or Core.IsSecretValue(exists) or exists ~= true
+        or not playerOK or Core.IsSecretValue(player) or player ~= true
+        or not guidOK or Core.IsSecretValue(guid) or not validPlayerGUID(guid) then
         return nil
     end
 

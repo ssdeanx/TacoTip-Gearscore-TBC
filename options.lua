@@ -3420,7 +3420,7 @@ end
 
 local function createDashboard()
     local frame = CreateFrame("Frame", "TacoTipDashboard", UIParent)
-    frame:SetSize(920, 590)
+    frame:SetSize(1000, 600)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("DIALOG")
     frame:SetMovable(true)
@@ -3435,20 +3435,20 @@ local function createDashboard()
         tinsert(_G.UISpecialFrames, "TacoTipDashboard")
     end
 
-    -- Top Header Bar
+    -- Top Header Bar (Height 54 to fit 48x48 icon comfortably)
     local header = CreateFrame("Frame", nil, frame)
     header:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
     header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
-    header:SetHeight(44)
+    header:SetHeight(54)
     paintFlatBox(header, DASH_THEME.headerBg)
 
     local logo = header:CreateTexture(nil, "ARTWORK")
-    logo:SetSize(32, 32)
-    logo:SetPoint("LEFT", header, "LEFT", 12, 0)
+    logo:SetSize(48, 48)
+    logo:SetPoint("LEFT", header, "LEFT", 10, 0)
     logo:SetTexture(LOGO_TEXTURE_PATH)
 
     local title = header:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("LEFT", logo, "RIGHT", 10, 0)
+    title:SetPoint("LEFT", logo, "RIGHT", 12, 0)
     title:SetText("|cffffffffTACO|cffffb81cT|cff7be046I|cff2ecc71P|r  |cffb4e634" ..
         addOnVersion .. "|r · |cff9ba3ae" .. getClientFamilyDisplayLabel() .. "|r")
 
@@ -3456,11 +3456,11 @@ local function createDashboard()
         "Close", "Close the dashboard (ESC also works).")
     close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
 
-    -- Left Sidebar (Narrower: 165px wide)
+    -- Left Sidebar (Narrower: 155px wide, compact tab buttons)
     local sidebar = CreateFrame("Frame", nil, frame)
     sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
     sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 31)
-    sidebar:SetWidth(165)
+    sidebar:SetWidth(155)
     paintFlatBox(sidebar, DASH_THEME.sidebarBg)
 
     -- Right Content Area (Extends down to bottom near sleek footer)
@@ -3491,9 +3491,9 @@ local function createDashboard()
     end, "Reset Configuration", "Restore every TacoTip setting to its default.")
     resetCard:SetPoint("RIGHT", moveCard, "LEFT", -8, 0)
 
-    -- Sidebar Search Box (Matching narrower sidebar)
+    -- Sidebar Search Box (Matching narrower 155px sidebar)
     local searchBox = CreateFrame("EditBox", "TacoTipDashboardSearch", sidebar, "InputBoxTemplate")
-    searchBox:SetSize(141, 22)
+    searchBox:SetSize(131, 22)
     searchBox:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 12, -10)
     searchBox:SetAutoFocus(false)
     searchBox:SetFontObject("GameFontHighlightSmall")
@@ -3505,7 +3505,7 @@ local function createDashboard()
     -- Helper: Pill Toggle Switch Card
     local function createPillToggle(parent, titleText, descText, initialVal, onToggle)
         local card = CreateFrame("Frame", nil, parent)
-        card:SetSize(680, 42)
+        card:SetSize(760, 42)
         card:EnableMouse(true)
         paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
 
@@ -3599,7 +3599,7 @@ local function createDashboard()
     -- Helper: Slider Card
     local function createDashboardSlider(parent, titleText, descText, minVal, maxVal, step, initialVal, onValueChange, formatVal)
         local card = CreateFrame("Frame", nil, parent)
-        card:SetSize(680, 48)
+        card:SetSize(760, 48)
         paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
 
         local t = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -3653,7 +3653,7 @@ local function createDashboard()
     -- Helper: Callout Notice Box
     local function createNoticeBox(parent, iconLabel, noticeText, isEmerald, customHeight)
         local box = CreateFrame("Frame", nil, parent)
-        box:SetSize(680, customHeight or 34)
+        box:SetSize(760, customHeight or 34)
         local borderCol = isEmerald and DASH_THEME.borderEmerald or DASH_THEME.borderGold
         local bgCol = isEmerald and { 0.08, 0.22, 0.14, 0.95 } or { 0.22, 0.17, 0.06, 0.95 }
         paintFlatBox(box, bgCol, borderCol)
@@ -3729,7 +3729,7 @@ local function createDashboard()
         else
             yPos = -38 - (order - 1) * 32
         end
-        local btn = createFlatActionCard(sidebar, 145, 28, label, "plain", function() selectTab(id) end)
+        local btn = createFlatActionCard(sidebar, 135, 28, label, "plain", function() selectTab(id) end)
         btn:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 10, yPos)
         tabButtons[id] = btn
         return page
@@ -3738,7 +3738,7 @@ local function createDashboard()
     -- Subtle sidebar divider line between category tabs and utility tabs
     local sideDiv = sidebar:CreateTexture(nil, "BORDER")
     sideDiv:SetTexture(WHITE8X8)
-    sideDiv:SetSize(143, 1)
+    sideDiv:SetSize(133, 1)
     sideDiv:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 11, hasExtras and -300 or -268)
     sideDiv:SetVertexColor(0.24, 0.28, 0.34, 0.8)
 
@@ -3748,7 +3748,7 @@ local function createDashboard()
         ph:SetPoint("TOPLEFT", page, "TOPLEFT", 4, 0)
         ph:SetText("|cffffd100" .. titleText .. "|r")
 
-        local pd = createWrappedText(page, "GameFontHighlightSmall", 680, descText)
+        local pd = createWrappedText(page, "GameFontHighlightSmall", 760, descText)
         pd:SetPoint("TOPLEFT", ph, "BOTTOMLEFT", 0, -4)
 
         local scroll, scrollChild = createScrollPage(page)
@@ -4274,7 +4274,7 @@ local function createDashboard()
 
     -- Hero Progression Card
     local heroCard = CreateFrame("Frame", nil, progChild)
-    heroCard:SetSize(680, 96)
+    heroCard:SetSize(760, 96)
     paintFlatBox(heroCard, DASH_THEME.cardBg, DASH_THEME.borderGold)
     heroCard.searchText = "progression level rank gearscore xp trophies chronicle mini game"
 
@@ -4302,7 +4302,7 @@ local function createDashboard()
 
     local xpBarBg = CreateFrame("Frame", nil, heroCard)
     xpBarBg:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 10)
-    xpBarBg:SetSize(656, 18)
+    xpBarBg:SetSize(736, 18)
     paintFlatBox(xpBarBg, { 0.08, 0.09, 0.11, 0.95 }, DASH_THEME.borderSubtle)
 
     local xpBarFill = xpBarBg:CreateTexture(nil, "ARTWORK")
@@ -4322,7 +4322,7 @@ local function createDashboard()
     progy = addSectionHeader(progChild, "Milestone Trophies & Achievements", progy)
 
     local trophyCard = CreateFrame("Frame", nil, progChild)
-    trophyCard:SetSize(680, 126)
+    trophyCard:SetSize(760, 126)
     paintFlatBox(trophyCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
     trophyCard.searchText = "trophies achievements milestones rewards badges"
 
@@ -4332,11 +4332,11 @@ local function createDashboard()
     for i, def in ipairs(trophyDefs) do
         local col = ((i - 1) % 5)
         local row = math.floor((i - 1) / 5)
-        local x = 10 + col * (126 + 8)
+        local x = 14 + col * (140 + 8)
         local y = -8 - row * (52 + 6)
 
         local tBtn = CreateFrame("Frame", nil, trophyCard)
-        tBtn:SetSize(126, 52)
+        tBtn:SetSize(140, 52)
         tBtn:SetPoint("TOPLEFT", trophyCard, "TOPLEFT", x, y)
         paintFlatBox(tBtn, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
         tBtn:EnableMouse(true)
@@ -4405,7 +4405,7 @@ local function createDashboard()
     progy = addSectionHeader(progChild, "Equipment Upgrade Chronicle", progy)
 
     local chronicleContainer = CreateFrame("Frame", nil, progChild)
-    chronicleContainer:SetSize(680, 260)
+    chronicleContainer:SetSize(760, 260)
     paintFlatBox(chronicleContainer, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
     chronicleContainer.searchText = "chronicle upgrade history equipment gear log items"
 
@@ -4433,7 +4433,7 @@ local function createDashboard()
 
     -- Column Header Bar
     local colBar = CreateFrame("Frame", nil, chronicleContainer)
-    colBar:SetSize(660, 20)
+    colBar:SetSize(740, 20)
     colBar:SetPoint("TOPLEFT", chronicleContainer, "TOPLEFT", 10, -36)
     paintFlatBox(colBar, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
 
@@ -4457,7 +4457,7 @@ local function createDashboard()
     local chronicleRows = {}
     for r = 1, visibleChronicleRows do
         local row = CreateFrame("Button", nil, chronicleContainer)
-        row:SetSize(640, 26)
+        row:SetSize(720, 26)
         row:SetPoint("TOPLEFT", chronicleContainer, "TOPLEFT", 10, -58 - (r - 1) * 28)
 
         local rbg = row:CreateTexture(nil, "BACKGROUND")
@@ -4593,13 +4593,13 @@ local function createDashboard()
 
     -- Action bar with 3 buttons
     local progActionCard = CreateFrame("Frame", nil, progChild)
-    progActionCard:SetSize(680, 48)
+    progActionCard:SetSize(760, 48)
     paintFlatBox(progActionCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
     progActionCard.searchText = "snapshot export reset clear progression gear history"
 
     local snapBtn = createFlatActionCard(progActionCard, 150, 26, "Snapshot Current Gear", "emerald", function()
         if (TT and TT.EvaluatePlayerEquipment) then
-            TT:EvaluatePlayerEquipment(false)
+            TT:EvaluatePlayerEquipment(false, true)
             if (frame.RefreshProgression) then frame:RefreshProgression() end
             local rec = TT.GetPlayerProgression and TT:GetPlayerProgression()
             local count = rec and rec.history and #rec.history or 0
@@ -4803,7 +4803,7 @@ local function createDashboard()
         -- Embedded Leaderboard Surface
         -- ====================================================================
         local lbContainer = CreateFrame("Frame", nil, extrasChild)
-        lbContainer:SetSize(680, 365)
+        lbContainer:SetSize(760, 365)
         paintFlatBox(lbContainer, DASH_THEME.cardBg, DASH_THEME.borderGold)
         lbContainer.searchText = "server leaderboard rankings gearscore ranks ex"
 
@@ -4842,7 +4842,7 @@ local function createDashboard()
         -- Column Header Bar (y = -38, height 22)
         local tableHeader = CreateFrame("Frame", nil, lbContainer)
         tableHeader:SetPoint("TOPLEFT", lbContainer, "TOPLEFT", 10, -38)
-        tableHeader:SetSize(660, 22)
+        tableHeader:SetSize(740, 22)
         paintFlatBox(tableHeader, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
 
         local colRank = tableHeader:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -4877,7 +4877,7 @@ local function createDashboard()
         local rows = {}
         for r = 1, visibleRowsCount do
             local row = CreateFrame("Button", nil, lbContainer)
-            row:SetSize(640, 24)
+            row:SetSize(720, 24)
             row:SetPoint("TOPLEFT", lbContainer, "TOPLEFT", 10, -62 - (r - 1) * 25)
 
             local rbg = row:CreateTexture(nil, "BACKGROUND")
@@ -5210,7 +5210,7 @@ local function createDashboard()
 
         -- Action Card: Sync Now
         local syncCard = CreateFrame("Frame", nil, extrasChild)
-        syncCard:SetSize(680, 56)
+        syncCard:SetSize(760, 56)
         paintFlatBox(syncCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
         syncCard.searchText = "sync now database peer p2p ttgssync broadcast"
 
@@ -5249,7 +5249,7 @@ local function createDashboard()
 
         -- Action Card: Open Extras Settings
         local optCard = CreateFrame("Frame", nil, extrasChild)
-        optCard:SetSize(680, 52)
+        optCard:SetSize(760, 52)
         paintFlatBox(optCard, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
         optCard.searchText = "extras settings options configuration ex tte"
 

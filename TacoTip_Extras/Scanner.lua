@@ -235,9 +235,14 @@ end
 local function capturePlayerIdentity()
     if type(UnitExists) ~= "function"
         or type(UnitIsPlayer) ~= "function"
-        or type(UnitGUID) ~= "function"
-        or not UnitExists("player")
-        or not UnitIsPlayer("player") then
+        or type(UnitGUID) ~= "function" then
+        return nil, "player-validation-failed"
+    end
+
+    local okE, exists = pcall(UnitExists, "player")
+    local okP, isP = pcall(UnitIsPlayer, "player")
+    if not okE or Core.IsSecretValue(exists) or exists ~= true
+        or not okP or Core.IsSecretValue(isP) or isP ~= true then
         return nil, "player-validation-failed"
     end
 
@@ -1178,9 +1183,9 @@ local function unitMatchesRemoteGUID(unit, guid)
     local existsOK, exists = pcall(UnitExists, unit)
     local playerOK, isPlayer = pcall(UnitIsPlayer, unit)
     local guidOK, unitGUID = pcall(UnitGUID, unit)
-    if not existsOK or not exists
-        or not playerOK or not isPlayer
-        or not guidOK or not Core.SafeEquals(unitGUID, guid) then
+    if not existsOK or Core.IsSecretValue(exists) or exists ~= true
+        or not playerOK or Core.IsSecretValue(isPlayer) or isPlayer ~= true
+        or not guidOK or Core.IsSecretValue(unitGUID) or not Core.SafeEquals(unitGUID, guid) then
         return false
     end
 
