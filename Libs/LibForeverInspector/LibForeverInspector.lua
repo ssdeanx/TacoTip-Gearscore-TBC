@@ -3457,16 +3457,23 @@ local function readForeverConfig(configID)
     if (not ok or type(info) ~= "table") then return nil end
     local treeIDs = info.treeIDs
     local treeID = type(treeIDs) == "table" and treeIDs[1] or nil
-    if (type(treeID) ~= "number") then return nil end
+    if (type(treeID) ~= "number" or isSecretValue(treeID)) then return nil end
 
     local dOk, displayInfos = pcall(C_Traits.GetGroupDisplayInfoByTreeID, treeID)
     if (not dOk or type(displayInfos) ~= "table") then return nil end
 
     local ordered = {}
-    for i = 1, #displayInfos do ordered[i] = displayInfos[i] end
+    for i = 1, #displayInfos do
+        local d = displayInfos[i]
+        if (type(d) == "table" and not isSecretValue(d.groupID) and not isSecretValue(d.displayName) and not isSecretValue(d.icon)) then
+            ordered[#ordered + 1] = d
+        end
+    end
     -- orderIndex is the order the client draws the trees in.
     table.sort(ordered, function(a, b)
-        return (type(a) == "table" and a.orderIndex or 0) < (type(b) == "table" and b.orderIndex or 0)
+        local oiA = (type(a) == "table" and not isSecretValue(a.orderIndex)) and (a.orderIndex or 0) or 0
+        local oiB = (type(b) == "table" and not isSecretValue(b.orderIndex)) and (b.orderIndex or 0) or 0
+        return oiA < oiB
     end)
 
     local groupIDs, trees = {}, {}
@@ -3487,9 +3494,13 @@ local function readForeverConfig(configID)
     if (not cOk or type(groupInfos) ~= "table") then return nil end
     local spentByGroup = {}
     for _, gi in ipairs(groupInfos) do
-        if (type(gi) == "table" and type(gi.traitNodeGroupID) == "number") then
+        if (type(gi) == "table" and type(gi.traitNodeGroupID) == "number" and not isSecretValue(gi.traitNodeGroupID)) then
             local ci = gi.currencyInfos and gi.currencyInfos[1]
-            local spent = ci and (tonumber(ci.spent) or tonumber(ci.spentInTree)) or 0
+            local rawSpent = ci and (ci.spent or ci.spentInTree)
+            local spent = 0
+            if (rawSpent and not isSecretValue(rawSpent)) then
+                spent = tonumber(rawSpent) or 0
+            end
             spentByGroup[gi.traitNodeGroupID] = spent
         end
     end
@@ -4798,6 +4809,7 @@ end
 -- only defensively, in case a future build exposes it; do not reason about
 -- behaviour as though this path can execute today.
 local function inspectDistance(unit)
+    if (not unit or isSecretValue(unit)) then return nil end
     -- Every comparison happens INSIDE the pcall. The docs mark UnitDistanceSquared
     -- as SecretArguments-only on forever/live (returns are plain numbers), but a
     -- protected return is exactly the sort of thing that differs by build, and
@@ -4806,6 +4818,7 @@ local function inspectDistance(unit)
     if (type(_G.UnitDistanceSquared) == "function") then
         local ok, yards = pcall(function()
             local dist, checked = _G.UnitDistanceSquared(unit)
+            if (isSecretValue(dist) or isSecretValue(checked)) then return nil end
             if (type(dist) ~= "number" or dist < 0) then return nil end
             if (checked ~= nil and checked ~= true) then return nil end
             return math.sqrt(dist)
@@ -4815,6 +4828,7 @@ local function inspectDistance(unit)
     if (type(_G.UnitDistance) == "function") then
         local ok, yards = pcall(function()
             local d = _G.UnitDistance(unit)
+            if (isSecretValue(d)) then return nil end
             if (type(d) ~= "number" or d < 0) then return nil end
             return d
         end)
@@ -4827,9 +4841,11 @@ end
 -- limit is stored squared: comparing squares is exact, while sqrt-then-compare
 -- rounds and can accept a distance the client just refused.
 local function inspectDistanceSquared(unit)
+    if (not unit or isSecretValue(unit)) then return nil end
     if (type(_G.UnitDistanceSquared) == "function") then
         local ok, dist = pcall(function()
             local d, checked = _G.UnitDistanceSquared(unit)
+            if (isSecretValue(d) or isSecretValue(checked)) then return nil end
             if (type(d) ~= "number" or d < 0) then return nil end
             if (checked ~= nil and checked ~= true) then return nil end
             return d
@@ -5487,6 +5503,7 @@ pcall(installInspectErrorSuppressor)
 -- time, but a client that created it later would otherwise leave the guard off for
 -- the session with nothing to say so.
 probeCanInspect = function(unit)
+    if (not unit or isSecretValue(unit)) then return false, false end
     if (not lib.inspectSuppressorInstalled) then
         pcall(installInspectErrorSuppressor)
     end
@@ -5500,10 +5517,13 @@ probeCanInspect = function(unit)
     probeDepth = probeDepth - 1
     probeUnit = prevUnit
     armGuardWindow(unit)
+    if (not ok) then return false, false end
+    if (isSecretValue(allowed)) then return true, true end
     return ok, allowed
 end
 
 probeInteractDistance = function(unit)
+    if (not unit or isSecretValue(unit)) then return nil end
     if (not lib.inspectSuppressorInstalled) then
         pcall(installInspectErrorSuppressor)
     end
@@ -5518,10 +5538,12 @@ probeInteractDistance = function(unit)
     probeUnit = prevUnit
     armGuardWindow(unit)
     if (not ok) then return nil end
+    if (isSecretValue(allowed)) then return true end
     return allowed
 end
 
 requestNotifyInspect = function(unit)
+    if (not unit or isSecretValue(unit)) then return false, nil end
     if (not lib.inspectSuppressorInstalled) then
         pcall(installInspectErrorSuppressor)
     end

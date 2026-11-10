@@ -1714,6 +1714,12 @@ local function createPanel()
             end
         end
     )
+    local core = namespace.Core
+    if core and type(core.IsClassicEraClient) == "function" and not core.IsClassicEraClient() then
+        if controls.ShamanBlue then
+            controls.ShamanBlue:Hide()
+        end
+    end
 
     -- Top-right of the page, on the title row.
     --

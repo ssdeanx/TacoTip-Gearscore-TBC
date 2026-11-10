@@ -672,6 +672,9 @@ local function getClassIconMarkup(class)
     if (not class or not GetClassAtlas) then
         return ""
     end
+    if (type(issecretvalue) == "function" and issecretvalue(class)) then
+        return ""
+    end
     local size = (TacoTipConfig and TacoTipConfig.class_icon_size) or 20
     local sizeCache = classIconMarkupCache[size]
     if (not sizeCache) then
@@ -682,11 +685,13 @@ local function getClassIconMarkup(class)
     if (cached ~= nil) then
         return cached
     end
-    local atlas = GetClassAtlas(class)
-    if (atlas and atlas ~= "") then
-        local markup = string.format("|A:%s:%d:%d|a", atlas, size, size)
-        sizeCache[class] = markup
-        return markup
+    local okAtlas, atlas = pcall(GetClassAtlas, class)
+    if (okAtlas and atlas and not (type(issecretvalue) == "function" and issecretvalue(atlas))) then
+        if (atlas ~= "") then
+            local markup = string.format("|A:%s:%d:%d|a", atlas, size, size)
+            sizeCache[class] = markup
+            return markup
+        end
     end
     sizeCache[class] = ""
     return ""
@@ -705,7 +710,7 @@ local function getClassColor(class, optClass)
     if (type(class) == "table" and optClass) then
         class = optClass
     end
-    if (not class) then
+    if (not class or isSecretValue(class)) then
         return nil
     end
     if (class == "SHAMAN" and (not TacoTipConfig or TacoTipConfig.shaman_blue ~= false)) then
@@ -805,13 +810,14 @@ local function getHostileDifficultyColor(unit)
     end
 
     local playerLvl = (type(UnitLevel) == "function" and UnitLevel("player")) or 1
+    if (isSecretValue(playerLvl)) then playerLvl = 1 end
     if (playerLvl ~= lastPlayerLevel) then
         questDifficultyColorCache = {}
         lastPlayerLevel = playerLvl
     end
 
     local level = UnitLevel(unit)
-    local targetLevel = (level and level > 0) and level or (playerLvl + 10)
+    local targetLevel = (level and not isSecretValue(level) and level > 0) and level or (playerLvl + 10)
     local cachedColor = questDifficultyColorCache[targetLevel]
     if (cachedColor == nil) then
         cachedColor = GetQuestDifficultyColor(targetLevel) or false
@@ -831,7 +837,7 @@ local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
     end
 
     local level = UnitLevel(unit)
-    local levelToken = (level and level > 0) and tostring(level) or "??"
+    local levelToken = (level and not isSecretValue(level) and level > 0) and tostring(level) or "??"
     local coloredLevel = colorizeText(levelToken, color.r, color.g, color.b)
 
     if (tooltip and lineIndex) then
@@ -839,7 +845,7 @@ local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
         tooltip.TacoTipLevelColorLineText = coloredLevel
     end
 
-    if (level and level > 0) then
+    if (level and not isSecretValue(level) and level > 0) then
         return string.gsub(textLine, levelToken, coloredLevel, 1)
     end
 
@@ -895,7 +901,7 @@ local function getOrCreateSpecIconFrame(tooltip)
 end
 
 local function applySpecializationIcon(tooltip, icon)
-    if (not icon) then
+    if (not icon or (type(issecretvalue) == "function" and issecretvalue(icon))) then
         -- Do not create the frame just to hide it: the Classic family never uses
         -- the overlay, and creating it there would be a behaviour change.
         if (tooltip and tooltip.TacoTipSpecIcon) then
@@ -973,42 +979,33 @@ end
 -- localized, so they take priority over the library's built-in English
 -- spec_table; on the Classic family they are nil and the table is used.
 local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon, forcePoints)
+    local isSec = (type(issecretvalue) == "function")
     local specName
-    if (engineName and engineName ~= "") then
-        specName = engineName
-    elseif (class and specIndex) then
-        -- Specialization name resolution.
-        --
-        -- The old code consulted _G.TACOTIP_SPEC_NAMES here "because it follows
-        -- the saved addon-language override" -- but nothing ever wrote that
-        -- global, so the lookup was always nil and every spec name silently
-        -- fell through to the library's built-in table. The dead branch and the
-        -- comment describing it are removed; GetSpecializationName is now the
-        -- single source and already checks its own table.
+    if (engineName and not (isSec and issecretvalue(engineName))) then
+        if (engineName ~= "") then
+            specName = engineName
+        end
+    end
+    if (not specName and class and not (isSec and issecretvalue(class)) and specIndex and not (isSec and issecretvalue(specIndex))) then
         specName = CI:GetSpecializationName(class, specIndex, true)
     end
-    if (not specName) then
+    if (not specName or (isSec and issecretvalue(specName))) then
         return nil
     end
 
-    -- Icon source. The Classic lookup returns a numeric fileID (the static
-    -- talent table's `texture` field), and the working addon inlines it with
-    -- tostring() because a |T escape accepts a fileID as well as a texture
-    -- path. Requiring type() == "string" here silently dropped every fileID,
-    -- which is why no specialization icon rendered.
     local iconTexture = engineIcon
-    if (not iconTexture) then
-        iconTexture = getSpecializationIcon(class, specIndex)
+    if (not iconTexture or (isSec and issecretvalue(iconTexture))) then
+        if (class and specIndex and not (isSec and issecretvalue(class)) and not (isSec and issecretvalue(specIndex))) then
+            iconTexture = getSpecializationIcon(class, specIndex)
+        else
+            iconTexture = nil
+        end
     end
     local iconText = ""
-    if (iconTexture) then
+    if (iconTexture and not (isSec and issecretvalue(iconTexture))) then
         iconText = string.format("|T%s:14:14:0:0:64:64:4:60:4:60|t ", tostring(iconTexture))
     end
-    local classColor = getClassColor(class)
-    -- Inactive dual-spec run: spec name is greyed out using lowest GearScore
-    -- quality color (0.50, 0.50, 0.50 / GRAY_FONT_COLOR), while the active
-    -- spec uses class color. The color code is applied strictly to specName
-    -- so talent numbers [p1/p2/p3] remain clean white for both specs.
+    local classColor = (class and not (isSec and issecretvalue(class))) and getClassColor(class) or nil
     local coloredName
     if (dim) then
         coloredName = colorizeText(specName, 0.50, 0.50, 0.50)
@@ -1016,8 +1013,16 @@ local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engin
         coloredName = classColor and colorizeText(specName, classColor.r, classColor.g, classColor.b) or specName
     end
     local isClassicFamily = CI and CI.IsClassic and (CI:IsClassic() or CI:IsTBC() or CI:IsWotlk())
-    if (p1 and p2 and p3 and (p1 > 0 or p2 > 0 or p3 > 0 or isClassicFamily or forcePoints)) then
-        return string.format("%s%s [%d/%d/%d]", iconText, coloredName, p1 or 0, p2 or 0, p3 or 0)
+    local hasPoints = false
+    if (p1 and p2 and p3 and not (isSec and (issecretvalue(p1) or issecretvalue(p2) or issecretvalue(p3)))) then
+        if (type(p1) == "number" and type(p2) == "number" and type(p3) == "number") then
+            if (p1 > 0 or p2 > 0 or p3 > 0 or isClassicFamily or forcePoints) then
+                hasPoints = true
+            end
+        end
+    end
+    if (hasPoints) then
+        return string.format("%s%s [%d/%d/%d]", iconText, coloredName, p1, p2, p3)
     else
         return string.format("%s%s", iconText, coloredName)
     end
@@ -2498,6 +2503,9 @@ local function onTooltipSetUnit(tooltip, data)
         end
     end
     name = name or (tooltipUnit and UnitName(tooltipUnit))
+    if (isSecretValue(name)) then
+        name = nil
+    end
     if (not tooltipUnit) then
         local cause = "unresolved-unit"
         if (not tooltip) then
@@ -2672,6 +2680,9 @@ local function onTooltipSetUnit(tooltip, data)
     if (TacoTipConfig.show_target and UnitIsConnected(tooltipUnit) and not UnitIsUnit(tooltipUnit, "player")) then
         local unitTarget = tooltipUnit .. "target"
         local targetName = UnitName(unitTarget)
+        if (isSecretValue(targetName)) then
+            targetName = _G.UNKNOWN or "Unknown"
+        end
 
         if (targetName) then
             if (UnitIsUnit(unitTarget, tooltipUnit)) then
@@ -2763,6 +2774,10 @@ local function onTooltipSetUnit(tooltip, data)
         local localizedClass, class = UnitClass(tooltipUnit)
         local localizedRace = UnitRace(tooltipUnit)
         local level = UnitLevel(tooltipUnit)
+        if (isSecretValue(localizedClass)) then localizedClass = nil end
+        if (isSecretValue(class)) then class = nil end
+        if (isSecretValue(localizedRace)) then localizedRace = nil end
+        if (isSecretValue(level)) then level = nil end
 
         if (not TacoTipConfig.show_titles and name and string.find(text[1], name, 1, true)) then
             text[1] = name
@@ -2778,6 +2793,8 @@ local function onTooltipSetUnit(tooltip, data)
         if (GetGuildInfo) then
             guildName, guildRankName = GetGuildInfo(tooltipUnit)
         end
+        if (isSecretValue(guildName)) then guildName = nil end
+        if (isSecretValue(guildRankName)) then guildRankName = nil end
         if (not guildName) then
             for i = 2, #text do
                 if (text[i]) then
@@ -2793,7 +2810,7 @@ local function onTooltipSetUnit(tooltip, data)
             end
         end
 
-        local levelStr = (level and level > 0) and tostring(level) or "??"
+        local levelStr = (level and not isSecretValue(level) and level > 0) and tostring(level) or "??"
         local diffColor = getHostileDifficultyColor(tooltipUnit)
         if (diffColor) then
             levelStr = colorizeText(levelStr, diffColor.r, diffColor.g, diffColor.b)
@@ -2897,17 +2914,19 @@ local function onTooltipSetUnit(tooltip, data)
                 end
             end
         end
-        if (TacoTipConfig.show_team) then
-            local faction = UnitFactionGroup(tooltipUnit)
-            if (faction == "Horde") then
-                nameLineIcons = nameLineIcons .. HORDE_ICON_SPACED
-            elseif (faction == "Alliance") then
-                nameLineIcons = nameLineIcons .. ALLIANCE_ICON_SPACED
+        if (TacoTipConfig.show_team and type(UnitFactionGroup) == "function") then
+            local okFact, faction = pcall(UnitFactionGroup, tooltipUnit)
+            if (okFact and faction and not (type(issecretvalue) == "function" and issecretvalue(faction))) then
+                if (faction == "Horde") then
+                    nameLineIcons = nameLineIcons .. HORDE_ICON_SPACED
+                elseif (faction == "Alliance") then
+                    nameLineIcons = nameLineIcons .. ALLIANCE_ICON_SPACED
+                end
             end
         end
         if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
-            local _, classFile = UnitClass(tooltipUnit)
-            if (classFile) then
+            local okClass, _, classFile = pcall(UnitClass, tooltipUnit)
+            if (okClass and classFile and not (type(issecretvalue) == "function" and issecretvalue(classFile))) then
                 local iconMarkup = getClassIconMarkup(classFile)
                 if (iconMarkup and iconMarkup ~= "") then
                     nameLineIcons = nameLineIcons .. " " .. iconMarkup
@@ -2915,10 +2934,12 @@ local function onTooltipSetUnit(tooltip, data)
             end
         end
         if (TacoTipConfig.show_role_icon and UnitIsPlayer(tooltipUnit) and type(IsInGroup) == "function" and IsInGroup()) then
-            local role = UnitGroupRolesAssigned(tooltipUnit)
-            if (role and role ~= "NONE") then
-                local roleIcon = ROLE_ICONS[role] or ROLE_ICONS.DPS
-                nameLineIcons = nameLineIcons .. roleIcon
+            local okRole, role = pcall(UnitGroupRolesAssigned, tooltipUnit)
+            if (okRole and role and not (type(issecretvalue) == "function" and issecretvalue(role))) then
+                if (role ~= "NONE") then
+                    local roleIcon = ROLE_ICONS[role] or ROLE_ICONS.DPS
+                    nameLineIcons = nameLineIcons .. roleIcon
+                end
             end
         end
         if (nameLineIcons ~= "") then
@@ -4841,17 +4862,19 @@ local function collectActiveUnitSection()
     local fnUnitClass = _G.UnitClass or UnitClass
     local fnUnitRace = _G.UnitRace or UnitRace
     local name = (type(fnUnitName) == "function" and fnUnitName(activeUnit)) or "?"
+    if (isSecretValue(name)) then name = "<secret>" end
     local guid = (type(fnUnitGUID) == "function" and fnUnitGUID(activeUnit)) or "?"
-    if (isSecretValue(guid)) then
-        guid = "<secret>"
-    end
+    if (isSecretValue(guid)) then guid = "<secret>" end
     local isPlayer = false
     if (type(fnUnitIsPlayer) == "function" and fnUnitIsPlayer(activeUnit)) then
         isPlayer = true
     end
     local level = (type(fnUnitLevel) == "function" and fnUnitLevel(activeUnit)) or "?"
+    if (isSecretValue(level)) then level = "<secret>" end
     local class = (type(fnUnitClass) == "function" and fnUnitClass(activeUnit)) or "?"
+    if (isSecretValue(class)) then class = "<secret>" end
     local race = (type(fnUnitRace) == "function" and fnUnitRace(activeUnit)) or ""
+    if (isSecretValue(race)) then race = "<secret>" end
     diagRow(s, "unit", string.format("%s (%slevel %s, %s%s)",
         name,
         isPlayer and "Player, " or "NPC, ",
@@ -4865,6 +4888,7 @@ local function collectActiveUnitSection()
         local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
         local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
         local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
+        if (isSecretValue(canInspect)) then canInspect = "<secret>" end
         -- CheckInteractDistance is protected on the mainline clients. Calling it
         -- from the tainted slash-command diagnostics path raises
         -- ADDON_ACTION_BLOCKED ('UNKNOWN()'); report it as not applicable there
@@ -4874,17 +4898,24 @@ local function collectActiveUnitSection()
             interactDist = tostring(fnCheckInteractDistance(activeUnit, 1))
         end
         local isVisible = (type(_G.UnitIsVisible) == "function") and _G.UnitIsVisible(activeUnit) or false
+        if (isSecretValue(isVisible)) then isVisible = "<secret>" end
         local isConnected = (type(fnUnitIsConnected) == "function") and fnUnitIsConnected(activeUnit) or false
+        if (isSecretValue(isConnected)) then isConnected = "<secret>" end
         local canAttack = (type(fnUnitCanAttack) == "function") and fnUnitCanAttack("player", activeUnit) or false
+        if (isSecretValue(canAttack)) then canAttack = "<secret>" end
         diagRow(s, "inspectable",
             string.format("CanInspect=%s | InteractDist(1)=%s | Visible=%s | Connected=%s | Hostile=%s",
                 tostring(canInspect), tostring(interactDist), tostring(isVisible), tostring(isConnected),
                 tostring(canAttack)), "info")
         local distStr = nil
         if (type(_G.UnitDistanceSquared) == "function") then
-            local d2, chk = _G.UnitDistanceSquared(activeUnit)
-            if (chk and d2) then
-                distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
+            local okDist, d2, chk = pcall(_G.UnitDistanceSquared, activeUnit)
+            if (okDist and d2 ~= nil) then
+                if (type(issecretvalue) == "function" and (issecretvalue(d2) or issecretvalue(chk))) then
+                    distStr = "protected (secret in combat)"
+                elseif (chk and type(d2) == "number" and d2 >= 0) then
+                    distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
+                end
             end
         end
         diagRow(s, "distance", distStr or "unknown", "info")

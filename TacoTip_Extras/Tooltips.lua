@@ -462,7 +462,7 @@ end
 local function playerClassColor(unit)
     if type(_G.UnitClass) == "function" then
         local ok, _, classToken = pcall(_G.UnitClass, unit)
-        if ok and type(classToken) == "string" then
+        if ok and type(classToken) == "string" and not (type(issecretvalue) == "function" and issecretvalue(classToken)) then
             -- The CHAIN lives in Core (Core.GetClassColor), so the tooltip,
             -- the character/inspect frame and the leaderboard row cannot drift
             -- apart. What stays here is this surface's own two rules: the
@@ -759,7 +759,7 @@ local function getRankRow(guid, unit, mode)
         local uGUID = rawget(g, "UnitGUID")
         if type(uGUID) == "function" then
             local ok, id = pcall(uGUID, unit)
-            if ok and type(id) == "string" then
+            if ok and type(id) == "string" and not (type(issecretvalue) == "function" and issecretvalue(id)) then
                 targetGUID = id
             end
         end
@@ -780,10 +780,12 @@ local function getRankRow(guid, unit, mode)
     if type(uClass) == "function" and unit then
         local ok, locClass, token = pcall(uClass, unit)
         if ok then
-            if type(locClass) == "string" and locClass ~= "" then
-                className = locClass
+            if type(locClass) == "string" and not (type(issecretvalue) == "function" and issecretvalue(locClass)) then
+                if locClass ~= "" then
+                    className = locClass
+                end
             end
-            if type(token) == "string" then
+            if type(token) == "string" and not (type(issecretvalue) == "function" and issecretvalue(token)) then
                 classFile = token
             end
         end
@@ -822,9 +824,13 @@ local function getRankRow(guid, unit, mode)
         if mode == "Compact" then
             local getAtlas = rawget(g, "GetClassAtlas")
             if type(getAtlas) == "function"
-                and type(classFile) == "string" and classFile ~= "" then
+                and type(classFile) == "string"
+                and not (type(issecretvalue) == "function" and issecretvalue(classFile))
+                and classFile ~= "" then
                 local ok, atlas = pcall(getAtlas, classFile)
-                if ok and type(atlas) == "string" and atlas ~= "" then
+                if ok and type(atlas) == "string"
+                    and not (type(issecretvalue) == "function" and issecretvalue(atlas))
+                    and atlas ~= "" then
                     classDisplay = "|A:" .. atlas .. ":14:14|a"
                     classColored = false
                 end

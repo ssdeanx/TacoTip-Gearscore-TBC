@@ -61,7 +61,8 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 - Interactive Leaderboard window (`/ex ranks`, also `/ex lb`, `/ex rank`, `/ex leaderboard`) covering the **whole realm**, opening centred on your own rank, with class and guild filtering, live search, a sortable level column, `▲ Top` / `▼ My Rank` navigation, keyboard navigation, a Comfortable-rows density option, and personal rank standing.
 - Active **Sync Now** control on both the leaderboard header and the Options page, enabling immediate peer-to-peer record exchange across Group, Guild, and the private background channel with rate-limited token bucket protection.
 - Stealth channel operation: `/ttgssync` is private with a password, completely filtered from standard chat frames, hidden from channel lists, and prevented from taking numbered slots.
-- Direct integration with TacoTip's standalone dashboard (`/tt`), providing 1-click launchers for the Leaderboard, Sync Now, and Settings.
+- Direct integration with TacoTip's standalone dashboard (`/tt`): embeds a complete 680×365px Leaderboard directly into the "Extras" tab with 3-way faction filtering (`[All Realm]`, `[Alliance]`, `[Horde]`), dynamic search, GearScore quality range bands, and `[My Rank]` navigation, alongside 1-click launchers for the standalone browser, Sync Now, and Settings.
+- WoW Forever all-level enhancement completion tracking: Potential GS, Delta, and Completion track across all character levels on Camelot without requiring level-70 gating.
 - Automatic tooltip rank display (`GS Rank: #14 [#2 Warrior]`) on player hover.
 - Current GS, Potential GS, Delta, Completion, Average iLvl, and optional Unenhanced GS for player tooltips.
 - Extras-owned Basic and Detailed summaries for the local Character window and remote player Inspect windows.
@@ -81,7 +82,7 @@ Drop the `TacoTip_Extras` folder into `Interface/AddOns/`. The TOC filename must
 
 Potential GS, Delta, and Completion appear only when their required item and socket evidence is conclusive. Unavailable or unknown information is never represented as zero.
 
-**The level-70 rule.** Potential GS, Delta, and Completion are hidden for a character below level 70 while **Restrict Potential, Completion, and warnings to level 70** is on — which is the default. Turn that setting off and the same three values are computed and shown at any level: the numbers do not change, only whether you are shown them. The setting takes effect immediately; the values are recomputed from the gear that has already been read, so nothing is rescanned and no re-inspection happens. Current GS, Unenhanced GS, and Average iLvl are never affected by it.
+**The level-70 rule.** On Classic clients, Potential GS, Delta, and Completion are hidden for a character below level 70 while **Restrict Potential, Completion, and warnings to level 70** is on — which is the default. Turn that setting off and the same three values are computed and shown at any level: the numbers do not change, only whether you are shown them. Current GS, Unenhanced GS, and Average iLvl are never affected by it. On **WoW Forever (Camelot)**, this restriction is bypassed automatically: equipment enhancement completion is tracked and displayed for all character levels, giving players full visibility into gemming and enchanting progression from early leveling through endgame.
 
 ## Player-tooltip modes
 

@@ -326,6 +326,33 @@ function Core.IsClassicFamilyClient()
     return nil
 end
 
+function Core.IsClassicEraClient()
+    local adapter = namespace.TacoTipAdapter
+    if type(adapter) ~= "table"
+        or type(adapter.GetInspector) ~= "function" then
+        local wowProject = rawget(_G, "WOW_PROJECT_ID")
+        local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
+        if wowProject and wowClassic and wowProject == wowClassic then
+            return true
+        end
+        return false
+    end
+    local ok, inspector = pcall(adapter.GetInspector)
+    if ok and type(inspector) == "table" and type(inspector.IsClassic) == "function" then
+        local answered, result = pcall(inspector.IsClassic, inspector)
+        if answered and result == true then
+            return true
+        end
+        return false
+    end
+    local wowProject = rawget(_G, "WOW_PROJECT_ID")
+    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
+    if wowProject and wowClassic and wowProject == wowClassic then
+        return true
+    end
+    return false
+end
+
 -- THE PvP WIRE RULE'S MARKER.
 --
 -- Retail and WoW Forever never render inspected PvP data -- both fields are
@@ -740,6 +767,9 @@ end
 --
 -- Returns r, g, b or nil. A nil return means "carry on with the chain".
 function Core.GetClassColorOverride(classToken)
+    if type(issecretvalue) == "function" and issecretvalue(classToken) then
+        return nil
+    end
     if classToken ~= "SHAMAN" then
         return nil
     end
@@ -788,6 +818,9 @@ end
 --
 -- Returns r, g, b on success, or nil when the chain found nothing usable.
 function Core.GetClassColor(classToken, options)
+    if type(issecretvalue) == "function" and issecretvalue(classToken) then
+        return nil
+    end
     if type(classToken) ~= "string" or classToken == "" then
         return nil
     end

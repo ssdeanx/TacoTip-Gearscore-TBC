@@ -2567,6 +2567,9 @@ local function buildTooltipsPage()
             TacoTipConfig.shaman_blue = value
         end)
     controls.shamanBlue:SetPoint("TOPLEFT", content, "TOPLEFT", 260, builder.y)
+    if (not (CI and CI.IsClassic and CI:IsClassic())) then
+        controls.shamanBlue:Hide()
+    end
     builder.y = builder.y - 30
 
     controls.showTitles = createOptionsCheckbox(content, nil, L["Title"], L["Show player's title in tooltips"],
@@ -2935,7 +2938,9 @@ local function buildTooltipsPage()
         controls.tooltipBorderTextureChoice:SetValues(TT:GetTooltipBorderChoices())
         controls.styleChoice:SetValue(TacoTipConfig.tip_style)
         controls.useClassColors:SetChecked(TacoTipConfig.color_class)
-        controls.shamanBlue:SetChecked(TacoTipConfig.shaman_blue ~= false)
+        if (controls.shamanBlue) then
+            controls.shamanBlue:SetChecked(TacoTipConfig.shaman_blue ~= false)
+        end
         controls.showTitles:SetChecked(TacoTipConfig.show_titles)
         controls.showGuildNames:SetChecked(TacoTipConfig.show_guild_name)
         controls.showGuildRanks:SetChecked(TacoTipConfig.show_guild_rank)
@@ -3955,12 +3960,15 @@ local function createDashboard()
         end)
     uy = registerRow(unitsChild, syncControls.color_class, "units", uy)
 
-    syncControls.shaman_blue = createPillToggle(unitsChild, "Shaman Blue",
-        "Use Shaman blue instead of pink for Shaman class colors.", TacoTipConfig.shaman_blue, function(v)
-            TacoTipConfig.shaman_blue = v
-            onSettingChanged()
-        end)
-    uy = registerRow(unitsChild, syncControls.shaman_blue, "units", uy)
+    local isClassicEra = CI and CI.IsClassic and CI:IsClassic()
+    if (isClassicEra) then
+        syncControls.shaman_blue = createPillToggle(unitsChild, "Shaman Blue",
+            "Use Shaman blue instead of pink for Shaman class colors.", TacoTipConfig.shaman_blue, function(v)
+                TacoTipConfig.shaman_blue = v
+                onSettingChanged()
+            end)
+        uy = registerRow(unitsChild, syncControls.shaman_blue, "units", uy)
+    end
     unitsChild:SetHeight(math.abs(uy) + 20)
 
     -- ========================================================================
@@ -4456,23 +4464,58 @@ local function createDashboard()
             return 0.82, 0.82, 0.82
         end
 
-        local function getGsColor(gs)
-            if (type(gs) ~= "number" or gs <= 0) then
-                return 0.6, 0.6, 0.6
+        local function getGsQualityColor(score)
+            local s = tonumber(score)
+            if (not s or s <= 0) then
+                return 0.50, 0.50, 0.50
             end
             local gsModule = rawget(_G, "TT_GS")
             if (gsModule and type(gsModule.GetQuality) == "function") then
-                local ok, r, g, b = pcall(gsModule.GetQuality, gsModule, gs)
+                local ok, r, g, b = pcall(gsModule.GetQuality, gsModule, s)
                 if (ok and type(r) == "number") then
                     return r, g, b
                 end
             end
-            if (gs >= 5000) then return 1.0, 0.5, 0.0
-            elseif (gs >= 4000) then return 0.64, 0.21, 0.93
-            elseif (gs >= 3000) then return 0.0, 0.44, 0.87
-            elseif (gs >= 2000) then return 0.12, 1.0, 0.0
+            -- Client-aware GearScore range bands: Classic Era/Forever: 200, TBC: 400, Retail/Titanforge: 1000
+            local bSize = 1000
+            if (CI and ((CI.IsClassic and CI:IsClassic()) or (CI.IsForever and CI:IsForever()))) then
+                bSize = 200
+            elseif (CI and CI.IsTBC and CI:IsTBC()) then
+                bSize = 400
             end
-            return 1.0, 1.0, 1.0
+            if (s > bSize * 6) then return 0.92, 0.10, 0.10 -- Artifact
+            elseif (s > bSize * 5) then return 1.00, 0.63, 0.00 -- Legendary
+            elseif (s > bSize * 4) then return 0.63, 0.20, 0.83 -- Epic
+            elseif (s > bSize * 3) then return 0.12, 0.40, 0.83 -- Superior
+            elseif (s > bSize * 2) then return 0.12, 0.81, 0.04 -- Uncommon
+            elseif (s > bSize) then return 1.00, 1.00, 1.00 -- Common
+            end
+            return 0.50, 0.50, 0.50 -- Trash
+        end
+
+        local function getRankRangeColor(rank, total)
+            local rNum = tonumber(rank)
+            if (not rNum) then return 0.62, 0.62, 0.62 end
+            if (rNum == 1) then return 1.00, 0.84, 0.00 end -- #1 Gold medal
+            if (rNum == 2) then return 0.75, 0.75, 0.75 end -- #2 Silver medal
+            if (rNum == 3) then return 0.80, 0.50, 0.20 end -- #3 Bronze medal
+
+            local tot = tonumber(total)
+            if (tot and tot > 0) then
+                local fraction = (tot - rNum + 1) / tot
+                if (fraction >= 0.95) then
+                    return 1.00, 0.84, 0.00 -- Top 5% Gold
+                elseif (fraction >= 0.75) then
+                    return 0.63, 0.20, 0.83 -- Top 25% Epic Purple
+                elseif (fraction >= 0.50) then
+                    return 0.12, 0.40, 0.83 -- Top 50% Superior Blue
+                elseif (fraction >= 0.25) then
+                    return 0.12, 0.81, 0.04 -- Top 75% Uncommon Green
+                else
+                    return 1.00, 1.00, 1.00 -- Common White
+                end
+            end
+            return 0.62, 0.62, 0.62
         end
 
         local function updateRows()
@@ -4488,15 +4531,9 @@ local function createDashboard()
                 if (entry) then
                     row.entry = entry
                     local rank = entry.rank or entryIdx
-                    if (rank == 1) then
-                        row.rankTxt:SetText("|cffffd700#1|r")
-                    elseif (rank == 2) then
-                        row.rankTxt:SetText("|cffc0c0c0#2|r")
-                    elseif (rank == 3) then
-                        row.rankTxt:SetText("|cffcd7f32#3|r")
-                    else
-                        row.rankTxt:SetText("|cff888888#" .. tostring(rank) .. "|r")
-                    end
+                    local rr, rg, rb = getRankRangeColor(rank, total)
+                    row.rankTxt:SetText("#" .. tostring(rank))
+                    row.rankTxt:SetTextColor(rr, rg, rb)
 
                     local cr, cg, cb = getEntryClassColor(entry.class)
                     row.classBar:SetColorTexture(cr, cg, cb, 0.9)
@@ -4512,12 +4549,15 @@ local function createDashboard()
                     row.lvlTxt:SetText(tostring(entry.level or ""))
 
                     row.specTxt:SetText(entry.specName or "Unknown")
-                    row.ilvlTxt:SetText(tostring(entry.ilvl or ""))
 
                     local gsVal = entry.gs or 0
-                    local gr, gg, gb = getGsColor(gsVal)
+                    local gr, gg, gb = getGsQualityColor(gsVal)
                     row.gsTxt:SetText(tostring(gsVal))
                     row.gsTxt:SetTextColor(gr, gg, gb)
+
+                    local ilvlVal = entry.ilvl or 0
+                    row.ilvlTxt:SetText(ilvlVal > 0 and tostring(ilvlVal) or "")
+                    row.ilvlTxt:SetTextColor(gr, gg, gb)
 
                     row:Show()
                 else
