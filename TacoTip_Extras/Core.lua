@@ -58,6 +58,28 @@ function Core.RunUntainted(fn, ...)
     return fn(...)
 end
 
+function Core.IsSecretValue(v)
+    if (v == nil) then return false end
+    if (type(issecretvalue) == "function") then
+        local okSecret, isSec = pcall(issecretvalue, v)
+        if (okSecret and isSec) then return true end
+    end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if (type(canaccess) == "function") then
+        local okAccess, canAcc = pcall(canaccess, v)
+        if (okAccess and not canAcc) then return true end
+    end
+    return false
+end
+
+function Core.SafeEquals(a, b)
+    if (a == nil or b == nil or Core.IsSecretValue(a) or Core.IsSecretValue(b)) then
+        return false
+    end
+    local ok, eq = pcall(function() return a == b end)
+    return ok and eq == true
+end
+
 local REQUIRED_SLOTS = {
     1, 2, 3, 5, 6, 7, 8, 9, 10,
     11, 12, 13, 14, 15, 16, 17, 18,
@@ -351,6 +373,91 @@ function Core.IsClassicEraClient()
         return true
     end
     return false
+end
+
+function Core.ClientHasSockets()
+    -- Sockets exist only in TBC (Classic Anniversary), WotLK (Titanforge), and Retail.
+    -- WoW Forever (Camelot 16001) and Classic Era (11509) have NO sockets in the game.
+    local adapter = namespace.TacoTipAdapter
+    if type(adapter) == "table" and type(adapter.GetInspector) == "function" then
+        local ok, inspector = pcall(adapter.GetInspector)
+        if ok and type(inspector) == "table" then
+            if type(inspector.IsForever) == "function" then
+                local ans, res = pcall(inspector.IsForever, inspector)
+                if ans and res == true then
+                    return false
+                end
+            end
+            if type(inspector.IsClassic) == "function" then
+                local ans, res = pcall(inspector.IsClassic, inspector)
+                if ans and res == true then
+                    return false
+                end
+            end
+            if type(inspector.IsTBC) == "function" then
+                local ans, res = pcall(inspector.IsTBC, inspector)
+                if ans and res == true then
+                    return true
+                end
+            end
+            if type(inspector.IsWotlk) == "function" then
+                local ans, res = pcall(inspector.IsWotlk, inspector)
+                if ans and res == true then
+                    return true
+                end
+            end
+            if type(inspector.IsRetail) == "function" then
+                local ans, res = pcall(inspector.IsRetail, inspector)
+                if ans and res == true then
+                    return true
+                end
+            end
+        end
+    end
+    local wowProject = rawget(_G, "WOW_PROJECT_ID")
+    local wowBC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC") or rawget(_G, "WOW_PROJECT_BC_CLASSIC")
+    local wowWrath = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
+    if (wowProject and wowBC and wowProject == wowBC) or (wowProject and wowWrath and wowProject == wowWrath) then
+        return true
+    end
+    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
+    if wowProject and wowClassic and wowProject == wowClassic then
+        return false
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return false
+        elseif iface >= 20000 and iface < 40000 then
+            return true
+        elseif iface >= 100000 then
+            return true
+        elseif iface >= 10000 and iface < 16000 then
+            return false
+        end
+    end
+    return false
+end
+
+function Core.GetTargetEnhancementLevel()
+    local adapter = namespace.TacoTipAdapter
+    if type(adapter) == "table" and type(adapter.GetInspector) == "function" then
+        local ok, inspector = pcall(adapter.GetInspector)
+        if ok and type(inspector) == "table" then
+            if type(inspector.IsForever) == "function" and inspector:IsForever() then
+                return 60
+            end
+        end
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return 60
+        end
+    end
+    return 70
 end
 
 -- THE PvP WIRE RULE'S MARKER.
@@ -767,7 +874,7 @@ end
 --
 -- Returns r, g, b or nil. A nil return means "carry on with the chain".
 function Core.GetClassColorOverride(classToken)
-    if type(issecretvalue) == "function" and issecretvalue(classToken) then
+    if Core.IsSecretValue(classToken) then
         return nil
     end
     if classToken ~= "SHAMAN" then
@@ -818,7 +925,7 @@ end
 --
 -- Returns r, g, b on success, or nil when the chain found nothing usable.
 function Core.GetClassColor(classToken, options)
-    if type(issecretvalue) == "function" and issecretvalue(classToken) then
+    if Core.IsSecretValue(classToken) then
         return nil
     end
     if type(classToken) ~= "string" or classToken == "" then

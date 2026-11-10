@@ -144,6 +144,7 @@ local CLIENTS = {
         driver = "unit-hook",
         tooltip = "classic",
         itemStats = false,
+        hasSockets = false,
     },
     tbc = {
         label = "TBC Anniversary",
@@ -153,6 +154,7 @@ local CLIENTS = {
         driver = "unit-hook",
         tooltip = "classic",
         itemStats = false,
+        hasSockets = true,
     },
     titanforge = {
         label = "Titanforge",
@@ -162,6 +164,7 @@ local CLIENTS = {
         driver = "unit-hook",
         tooltip = "classic",
         itemStats = false,
+        hasSockets = true,
     },
     forever = {
         label = "WoW Forever",
@@ -174,6 +177,7 @@ local CLIENTS = {
         driver = "poll",
         tooltip = "mainline",
         itemStats = true,
+        hasSockets = false,
     },
     retail = {
         label = "Retail",
@@ -184,6 +188,7 @@ local CLIENTS = {
         tooltip = "mainline",
         -- Phase 2 modelled Retail as NOT having GetItemStats. It does.
         itemStats = true,
+        hasSockets = true,
     },
 }
 
@@ -271,6 +276,7 @@ local TT_GLOBAL = VARIANT_PROFILE.ttGlobal or "TacoTip"
 local TOOLTIP_SHAPE = CLIENT_PROFILE.tooltip
 local EXPECTED_DRIVER = CLIENT_PROFILE.driver
 local ITEM_STATS = CLIENT_PROFILE.itemStats and not VARIANT_PROFILE.forceNoItemStats
+local SOCKETS_ENABLED = CLIENT_PROFILE.hasSockets and not VARIANT_PROFILE.forceNoItemStats
 
 -- The minimum the adapter enforces. Duplicated here on purpose: a harness that
 -- reads the add-on's own constant cannot catch someone lowering it.
@@ -3369,23 +3375,27 @@ do
     local scanRevision = scanState and scanState.revision or nil
     local slotOne = scanRevision and scanRevision.slots and scanRevision.slots[1] or nil
     local socketCell = slotOne and slotOne.sockets or nil
-    if not ITEM_STATS then
+    if not CLIENT_PROFILE.hasSockets then
+        check(type(socketCell) == "table"
+            and socketCell.status == "complete"
+            and type(socketCell.value) == "table"
+            and socketCell.value.capacity == 0,
+            "on clients without sockets (Era/Forever) socket capacity is zero",
+            "socket cell=" .. tostring(socketCell and socketCell.status)
+                .. " capacity=" .. tostring(socketCell and socketCell.value and socketCell.value.capacity))
+        local scanResult = scanState and scanState.result or nil
+        local metrics = scanResult and scanResult.metrics or nil
+        local potential = metrics and metrics.potentialGS or nil
+        check(potential ~= nil and potential.status == "complete",
+            "on clients without sockets potential GS is complete without socket dependency",
+            "potentialGS=" .. tostring(potential and potential.status) .. " reason=" .. tostring(potential and potential.reason))
+    elseif not SOCKETS_ENABLED then
         check(type(socketCell) == "table"
             and socketCell.status == "unavailable"
             and socketCell.reason == "socket-capability-unavailable",
-            "without GetItemStats the socket path stays absent (the documented degradation)",
+            "without socket API the socket path degrades on socket-capable client",
             "socket cell=" .. tostring(socketCell and socketCell.status)
                 .. " reason=" .. tostring(socketCell and socketCell.reason))
-        -- The socket-count API IS in the model on this client -- it is
-        -- documented on the Classic branches too -- and the socket path is
-        -- still absent. That is the point: the GATE is the gate, and the
-        -- Classic clients' degradation is not an accident of the model.
-        check(type(REALG.C_Item) == "table"
-            and type(REALG.C_Item.GetItemNumSockets) == "function",
-            "the socket-count API is present in the model where the socket path is gated off",
-            "GetItemNumSockets="
-                .. tostring(type(REALG.C_Item) == "table"
-                    and type(REALG.C_Item.GetItemNumSockets)))
     elseif not slotOne then
         -- This run's scanner produced no occupied slot (the adapter refused,
         -- so there was nothing to inspect). The pin does not apply.
@@ -3464,7 +3474,7 @@ do
         return cell.value and cell.value.capacity or nil
     end
 
-    if ITEM_STATS and slotOne then
+    if SOCKETS_ENABLED and slotOne then
         serveItem(50010, ONE_SOCKET_LINK)
         local oneState = driveLocalScan("socket-one-socket-pin")
         check(scannedCapacity(oneState) == 1,
@@ -4657,10 +4667,13 @@ local function occupiedSlot(link, itemID, enchant, g1, g2, g3, capacity, g4)
         itemSubclassID = cell(1),
         permanentEnchantID = cell(enchant),
         scoreGemIDs = cell({ g1, g2, g3 }),
-        sockets = ITEM_STATS and cell({
+        sockets = SOCKETS_ENABLED and cell({
             capacity = capacity,
             gemIDs = socketGemIDs,
-        }) or blocked("unavailable", "socket-capability-unavailable"),
+        }) or (CLIENT_PROFILE.hasSockets and blocked("unavailable", "socket-capability-unavailable") or cell({
+            capacity = 0,
+            gemIDs = {},
+        })),
         scopeCapablePhysicalRanged = cell(false),
         itemInfoValue = makeInfo(link, 4, 200, "INVTYPE_HEAD"),
     }
@@ -4669,7 +4682,7 @@ end
 local revision = {
     classToken = cell("WARRIOR"),
     level = cell(70),
-    socketCapability = cell(ITEM_STATS),
+    socketCapability = cell(SOCKETS_ENABLED or not CLIENT_PROFILE.hasSockets),
     slots = {},
 }
 for _, slotID in ipairs(REQUIRED_SLOTS) do
@@ -4786,21 +4799,21 @@ end
 
 out(("\n-- socket path without GetItemStats --\n"))
 
-if ITEM_STATS then
+if SOCKETS_ENABLED then
     check(gemmed.emptyScoreBearingSockets.status == "complete"
         and gemmed.emptyScoreBearingSockets.value == 1,
-        "with GetItemStats, one empty socket is counted",
+        "with sockets enabled, one empty socket is counted",
         "got " .. tostring(gemmed.emptyScoreBearingSockets.value))
     check(result.metrics.potentialGS.status == "complete",
-        "with GetItemStats the potential total is complete",
+        "with sockets enabled the potential total is complete",
         "status " .. tostring(result.metrics.potentialGS.status))
-    out("   (this client has GetItemStats; run the nostats variant for the degraded path)\n")
-else
+    out("   (this client has sockets; run the nostats variant for the degraded path)\n")
+elseif CLIENT_PROFILE.hasSockets then
     check(gemmed.current.status == "complete",
-        "gem count still scores where GetItemStats is absent",
+        "gem count still scores where socket API is absent",
         "status " .. tostring(gemmed.current.status))
     check(gemmed.current.value == expectedGemmed,
-        "the gem bonus is still applied from the item LINK without GetItemStats",
+        "the gem bonus is still applied from the item LINK without socket API",
         "got " .. tostring(gemmed.current.value)
             .. ", expected " .. tostring(expectedGemmed))
     check(gemmed.emptyScoreBearingSockets.status ~= "complete",
@@ -4814,6 +4827,13 @@ else
         "status " .. tostring(result.metrics.potentialGS.status))
     check(result.metrics.gearScore.status == "complete",
         "current total survives the degradation",
+        "status " .. tostring(result.metrics.gearScore.status))
+else
+    check(result.metrics.potentialGS.status == "complete",
+        "on clients without sockets (Era/Forever) potential total is complete without sockets",
+        "status " .. tostring(result.metrics.potentialGS.status))
+    check(result.metrics.gearScore.status == "complete",
+        "current total is complete",
         "status " .. tostring(result.metrics.gearScore.status))
 end
 
@@ -4855,7 +4875,7 @@ end
 -- pass for the wrong reason.
 out(("\n-- socket capacity: reconciling and contradicting items --\n"))
 
-if ITEM_STATS then
+if SOCKETS_ENABLED then
     local RECONCILING_LINK = makeLink(50020, 0, 41398, 0, 0)
     local TOO_SMALL_LINK = makeLink(50021, 0, 41398, 41398, 0)
     local TOO_LARGE_LINK = makeLink(50022, 0, 41398, 0, 0)

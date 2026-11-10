@@ -6,6 +6,7 @@ end
 
 local RankSync = {}
 namespace.RankSync = RankSync
+local Core = namespace.Core
 
 local PREFIX = "TACO_GS_SYNC"
 local CHANNEL_NAME = "ttgssync"
@@ -353,7 +354,7 @@ end
 local WIRE_VERSION = "2"
 
 local function safeNumber(val, default)
-    if type(issecretvalue) == "function" and issecretvalue(val) then
+    if Core.IsSecretValue(val) then
         return default or 0
     end
     local n = tonumber(val)
@@ -362,7 +363,7 @@ local function safeNumber(val, default)
 end
 
 local function safeString(val)
-    if type(issecretvalue) == "function" and issecretvalue(val) then
+    if Core.IsSecretValue(val) then
         return ""
     end
     if type(val) ~= "string" then return "" end
@@ -444,7 +445,7 @@ local function splitFields(payload)
 end
 
 function RankSync.DeserializeRecord(payload)
-    if type(issecretvalue) == "function" and issecretvalue(payload) then return nil end
+    if Core.IsSecretValue(payload) then return nil end
     if type(payload) ~= "string" then return nil end
     local parts = splitFields(payload)
     if #parts < RECORD_FIELDS or parts[1] ~= "R" then
@@ -485,7 +486,7 @@ local function ownGUID()
         return nil
     end
     local ok, guid = pcall(fn, "player")
-    if ok and type(guid) == "string" and guid ~= "" then
+    if ok and type(guid) == "string" and guid ~= "" and not Core.IsSecretValue(guid) then
         return guid
     end
     return nil

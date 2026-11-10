@@ -77,13 +77,27 @@ end
 TT_PAWN = {}
 local TT_PAWN = TT_PAWN
 
+local function isSecretValue(v)
+    if (v == nil) then return false end
+    if (type(issecretvalue) == "function") then
+        local okSecret, isSec = pcall(issecretvalue, v)
+        if (okSecret and isSec) then return true end
+    end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if (type(canaccess) == "function") then
+        local okAccess, canAcc = pcall(canaccess, v)
+        if (okAccess and not canAcc) then return true end
+    end
+    return false
+end
+
 local function getPlayerGUID(arg)
-    if (arg and not (type(issecretvalue) == "function" and issecretvalue(arg))) then
+    if (arg and not isSecretValue(arg)) then
         if (GUIDIsPlayer(arg)) then
             return arg
         elseif (UnitIsPlayer(arg)) then
-            local ug = UnitGUID(arg)
-            if (ug and not (type(issecretvalue) == "function" and issecretvalue(ug))) then
+            local okUG, ug = pcall(UnitGUID, arg)
+            if (okUG and ug and not isSecretValue(ug)) then
                 return ug
             end
         end
@@ -93,19 +107,22 @@ end
 
 function TT_PAWN:GetItemScore(itemLink, class, specIndex, scaleName)
     if (itemLink and class and specIndex) then
+        if (isSecretValue(itemLink) or isSecretValue(class) or isSecretValue(specIndex) or isSecretValue(scaleName)) then
+            return 0
+        end
         if (type(PawnGetItemData) == "function") then
             local ok, item = pcall(PawnGetItemData, itemLink)
-            if (ok and item and type(PawnGetSingleValueFromItem) == "function") then
+            if (ok and item and not isSecretValue(item) and type(PawnGetSingleValueFromItem) == "function") then
                 if (not scaleName) then
                     scaleName = "\"MrRobot\":" .. class .. specIndex
                     local okScore, _, score = pcall(PawnGetSingleValueFromItem, item, scaleName)
-                    if (okScore and score and tonumber(score)) then
+                    if (okScore and score and not isSecretValue(score) and tonumber(score)) then
                         return tonumber(score) or 0
                     end
                     scaleName = "\"Classic\":" .. class .. specIndex
                 end
                 local okScore, _, score = pcall(PawnGetSingleValueFromItem, item, scaleName)
-                if (okScore and score) then
+                if (okScore and score and not isSecretValue(score)) then
                     return tonumber(score) or 0
                 end
             end
@@ -143,8 +160,8 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
         local isSelf = (unitorguid == "player")
             or (type(UnitIsUnit) == "function" and UnitIsUnit(unitorguid, "player"))
         if (not isSelf) then
-            local playerGUID = type(UnitGUID) == "function" and UnitGUID("player")
-            if (playerGUID and not (type(issecretvalue) == "function" and issecretvalue(playerGUID))) then
+            local okP, playerGUID = pcall(UnitGUID, "player")
+            if (okP and playerGUID and not isSecretValue(playerGUID) and not isSecretValue(guid)) then
                 isSelf = (guid == playerGUID)
             end
         end
@@ -181,17 +198,22 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
             for i = 1, 18 do
                 if (i ~= 4) then
                     local item = CI:GetInventoryItemMixin(guid, i)
-                    if (item) then
-                        if (item:IsItemDataCached()) then
+                    if (item and not isSecretValue(item)) then
+                        if (item.IsItemDataCached and item:IsItemDataCached()) then
                             if (scaleName) then
-                                local tempScore = TT_PAWN:GetItemScore(item:GetItemLink(), class, spec, scaleName)
-                                pawnScore = pawnScore + tempScore
+                                local link = item.GetItemLink and item:GetItemLink()
+                                if (link and not isSecretValue(link)) then
+                                    local tempScore = TT_PAWN:GetItemScore(link, class, spec, scaleName)
+                                    if (tempScore and not isSecretValue(tempScore)) then
+                                        pawnScore = pawnScore + tempScore
+                                    end
+                                end
                             end
                         else
                             IsReady = false
-                            local itemID = item:GetItemID()
-                            if (itemID) then
-                                if (useCallback) then
+                            local itemID = item.GetItemID and item:GetItemID()
+                            if (itemID and not isSecretValue(itemID)) then
+                                if (useCallback and cb_table and cb_table.items) then
                                     -- Dedupe identical item ids before
                                     -- registering; see gearscore.lua for the
                                     -- duplicate-slot rationale.

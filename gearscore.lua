@@ -213,13 +213,27 @@ local GS_Quality = {
     [BRACKET_SIZE * 7] = { r = 0.92, g = 0.10, b = 0.10, label = "Artifact" },
 }
 
+local function isSecretValue(v)
+    if (v == nil) then return false end
+    if (type(issecretvalue) == "function") then
+        local okSecret, isSec = pcall(issecretvalue, v)
+        if (okSecret and isSec) then return true end
+    end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if (type(canaccess) == "function") then
+        local okAccess, canAcc = pcall(canaccess, v)
+        if (okAccess and not canAcc) then return true end
+    end
+    return false
+end
+
 local function getPlayerGUID(arg)
-    if (arg and not (type(issecretvalue) == "function" and issecretvalue(arg))) then
+    if (arg and not isSecretValue(arg)) then
         if (GUIDIsPlayer(arg)) then
             return arg
         elseif (UnitIsPlayer(arg)) then
-            local ug = UnitGUID(arg)
-            if (ug and not (type(issecretvalue) == "function" and issecretvalue(ug))) then
+            local okUG, ug = pcall(UnitGUID, arg)
+            if (okUG and ug and not isSecretValue(ug)) then
                 return ug
             end
         end
@@ -268,7 +282,10 @@ local ITEM_BAND_SCALE = 11.25
 -- GetItemInfo call instead of one per scoring consumer.
 -- @param info result of GetItemInfo(itemLink) (may be nil while uncached)
 local function scoreFromItemValues(itemLinkOut, ItemRarity, ItemLevel, ItemEquipLoc, itemLinkFallback)
-    if (not itemLinkOut and itemLinkFallback and RequestLoadItemDataByID) then
+    if (isSecretValue(itemLinkOut) or isSecretValue(itemLinkFallback) or isSecretValue(ItemRarity) or isSecretValue(ItemLevel) or isSecretValue(ItemEquipLoc)) then
+        return 0, 0, 0.5, 0.5, 0.5
+    end
+    if (not itemLinkOut and itemLinkFallback and not isSecretValue(itemLinkFallback) and RequestLoadItemDataByID) then
         local itemID = tonumber(string.match(itemLinkFallback, "item:(%d+)"))
         if (itemID) then
             pcall(RequestLoadItemDataByID, itemID)
@@ -333,7 +350,7 @@ end
 -- @return number gearScore, number itemLevel, number r, number g, number b, string|nil equipLoc
 local function scoreFromItemInfo(info, itemLinkFallback)
     if (not info or type(info) ~= "table") then
-        if (itemLinkFallback and RequestLoadItemDataByID) then
+        if (itemLinkFallback and not isSecretValue(itemLinkFallback) and RequestLoadItemDataByID) then
             local itemID = tonumber(string.match(itemLinkFallback, "item:(%d+)"))
             if (itemID) then
                 pcall(RequestLoadItemDataByID, itemID)
@@ -353,7 +370,7 @@ end
 -- Public entry: score directly from an item link. Retained for callers
 -- (frame overlays, tests) that do not already hold a GetItemInfo result.
 function TT_GS:GetItemScore(ItemLink)
-    if not (ItemLink) then
+    if not (ItemLink) or isSecretValue(ItemLink) then
         return 0, 0, 0.1, 0.1, 0.1
     end
     local _, itemLinkOut, itemRarity, itemLevel, _, _, _, _, itemEquipLoc = GetItemInfo(ItemLink)
@@ -363,6 +380,9 @@ end
 -- Hunter-adjusted score. Accepts an optional pre-fetched GetItemInfo table
 -- so item-tooltip callers reuse one fetch across ilvl/GearScore/HunterScore.
 function TT_GS:GetItemHunterScore(ItemLink, info)
+    if (ItemLink and isSecretValue(ItemLink)) then
+        return 0, 0, 0.1, 0.1, 0.1
+    end
     -- NOTE: no `info and A(...) or B(...)` shortcut here — and/or yields a
     -- single value, which would leave every score field after GearScore nil.
     local GearScore, ItemLevel, Red, Green, Blue, ItemEquipLoc
@@ -411,8 +431,8 @@ function TT_GS:GetScore(unitorguid, useCallback)
         local isSelf = (unitorguid == "player")
             or (type(UnitIsUnit) == "function" and UnitIsUnit(unitorguid, "player"))
         if (not isSelf) then
-            local playerGUID = type(UnitGUID) == "function" and UnitGUID("player")
-            if (playerGUID and not (type(issecretvalue) == "function" and issecretvalue(playerGUID))) then
+            local okP, playerGUID = pcall(UnitGUID, "player")
+            if (okP and playerGUID and not isSecretValue(playerGUID) and not isSecretValue(guid)) then
                 isSelf = (guid == playerGUID)
             end
         end
@@ -521,7 +541,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
         -- dual-wielding 2H weapons balances with 1H dual wielders (1.0 + 1.0 = 2.0).
         -- Standalone 2H weapons (no offhand equipped) retain full 2.0x weight.
         local OffHandTitanGrip = 1
-        if (mainHandLink and offHandLink) then
+        if (mainHandLink and offHandLink and not isSecretValue(mainHandLink) and not isSecretValue(offHandLink)) then
             local mhEquipLoc = select(9, GetItemInfo(mainHandLink))
             local ohEquipLoc = select(9, GetItemInfo(offHandLink))
             if (mhEquipLoc == "INVTYPE_2HWEAPON") then
@@ -532,7 +552,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
             end
         end
 
-        if (offHandLink) then
+        if (offHandLink and not isSecretValue(offHandLink)) then
             local TempScore, ItemLevel = TT_GS:GetItemScore(offHandLink)
             if (PlayerEnglishClass == "HUNTER") then
                 TempScore = TempScore * hunterMeleeWeight
@@ -545,26 +565,29 @@ function TT_GS:GetScore(unitorguid, useCallback)
         for i = 1, 18 do
             if (i ~= 4) and (i ~= 17) then
                 local item = CI:GetInventoryItemMixin(guid, i)
-                if (item) then
-                    if (item:IsItemDataCached()) then
-                        local TempScore, ItemLevel = TT_GS:GetItemScore(item:GetItemLink())
-                        if (PlayerEnglishClass == "HUNTER") then
-                            if (i == 16) then
-                                TempScore = TempScore * hunterMeleeWeight
-                            elseif (i == 18) then
-                                TempScore = TempScore * 5.3224
+                if (item and not isSecretValue(item)) then
+                    if (item.IsItemDataCached and item:IsItemDataCached()) then
+                        local link = item.GetItemLink and item:GetItemLink()
+                        if (link and not isSecretValue(link)) then
+                            local TempScore, ItemLevel = TT_GS:GetItemScore(link)
+                            if (PlayerEnglishClass == "HUNTER") then
+                                if (i == 16) then
+                                    TempScore = TempScore * hunterMeleeWeight
+                                elseif (i == 18) then
+                                    TempScore = TempScore * 5.3224
+                                end
                             end
+                            if (i == 16) then
+                                TempScore = TempScore * TitanGrip
+                            end
+                            GearScore = GearScore + TempScore
+                            ItemCount = ItemCount + 1
+                            LevelTotal = LevelTotal + ItemLevel
                         end
-                        if (i == 16) then
-                            TempScore = TempScore * TitanGrip
-                        end
-                        GearScore = GearScore + TempScore
-                        ItemCount = ItemCount + 1
-                        LevelTotal = LevelTotal + ItemLevel
                     else
                         IsReady = false
-                        local itemID = item:GetItemID()
-                        if (itemID) then
+                        local itemID = item.GetItemID and item:GetItemID()
+                        if (itemID and not isSecretValue(itemID)) then
                             if (useCallback) then
                                 -- Same dedupe rule as the weapon-slot
                                 -- registrations above.

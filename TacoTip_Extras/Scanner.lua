@@ -8,6 +8,7 @@ end
 
 local Scoring = namespace.Scoring
 local Cache = namespace.Cache
+local Core = namespace.Core
 local Scanner = {}
 namespace.Scanner = Scanner
 
@@ -240,8 +241,8 @@ local function capturePlayerIdentity()
         return nil, "player-validation-failed"
     end
 
-    local guid = UnitGUID("player")
-    if type(guid) ~= "string" or guid == "" then
+    local okGUID, guid = pcall(UnitGUID, "player")
+    if not okGUID or type(guid) ~= "string" or guid == "" or Core.IsSecretValue(guid) then
         return nil, "player-guid-unavailable"
     end
     return guid
@@ -408,7 +409,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     if type(rankSync) ~= "table" or type(rankSync.QueueInspectRecord) ~= "function" then
         return
     end
-    if type(issecretvalue) == "function" and issecretvalue(guid) then
+    if Core.IsSecretValue(guid) then
         return
     end
     if type(guid) ~= "string" or guid == "" then
@@ -419,7 +420,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
         and type(result.metrics.gearScore) == "table"
         and result.metrics.gearScore.status == "complete"
         and result.metrics.gearScore.value
-    if type(issecretvalue) == "function" and issecretvalue(gs) then
+    if Core.IsSecretValue(gs) then
         return
     end
     if type(gs) ~= "number" or gs <= 0 then
@@ -430,7 +431,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     local ilvl = 0
     if type(avgMetric) == "table" and avgMetric.status == "complete" and type(avgMetric.value) == "table" then
         local rawVal = avgMetric.value.raw or avgMetric.value.display or 0
-        if type(issecretvalue) == "function" and issecretvalue(rawVal) then
+        if Core.IsSecretValue(rawVal) then
             ilvl = 0
         else
             ilvl = rawVal
@@ -442,7 +443,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     local uName = rawget(g, "UnitName")
     if type(uName) == "function" and unit then
         local ok, n = pcall(uName, unit)
-        if ok and (not (type(issecretvalue) == "function" and issecretvalue(n))) and type(n) == "string" and n ~= "" then
+        if ok and not Core.IsSecretValue(n) and type(n) == "string" and n ~= "" then
             pName = n
         end
     end
@@ -600,44 +601,119 @@ local function captureTemporaryEffects()
     return mainCell, offCell
 end
 
+local function clientHasSockets()
+    local core = namespace.Core
+    if type(core) == "table" and type(core.ClientHasSockets) == "function" then
+        local ok, val = pcall(core.ClientHasSockets)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
+    local wowProject = rawget(_G, "WOW_PROJECT_ID")
+    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
+    if wowProject and wowClassic and wowProject == wowClassic then
+        return false
+    end
+    local wowBC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC") or rawget(_G, "WOW_PROJECT_BC_CLASSIC")
+    local wowWrath = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
+    if (wowProject and wowBC and wowProject == wowBC) or (wowProject and wowWrath and wowProject == wowWrath) then
+        return true
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return false
+        elseif iface >= 20000 and iface < 40000 then
+            return true
+        elseif iface >= 100000 then
+            return true
+        elseif iface >= 10000 and iface < 16000 then
+            return false
+        end
+    end
+    return false
+end
+
+local function isRetailClient()
+    local adapter = namespace.TacoTipAdapter
+    if type(adapter) == "table" and type(adapter.GetInspector) == "function" then
+        local ok, insp = pcall(adapter.GetInspector)
+        if ok and type(insp) == "table" and type(insp.IsRetail) == "function" then
+            local ans, res = pcall(insp.IsRetail, insp)
+            if ans and res == true then
+                return true
+            end
+        end
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 100000 then
+            return true
+        end
+    end
+    return false
+end
+
+local function isSocketCapabilityAvailable()
+    if not clientHasSockets() then
+        return true
+    end
+    if isRetailClient() and type(_G.GetItemStats) ~= "function" then
+        return false
+    end
+    local cItem = _G.C_Item
+    if type(cItem) == "table" and type(cItem.GetItemNumSockets) == "function" then
+        return true
+    end
+    if type(_G.GetItemStats) == "function" then
+        return true
+    end
+    return false
+end
+
 local function readSocketCapacity(nativeLink)
-    -- THE SCOPE GATE, unchanged. GetItemStats is a MAINLINE-FAMILY API,
-    -- present on Retail and WoW Forever and absent from the three Classic
-    -- clients (it is documented in
-    -- Blizzard_APIDocumentationGenerated/ItemDocumentation.lua on origin/live
-    -- and origin/forever, and appears nowhere in the Interface tree of
-    -- classic_era, classic_anniversary or classic_titan). Feature-detected, so
-    -- the Classic clients take the degraded path rather than a wrong number.
-    --
-    -- The gate is deliberately NOT widened to C_Item.GetItemNumSockets, which
-    -- the mirror documents on the Classic branches too: the Classic clients'
-    -- behaviour is a shipped, documented contract, and widening the gate
-    -- would change published numbers on clients that cannot be tested before
-    -- publish.
-    local getItemStats = _G.GetItemStats
-    if type(getItemStats) ~= "function" then
+    -- Sockets only exist in TBC (Classic Anniversary), WotLK (Titanforge), and Retail.
+    -- WoW Forever and Classic Era have NO sockets in the game world. On those clients,
+    -- capacity is 0 and does not block enhancement analysis.
+    if not clientHasSockets() then
+        return 0
+    end
+
+    if isRetailClient() and type(_G.GetItemStats) ~= "function" then
         return nil, "socket-capability-unavailable"
     end
 
-    -- THE SOURCE OF TRUTH: the documented socket-count API.
-    --
-    -- C_Item.GetItemNumSockets(itemInfo) returns the socket count, and the
-    -- argument is the item link -- the shape Blizzard itself uses
-    -- (PaperDollFrame.lua:2775, fed the raw link at :1728). The evidence is
-    -- written out at the top of this file.
     local cItem = _G.C_Item
-    if type(cItem) ~= "table" or type(cItem.GetItemNumSockets) ~= "function" then
-        return nil, "socket-capacity-unavailable"
-    end
-
-    local ok, socketCount = pcall(cItem.GetItemNumSockets, nativeLink)
-    if not ok then
-        return nil, "socket-capacity-unavailable"
-    end
-    if not isNonnegativeInteger(socketCount) then
+    if type(cItem) == "table" and type(cItem.GetItemNumSockets) == "function" then
+        local ok, socketCount = pcall(cItem.GetItemNumSockets, nativeLink)
+        if ok and isNonnegativeInteger(socketCount) then
+            return socketCount
+        end
+        if not ok then
+            return nil, "socket-capacity-unavailable"
+        end
         return nil, "socket-capacity-invalid"
     end
-    return socketCount
+
+    local getItemStats = _G.GetItemStats
+    if type(getItemStats) == "function" then
+        local ok, stats = pcall(getItemStats, nativeLink)
+        if ok and type(stats) == "table" then
+            local count = 0
+            for key, val in pairs(stats) do
+                if type(key) == "string" and string.find(key, "EMPTY_SOCKET", 1, true) and type(val) == "number" then
+                    count = count + val
+                end
+            end
+            if isNonnegativeInteger(count) then
+                return count
+            end
+        end
+    end
+
+    return nil, "socket-capacity-unavailable"
 end
 
 local function buildSocketCell(nativeLink, parsed)
@@ -1020,7 +1096,7 @@ local function capture(targetGeneration)
     local revision = {
         classToken = classToken,
         level = level,
-        socketCapability = complete(type(GetItemStats) == "function"),
+        socketCapability = complete(isSocketCapabilityAvailable()),
         slots = slots,
     }
     local result = Scoring.Evaluate(revision, enhancementPolicy())
@@ -1089,7 +1165,7 @@ local function unitMatchesRemoteGUID(unit, guid)
         return false
     end
 
-    if unit == guid then
+    if Core.SafeEquals(unit, guid) then
         return true
     end
 
@@ -1104,12 +1180,12 @@ local function unitMatchesRemoteGUID(unit, guid)
     local guidOK, unitGUID = pcall(UnitGUID, unit)
     if not existsOK or not exists
         or not playerOK or not isPlayer
-        or not guidOK or unitGUID ~= guid then
+        or not guidOK or not Core.SafeEquals(unitGUID, guid) then
         return false
     end
 
     local localOK, localGUID = pcall(UnitGUID, "player")
-    return not localOK or localGUID ~= guid
+    return not localOK or not Core.SafeEquals(localGUID, guid)
 end
 
 local function resolveRemoteUnit(guid, callbackUnit)
@@ -1255,7 +1331,7 @@ captureRemoteBody = function(context)
     local revision = {
         classToken = classToken,
         level = level,
-        socketCapability = complete(type(GetItemStats) == "function"),
+        socketCapability = complete(isSocketCapabilityAvailable()),
         slots = slots,
     }
     local result = Scoring.Evaluate(revision, enhancementPolicy())

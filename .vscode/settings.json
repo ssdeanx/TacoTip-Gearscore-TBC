@@ -170,5 +170,6 @@
     },
     "Lua.diagnostics.disable": [
         "assign-type-mismatch"
-    ]
+    ],
+    "graph-it-live.branchWatch.enabled": true
 }

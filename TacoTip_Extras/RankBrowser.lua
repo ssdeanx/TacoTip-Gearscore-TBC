@@ -21,6 +21,11 @@ local function isSecretValue(val)
         local ok, isSec = pcall(issecretvalue, val)
         if ok and isSec then return true end
     end
+    local canaccess = rawget(_G, "canaccessvalue")
+    if type(canaccess) == "function" then
+        local okAccess, canAcc = pcall(canaccess, val)
+        if okAccess and not canAcc then return true end
+    end
     return false
 end
 
@@ -167,7 +172,7 @@ end
 local COLUMNS = {
     { key = "rank", x = 8, width = 40, justify = "LEFT", label = "LB_COL_RANK", fallback = "RANK", template = "GameFontHighlightSmall" },
     { key = "name", x = 56, width = 232, justify = "LEFT", label = "LB_COL_PLAYER", fallback = "PLAYER", template = "GameFontNormal" },
-    { key = "spec", x = 296, width = 184, justify = "LEFT", label = "LB_COL_SPECCLASS", fallback = "SPEC / CLASS", template = "GameFontHighlightSmall" },
+    { key = "spec", x = 296, width = 184, justify = "LEFT", label = "LB_COL_SPECCLASS", headerText = "GUILD", fallback = "GUILD", template = "GameFontHighlightSmall" },
     { key = "level", x = 488, width = 40, justify = "RIGHT", label = "LB_COL_LEVEL", fallback = "LEVEL", template = "GameFontHighlightSmall" },
     { key = "gs", x = 536, width = 70, justify = "RIGHT", label = "LB_COL_GS", fallback = "GEARSCORE", template = "GameFontHighlight" },
     { key = "ilvl", x = 614, width = 58, justify = "RIGHT", label = "LB_COL_ILVL", fallback = "iLVL", template = "GameFontHighlightSmall" },
@@ -992,6 +997,12 @@ local function applySpecIcon(row, entry)
     local tex = row.specIconTexture
     if not tex then return end
 
+    if type(entry.guild) == "string" and entry.guild ~= "" then
+        tex:Hide()
+        row.hasSpecIcon = false
+        return
+    end
+
     -- A numeric specID resolves through the engine (localized name's icon);
     -- legacy rows carry a stored texture path instead. Either may be absent,
     -- and absence hides the texture -- never an error, never an empty box.
@@ -1066,26 +1077,29 @@ local function renderRow(row, entry, index, gsRank, myGUID)
     row.nameText:SetTextColor(c[1], c[2], c[3])
     row.classBar:SetColorTexture(c[1], c[2], c[3], 0.85)
 
-    -- Spec, muted so it reads as secondary to the name. A numeric specID
-    -- resolves through the engine first (localized at render); with no
-    -- specID, fall back to the stored specName, then the LOCALIZED class
-    -- name -- a class the locale table has not caught up with (EVOKER) must
-    -- still read as itself rather than as blank (A5/G4).
-    local specName = specDisplayOf(entry)
-    if type(specName) ~= "string" or specName == "" then
-        specName = entry.specName
-    end
-    if type(specName) ~= "string" or specName == "" then
-        local classToken = classTokenOf(entry)
-        if classToken == "UNKNOWN" then
-            -- No class info at all: blank, exactly as before.
-            specName = (type(entry.class) == "string" and entry.class ~= "")
-                and entry.class or ""
-        else
-            specName = L["CLASS_" .. classToken] or classToken
+    -- Guild / Spec, muted so it reads as secondary to the name. When a guild
+    -- is present, display <GuildName>. Otherwise, fall back to spec/class.
+    local guildOrSpec
+    if type(entry.guild) == "string" and entry.guild ~= "" then
+        guildOrSpec = "<" .. entry.guild .. ">"
+    else
+        local specName = specDisplayOf(entry)
+        if type(specName) ~= "string" or specName == "" then
+            specName = entry.specName
         end
+        if type(specName) ~= "string" or specName == "" then
+            local classToken = classTokenOf(entry)
+            if classToken == "UNKNOWN" then
+                -- No class info at all: blank, exactly as before.
+                specName = (type(entry.class) == "string" and entry.class ~= "")
+                    and entry.class or ""
+            else
+                specName = L["CLASS_" .. classToken] or classToken
+            end
+        end
+        guildOrSpec = (type(specName) == "string" and specName ~= "") and specName or ""
     end
-    row.specText:SetText(specName)
+    row.specText:SetText(guildOrSpec)
     row.specText:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
 
     -- GearScore and iLvl share the score's quality colour.
@@ -2756,7 +2770,7 @@ function RankBrowser.CreateUI()
             -- sits 2px down from the band's top. The plain-text headers below
             -- are placed so their TEXT lines up with the button's text.
             header:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT + col.x, headerTop() - 2)
-            header:SetText(L[col.label] or col.fallback or col.label)
+            header:SetText(col.headerText or L[col.label] or col.fallback or col.label)
             header:SetScript("OnClick", function()
                 if currentSort == col.key then
                     -- Repeat click on the ACTIVE column flips the direction
@@ -2804,7 +2818,7 @@ function RankBrowser.CreateUI()
             header:SetPoint("TOPLEFT", f, "TOPLEFT", ROW_LEFT + col.x, headerTop() - 6)
             header:SetWidth(col.width)
             header:SetJustifyH(col.justify)
-            header:SetText(L[col.label] or col.fallback or col.label)
+            header:SetText(col.headerText or L[col.label] or col.fallback or col.label)
         end
         col.header = header
         f.headerWidgets = f.headerWidgets or {}

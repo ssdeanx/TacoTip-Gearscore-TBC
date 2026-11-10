@@ -243,12 +243,15 @@ local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
 function TT.isSecretValue(v)
-    if (type(issecretvalue) == "function" and issecretvalue(v)) then
-        return true
+    if (v == nil) then return false end
+    if (type(issecretvalue) == "function") then
+        local okSecret, isSec = pcall(issecretvalue, v)
+        if (okSecret and isSec) then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
-    if (type(canaccess) == "function" and not canaccess(v)) then
-        return true
+    if (type(canaccess) == "function") then
+        local okAccess, canAcc = pcall(canaccess, v)
+        if (okAccess and not canAcc) then return true end
     end
     return false
 end
@@ -327,7 +330,11 @@ local function getTooltipOwnerUnit(tooltip)
     end
     local unit = owner.unit or owner.displayedUnit
     if (not unit and type(owner.GetAttribute) == "function") then
-        unit = owner:GetAttribute("unit")
+        local okA, attr = pcall(owner.GetAttribute, owner, "unit")
+        if (okA) then unit = attr end
+    end
+    if (unit and isSecretValue(unit)) then
+        return nil
     end
     return unit
 end
@@ -672,7 +679,7 @@ local function getClassIconMarkup(class)
     if (not class or not GetClassAtlas) then
         return ""
     end
-    if (type(issecretvalue) == "function" and issecretvalue(class)) then
+    if (isSecretValue(class)) then
         return ""
     end
     local size = (TacoTipConfig and TacoTipConfig.class_icon_size) or 20
@@ -686,7 +693,7 @@ local function getClassIconMarkup(class)
         return cached
     end
     local okAtlas, atlas = pcall(GetClassAtlas, class)
-    if (okAtlas and atlas and not (type(issecretvalue) == "function" and issecretvalue(atlas))) then
+    if (okAtlas and atlas and not isSecretValue(atlas)) then
         if (atlas ~= "") then
             local markup = string.format("|A:%s:%d:%d|a", atlas, size, size)
             sizeCache[class] = markup
@@ -741,7 +748,8 @@ local function clearTooltipGuildLine(tooltip)
         -- index was recorded for. Blanking it unconditionally erased the other
         -- addon's line instead, reported as "item amounts break on the second
         -- mouseover". The text is the only proof of ownership we have.
-        if (left and left.GetText and left:GetText() == tooltip.TacoTipGuildLineText) then
+        local leftText = (left and left.GetText) and left:GetText() or nil
+        if (left and left.SetText and safeEquals(leftText, tooltip.TacoTipGuildLineText)) then
             left:SetText()
         end
         tooltip.TacoTipGuildLineIndex = nil
@@ -752,7 +760,8 @@ end
 local function clearTooltipLevelColorLine(tooltip)
     if (tooltip and tooltip.TacoTipLevelColorLineIndex) then
         local left = getTooltipLeftLine(tooltip, tooltip.TacoTipLevelColorLineIndex)
-        if (left and left.GetText and left:GetText() == tooltip.TacoTipLevelColorLineText) then
+        local leftText = (left and left.GetText) and left:GetText() or nil
+        if (left and left.SetText and safeEquals(leftText, tooltip.TacoTipLevelColorLineText)) then
             left:SetText()
         end
         tooltip.TacoTipLevelColorLineIndex = nil
@@ -805,19 +814,24 @@ local function getHostileDifficultyColor(unit)
         return nil
     end
 
-    if (UnitCanAttack and not UnitCanAttack("player", unit) and UnitIsPlayer and UnitIsPlayer(unit)) then
-        return nil
+    if (type(UnitCanAttack) == "function" and type(UnitIsPlayer) == "function") then
+        local okAtk, canAtk = pcall(UnitCanAttack, "player", unit)
+        local okPlr, isPlr = pcall(UnitIsPlayer, unit)
+        if (okAtk and canAtk == false and okPlr and isPlr == true) then
+            return nil
+        end
     end
 
-    local playerLvl = (type(UnitLevel) == "function" and UnitLevel("player")) or 1
-    if (isSecretValue(playerLvl)) then playerLvl = 1 end
+    local okPLvl, rawPLvl = pcall(UnitLevel, "player")
+    local playerLvl = (okPLvl and rawPLvl and not isSecretValue(rawPLvl)) and rawPLvl or 1
     if (playerLvl ~= lastPlayerLevel) then
         questDifficultyColorCache = {}
         lastPlayerLevel = playerLvl
     end
 
-    local level = UnitLevel(unit)
-    local targetLevel = (level and not isSecretValue(level) and level > 0) and level or (playerLvl + 10)
+    local okLvl, rawLvl = pcall(UnitLevel, unit)
+    local level = (okLvl and not isSecretValue(rawLvl)) and rawLvl or nil
+    local targetLevel = (level and level > 0) and level or (playerLvl + 10)
     local cachedColor = questDifficultyColorCache[targetLevel]
     if (cachedColor == nil) then
         cachedColor = GetQuestDifficultyColor(targetLevel) or false
@@ -827,7 +841,7 @@ local function getHostileDifficultyColor(unit)
 end
 
 local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
-    if (not textLine or textLine == "") then
+    if (not textLine or isSecretValue(textLine) or textLine == "") then
         return textLine
     end
 
@@ -836,8 +850,9 @@ local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
         return textLine
     end
 
-    local level = UnitLevel(unit)
-    local levelToken = (level and not isSecretValue(level) and level > 0) and tostring(level) or "??"
+    local okLvl, rawLvl = pcall(UnitLevel, unit)
+    local level = (okLvl and not isSecretValue(rawLvl)) and rawLvl or nil
+    local levelToken = (level and level > 0) and tostring(level) or "??"
     local coloredLevel = colorizeText(levelToken, color.r, color.g, color.b)
 
     if (tooltip and lineIndex) then
@@ -845,7 +860,7 @@ local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
         tooltip.TacoTipLevelColorLineText = coloredLevel
     end
 
-    if (level and not isSecretValue(level) and level > 0) then
+    if (level and level > 0) then
         return string.gsub(textLine, levelToken, coloredLevel, 1)
     end
 
@@ -901,7 +916,7 @@ local function getOrCreateSpecIconFrame(tooltip)
 end
 
 local function applySpecializationIcon(tooltip, icon)
-    if (not icon or (type(issecretvalue) == "function" and issecretvalue(icon))) then
+    if (not icon or isSecretValue(icon)) then
         -- Do not create the frame just to hide it: the Classic family never uses
         -- the overlay, and creating it there would be a behaviour change.
         if (tooltip and tooltip.TacoTipSpecIcon) then
@@ -979,33 +994,32 @@ end
 -- localized, so they take priority over the library's built-in English
 -- spec_table; on the Classic family they are nil and the table is used.
 local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engineName, engineIcon, forcePoints)
-    local isSec = (type(issecretvalue) == "function")
     local specName
-    if (engineName and not (isSec and issecretvalue(engineName))) then
+    if (engineName and not isSecretValue(engineName)) then
         if (engineName ~= "") then
             specName = engineName
         end
     end
-    if (not specName and class and not (isSec and issecretvalue(class)) and specIndex and not (isSec and issecretvalue(specIndex))) then
+    if (not specName and class and not isSecretValue(class) and specIndex and not isSecretValue(specIndex)) then
         specName = CI:GetSpecializationName(class, specIndex, true)
     end
-    if (not specName or (isSec and issecretvalue(specName))) then
+    if (not specName or isSecretValue(specName)) then
         return nil
     end
 
     local iconTexture = engineIcon
-    if (not iconTexture or (isSec and issecretvalue(iconTexture))) then
-        if (class and specIndex and not (isSec and issecretvalue(class)) and not (isSec and issecretvalue(specIndex))) then
+    if (not iconTexture or isSecretValue(iconTexture)) then
+        if (class and specIndex and not isSecretValue(class) and not isSecretValue(specIndex)) then
             iconTexture = getSpecializationIcon(class, specIndex)
         else
             iconTexture = nil
         end
     end
     local iconText = ""
-    if (iconTexture and not (isSec and issecretvalue(iconTexture))) then
+    if (iconTexture and not isSecretValue(iconTexture)) then
         iconText = string.format("|T%s:14:14:0:0:64:64:4:60:4:60|t ", tostring(iconTexture))
     end
-    local classColor = (class and not (isSec and issecretvalue(class))) and getClassColor(class) or nil
+    local classColor = (class and not isSecretValue(class)) and getClassColor(class) or nil
     local coloredName
     if (dim) then
         coloredName = colorizeText(specName, 0.50, 0.50, 0.50)
@@ -1014,7 +1028,7 @@ local function formatSpecializationText(class, specIndex, p1, p2, p3, dim, engin
     end
     local isClassicFamily = CI and CI.IsClassic and (CI:IsClassic() or CI:IsTBC() or CI:IsWotlk())
     local hasPoints = false
-    if (p1 and p2 and p3 and not (isSec and (issecretvalue(p1) or issecretvalue(p2) or issecretvalue(p3)))) then
+    if (p1 and p2 and p3 and not isSecretValue(p1) and not isSecretValue(p2) and not isSecretValue(p3)) then
         if (type(p1) == "number" and type(p2) == "number" and type(p3) == "number") then
             if (p1 > 0 or p2 > 0 or p3 > 0 or isClassicFamily or forcePoints) then
                 hasPoints = true
@@ -1617,30 +1631,49 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 local uGuid = (unit and safeUnitGUID(unit)) or nil
                 local modelKey = (uGuid and not isSecretValue(uGuid)) and uGuid or unit
                 if (portrait.tacoTipModelKey ~= modelKey) then
-                    -- Clear first so the previous character's mesh cannot persist
-                    -- while the new one streams in (pcall: ClearModel may be absent
-                    -- on some clients).
-                    local okClear, errClear = pcall(portrait.ClearModel, portrait)
-                    if (not okClear and errClear) then
-                        TT:RecordError("Portrait", errClear, "ClearModel")
+                    local canSet = true
+                    if (type(portrait.CanSetUnit) == "function") then
+                        local okCan, allowed = pcall(portrait.CanSetUnit, portrait, unit)
+                        if (okCan and allowed == false) then
+                            canSet = false
+                        end
                     end
-                    local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
-                    -- SetUnit reports success with a boolean, so a non-throwing
-                    -- false is still a failure. Caching it as the current unit
-                    -- would leave the previous character's mesh under the new
-                    -- tooltip and make the retry counter unreachable.
-                    if (okCall and setResult ~= false) then
+                    if (not canSet) then
                         portrait.tacoTipModelKey = modelKey
-                        -- SetUnit loads a fresh mesh and the camera returns to
-                        -- its default; re-apply the configured zoom after it.
-                        portrait._tacoTipZoom = nil
+                        portrait.tacoTipSetRetries = nil
                     else
-                        -- SetUnit failed: leave the cache empty so the next render
-                        -- retries rather than believing a model is loaded.
-                        portrait.tacoTipModelKey = nil
-                        TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
-                        if (not okCall and setResult) then
-                            TT:RecordError("Portrait", setResult, "SetUnit")
+                        -- Clear first so the previous character's mesh cannot persist
+                        -- while the new one streams in (pcall: ClearModel may be absent
+                        -- on some clients).
+                        local okClear, errClear = pcall(portrait.ClearModel, portrait)
+                        if (not okClear and errClear) then
+                            TT:RecordError("Portrait", errClear, "ClearModel")
+                        end
+                        local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
+                        -- SetUnit reports success with a boolean, so a non-throwing
+                        -- false is still a failure. Caching it as the current unit
+                        -- would leave the previous character's mesh under the new
+                        -- tooltip and make the retry counter unreachable.
+                        if (okCall and setResult ~= false) then
+                            portrait.tacoTipModelKey = modelKey
+                            portrait.tacoTipSetRetries = nil
+                            -- SetUnit loads a fresh mesh and the camera returns to
+                            -- its default; re-apply the configured zoom after it.
+                            portrait._tacoTipZoom = nil
+                        else
+                            local retries = (portrait.tacoTipSetRetries or 0) + 1
+                            portrait.tacoTipSetRetries = retries
+                            TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
+                            if (not okCall and setResult) then
+                                TT:RecordError("Portrait", setResult, "SetUnit")
+                            end
+                            if (retries >= 2) then
+                                -- Mesh load failed or not available for this unit; stop hammering
+                                -- SetUnit on every single frame/render tick for this character.
+                                portrait.tacoTipModelKey = modelKey
+                            else
+                                portrait.tacoTipModelKey = nil
+                            end
                         end
                     end
                 end
@@ -1701,8 +1734,9 @@ end
 -- with SecretAspect.BarValue), so the bar must be shown and the values passed
 -- through untouched. Non-secret clients keep the original "max > 0" gate.
 local function tooltipUnitHasVisiblePower(unit)
-    local maxPower = UnitPowerMax(unit)
-    if (type(issecretvalue) == "function" and issecretvalue(maxPower)) then
+    local okMax, maxPower = pcall(UnitPowerMax, unit)
+    if (not okMax) then return false end
+    if (isSecretValue(maxPower)) then
         return true
     end
     return maxPower ~= nil and maxPower > 0
@@ -2502,7 +2536,12 @@ local function onTooltipSetUnit(tooltip, data)
             tooltipUnit = ownerUnit
         end
     end
-    name = name or (tooltipUnit and UnitName(tooltipUnit))
+    if (not name and tooltipUnit and type(UnitName) == "function") then
+        local okN, uName = pcall(UnitName, tooltipUnit)
+        if (okN and uName and not isSecretValue(uName)) then
+            name = uName
+        end
+    end
     if (isSecretValue(name)) then
         name = nil
     end
@@ -2589,8 +2628,8 @@ local function onTooltipSetUnit(tooltip, data)
         return
     end
 
-    local rawGuid = (data and data.guid) or (type(UnitGUID) == "function" and UnitGUID(tooltipUnit))
-    local guid = (rawGuid and not TT.isSecretValue(rawGuid)) and rawGuid or nil
+    local rawGuid = (data and data.guid) or safeUnitGUID(tooltipUnit)
+    local guid = (rawGuid and not isSecretValue(rawGuid)) and rawGuid or nil
     -- Self has no inspect-cache record: CI:GetUnitData("player") is nil, so the
     -- score memo can never supply a value. The first render registers the
     -- item-load callbacks and TacoTip_GSCallback then clears the retry gate;
@@ -2646,14 +2685,14 @@ local function onTooltipSetUnit(tooltip, data)
         text[i] = leftLine and leftLine:GetText()
     end
 
-    if (not text[1] or text[1] == "") then return end
-    if (UnitIsPlayer(tooltipUnit) and (not text[2] or text[2] == "")) then return end
+    if (not text[1] or isSecretValue(text[1]) or text[1] == "") then return end
+    if (UnitIsPlayer(tooltipUnit) and (not text[2] or isSecretValue(text[2]) or text[2] == "")) then return end
 
     -- Find the actual level line: players in guilds have the guild on line 2,
     -- so the level text shifts to line 3.
     local levelLineIndex = 2
-    if (text[2] and string.find(text[2], "<.+>")) then
-        if (text[3] and text[3] ~= "" and not string.find(text[3], "<.+>")) then
+    if (text[2] and not isSecretValue(text[2]) and string.find(text[2], "<.+>")) then
+        if (text[3] and not isSecretValue(text[3]) and text[3] ~= "" and not string.find(text[3], "<.+>")) then
             levelLineIndex = 3
         end
     end
@@ -2751,10 +2790,12 @@ local function onTooltipSetUnit(tooltip, data)
             local inGroup = (type(IsInGroup) == "function" and IsInGroup())
             if (inGroup and (((type(IsInRaid) == "function" and IsInRaid() and UnitInRaid and UnitInRaid(tooltipUnit))) or (UnitInParty and UnitInParty(tooltipUnit)))) then
                 if (GetBestMapForUnit) then
-                    local unitMap = GetBestMapForUnit(tooltipUnit)
-                    local playerMap = GetBestMapForUnit("player")
-                    if (unitMap and playerMap and unitMap ~= playerMap) then
-                        inSameMap = false
+                    local okU, unitMap = pcall(GetBestMapForUnit, tooltipUnit)
+                    local okP, playerMap = pcall(GetBestMapForUnit, "player")
+                    if (okU and okP and unitMap and playerMap and not isSecretValue(unitMap) and not isSecretValue(playerMap)) then
+                        if (not safeEquals(unitMap, playerMap)) then
+                            inSameMap = false
+                        end
                     end
                 end
             end
@@ -2883,8 +2924,8 @@ local function onTooltipSetUnit(tooltip, data)
 
         if (TacoTipConfig.show_realm and UnitIsPlayer(tooltipUnit)
                 and type(_G.UnitIsSameServer) == "function" and not UnitIsSameServer(tooltipUnit)) then
-            local _, realm = UnitName(tooltipUnit)
-            if (realm and realm ~= "") then
+            local okR, _, realm = pcall(UnitName, tooltipUnit)
+            if (okR and realm and not isSecretValue(realm) and realm ~= "") then
                 if (wide_style) then
                     addLineDouble((L["Realm"] or "Realm") .. ":", realm, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g,
                         NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
@@ -2894,8 +2935,8 @@ local function onTooltipSetUnit(tooltip, data)
             end
         end
         if (TacoTipConfig.show_honor_rank) then
-            local pvpName = UnitPVPName(tooltipUnit)
-            if (pvpName and pvpName ~= "" and pvpName ~= name) then
+            local okPVP, pvpName = pcall(UnitPVPName, tooltipUnit)
+            if (okPVP and pvpName and not isSecretValue(pvpName) and pvpName ~= "" and not safeEquals(pvpName, name)) then
                 if (wide_style) then
                     addLineDouble((L["Honor Rank"] or "Honor Rank") .. ":", pvpName, NORMAL_FONT_COLOR.r,
                         NORMAL_FONT_COLOR.g,
@@ -2909,14 +2950,14 @@ local function onTooltipSetUnit(tooltip, data)
         if (TacoTipConfig.show_pvp_icon and UnitIsPlayer(tooltipUnit) and UnitIsPVP(tooltipUnit)) then
             nameLineIcons = nameLineIcons .. PVP_FLAG_ICON_SPACED
             for i = 2, numLines do
-                if (text[i]) then
+                if (text[i] and not isSecretValue(text[i])) then
                     text[i] = string.gsub(text[i], "PvP", "", 1)
                 end
             end
         end
         if (TacoTipConfig.show_team and type(UnitFactionGroup) == "function") then
             local okFact, faction = pcall(UnitFactionGroup, tooltipUnit)
-            if (okFact and faction and not (type(issecretvalue) == "function" and issecretvalue(faction))) then
+            if (okFact and faction and not isSecretValue(faction)) then
                 if (faction == "Horde") then
                     nameLineIcons = nameLineIcons .. HORDE_ICON_SPACED
                 elseif (faction == "Alliance") then
@@ -2926,7 +2967,7 @@ local function onTooltipSetUnit(tooltip, data)
         end
         if (TacoTipConfig.show_class_icon and UnitIsPlayer(tooltipUnit)) then
             local okClass, _, classFile = pcall(UnitClass, tooltipUnit)
-            if (okClass and classFile and not (type(issecretvalue) == "function" and issecretvalue(classFile))) then
+            if (okClass and classFile and not isSecretValue(classFile)) then
                 local iconMarkup = getClassIconMarkup(classFile)
                 if (iconMarkup and iconMarkup ~= "") then
                     nameLineIcons = nameLineIcons .. " " .. iconMarkup
@@ -2935,14 +2976,14 @@ local function onTooltipSetUnit(tooltip, data)
         end
         if (TacoTipConfig.show_role_icon and UnitIsPlayer(tooltipUnit) and type(IsInGroup) == "function" and IsInGroup()) then
             local okRole, role = pcall(UnitGroupRolesAssigned, tooltipUnit)
-            if (okRole and role and not (type(issecretvalue) == "function" and issecretvalue(role))) then
+            if (okRole and role and not isSecretValue(role)) then
                 if (role ~= "NONE") then
                     local roleIcon = ROLE_ICONS[role] or ROLE_ICONS.DPS
                     nameLineIcons = nameLineIcons .. roleIcon
                 end
             end
         end
-        if (nameLineIcons ~= "") then
+        if (nameLineIcons ~= "" and text[1] and not isSecretValue(text[1])) then
             text[1] = text[1] .. nameLineIcons
         end
         if (isForever) then
@@ -3390,15 +3431,15 @@ local function onTooltipSetUnit(tooltip, data)
                 if (TacoTipConfig.show_power_bar) then
                     local unit = u or resolveTooltipUnit(GameTooltip) or self._tacoTipUnit
                     if (unit and (not UnitExists or UnitExists(unit))) then
-                        local _, power = UnitPowerType(unit)
-                        local color = (PowerBarColor and PowerBarColor[power]) or FALLBACK_POWER_COLOR
+                        local okType, _, power = pcall(UnitPowerType, unit)
+                        local color = (okType and power and not isSecretValue(power) and PowerBarColor and PowerBarColor[power]) or FALLBACK_POWER_COLOR
                         self:SetStatusBarColor(color.r or 0, color.g or 0, color.b or 1)
-                        local max = UnitPowerMax(unit)
-                        local cur = UnitPower(unit)
-                        if (max ~= nil) then
+                        local okMax, max = pcall(UnitPowerMax, unit)
+                        local okCur, cur = pcall(UnitPower, unit)
+                        if (okMax and max ~= nil) then
                             self:SetMinMaxValues(0, max)
                         end
-                        if (cur ~= nil) then
+                        if (okCur and cur ~= nil) then
                             self:SetValue(cur)
                         end
                         if (self.Text) then
@@ -3585,21 +3626,21 @@ TT.HookedTooltipScripts.Unit = TT.HookedTooltipScripts.Unit
 local function resolveTooltipItem(tooltip, data)
     if (tooltip and tooltip.GetItem) then
         local ok, _, itemLink = pcall(tooltip.GetItem, tooltip)
-        if (ok and itemLink) then return itemLink end
+        if (ok and itemLink and not isSecretValue(itemLink)) then return itemLink end
     end
     if (TooltipUtil and TooltipUtil.GetDisplayedItem and tooltip) then
         local ok, _, dispLink = pcall(TooltipUtil.GetDisplayedItem, tooltip)
-        if (ok and dispLink) then return dispLink end
+        if (ok and dispLink and not isSecretValue(dispLink)) then return dispLink end
     end
-    if (data and type(data) == "table") then
+    if (data and type(data) == "table" and not isSecretValue(data)) then
         -- `hyperlink` is what the post-call actually supplies for an item, so
         -- this is the branch that fires in practice on Retail / WoW Forever.
-        if (data.hyperlink) then return data.hyperlink end
+        if (data.hyperlink and not isSecretValue(data.hyperlink)) then return data.hyperlink end
         -- GetItemLinkByGUID is documented only on Forever and Retail; on the
         -- Classic branches this whole arm is skipped.
-        if (data.guid and C_Item and C_Item.GetItemLinkByGUID) then
+        if (data.guid and not isSecretValue(data.guid) and C_Item and C_Item.GetItemLinkByGUID) then
             local ok, link = pcall(C_Item.GetItemLinkByGUID, data.guid)
-            if (ok and link) then return link end
+            if (ok and link and not isSecretValue(link)) then return link end
         end
         -- There is deliberately no itemID -> link fallback. C_Item.GetItemLink
         -- takes an ItemLocation, not an itemID, and no documented C_Item
@@ -3623,7 +3664,7 @@ local function itemToolTipHook(self, data)
     clearTooltipVisuals(self, nil, nil, "item")
 
     local itemLink = resolveTooltipItem(self, data)
-    if (itemLink) then
+    if (itemLink and not isSecretValue(itemLink)) then
         getTooltipState(self).currentItemLink = itemLink
     end
     -- Both item features off: skip the IsEquippableItem/GetItemInfo work
@@ -3635,7 +3676,7 @@ local function itemToolTipHook(self, data)
     -- item hover when that CVar is off, and safeItemToolTipHook would swallow
     -- the error into geterrorhandler, killing the iLvl/GearScore lines.
     local IsEquippableItem = (_G.C_Item and _G.C_Item.IsEquippableItem) or _G.IsEquippableItem
-    if (itemLink and (TacoTipConfig.show_item_level or TacoTipConfig.show_gs_items)
+    if (itemLink and not isSecretValue(itemLink) and (TacoTipConfig.show_item_level or TacoTipConfig.show_gs_items)
             and type(IsEquippableItem) == "function" and IsEquippableItem(itemLink)) then
         -- Single GetItemInfo fetch per hover, shared by the ilvl line,
         -- GearScore and HunterScore below (F3 hot-path fix). If Blizzard
@@ -3708,7 +3749,7 @@ local function safeItemToolTipHook(self, ...)
 end
 
 scheduleItemTooltipRefresh = function(tooltip, itemLink)
-    if (not tooltip or not itemLink or not Item or not Item.CreateFromItemLink) then
+    if (not tooltip or not itemLink or isSecretValue(itemLink) or not Item or not Item.CreateFromItemLink) then
         return
     end
 
@@ -4766,7 +4807,9 @@ local function collectProblems()
             end
             local timeouts = tonumber(st.timeouts) or 0
             if (timeouts > 0) then
-                add("error", string.format("Inspect requests timed out %d time(s) without server response",
+                local readyCount = tonumber(st.ready) or 0
+                local timeoutSev = (readyCount == 0 and timeouts >= 3) and "error" or "warn"
+                add(timeoutSev, string.format("Inspect requests timed out %d time(s) without server response",
                     timeouts))
             end
             local rejected = tonumber(st.rejected) or 0
@@ -4887,7 +4930,8 @@ local function collectActiveUnitSection()
         local fnCheckInteractDistance = _G.CheckInteractDistance or CheckInteractDistance
         local fnUnitIsConnected = _G.UnitIsConnected or UnitIsConnected
         local fnUnitCanAttack = _G.UnitCanAttack or UnitCanAttack
-        local canInspect = (type(fnCanInspect) == "function") and fnCanInspect(activeUnit) or false
+        local okCan, rawCan = pcall(fnCanInspect, activeUnit)
+        local canInspect = (type(fnCanInspect) == "function" and okCan) and rawCan or false
         local canInspectStr = isSecretValue(canInspect) and "<secret>" or tostring(canInspect)
         -- CheckInteractDistance is protected on the mainline clients. Calling it
         -- from the tainted slash-command diagnostics path raises
@@ -4911,7 +4955,7 @@ local function collectActiveUnitSection()
         if (type(_G.UnitDistanceSquared) == "function") then
             local okDist, d2, chk = pcall(_G.UnitDistanceSquared, activeUnit)
             if (okDist and d2 ~= nil) then
-                if (type(issecretvalue) == "function" and (issecretvalue(d2) or issecretvalue(chk))) then
+                if (isSecretValue(d2) or isSecretValue(chk)) then
                     distStr = "protected (secret in combat)"
                 elseif (chk and type(d2) == "number" and d2 >= 0) then
                     distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
@@ -5749,9 +5793,9 @@ function TT:EvaluatePlayerEquipment(isSilent)
             local oldGS = oldSnap and oldSnap.gs or 0
             local oldILvl = oldSnap and oldSnap.ilvl or 0
 
-            if (not isSilent and oldSnap and slotGS > oldGS and oldGS > 0) then
-                local deltaGS = slotGS - oldGS
-                local deltaILvl = math.max(0, slotILvl - oldILvl)
+            if (not isSilent and ((oldSnap and slotGS > oldGS) or (not oldSnap and slotGS > 0))) then
+                local deltaGS = (oldSnap and oldGS > 0) and (slotGS - oldGS) or slotGS
+                local deltaILvl = (oldSnap and oldILvl > 0) and math.max(0, slotILvl - oldILvl) or slotILvl
                 table.insert(rec.history, 1, {
                     time = now,
                     slotID = slotID,
@@ -5795,6 +5839,29 @@ function TT:EvaluatePlayerEquipment(isSilent)
             }
         elseif (not link and oldLink) then
             rec.snapshots[slotID] = nil
+        end
+    end
+
+    if (not isSilent and #rec.history == 0) then
+        for _, slotID in ipairs(GEAR_SLOTS_ORDERED) do
+            local snap = rec.snapshots[slotID]
+            if (snap and snap.link and (snap.gs or 0) > 0) then
+                table.insert(rec.history, {
+                    time = now,
+                    slotID = slotID,
+                    slotName = GEAR_SLOT_NAMES[slotID] or ("Slot " .. slotID),
+                    oldLink = nil,
+                    newLink = snap.link,
+                    oldILvl = 0,
+                    newILvl = snap.ilvl or 0,
+                    oldGS = 0,
+                    newGS = snap.gs or 0,
+                    deltaGS = snap.gs or 0,
+                    deltaILvl = snap.ilvl or 0,
+                    totalGS = currentScore,
+                    level = levelInfo.level,
+                })
+            end
         end
     end
 

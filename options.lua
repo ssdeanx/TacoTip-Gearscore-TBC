@@ -608,19 +608,21 @@ local function registerOptionsCategory()
             registerSettingsSubcategories()
         end
 
-        if (not InterfaceOptions_AddCategory and LoadAddOn) then
-            pcall(LoadAddOn, "Blizzard_OptionsUI")
-            pcall(LoadAddOn, "Blizzard_InterfaceOptions")
-        end
+        if (not settingsCategoryRegistered) then
+            if (not InterfaceOptions_AddCategory and LoadAddOn) then
+                pcall(LoadAddOn, "Blizzard_OptionsUI")
+                pcall(LoadAddOn, "Blizzard_InterfaceOptions")
+            end
 
-        if (not legacyCategoryRegistered and InterfaceOptions_AddCategory) then
-            InterfaceOptions_AddCategory(optionsFrame)
-            legacyCategoryRegistered = true
-            registeredAny = true
-        end
+            if (not legacyCategoryRegistered and InterfaceOptions_AddCategory) then
+                InterfaceOptions_AddCategory(optionsFrame)
+                legacyCategoryRegistered = true
+                registeredAny = true
+            end
 
-        if (legacyCategoryRegistered) then
-            registerLegacyChildCategories()
+            if (legacyCategoryRegistered) then
+                registerLegacyChildCategories()
+            end
         end
     end)
 
@@ -2187,17 +2189,10 @@ local function buildRootPage()
             string.format(L["OPTIONS_LANGUAGE_CLIENT_DEFAULT"] or "Client default (%s)",
                 getLocaleDisplayName(GetLocale() or "enUS"))
         local lines = {
-            L["OPTIONS_ROOT_PAGE_HINT"] or "Use the child pages in the AddOns tree to configure TacoTip.",
-            "|cffb4e634•|r " .. string.format(L["OPTIONS_STATUS_LANGUAGE"] or "Addon language: %s.", localeSummary),
-            "|cffb4e634•|r " .. tooltipMode,
-            "|cffb4e634•|r " ..
-            (TacoTipConfig.show_gs_character and (L["OPTIONS_STATUS_CHARACTER_GS_ON"] or "Character and inspect GearScore overlays are enabled.") or (L["OPTIONS_STATUS_CHARACTER_GS_OFF"] or "Character and inspect GearScore overlays are disabled.")),
-            "|cffb4e634•|r " ..
-            (TacoTipConfig.show_avg_ilvl and (L["OPTIONS_STATUS_CHARACTER_ILVL_ON"] or "Average item level overlays are enabled.") or (L["OPTIONS_STATUS_CHARACTER_ILVL_OFF"] or "Average item level overlays are disabled.")),
-            "|cffb4e634•|r " ..
-            (TacoTipConfig.unlock_info_position and (L["OPTIONS_STATUS_OVERLAYS_UNLOCKED"] or "Overlay drag movers are unlocked.") or (L["OPTIONS_STATUS_OVERLAYS_LOCKED"] or "Overlay drag movers are locked.")),
-            "|cffb4e634•|r Community Discord: |cffffd100" ..
-            DISCORD_INVITE_URL .. "|r  (Type |cffb4e634/tt|r to open the full Dashboard)"
+            "|cffb4e634TacoTip Dashboard:|r Type |cffffd100/tt|r or click the button above for the full standalone dashboard.",
+            "|cffb4e634•|r " .. string.format(L["OPTIONS_STATUS_LANGUAGE"] or "Addon language: %s.", localeSummary) ..
+            "  |cffb4e634•|r " .. tooltipMode,
+            "|cffb4e634•|r Discord: |cffffd100" .. DISCORD_INVITE_URL .. "|r"
         }
         return table.concat(lines, "\n")
     end
@@ -3448,7 +3443,7 @@ local function createDashboard()
     paintFlatBox(header, DASH_THEME.headerBg)
 
     local logo = header:CreateTexture(nil, "ARTWORK")
-    logo:SetSize(28, 28)
+    logo:SetSize(32, 32)
     logo:SetPoint("LEFT", header, "LEFT", 12, 0)
     logo:SetTexture(LOGO_TEXTURE_PATH)
 
@@ -4283,8 +4278,18 @@ local function createDashboard()
     paintFlatBox(heroCard, DASH_THEME.cardBg, DASH_THEME.borderGold)
     heroCard.searchText = "progression level rank gearscore xp trophies chronicle mini game"
 
+    local heroPortrait = heroCard:CreateTexture(nil, "ARTWORK")
+    heroPortrait:SetSize(46, 46)
+    heroPortrait:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 12, -10)
+    if (_G.SetPortraitTexture) then
+        pcall(_G.SetPortraitTexture, heroPortrait, "player")
+    end
+    if (not heroPortrait:GetTexture()) then
+        heroPortrait:SetTexture(LOGO_TEXTURE_PATH)
+    end
+
     local heroLevelText = heroCard:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    heroLevelText:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 14, -10)
+    heroLevelText:SetPoint("TOPLEFT", heroPortrait, "TOPRIGHT", 10, 0)
     heroLevelText:SetText("|cffffd100[LEVEL 1]|r Novice")
 
     local heroGSText = heroCard:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
@@ -4296,8 +4301,8 @@ local function createDashboard()
     heroStatsText:SetText("Peak: |cffffd1000|r  •  Average iLvl: |cffffffff0|r  •  Upgrades: |cff59f0dc0|r  •  Trophies: |cffb4e6340/10|r")
 
     local xpBarBg = CreateFrame("Frame", nil, heroCard)
-    xpBarBg:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 12)
-    xpBarBg:SetSize(656, 20)
+    xpBarBg:SetPoint("BOTTOMLEFT", heroCard, "BOTTOMLEFT", 12, 10)
+    xpBarBg:SetSize(656, 18)
     paintFlatBox(xpBarBg, { 0.08, 0.09, 0.11, 0.95 }, DASH_THEME.borderSubtle)
 
     local xpBarFill = xpBarBg:CreateTexture(nil, "ARTWORK")
@@ -4337,9 +4342,12 @@ local function createDashboard()
         tBtn:EnableMouse(true)
         tBtn.def = def
 
-        local tIcon = tBtn:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+        local tIcon = tBtn:CreateTexture(nil, "ARTWORK")
+        tIcon:SetSize(22, 22)
         tIcon:SetPoint("TOPLEFT", tBtn, "TOPLEFT", 6, -6)
-        tIcon:SetText("|cff555555☆|r")
+        tIcon:SetTexture("Interface\\Icons\\achievement_general")
+        if (tIcon.SetDesaturated) then tIcon:SetDesaturated(true) end
+        if (tIcon.SetAlpha) then tIcon:SetAlpha(0.35) end
         tBtn.icon = tIcon
 
         local tName = tBtn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -4593,7 +4601,9 @@ local function createDashboard()
         if (TT and TT.EvaluatePlayerEquipment) then
             TT:EvaluatePlayerEquipment(false)
             if (frame.RefreshProgression) then frame:RefreshProgression() end
-            print("|cFFFFB81C[TacoTip]|r |cFFB4E634Equipment snapshot evaluated!|r")
+            local rec = TT.GetPlayerProgression and TT:GetPlayerProgression()
+            local count = rec and rec.history and #rec.history or 0
+            print(string.format("|cFFFFB81C[TacoTip]|r |cFFB4E634Equipment snapshot evaluated! (%d item(s) in chronicle)|r", count))
         end
     end, "Snapshot Gear", "Immediately scan your currently equipped gear and log any upgrades.")
     snapBtn:SetPoint("LEFT", progActionCard, "LEFT", 12, 0)
@@ -4737,18 +4747,24 @@ local function createDashboard()
         xpBarText:SetText(string.format("%d / %d GS to Level %d (%d%%)",
             levelInfo.progress, levelInfo.step, levelInfo.level + 1, pct))
 
+        if (heroPortrait and _G.SetPortraitTexture) then
+            pcall(_G.SetPortraitTexture, heroPortrait, "player")
+        end
+
         -- Update Trophies
         for _, tBtn in ipairs(trophyButtons) do
             local def = tBtn.def
             if (def) then
                 local tr = rec.trophies[def.id]
                 if (tr) then
-                    tBtn.icon:SetText("|cffffd100★|r")
+                    if (tBtn.icon and tBtn.icon.SetDesaturated) then tBtn.icon:SetDesaturated(false) end
+                    if (tBtn.icon and tBtn.icon.SetAlpha) then tBtn.icon:SetAlpha(1.0) end
                     tBtn.name:SetText(string.format("|cffffd100%s|r", def.name))
                     tBtn.status:SetText("|cffb4e634UNLOCKED|r")
                     tBtn:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderEmerald)
                 else
-                    tBtn.icon:SetText("|cff555555☆|r")
+                    if (tBtn.icon and tBtn.icon.SetDesaturated) then tBtn.icon:SetDesaturated(true) end
+                    if (tBtn.icon and tBtn.icon.SetAlpha) then tBtn.icon:SetAlpha(0.35) end
                     tBtn.name:SetText(string.format("|cff888888%s|r", def.name))
                     tBtn.status:SetText("|cff666666Locked|r")
                     tBtn:SetFlatColors(DASH_THEME.headerBg, DASH_THEME.borderSubtle)
@@ -5071,7 +5087,11 @@ local function createDashboard()
                     row.guildTxt:SetText(entry.guild and entry.guild ~= "" and ("<" .. entry.guild .. ">") or "")
                     row.lvlTxt:SetText(tostring(entry.level or ""))
 
-                    row.specTxt:SetText(entry.specName or "Unknown")
+                    local specOrClass = entry.specName
+                    if (not specOrClass or specOrClass == "" or specOrClass == "Unknown") then
+                        specOrClass = entry.class or "--"
+                    end
+                    row.specTxt:SetText(specOrClass)
 
                     local gsVal = entry.gs or 0
                     local gr, gg, gb = getGsQualityColor(gsVal)

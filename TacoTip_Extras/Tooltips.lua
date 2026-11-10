@@ -189,7 +189,7 @@ local COMPACT_DELTA_LABEL = "\206\148"
 
 local function validPlayerGUID(guid)
     if type(guid) ~= "string"
-        or (type(issecretvalue) == "function" and issecretvalue(guid))
+        or Core.IsSecretValue(guid)
         or not string.match(guid, "^Player%-%d+%-%x+$") then
         return false
     end
@@ -259,10 +259,10 @@ local function tooltipUnit(target)
                 return dispUnit
             end
             if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function"
-                and not (type(issecretvalue) == "function" and issecretvalue(dispGUID)) then
+                and not Core.IsSecretValue(dispGUID) then
                 for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
-                    local ug = _G.UnitGUID(u)
-                    if ug and not (type(issecretvalue) == "function" and issecretvalue(ug)) and ug == dispGUID then
+                    local okUG, ug = pcall(_G.UnitGUID, u)
+                    if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, dispGUID) then
                         return u
                     end
                 end
@@ -284,10 +284,10 @@ local function tooltipUnit(target)
             end
             -- If guid matches a known unit token:
             if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function"
-                and not (type(issecretvalue) == "function" and issecretvalue(guid)) then
+                and not Core.IsSecretValue(guid) then
                 for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
-                    local ug = _G.UnitGUID(u)
-                    if ug and not (type(issecretvalue) == "function" and issecretvalue(ug)) and ug == guid then
+                    local okUG, ug = pcall(_G.UnitGUID, u)
+                    if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, guid) then
                         return u
                     end
                 end
@@ -324,21 +324,21 @@ local function validatePlayerUnit(target)
     end
 
     local confirmOK, confirmedGUID = pcall(_G.UnitGUID, unit)
-    if not confirmOK or confirmedGUID ~= guid then
+    if not confirmOK or not Core.SafeEquals(confirmedGUID, guid) then
         return nil
     end
     return unit, guid
 end
 
 local function isLocalGUID(guid)
-    if type(_G.UnitGUID) ~= "function" or (type(issecretvalue) == "function" and issecretvalue(guid)) then
+    if type(_G.UnitGUID) ~= "function" or Core.IsSecretValue(guid) then
         return false
     end
     local ok, playerGUID = pcall(_G.UnitGUID, "player")
-    if not ok or (type(issecretvalue) == "function" and issecretvalue(playerGUID)) then
+    if not ok or Core.IsSecretValue(playerGUID) then
         return false
     end
-    return playerGUID == guid
+    return Core.SafeEquals(playerGUID, guid)
 end
 
 -- One reused table. This used to allocate a fresh eight-field table on every
@@ -462,7 +462,7 @@ end
 local function playerClassColor(unit)
     if type(_G.UnitClass) == "function" then
         local ok, _, classToken = pcall(_G.UnitClass, unit)
-        if ok and type(classToken) == "string" and not (type(issecretvalue) == "function" and issecretvalue(classToken)) then
+        if ok and type(classToken) == "string" and not Core.IsSecretValue(classToken) then
             -- The CHAIN lives in Core (Core.GetClassColor), so the tooltip,
             -- the character/inspect frame and the leaderboard row cannot drift
             -- apart. What stays here is this surface's own two rules: the
@@ -541,9 +541,6 @@ end
 -- gate believed the user had switched the restriction off, and the three
 -- metrics then read "Unavailable" instead of showing a value.
 local function level70RestrictionEnabled()
-    if isForeverClient() then
-        return false
-    end
     local core = namespace.Core
     if type(core) == "table" and type(core.GetEnhancementPolicy) == "function" then
         local ok, policy = pcall(core.GetEnhancementPolicy)
@@ -558,13 +555,17 @@ local function level70RestrictionEnabled()
 end
 
 local function enhancementMetricsSuppressed(revision)
-    if isForeverClient() then
-        return false
-    end
     if not level70RestrictionEnabled() then
         return false
     end
-    return readLevel(revision) ~= 70
+    local lvl = readLevel(revision)
+    if type(lvl) ~= "number" then
+        return false
+    end
+    if isForeverClient() then
+        return lvl < 60
+    end
+    return lvl ~= 70
 end
 
 local function completionParts(metrics)
@@ -759,7 +760,7 @@ local function getRankRow(guid, unit, mode)
         local uGUID = rawget(g, "UnitGUID")
         if type(uGUID) == "function" then
             local ok, id = pcall(uGUID, unit)
-            if ok and type(id) == "string" and not (type(issecretvalue) == "function" and issecretvalue(id)) then
+            if ok and type(id) == "string" and not Core.IsSecretValue(id) then
                 targetGUID = id
             end
         end
@@ -780,12 +781,12 @@ local function getRankRow(guid, unit, mode)
     if type(uClass) == "function" and unit then
         local ok, locClass, token = pcall(uClass, unit)
         if ok then
-            if type(locClass) == "string" and not (type(issecretvalue) == "function" and issecretvalue(locClass)) then
+            if type(locClass) == "string" and not Core.IsSecretValue(locClass) then
                 if locClass ~= "" then
                     className = locClass
                 end
             end
-            if type(token) == "string" and not (type(issecretvalue) == "function" and issecretvalue(token)) then
+            if type(token) == "string" and not Core.IsSecretValue(token) then
                 classFile = token
             end
         end
@@ -825,11 +826,11 @@ local function getRankRow(guid, unit, mode)
             local getAtlas = rawget(g, "GetClassAtlas")
             if type(getAtlas) == "function"
                 and type(classFile) == "string"
-                and not (type(issecretvalue) == "function" and issecretvalue(classFile))
+                and not Core.IsSecretValue(classFile)
                 and classFile ~= "" then
                 local ok, atlas = pcall(getAtlas, classFile)
                 if ok and type(atlas) == "string"
-                    and not (type(issecretvalue) == "function" and issecretvalue(atlas))
+                    and not Core.IsSecretValue(atlas)
                     and atlas ~= "" then
                     classDisplay = "|A:" .. atlas .. ":14:14|a"
                     classColored = false
@@ -1346,8 +1347,8 @@ end
 
 local function renderInputsUnchanged(current, target, guid, source, mode, unit)
     if current.tooltip ~= target
-        or current.unit ~= unit
-        or current.guid ~= guid
+        or not Core.SafeEquals(current.unit, unit)
+        or not Core.SafeEquals(current.guid, guid)
         or current.source ~= source.source
         or current.state ~= source.state
         or current.generation ~= source.generation
@@ -1359,7 +1360,7 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
     local classRed, classGreen, classBlue, classToken = playerClassColor(unit)
     local fresh = rankLineInputs(guid)
     return current.shiftDown == shiftIsDown()
-        and current.classToken == classToken
+        and Core.SafeEquals(current.classToken, classToken)
         and current.classRed == classRed
         and current.classGreen == classGreen
         and current.classBlue == classBlue
@@ -1410,7 +1411,7 @@ local function renderPlayerTooltipBody(target)
         and type(source.revision) == "table"
         and type(source.result) == "table" then
         local confirmOK, currentGUID = pcall(_G.UnitGUID, unit)
-        if not confirmOK or currentGUID ~= guid then
+        if not confirmOK or not Core.SafeEquals(currentGUID, guid) then
             clearBinding()
             return false
         end

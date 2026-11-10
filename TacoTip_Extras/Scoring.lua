@@ -150,6 +150,43 @@ local function isForeverClient()
     return false
 end
 
+local function clientHasSockets()
+    local core = type(namespace) == "table" and namespace.Core
+    if type(core) == "table" and type(core.ClientHasSockets) == "function" then
+        local ok, val = pcall(core.ClientHasSockets)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
+    if isForeverClient() then
+        return false
+    end
+    local wowProject = rawget(_G, "WOW_PROJECT_ID")
+    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
+    if wowProject and wowClassic and wowProject == wowClassic then
+        return false
+    end
+    local wowBC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC") or rawget(_G, "WOW_PROJECT_BC_CLASSIC")
+    local wowWrath = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
+    if (wowProject and wowBC and wowProject == wowBC) or (wowProject and wowWrath and wowProject == wowWrath) then
+        return true
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        if iface >= 16000 and iface < 20000 then
+            return false
+        elseif iface >= 20000 and iface < 40000 then
+            return true
+        elseif iface >= 100000 then
+            return true
+        elseif iface >= 10000 and iface < 16000 then
+            return false
+        end
+    end
+    return false
+end
+
 local function makeBlocker(status, reason)
     return { status = status, reason = reason }
 end
@@ -551,6 +588,14 @@ local function readPotentialEnchantEligibility(item, equipLoc, equipLocBlocker)
 end
 
 local function readSocketEvidence(item, parsed)
+    if not clientHasSockets() then
+        return {
+            capacity = 0,
+            filled = 0,
+            emptyScoreBearing = 0,
+        }, nil
+    end
+
     local sockets, socketBlocker = readCell(item.sockets, "sockets", validateSockets)
     if socketBlocker or not sockets then
         return nil, socketBlocker or makeBlocker("unknown", "sockets-missing")
@@ -767,18 +812,12 @@ local function enhancementPolicy(revision, policy)
         return nil, makeBlocker("contradictory", "enhancement-policy")
     end
 
-    -- On WoW Forever (Camelot, interface 16001), enhancement metrics (Potential GS,
-    -- Delta, and Completion) show for all levels without a level 70 restriction gate.
-    if isForeverClient() then
-        return false, nil
-    end
-
-    local restrictToLevel70 = true
+    local restrictLevel = true
     if policy.restrictEnhancementMetricsToLevel70 ~= nil then
-        restrictToLevel70 = policy.restrictEnhancementMetricsToLevel70
+        restrictLevel = policy.restrictEnhancementMetricsToLevel70
     end
 
-    if not restrictToLevel70 then
+    if not restrictLevel then
         return false, nil
     end
 
@@ -786,6 +825,11 @@ local function enhancementPolicy(revision, policy)
     if levelBlocker then
         return nil, levelBlocker
     end
+
+    if isForeverClient() then
+        return level < 60, nil
+    end
+
     return level ~= 70, nil
 end
 
@@ -852,8 +896,12 @@ function Scoring.Evaluate(revision, policy)
         "socket-capability",
         function(value) return type(value) == "boolean" end
     )
-    if not socketCapabilityBlocker and not socketCapability then
-        socketCapabilityBlocker = makeBlocker("unavailable", "socket-capability")
+    if clientHasSockets() then
+        if not socketCapabilityBlocker and not socketCapability then
+            socketCapabilityBlocker = makeBlocker("unavailable", "socket-capability")
+        end
+    else
+        socketCapabilityBlocker = nil
     end
 
     local suppressed, enhancementPolicyBlocker = enhancementPolicy(revision, policy)

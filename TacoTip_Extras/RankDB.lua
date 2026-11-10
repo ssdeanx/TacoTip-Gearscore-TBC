@@ -6,6 +6,7 @@ end
 
 local RankDB = {}
 namespace.RankDB = RankDB
+local Core = namespace.Core
 
 -- 20000 players per realm, measured rather than guessed.
 --
@@ -202,7 +203,7 @@ end
 
 local function sanitizeString(val, maxLen)
     if type(val) ~= "string" then return nil end
-    if type(issecretvalue) == "function" and issecretvalue(val) then return nil end
+    if Core.IsSecretValue(val) then return nil end
     local s = val:gsub("[%c;]", ""):match("^%s*(.-)%s*$")
     if s == "" then return nil end
     if maxLen and #s > maxLen then
@@ -222,7 +223,7 @@ local function sanitizeString(val, maxLen)
 end
 
 local function sanitizeNumber(val, minVal, maxVal)
-    if type(issecretvalue) == "function" and issecretvalue(val) then return nil end
+    if Core.IsSecretValue(val) then return nil end
     local n = tonumber(val)
     if not n or n ~= n or n == math.huge or n == -math.huge then
         return nil
