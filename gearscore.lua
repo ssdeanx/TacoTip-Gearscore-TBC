@@ -214,21 +214,57 @@ local GS_Quality = {
 }
 
 local function isSecretValue(v)
-    if (v == nil) then return false end
+    if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
         local okSecret, isSec = pcall(issecretvalue, v)
-        if (okSecret and isSec) then return true end
+        if (not okSecret or isSec == true) then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
     if (type(canaccess) == "function") then
         local okAccess, canAcc = pcall(canaccess, v)
-        if (okAccess and not canAcc) then return true end
+        if (not okAccess or canAcc == false) then return true end
     end
     return false
 end
 
+-- UnitIsUnit is RequiresComparableUnitTokens / SecretWhenUnitComparisonRestricted:
+-- in restricted combat its boolean is itself a secret, so `UnitIsUnit(...)` in an
+-- `if` and after `not` is a boolean test on a secret value and throws. The
+-- sanctioned pre-check is C_Secrets.CanCompareUnitTokens, which answers without
+-- returning a secret. That namespace is a client capability this add-on must not
+-- assume -- it never defines or replaces it, so it is feature-detected -- and when
+-- it is absent the pcall and the strong secret predicate above carry the guard. A
+-- comparison that cannot be verified reads as false -- this only skips the
+-- UnitIsUnit shortcut, and the GUID equality check inside GetScore stays
+-- authoritative.
+local function safeUnitIsUnit(unit1, unit2)
+    if (type(unit1) == "nil" or type(unit2) == "nil" or type(UnitIsUnit) ~= "function") then
+        return false
+    end
+    if (isSecretValue(unit1) or isSecretValue(unit2)) then
+        return false
+    end
+    local secretsApi = rawget(_G, "C_Secrets")
+    local canCompareUnitTokens = type(secretsApi) == "table" and secretsApi.CanCompareUnitTokens
+    if (type(canCompareUnitTokens) == "function") then
+        local compareOk, permitted = pcall(canCompareUnitTokens, unit1, unit2)
+        if (not compareOk or isSecretValue(permitted) or permitted == false) then
+            return false
+        end
+    end
+    local ok, isUnit = pcall(UnitIsUnit, unit1, unit2)
+    if (not ok or isSecretValue(isUnit)) then
+        return false
+    end
+    return isUnit == true
+end
+
 local function getPlayerGUID(arg)
-    if (arg and not isSecretValue(arg)) then
+    -- type()-based, not `arg and ...`: a truthiness test is itself a boolean
+    -- operation, so a secret value would be tested before the secret predicate
+    -- that exists to reject it ever runs. Unit tokens and GUIDs are strings, so
+    -- the type test is also the tighter contract.
+    if (type(arg) == "string" and not isSecretValue(arg)) then
         if (GUIDIsPlayer(arg)) then
             return arg
         elseif (UnitIsPlayer(arg)) then
@@ -429,7 +465,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
     local guid = getPlayerGUID(unitorguid)
     if (guid) then
         local isSelf = (unitorguid == "player")
-            or (type(UnitIsUnit) == "function" and UnitIsUnit(unitorguid, "player"))
+            or safeUnitIsUnit(unitorguid, "player")
         if (not isSelf) then
             local okP, playerGUID = pcall(UnitGUID, "player")
             if (okP and playerGUID and not isSecretValue(playerGUID) and not isSecretValue(guid)) then

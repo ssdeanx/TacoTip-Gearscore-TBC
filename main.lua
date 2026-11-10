@@ -268,6 +268,40 @@ end
 
 local safeEquals = TT.safeEquals
 
+-- Is a tooltip-data table safe to INDEX?
+--
+-- The post-call hands us the very payload the client just processed. On WoW
+-- Forever that payload can be a SECRET TABLE. From the client/wiki contract: once
+-- untainted code stores a secret value as a table KEY, the table is irrevocably
+-- flagged both secret AND inaccessible to tainted code, and "any attempt to
+-- index, assign, measure, or iterate over such a table will trigger an immediate
+-- Lua error" ("attempted to index a forbidden table").
+--
+-- issecretvalue() does NOT answer that question, and it is the wrong predicate
+-- for this job: the raise happens on the INDEX ITSELF, before any isSecretValue()
+-- on the result could ever run. The documented predicate is canaccesstable():
+--   "Returns true if the immediate calling function has appropriate permissions
+--    to index secret tables. This will return false if the caller cannot access
+--    the table value itself, or if access to the table contents is disallowed by
+--    taint."                                    (FrameScriptDocumentation.lua:48-63)
+--
+-- It is itself SecretArguments="AllowedWhenUntainted", so it is pcall'd and a
+-- refusal is treated exactly like false. Clients that do not expose it (the
+-- classic family) simply read the table normally.
+--
+-- Every `data.<field>` read in this file goes through here first. Presenting no
+-- row is the correct outcome when the payload cannot be read -- never a raise.
+function TT.tooltipDataReadable(data)
+    if (type(data) ~= "table") then return false end
+    if (isSecretValue(data)) then return false end
+    local canAccess = rawget(_G, "canaccesstable")
+    if (type(canAccess) == "function") then
+        local ok, can = pcall(canAccess, data)
+        if (not ok or can ~= true) then return false end
+    end
+    return true
+end
+
 function TT.safeUnitGUID(unit)
     if (type(unit) == "nil" or isSecretValue(unit) or type(UnitGUID) ~= "function") then return nil end
     local ok, guid = pcall(UnitGUID, unit)
@@ -672,8 +706,21 @@ do
     stage("backdrop-mixin")
 end
 
+-- UnitIsOtherPlayersPet carries SecretWhenUnitIdentityRestricted, so on a
+-- restricted unit the answer is a secret BOOLEAN and the caller's
+-- `safeUnitIsUnit(...) or isOtherPlayersPet(...)` is a boolean test on it.
+-- Unknown reads as "not another player's pet" -- the pet branch is skipped, which
+-- is the safe direction (it only chooses which label to print).
 local function isOtherPlayersPet(unit)
-    return _G.UnitIsOtherPlayersPet and _G.UnitIsOtherPlayersPet(unit)
+    if (type(unit) == "nil" or isSecretValue(unit)
+            or type(_G.UnitIsOtherPlayersPet) ~= "function") then
+        return false
+    end
+    local ok, isPet = pcall(_G.UnitIsOtherPlayersPet, unit)
+    if (not ok or isSecretValue(isPet)) then
+        return false
+    end
+    return isPet == true
 end
 
 local function stopPowerBarTicker()
@@ -899,7 +946,14 @@ local function getHostileDifficultyColor(unit)
     if (type(UnitCanAttack) == "function" and type(UnitIsPlayer) == "function") then
         local okAtk, canAtk = pcall(UnitCanAttack, "player", unit)
         local okPlr, isPlr = pcall(UnitIsPlayer, unit)
-        if (okAtk and canAtk == false and okPlr and isPlr == true) then
+        -- The pcall protects the CALL, not the answer: `canAtk == false` below is a
+        -- COMPARISON, and a comparison on a secret boolean raises. The generated
+        -- docs annotate UnitCanAttack's return as a plain bool at this pin, but
+        -- Forever beta reports list it among the values that can arrive secret,
+        -- and a guard is a no-op when the annotation is right while it is a save
+        -- when it is not -- so the answer is tested before it is compared.
+        if (okAtk and not isSecretValue(canAtk) and canAtk == false
+                and okPlr and not isSecretValue(isPlr) and isPlr == true) then
             return nil
         end
     end
@@ -2639,7 +2693,7 @@ local function onTooltipSetUnit(tooltip, data)
         end
     end
     tooltipUnit = resolveTooltipUnit(tooltip, tooltipUnit)
-    if (not tooltipUnit and data and data.guid) then
+    if (not tooltipUnit and TT.tooltipDataReadable(data) and data.guid) then
         tooltipUnit = resolveUnitTokenFromGUID(data.guid, tooltip)
     end
     if (not tooltipUnit) then
@@ -2661,7 +2715,7 @@ local function onTooltipSetUnit(tooltip, data)
         local cause = "unresolved-unit"
         if (not tooltip) then
             cause = "no-tooltip"
-        elseif (data and data.guid) then
+        elseif (TT.tooltipDataReadable(data) and data.guid) then
             cause = "unresolved-guid"
         elseif (not name) then
             cause = "no-unit-source"
@@ -2718,7 +2772,8 @@ local function onTooltipSetUnit(tooltip, data)
         -- an unproven change is a complete no-op, and a proven change tears the
         -- mesh down and leaves it down.
         local unresolvedState = getTooltipState(tooltip)
-        local incomingGUID = (data and data.guid and not TT.isSecretValue(data.guid)) and data.guid or nil
+        local incomingGUID = (TT.tooltipDataReadable(data) and data.guid
+            and not TT.isSecretValue(data.guid)) and data.guid or nil
         local changeUnproven = (incomingGUID == nil)
             or TT.safeEquals(incomingGUID, unresolvedState.currentUnitGUID)
         -- keepModel and retainModel both = changeUnproven, and the old call had
@@ -2740,7 +2795,7 @@ local function onTooltipSetUnit(tooltip, data)
         return
     end
 
-    local rawGuid = (data and data.guid) or safeUnitGUID(tooltipUnit)
+    local rawGuid = (TT.tooltipDataReadable(data) and data.guid) or safeUnitGUID(tooltipUnit)
     local guid = (rawGuid and not isSecretValue(rawGuid)) and rawGuid or nil
     -- Self has no inspect-cache record: CI:GetUnitData("player") is nil, so the
     -- score memo can never supply a value. The first render registers the
@@ -2854,8 +2909,15 @@ local function onTooltipSetUnit(tooltip, data)
             elseif (safeUnitIsPlayer(unitTarget)) then
                 local classc
                 if (TacoTipConfig.color_class) then
-                    local _, targetClass = UnitClass(unitTarget)
-                    if (targetClass) then
+                    -- UnitClass is SecretArguments="AllowedWhenUntainted" and
+                    -- SecretWhenUnitIdentityRestricted: on a restricted unit the
+                    -- class token comes back secret, so `if (targetClass)` is a
+                    -- boolean test on a secret value and throws. Guard the call
+                    -- AND the answer; getClassColor re-checks, but it must not be
+                    -- handed a secret in the first place.
+                    local okClass, _, targetClass = pcall(UnitClass, unitTarget)
+                    if (okClass and not isSecretValue(targetClass)
+                            and type(targetClass) == "string") then
                         classc = getClassColor(targetClass)
                     end
                 end
@@ -2900,7 +2962,12 @@ local function onTooltipSetUnit(tooltip, data)
         else
             local inSameMap = true
             local inGroup = (type(IsInGroup) == "function" and IsInGroup())
-            if (inGroup and (((type(IsInRaid) == "function" and IsInRaid() and UnitInRaid and UnitInRaid(tooltipUnit))) or (UnitInParty and UnitInParty(tooltipUnit)))) then
+            -- Both group tests go through the secret-safe helpers: UnitInRaid is
+            -- SecretWhenUnitIdentityRestricted and UnitInParty takes a unit token
+            -- under SecretArguments = "AllowedWhenUntainted", so a bare call can
+            -- hand tainted code an error instead of an answer. A group answer the
+            -- client will not give reads as false.
+            if (inGroup and (safeUnitInRaid(tooltipUnit) or safeUnitInParty(tooltipUnit))) then
                 if (GetBestMapForUnit) then
                     local okU, unitMap = pcall(GetBestMapForUnit, tooltipUnit)
                     local okP, playerMap = pcall(GetBestMapForUnit, "player")
@@ -3034,8 +3101,36 @@ local function onTooltipSetUnit(tooltip, data)
 
         text = newText
 
-        if (TacoTipConfig.show_realm and safeUnitIsPlayer(tooltipUnit)
-                and type(_G.UnitIsSameServer) == "function" and not UnitIsSameServer(tooltipUnit)) then
+        -- Realm row: "is this unit on a different server than me?" -- answered
+        -- only when the client actually answers.
+        --
+        -- UnitIsSameServer declares SecretArguments = "AllowedWhenUntainted"
+        -- (UnitDocumentation.lua:2350-2361 on origin/forever), so a bare call from
+        -- this tainted tooltip path can raise instead of returning a bool. The
+        -- result carries no SecretWhen annotation; the ARGUMENT is the hazard.
+        --
+        -- Unknown reads as "not known to be different", so no realm row is drawn.
+        -- That is the same rule the zone row follows: a unit the client cannot
+        -- place gets no row, never a guessed one.
+        --
+        -- Deliberately INLINE and not a file-local helper: onTooltipSetUnit is
+        -- already at Lua 5.1's 60-upvalue ceiling (a 61st makes main.lua fail to
+        -- load with "function at line ... has more than 60 upvalues" on 5.1 and
+        -- luajit, while 5.4 keeps working -- so the breakage is client-family
+        -- selective and easy to miss). Everything used here is already captured.
+        local differentServer = false
+        -- GATED OFF on WoW Forever. Camelot has one realm per type (PvE / PvP /
+        -- RP-PvP) and no connected realms: every player a tooltip can describe is
+        -- already on your own server, so a "from another server" row cannot be
+        -- true there and must never be drawn. Operator observation, 2026-11-10 --
+        -- which outranks the mirror. This also stops a spurious row if
+        -- UnitIsSameServer ever disagrees on that family.
+        if (TacoTipConfig.show_realm and not isForever and safeUnitIsPlayer(tooltipUnit)
+                and type(_G.UnitIsSameServer) == "function" and not isSecretValue(tooltipUnit)) then
+            local okSame, same = pcall(_G.UnitIsSameServer, tooltipUnit)
+            differentServer = okSame and not isSecretValue(same) and same == false
+        end
+        if (differentServer) then
             local okRealm, _, realm = pcall(UnitName, tooltipUnit)
             if (okRealm and realm and not isSecretValue(realm) and realm ~= "") then
                 if (wide_style) then
@@ -3067,7 +3162,13 @@ local function onTooltipSetUnit(tooltip, data)
                 end
             end
         end
-        if (TacoTipConfig.show_team and type(UnitFactionGroup) == "function") then
+        if (TacoTipConfig.show_team and type(UnitFactionGroup) == "function"
+                and not isSecretValue(tooltipUnit)) then
+            -- UnitFactionGroup takes a cstring under SecretArguments =
+            -- "AllowedWhenUntainted", so a secret token is refused. pcall would
+            -- swallow that, but the row would then be retried and re-refused on
+            -- every render of a restricted unit; testing the token first says
+            -- "no faction icon" once, which is the truth.
             local okFact, faction = pcall(UnitFactionGroup, tooltipUnit)
             if (okFact and faction and not isSecretValue(faction)) then
                 if (faction == "Horde") then
@@ -3754,7 +3855,7 @@ local function resolveTooltipItem(tooltip, data)
         local ok, _, dispLink = pcall(TooltipUtil.GetDisplayedItem, tooltip)
         if (ok and dispLink and not isSecretValue(dispLink)) then return dispLink end
     end
-    if (data and type(data) == "table" and not isSecretValue(data)) then
+    if (TT.tooltipDataReadable(data)) then
         -- `hyperlink` is what the post-call actually supplies for an item, so
         -- this is the branch that fires in practice on Retail / WoW Forever.
         if (data.hyperlink and not isSecretValue(data.hyperlink)) then return data.hyperlink end

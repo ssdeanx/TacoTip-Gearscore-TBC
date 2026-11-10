@@ -173,6 +173,11 @@ local P = CONSTS
 local CAMELOT_CONSTS = {
     WOW_PROJECT_MAINLINE = 1,
     WOW_PROJECT_CLASSIC = 2,
+    -- Interface/AddOns/Blizzard_ProjectConstants/Camelot/ProjectConstants.lua:1-2
+    --   WOW_PROJECT_CAMELOT = 18;  WOW_PROJECT_ID = WOW_PROJECT_CAMELOT;
+    -- Forever's own id. It is NOT MAINLINE, which is what this file used to
+    -- assume.
+    WOW_PROJECT_CAMELOT = 18,
 }
 
 local FAMILY_FLAGS = { "IsClassic", "IsTBC", "IsWotlk", "IsForever", "IsRetail" }
@@ -217,6 +222,15 @@ local SCENARIOS = {
     -- the fallback never got a chance to run -- so Forever was reported as TBC,
     -- with TBC's 400 item-level bracket and TBC's other family behaviours.
     { n = "REAL camelot consts, WOW_PROJECT_ID nil", p = nil, i = 16001, f = "forever", b = 200, c = CAMELOT_CONSTS },
+    -- The real shipped build: FOREVER REPORTS ITS OWN PROJECT ID (18), not
+    -- MAINLINE (1). Identity must come from the named constant, so this resolves
+    -- without depending on the interface band at all.
+    { n = "REAL camelot, WOW_PROJECT_ID 18", p = 18, i = 16001, f = "forever", b = 200, c = CAMELOT_CONSTS },
+    -- ...and it still resolves when GetBuildInfo's interface slot cannot be read
+    -- (interfaceVersion 0). Before the named constant was consulted first, this
+    -- case fell all the way through to family "unknown" and silently switched
+    -- every isForever branch off.
+    { n = "REAL camelot, project 18, interface unreadable", p = 18, i = 0, f = "forever", b = 200, c = CAMELOT_CONSTS },
     -- Unrecognised clients must be reported unknown, not silently defaulted.
     -- Unrecognised clients keep the 1000 default (gearscore.lua names it
     -- explicitly so a future family is visible there). The bracket is pinned
@@ -382,7 +396,14 @@ do
             return "Player-" .. tostring(u)
         end
         env.CanInspect = function() return opts.canInspect ~= false end
-        env.CheckInteractDistance = function() return opts.nearby ~= false end
+        env.CheckInteractDistance = function(u)
+            -- A protected distance probe that raises: the outer per-plate pcall in
+            -- ScanNearby is the only thing that can contain this (the token test
+            -- and the GetUnit pcall both sit earlier), so it exercises the
+            -- last-resort isolation branch and its scanSkippedDistance counter.
+            if (u == "RAISE_DIST") then error("distance probe raised") end
+            return opts.nearby ~= false
+        end
         env.InCombatLockdown = function() return opts.combat == true end
         env.NotifyInspect = function() return true end
         -- Deterministic uptime clock: the fresh-cache pin below stamps with
@@ -437,8 +458,20 @@ do
             (ci:GetInspectStats().scanEnqueued or 0) == 1,
             "enqueued=" .. tostring(ci:GetInspectStats().scanEnqueued))
 
-        -- Per-plate fault isolation: the FIRST plate raises inside a unit query.
-        -- The scan must swallow it, count it, and still process the second plate.
+        -- Per-plate fault isolation, and the secret-token rule.
+        --
+        -- The FIRST plate's unit query raises ("BOOM"). The scan must not abort
+        -- and must still process the second plate.
+        --
+        -- What changed, and why the expectation moved: the plate handler now tests
+        -- the token with unit-exists BEFORE any query, because UnitExists is
+        -- SecretArguments="AllowedWhenUntainted" and a secret nameplate token
+        -- raises on every 2s scan tick. A plate whose token cannot be queried is
+        -- therefore skipped silently instead of being counted as a DISTANCE skip
+        -- (scanSkippedDistance means "out of range", and a refused token is not a
+        -- distance verdict). The per-plate pcall remains as last-resort isolation
+        -- and still increments scanSkippedDistance for any other fault in the
+        -- block, which the next check exercises.
         ci = run(project, iface, "slot4", CONSTS,
             scanEnv({ plates = { "BOOM", "n2" } }))
         ci:SetScanEnabled(true)
@@ -446,9 +479,27 @@ do
         local enq = ci:GetInspectStats().scanEnqueued or 0
         local skipped = ci:GetInspectStats().scanSkippedDistance or 0
         check("ScanNearby isolates bad plate " .. name,
-            (raised and enq == 1 and skipped == 1),
+            (raised and enq == 1 and skipped == 0),
             "ok=" .. tostring(raised) .. " enq=" .. tostring(enq)
             .. " skip=" .. tostring(skipped))
+
+        -- The per-plate pcall still contains an unrelated fault and lets the walk
+        -- continue, so isolation did not become a silent no-op. A raising distance
+        -- probe is the case the token test cannot absorb.
+        --
+        -- Only isolation is asserted here: whether that fault lands inside
+        -- isCloseEnoughToAsk depends on the family's distance path (the classic
+        -- family probes CheckInteractDistance, the modern pair does not), and the
+        -- scanSkippedDistance counter itself is already pinned per family by
+        -- "ScanNearby rejects out-of-range" below.
+        ci = run(project, iface, "slot4", CONSTS,
+            scanEnv({ plates = { "RAISE_DIST", "n2" } }))
+        ci:SetScanEnabled(true)
+        local raisedFault = pcall(ci.ScanNearby)
+        local faultEnq = ci:GetInspectStats().scanEnqueued or 0
+        check("ScanNearby survives an unrelated plate fault " .. name,
+            (raisedFault and faultEnq == 1),
+            "ok=" .. tostring(raisedFault) .. " enq=" .. tostring(faultEnq))
 
         -- Out of range. Classic has CanInspect true + distance false (the exact
         -- case that stalled the queue in 0.8.1); mainline has both false.

@@ -73,7 +73,7 @@ function Core.IsSecretValue(v)
 end
 
 function Core.SafeEquals(a, b)
-    if (a == nil or b == nil or Core.IsSecretValue(a) or Core.IsSecretValue(b)) then
+    if (type(a) == "nil" or type(b) == "nil" or Core.IsSecretValue(a) or Core.IsSecretValue(b)) then
         return false
     end
     local ok, eq = pcall(function() return a == b end)
@@ -316,11 +316,15 @@ end
 -- classic, false for mainline, nil when it cannot be decided -- callers must
 -- treat nil as "unknown", never as either side.
 --
--- This is the reliable split: WOW_PROJECT_ID is distinct for the three classic
--- projects, while Retail and WoW Forever share WOW_PROJECT_MAINLINE
--- (Libs/LibForeverInspector/LibForeverInspector.lua:106-117). The library
--- exposes exactly that as IsClassic/IsTBC/IsWotlk, and the main add-on uses the
--- same three methods for its classic-family check (main.lua:969).
+-- This is the reliable split, and it is deliberately delegated rather than
+-- re-derived: the library owns client identity. Do NOT reconstruct it here from
+-- WOW_PROJECT_ID -- Forever's project id is WOW_PROJECT_CAMELOT (18), NOT
+-- WOW_PROJECT_MAINLINE (1) (origin/forever
+-- Blizzard_ProjectConstants/Camelot/ProjectConstants.lua:1-2), so a MAINLINE
+-- comparison is false on Forever. The library reads the named constant first and
+-- keeps the interface band as its fallback; asking IsClassic/IsTBC/IsWotlk (and
+-- IsForever/IsRetail elsewhere in this file) inherits that fix. The main add-on
+-- uses the same three methods for its classic-family check (main.lua:969).
 function Core.IsClassicFamilyClient()
     local adapter = namespace.TacoTipAdapter
     if type(adapter) ~= "table"

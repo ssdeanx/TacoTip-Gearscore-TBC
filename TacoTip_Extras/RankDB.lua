@@ -828,7 +828,8 @@ local function localPlayerGUID()
         return nil
     end
     local ok, guid = pcall(unitGuid, "player")
-    if ok and type(guid) == "string" and guid ~= "" and (not Core or not Core.IsSecretValue or not Core.IsSecretValue(guid)) then
+    -- Secret first: `~= ""` on a secret string is a comparison and raises.
+    if ok and type(guid) == "string" and (not Core or not Core.IsSecretValue or not Core.IsSecretValue(guid)) and guid ~= "" then
         return guid
     end
     return nil

@@ -76,21 +76,21 @@ local function uptimeSeconds()
 end
 
 local function isSecretValue(v)
-    if (v == nil) then return false end
+    if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
         local okSecret, isSec = pcall(issecretvalue, v)
-        if (okSecret and isSec) then return true end
+        if (not okSecret or isSec == true) then return true end
     end
     local canaccess = rawget(_G, "canaccessvalue")
     if (type(canaccess) == "function") then
         local okAccess, canAcc = pcall(canaccess, v)
-        if (okAccess and not canAcc) then return true end
+        if (not okAccess or canAcc == false) then return true end
     end
     return false
 end
 
 local function safeEquals(a, b)
-    if (a == nil or b == nil or isSecretValue(a) or isSecretValue(b)) then
+    if (type(a) == "nil" or type(b) == "nil" or isSecretValue(a) or isSecretValue(b)) then
         return false
     end
     local ok, eq = pcall(function() return a == b end)
@@ -104,6 +104,101 @@ local function safeUnitGUID(unit)
     return guid
 end
 
+-- UnitIsUnit is RequiresComparableUnitTokens / SecretWhenUnitComparisonRestricted:
+-- in restricted combat its boolean is itself a secret, so `not UnitIsUnit(...)`
+-- or `UnitIsUnit(...)` in an `if` is a boolean test on a secret value and throws.
+-- The sanctioned pre-check is C_Secrets.CanCompareUnitTokens, which answers
+-- without returning a secret. That namespace is a client capability this add-on
+-- must not assume -- it never defines or replaces it, so it is feature-detected --
+-- and when it is absent the pcall and the strong secret predicate above carry the
+-- guard. A comparison that cannot be verified reads as false, matching main.lua's
+-- TT.safeUnitIsUnit: the caller then falls through to the GUID checks
+-- (safeUnitGUID/safeEquals), which remain authoritative.
+local function safeUnitIsUnit(unit1, unit2)
+    if (type(unit1) == "nil" or type(unit2) == "nil" or type(UnitIsUnit) ~= "function") then
+        return false
+    end
+    if (isSecretValue(unit1) or isSecretValue(unit2)) then
+        return false
+    end
+    local secretsApi = rawget(_G, "C_Secrets")
+    local canCompareUnitTokens = type(secretsApi) == "table" and secretsApi.CanCompareUnitTokens
+    if (type(canCompareUnitTokens) == "function") then
+        local compareOk, permitted = pcall(canCompareUnitTokens, unit1, unit2)
+        if (not compareOk or isSecretValue(permitted) or permitted == false) then
+            return false
+        end
+    end
+    local ok, isUnit = pcall(UnitIsUnit, unit1, unit2)
+    if (not ok or isSecretValue(isUnit)) then
+        return false
+    end
+    return isUnit == true
+end
+
+-- Unit-query helpers, one per API this library calls with a caller-supplied token.
+--
+-- WHY EVERY ONE OF THESE EXISTS (verified on origin/forever, 1.60.1.70888):
+-- UnitExists, UnitIsPlayer, UnitIsConnected and UnitIsDeadOrGhost each declare
+--   SecretArguments = "AllowedWhenUntainted"
+-- (UnitDocumentation.lua at each entry). Add-on execution is always tainted, so
+-- handing one of them a SECRET unit token is refused outright:
+--   bad argument #1 to 'UnitExists' (Usage: local result = UnitExists([unit]).
+--   Secret values are only allowed during untainted execution for this argument.)
+-- In instance combat / an active encounter a tooltip's own unit token can itself
+-- be secret (SecretWhenUnitIdentityRestricted), so a bare call from this path is
+-- exactly that error. The rule is: test the token first, never the answer alone.
+-- A token the client will not let us query answers false -- the caller then draws
+-- no row rather than guessing one.
+--
+-- Note the asymmetry that makes the argument test mandatory but the RESULT test
+-- cheap: these four carry no SecretReturns/SecretWhen on their returns, so the
+-- result is a plain bool we can test normally. UnitIsUnit is the opposite case
+-- (secret BOOLEAN return) and has its own helper above.
+local function safeUnitExists(unit)
+    if (type(unit) == "nil" or isSecretValue(unit) or type(UnitExists) ~= "function") then
+        return false
+    end
+    local ok, exists = pcall(UnitExists, unit)
+    if (not ok or isSecretValue(exists)) then
+        return false
+    end
+    return exists == true
+end
+
+local function safeUnitIsPlayer(unit)
+    if (type(unit) == "nil" or isSecretValue(unit) or type(UnitIsPlayer) ~= "function") then
+        return false
+    end
+    local ok, isPlayer = pcall(UnitIsPlayer, unit)
+    if (not ok or isSecretValue(isPlayer)) then
+        return false
+    end
+    return isPlayer == true
+end
+
+local function safeUnitIsConnected(unit)
+    if (type(unit) == "nil" or isSecretValue(unit) or type(UnitIsConnected) ~= "function") then
+        return false
+    end
+    local ok, connected = pcall(UnitIsConnected, unit)
+    if (not ok or isSecretValue(connected)) then
+        return false
+    end
+    return connected == true
+end
+
+local function safeUnitIsDeadOrGhost(unit)
+    if (type(unit) == "nil" or isSecretValue(unit) or type(UnitIsDeadOrGhost) ~= "function") then
+        return false
+    end
+    local ok, dead = pcall(UnitIsDeadOrGhost, unit)
+    if (not ok or isSecretValue(dead)) then
+        return false
+    end
+    return dead == true
+end
+
 local frame = lib.frame or CreateFrame("Frame")
 lib.frame = frame
 
@@ -113,20 +208,32 @@ lib.frame = frame
 -- Two independent signals, because neither is sufficient alone.
 --
 -- 1. WOW_PROJECT_ID. Defined per client and mutually distinct:
---      WOW_PROJECT_MAINLINE                 = 1  (Retail live AND WoW Forever)
+--      WOW_PROJECT_MAINLINE                 = 1  (Retail live)
+--      WOW_PROJECT_CAMELOT                  = 18 (WoW Forever / Camelot)
 --      WOW_PROJECT_CLASSIC                  = 2  (Classic Era / SoD)
 --      WOW_PROJECT_BURNING_CRUSADE_CLASSIC  = 5  (TBC Anniversary)
 --      WOW_PROJECT_WRATH_CLASSIC            = 11 (WotLK Titanforge)
 --    On the Classic clients it is a Lua global assigned by
 --    Blizzard_FrameXMLBase/<Family>/Constants.lua; on Retail/Forever it is
 --    engine/BNet-defined. Neither side of a comparison may be assumed defined:
---    the constants are NOT universal, and WOW_PROJECT_ID itself is engine-defined
---    on camelot, so an unguarded compare can be `nil == nil` and true. Every
---    constant below is therefore nil-checked before use; see the guard comment
---    above isClassic/isTBC/isWotlk. It cannot, however, separate Forever from
---    Retail -- both are MAINLINE.
+--    the constants are NOT universal, so an unguarded compare can be
+--    `nil == nil` and true. Every constant below is therefore nil-checked before
+--    use; see the guard comment above isClassic/isTBC/isWotlk.
 --
--- 2. The interface version, to split the MAINLINE family. Retail and Forever
+--    FOREVER IS CAMELOT, NOT MAINLINE. Earlier notes here (and the Warcraft
+--    Wiki's first example) said Forever reports MAINLINE (1). The client source
+--    contradicts that:
+--      Interface/AddOns/Blizzard_ProjectConstants/Camelot/ProjectConstants.lua:1-2
+--        WOW_PROJECT_CAMELOT = 18;
+--        WOW_PROJECT_ID     = WOW_PROJECT_CAMELOT;
+--    Reading identity from MAINLINE alone therefore makes isMainline FALSE on
+--    Forever, and Forever only lands in the right family through the
+--    interface-band fallback far below. That fallback needs GetBuildInfo's
+--    interface slot to be readable; when it is not, the whole add-on classifies
+--    Forever as "unknown" and every isForever branch silently switches off. So
+--    the named constant is consulted FIRST and the band is only the fallback.
+--
+-- 2. The interface version, to split the remaining families. Retail and Forever
 --    BOTH document the 4th GetBuildInfo return as interfaceVersion
 --    (Blizzard_APIDocumentationGenerated/BuildDocumentation.lua), so that slot is
 --    reliable for exactly the two clients that need it. The three Classic
@@ -148,13 +255,23 @@ local WOW_PROJECT_MAINLINE = rawget(_G, "WOW_PROJECT_MAINLINE") or 1
 local WOW_PROJECT_CLASSIC = rawget(_G, "WOW_PROJECT_CLASSIC")
 local WOW_PROJECT_BC_CLASSIC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC")
 local WOW_PROJECT_WRATH_CLASSIC = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
+-- Forever's own project id (18), from Blizzard_ProjectConstants/Camelot. Read
+-- through rawget because it is absent on every other family.
+local WOW_PROJECT_CAMELOT = rawget(_G, "WOW_PROJECT_CAMELOT")
 
 local isMainline = (WOW_PROJECT_ID == WOW_PROJECT_MAINLINE)
+-- Nil-checked: on a client that does not define it, `WOW_PROJECT_ID == nil` would
+-- be a `nil == nil` comparison and read as TRUE for any client whose project id
+-- is also nil.
+local isCamelot = (WOW_PROJECT_CAMELOT ~= nil and WOW_PROJECT_ID == WOW_PROJECT_CAMELOT)
 
--- Forever is the only client in the 16000-19999 interface band. Retail 1.6-1.8
--- used four-digit interfaces (1600/1700/1800) and Retail jumped to 10900 at
--- 1.9.0, so nothing else lands here.
-local isForever = isMainline and (interfaceVersion >= 16000 and interfaceVersion < 20000)
+-- Forever is identified by its own named constant FIRST; the interface band is
+-- only the fallback for a build that does not expose WOW_PROJECT_CAMELOT (or
+-- whose GetBuildInfo interface slot cannot be read). Retail 1.6-1.8 used
+-- four-digit interfaces (1600/1700/1800) and Retail jumped to 10900 at 1.9.0, so
+-- nothing but Forever lands in 16000-19999.
+local isForever = isCamelot
+    or (isMainline and (interfaceVersion >= 16000 and interfaceVersion < 20000))
 local isRetail = isMainline and not isForever
 
 -- Each constant must be proven to EXIST before it is compared. WOW_PROJECT_BC_CLASSIC
@@ -3268,11 +3385,10 @@ local function getModernSpecData(unit, groupIndex)
     if (not (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization)) then
         return nil
     end
-    -- The workspace stub declares UnitExists with no parameters, so the call
-    -- below is reported as a redundant-parameter warning; same suppression as
-    -- in getPlayerGUID.
-    ---@diagnostic disable-next-line: redundant-parameter
-    if (not unit or not UnitExists or not UnitExists(unit)) then
+    -- UnitExists is SecretArguments="AllowedWhenUntainted": a secret token here
+    -- is refused outright, so the token is tested before the query (an empty or
+    -- secret token simply answers false and no spec is read).
+    if (not safeUnitExists(unit)) then
         return nil
     end
 
@@ -3312,16 +3428,26 @@ local function getModernSpecData(unit, groupIndex)
     end
     if (not isForever and (type(activeSpecID) ~= "number" or activeSpecID <= 0)
             and C_SpecializationInfo.GetInspectSpecialization) then
-        -- Secret-restricted on Retail (SecretWhenUnitIdentityRestricted), which
-        -- is why this has always been pcall'd.
-        local iOk, iId = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
-        if (iOk and type(iId) == "number" and iId > 0) then activeSpecID = iId end
+        -- SecretWhenUnitIdentityRestricted on Retail AND WoW Forever: the ID can
+        -- be a secret number, so the pcall must cover the numeric comparison as
+        -- well -- `iId > 0` outside it is a boolean test on a secret value and
+        -- throws, which is why the whole read-and-validate now runs protected.
+        local iOk, iId = pcall(function()
+            local id = C_SpecializationInfo.GetInspectSpecialization(unit)
+            if (type(id) == "number" and id > 0) then return id end
+            return nil
+        end)
+        if (iOk and iId) then activeSpecID = iId end
     end
     if (isForever and not activeSpecIndex
             and (type(activeSpecID) ~= "number" or activeSpecID <= 0)
             and C_SpecializationInfo.GetInspectSpecialization) then
-        local iOk, iId = pcall(C_SpecializationInfo.GetInspectSpecialization, unit)
-        if (iOk and type(iId) == "number" and iId > 0) then activeSpecID = iId end
+        local iOk, iId = pcall(function()
+            local id = C_SpecializationInfo.GetInspectSpecialization(unit)
+            if (type(id) == "number" and id > 0) then return id end
+            return nil
+        end)
+        if (iOk and iId) then activeSpecID = iId end
     end
     if (isForever) then
         if (not activeSpecIndex and (type(activeSpecID) ~= "number" or activeSpecID <= 0)) then
@@ -3340,9 +3466,12 @@ local function getModernSpecData(unit, groupIndex)
         if (ok) then classID = id end
     end
     if (isForever and not classID and type(_G.UnitClass) == "function") then
-        ---@diagnostic disable-next-line: redundant-parameter
-        local _, _, unitClassID = _G.UnitClass(unit)
-        if (type(unitClassID) == "number") then
+        -- UnitClass is SecretWhenUnitIdentityRestricted: on a restricted unit the
+        -- class id is a SECRET NUMBER. `type(id) == "number"` passes for that, and
+        -- the secret would then be handed to GetNumSpecializationsForClassID.
+        -- guard the call and the answer.
+        local okClass, _, _, unitClassID = pcall(_G.UnitClass, unit)
+        if (okClass and not isSecretValue(unitClassID) and type(unitClassID) == "number") then
             classID = unitClassID
         end
     end
@@ -3355,7 +3484,16 @@ local function getModernSpecData(unit, groupIndex)
         end
     end
 
-    local sex = _G.UnitSex and _G.UnitSex(unit) or nil
+    -- UnitSex is SecretWhenUnitIdentityRestricted: on a restricted unit the answer
+    -- is a SECRET NUMBER, and it is threaded into the modern spec query. Unknown
+    -- reads as nil, which the query already accepts.
+    local sex = nil
+    if (type(_G.UnitSex) == "function" and not isSecretValue(unit)) then
+        local okSex, unitSex = pcall(_G.UnitSex, unit)
+        if (okSex and not isSecretValue(unitSex)) then
+            sex = unitSex
+        end
+    end
     local points = {}
     local specIndex, specName, specIcon
     for i = 1, specCount do
@@ -4306,13 +4444,13 @@ local function cacheUnitData(unit, guid, isRetry)
                 if (data.retryGeneration ~= retryGeneration) then return end
                 data.retryPending = false
                 local targetUnit = unit
-                if (not targetUnit or not (type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit))
+                if (not safeUnitExists(targetUnit)
                         or not safeEquals(safeUnitGUID(targetUnit), guid)) then
                     if (lib.PlayerGUIDToUnitToken) then
                         targetUnit = lib:PlayerGUIDToUnitToken(guid)
                     end
                 end
-                if (targetUnit and type(_G.UnitExists) == "function" and _G.UnitExists(targetUnit)) then
+                if (safeUnitExists(targetUnit)) then
                     cacheUnitData(targetUnit, guid, true)
                 end
             end)
@@ -4439,17 +4577,25 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if (event == "INSPECT_READY") then
         local guid = ...
         if (isSecretValue(guid)) then guid = nil end
-        if (not guid and inspectPendingUnit and UnitExists and UnitExists(inspectPendingUnit)) then
+        if (not guid and safeUnitExists(inspectPendingUnit)) then
             guid = safeUnitGUID(inspectPendingUnit)
         end
         local unit = inspectPendingUnit
-        if (not unit or not UnitExists or not UnitExists(unit) or not safeEquals(safeUnitGUID(unit), guid)) then
+        -- OUTER boundary. On an active encounter the INSPECT_READY payload and the
+        -- tokens this handler resolves are themselves secret (SecretWhenUnitIdentity
+        -- Restricted), and every query below is SecretArguments="AllowedWhenUntainted".
+        -- A secret pending token must not reach UnitExists at all: drop it and let
+        -- the InspectFrame / target / mouseover candidates answer instead. Each of
+        -- those goes through safeUnitExists, so a secret candidate answers false
+        -- rather than raising.
+        if (isSecretValue(unit)) then unit = nil end
+        if (not safeUnitExists(unit) or not safeEquals(safeUnitGUID(unit), guid)) then
             local insFrame = rawget(_G, "InspectFrame")
-            if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
+            if (safeUnitExists(insFrame and insFrame.unit) and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
                 unit = insFrame.unit
-            elseif (UnitExists and UnitExists("target") and safeEquals(safeUnitGUID("target"), guid)) then
+            elseif (safeUnitExists("target") and safeEquals(safeUnitGUID("target"), guid)) then
                 unit = "target"
-            elseif (UnitExists and UnitExists("mouseover") and safeEquals(safeUnitGUID("mouseover"), guid)) then
+            elseif (safeUnitExists("mouseover") and safeEquals(safeUnitGUID("mouseover"), guid)) then
                 unit = "mouseover"
             else
                 unit = nil
@@ -4493,14 +4639,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif (event == "PLAYER_TARGET_CHANGED") then
         if (type(UnitExists) == "function" and UnitExists("target")
                 and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
-                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("target", "player"))
+                and (not safeUnitIsUnit("target", "player"))
                 and isCloseEnoughToAsk("target")) then
             lib:DoInspect("target")
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (type(UnitExists) == "function" and UnitExists("mouseover")
                 and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
-                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit("mouseover", "player"))
+                and (not safeUnitIsUnit("mouseover", "player"))
                 and isCloseEnoughToAsk("mouseover")) then
             lib:DoInspect("mouseover")
         end
@@ -4510,9 +4656,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
     elseif (event == "UNIT_INVENTORY_CHANGED") then
         local unit = ...
-        if (unit and type(UnitExists) == "function" and UnitExists(unit)
-                and type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-                and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
+        if (safeUnitExists(unit) and safeUnitIsPlayer(unit)
+                and (not safeUnitIsUnit(unit, "player"))) then
             local guid = safeUnitGUID(unit)
             if (guid and not isSecretValue(guid) and lib.cache[guid]) then
                 -- Mark stale instead of zeroing .time: GetLastCacheTime()==0
@@ -4618,6 +4763,24 @@ local probeCanInspect, probeInteractDistance, requestNotifyInspect
 
 function lib:CanInspect(unit)
     if (not unit) then return false end
+    -- OUTER boundary for the whole inspect queue, and the most important single
+    -- guard in this file.
+    --
+    -- UnitExists / UnitIsConnected / UnitIsDeadOrGhost / UnitIsPlayer all declare
+    -- SecretArguments = "AllowedWhenUntainted" (UnitDocumentation.lua), so handing
+    -- any of them a SECRET unit token from add-on code raises
+    --   bad argument #1 to 'UnitExists' ... Secret values are only allowed during
+    --   untainted execution for this argument.
+    -- In an instance encounter a tooltip's own unit token is secret, and this
+    -- method is reached straight from the tooltip render path, so the token has to
+    -- be rejected HERE -- before the cooldown/range probes below, which also take
+    -- the token -- not at each individual call site.
+    --
+    -- A secret or unresolvable token answers false: the library then declines to
+    -- inspect, which is the correct behaviour when the client will not let us read
+    -- the unit at all. pcall cannot help here even where the call would succeed
+    -- silently: a refused protected call is not a Lua error the caller can catch.
+    if (isSecretValue(unit)) then return false end
     -- Both rejection guards live here rather than only at the call sites, so a
     -- newly added caller cannot reintroduce the request spam by forgetting
     -- them. requestInspect re-checks both because DoInspect passes through the
@@ -4625,11 +4788,11 @@ function lib:CanInspect(unit)
     if (isInspectCoolingDown(unit)) then return false end
     if (exceedsLearnedRange(unit)) then return false end
     if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return false end
-    if (type(UnitExists) == "function" and not UnitExists(unit)) then return false end
-    if (type(UnitIsConnected) == "function" and not UnitIsConnected(unit)) then return false end
-    if (type(UnitIsDeadOrGhost) == "function" and UnitIsDeadOrGhost(unit)) then return false end
-    if (type(UnitIsPlayer) == "function" and not UnitIsPlayer(unit)) then return false end
-    if (type(UnitIsUnit) == "function" and UnitIsUnit(unit, "player")) then return false end
+    if (not safeUnitExists(unit)) then return false end
+    if (not safeUnitIsConnected(unit)) then return false end
+    if (safeUnitIsDeadOrGhost(unit)) then return false end
+    if (not safeUnitIsPlayer(unit)) then return false end
+    if (safeUnitIsUnit(unit, "player")) then return false end
     local insFrame = rawget(_G, "InspectFrame")
     if (insFrame and insFrame.IsShown and insFrame:IsShown()) then return false end
     -- ORDER MATTERS HERE, and it is the whole reason this branch was rewritten.
@@ -5837,9 +6000,13 @@ end
 local SCAN_FALLBACK_UNITS = { "mouseover", "target", "focus" }
 
 local function scanCandidate(unit)
-    if (type(unit) ~= "string" or type(UnitExists) ~= "function" or not UnitExists(unit)) then return false end
-    if (type(UnitIsPlayer) ~= "function" or not UnitIsPlayer(unit)) then return false end
-    if (type(UnitIsUnit) == "function" and UnitIsUnit(unit, "player")) then return false end
+    if (type(unit) ~= "string") then return false end
+    -- type() is NOT a secrecy test: a secret string reports "string". Nameplate
+    -- and fallback tokens come straight off client frames and can be secret in an
+    -- encounter, so the token is tested before any query below.
+    if (not safeUnitExists(unit)) then return false end
+    if (not safeUnitIsPlayer(unit)) then return false end
+    if (safeUnitIsUnit(unit, "player")) then return false end
     if (isInspectCoolingDown(unit) or exceedsLearnedRange(unit)) then return false end
     -- Distance pre-filter, before the whole CanInspect chain. A target that has
     -- walked out of range is scanned here every lib.scanInterval (2s) until it is
@@ -5912,25 +6079,34 @@ local function scanNearby()
                     unit = plate.unitToken
                 end
             end
-            if (type(unit) == "string" and type(UnitExists) == "function" and UnitExists(unit)) then
-                if (type(UnitIsPlayer) == "function" and UnitIsPlayer(unit)
-                        and (type(UnitIsUnit) ~= "function" or not UnitIsUnit(unit, "player"))) then
-                    local guid = safeUnitGUID(unit)
-                    if (guid and not safeEquals(guid, safeUnitGUID("player"))) then
-                        platesWithUnit = platesWithUnit + 1
-                        local cached = lib.cache and lib.cache[guid]
-                        local fresh = isCacheFresh(cached)
-                        if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
-                            if (lib:DoInspect(unit)) then
-                                scanned = scanned + 1
-                                if (lib.inspectStats) then
-                                    lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
-                                end
-                            end
-                        elseif (not fresh) then
+            -- safeUnitExists, not a bare UnitExists.
+            --
+            -- type(unit) == "string" is NOT a secrecy test: a secret string
+            -- reports "string", so a nameplate carrying a secret token would reach
+            -- UnitExists, which is SecretArguments="AllowedWhenUntainted" and
+            -- refuses it with an immediate Lua error. The per-plate pcall above
+            -- would catch that, but the plate would then be counted as a distance
+            -- skip -- misleading, and it re-raises on every 2s scan tick. Testing
+            -- the token first means a restricted plate is simply not inspectable,
+            -- which is the truth. The pcall stays as the last-resort isolation for
+            -- any other fault in this block (nil methods, a raising GetUnit).
+            if (type(unit) == "string" and safeUnitExists(unit)
+                    and safeUnitIsPlayer(unit) and (not safeUnitIsUnit(unit, "player"))) then
+                local guid = safeUnitGUID(unit)
+                if (guid and not safeEquals(guid, safeUnitGUID("player"))) then
+                    platesWithUnit = platesWithUnit + 1
+                    local cached = lib.cache and lib.cache[guid]
+                    local fresh = isCacheFresh(cached)
+                    if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
+                        if (lib:DoInspect(unit)) then
+                            scanned = scanned + 1
                             if (lib.inspectStats) then
-                                lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
+                                lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
                             end
+                        end
+                    elseif (not fresh) then
+                        if (lib.inspectStats) then
+                            lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
                         end
                     end
                 end

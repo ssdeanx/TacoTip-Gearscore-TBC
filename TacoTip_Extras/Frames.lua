@@ -258,6 +258,12 @@ local function cancelInspectExpiry(context)
 end
 
 local function validPlayerGUID(guid)
+    -- Secret test first: `== ""` is a comparison on a secret string (raises), and
+    -- the string.match fallback below would run a pattern match over a secret
+    -- value. type() cannot tell a secret string from a plain one.
+    if Core and type(Core.IsSecretValue) == "function" and Core.IsSecretValue(guid) then
+        return false
+    end
     if type(guid) ~= "string" or guid == "" then
         return false
     end

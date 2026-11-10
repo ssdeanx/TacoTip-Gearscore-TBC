@@ -1249,7 +1249,7 @@ do
         TT.ev.resolveTooltipUnitFailed = 0
         TT.ev.gsCallbackNoUnit = 3
         _G.TacoTipConfig = {
-            custom_pos = { "BOTTOMRIGHT", "UIParent", 0, 0 },
+            custom_pos = { "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0 },
             show_power_bar = false,
             show_hp_bar = false,
             show_talents = false,

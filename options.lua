@@ -4143,7 +4143,7 @@ local function createDashboard()
             if (not v) then
                 TacoTipConfig.custom_pos = nil
             elseif (not TacoTipConfig.custom_pos) then
-                TacoTipConfig.custom_pos = { "BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y }
+                TacoTipConfig.custom_pos = { "BOTTOMRIGHT", "BOTTOMRIGHT", -CONTAINER_OFFSET_X - 13, CONTAINER_OFFSET_Y }
             end
             onSettingChanged()
         end)

@@ -23,8 +23,8 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-09)
-updated: 2026-11-09
+status: pending in-game verification (2026-11-10)
+updated: 2026-11-10
 ```
 
 <p align="center">
@@ -46,7 +46,7 @@ updated: 2026-11-09
   <img src="https://img.shields.io/badge/WoW%20Forever-16.0.01-9b59b6?style=flat-square&logo=battledotnet&logoColor=white" alt="WoW Forever" />
   <img src="https://img.shields.io/badge/Retail%20Live-12.01.05-e74c3c?style=flat-square&logo=battledotnet&logoColor=white" alt="Retail" />
   <img src="https://img.shields.io/badge/Quality-0%20Warnings-success?style=flat-square&logo=checkmarx&logoColor=white" alt="Luacheck Clean" />
-  <img src="https://img.shields.io/badge/Verification-72%2F72%20Passing-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="Tests 72/72" />
+  <img src="https://img.shields.io/badge/Verification-74%2F74%20Automated%20Harness-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="Automated harness 74/74 (offline pins, not in-game verification)" />
 </p>
 
 ---
@@ -77,6 +77,8 @@ updated: 2026-11-09
 | **<span style="color:#9b59b6">WoW Forever (Camelot)</span>** | `16001` | <span style="color:#2ecc71">**Active**</span> | Mainline Trait API (`C_Traits` + `C_SpecializationInfo`) |
 | **<span style="color:#e74c3c">Retail / Live (Midnight)</span>** | `120105` | <span style="color:#2ecc71">**Active**</span> | Mainline Family (`C_SpecializationInfo`) |
 
+> **<span style="color:#e67e23">Interface tokens:</span>** the root `TacoTip.toc` declares exactly these five (`11509`, `20506`, `38002`, `16001`, `120105`). The companion `TacoTip_Extras.toc` additionally lists `120107`; that asymmetry is deliberate in the two TOCs and is not something this README can change.
+
 > **<span style="color:#e67e23">Seamless 1:1 Migration:</span>** This universal release replaces all previous single-client TacoTip builds. Your configuration carries over automatically, and Classic Era / TBC GearScore numbers remain byte-identical.
 
 ---
@@ -94,8 +96,8 @@ updated: 2026-11-09
 | **Smooth Unit Power & Health Bars** | ✅ Smooth Fade-Out | ✅ Untainted Secret Values | ✅ AllowedWhenTainted |
 | **Group Role-Priority Inspects** | ✅ Tank > Healer > DPS | ✅ Tank > Healer > DPS | ✅ Tank > Healer > DPS |
 | **Dynamic Zone Tracking** | — | ✅ Native `C_Map` Readout | — |
-| **Enterprise Dashboard (`/tt`)** | ✅ `920×590` Slate & Lime | ✅ `920×590` Slate & Lime | ✅ `920×590` Slate & Lime |
-| **Directly Embedded Leaderboard** | ✅ Full Realm Browser | ✅ Full Realm Browser | ✅ Full Realm Browser |
+| **Enterprise Dashboard (`/tt`)** | ✅ `1000×600` Slate & Lime | ✅ `1000×600` Slate & Lime | ✅ `1000×600` Slate & Lime |
+| **Directly Embedded Leaderboard** | ✅ Realm Rankings from peer sync | ✅ Realm Rankings from peer sync | ✅ Realm Rankings from peer sync |
 | **1-Click Markdown Diagnostic Export** | ✅ `/tt report` | ✅ `/tt report` | ✅ `/tt report` |
 
 ---
@@ -104,9 +106,10 @@ updated: 2026-11-09
 
 | Command | Action |
 | :--- | :--- |
-| `/tt` or `/tacotip` | Toggle the modern **920×590 Enterprise Settings Dashboard** |
+| `/tt` or `/tacotip` | Toggle the modern **1000×600 Enterprise Settings Dashboard** |
 | `/tt report` or `/tt export` | Generate a 1-click **Markdown Diagnostic Report** ready to paste into Discord or GitHub |
-| `/tt diag` | Display the real-time **Diagnostic HUD** (yardage, cache status, inspect queue depth) |
+| `/tt diag` | Print the real-time **Diagnostic Report to chat** (yardage, cache status, inspect queue depth) |
+| `/tt diag ui` or `/tt diagui` | Open the dashboard's **Diagnostics tab** — the interactive panel (copy button, live refresh, trace toggle, log clear) |
 | `/tt custom` | Show the draggable green anchor button to set custom tooltip position |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
@@ -120,7 +123,7 @@ updated: 2026-11-09
 
 - 🌟 **<span style="color:#b4e634">Enterprise Standalone Dashboard Expansion (`1000×600`):</span>** Expanded the settings dashboard to 1000×600 with an upgraded 48×48 logo for spacious layout breathing room, readability, and information density. Streamlined the left navigation sidebar width to 155px (action buttons trimmed to 135px, search box to 131px) and expanded all content cards, chronicles, and embedded leaderboards to 760px of usable width.
 - 🎯 **<span style="color:#b4e634">Zero-Jump Rapid Re-hover 3D Portrait Engine:</span>** Once custom tooltip positioning is saved, the portrait stays firmly anchored on the right edge without redundant off-screen edge tests. Valid attachment points are preserved across hovers without tearing down the PlayerModel, completely eliminating portrait jumping when rapidly hovering and re-hovering over players or unit frames.
-- 🏆 **<span style="color:#b4e634">Directly Embedded Server Leaderboard & Quality Range Bands:</span>** When companion addon `TacoTip_Extras` is installed, the dashboard's "Extras" tab now embeds a complete 680×365px Server Leaderboard directly inside the window! Includes 3-way faction filters (`[All Realm]`, `[Alliance]`, `[Horde]`), live search, 10 styled rows, mouse-wheel scrolling, and 1-click `[My Rank]` jump button. Scores are dynamically styled using authentic GearScore quality range bands (`TT_GS:GetQuality`) and standing colors (#1 Gold, #2 Silver, #3 Bronze, Top 5% Gold, quality brackets).
+- 🏆 **<span style="color:#b4e634">Directly Embedded Server Leaderboard & Quality Range Bands:</span>** When companion addon `TacoTip_Extras` is installed, the dashboard's "Extras" tab now embeds a complete 760×365px Server Leaderboard directly inside the window! Includes 3-way faction filters (`[All Realm]`, `[Alliance]`, `[Horde]`), live search, 10 styled rows, mouse-wheel scrolling, and 1-click `[My Rank]` jump button. Scores are dynamically styled using authentic GearScore quality range bands (`TT_GS:GetQuality`) and standing colors (#1 Gold, #2 Silver, #3 Bronze, Top 5% Gold, quality brackets).
 - 🛡️ **<span style="color:#b4e634">Deep Combat & Restricted Dungeon Secret-Value Immunity:</span>** Fully immunized `UnitDistanceSquared` in diagnostics, `GetClassAtlas`, class tokens (`UnitClass`), specialization text, trait trees (`C_Traits`), faction badges, and group roles against secret string errors during combat and restricted encounters on modern engines.
 - 🎯 **<span style="color:#b4e634">3D Portrait Unit Frame Stabilization:</span>** Completely resolved the long-standing 3D character portrait flickering and strobing when hovering unit frames (`PlayerFrame`, `PetFrame`, `PartyMemberFrame`, `TargetFrame`, `CompactRaidFrame`). Prevented periodic 0.2s unit frame updates from resetting model points and destroying active 3D models while retaining seamless unit-change transitions.
 - 🛡️ **<span style="color:#b4e634">Intelligent Role-Priority Inspection Engine:</span>** In dungeons and raids, inspection queue priorities now prioritize group members by role: **Tank > Healer > DPS** before ambient open-world scans, ensuring immediate GearScore coverage for critical party members.
@@ -129,6 +132,16 @@ updated: 2026-11-09
 - ⚔️ **<span style="color:#b4e634">Pawn Dual-Spec Pre-Calculation & Caching:</span>** Multi-spec Pawn calculation now computes and caches both primary and secondary spec scores simultaneously. Switching talent specs immediately presents the cached score with zero re-evaluation lag or hitching.
 - 🔋 **<span style="color:#b4e634">Power Bar Stability & Status Text Safety:</span>** Fixed the power bar prematurely dropping when the mouse moves off a target while `GameTooltip` is still displayed. Immunized power bar and health bar status text against WoW Forever secret value restrictions.
 - 🧭 **<span style="color:#b4e634">Deep WoW Forever Secret-Value Taint Protection:</span>** Hardened map zone caches and inspect data readers against secret key tainting with `rawget(_G, "canaccessvalue")` and `issecretvalue` engine guards.
+- 🧩 **<span style="color:#b4e634">Follow-up Hardening (2026-11-10, same 1.0.0 notes):</span>** All six secret-value predicates in the shipped code now read a refused `issecretvalue`/`canaccessvalue` call as *secret* instead of treating the refusal as "not secret"; `gearscore.lua`, `pawn.lua` and `LibForeverInspector` gained a `UnitIsUnit` guard that pre-checks `C_Secrets.CanCompareUnitTokens` and never boolean-tests an unverified comparison (GUID equality stays authoritative); the saved `custom_pos` writer stores the four-element `{ point, relPoint, x, y }` contract again, so a re-login no longer discards the saved position; and the group check routes `UnitInRaid` through the guarded helper. No player-visible behaviour changes on non-restricted clients.
+- 🚨 **<span style="color:#b4e634">Dungeon & Encounter Crash Fix — `bad argument #1 to 'UnitExists'`:</span>** This is the error players have been reporting in instances. `UnitExists`, `UnitIsPlayer`, `UnitIsConnected` and `UnitIsDeadOrGhost` are all `SecretArguments = "AllowedWhenUntainted"`, so handing one of them a secret unit token from add-on code is refused outright — and inside an instance encounter a tooltip's own unit token **is** secret. Eleven call sites in `LibForeverInspector` passed a caller-supplied token straight to those globals, and the inspect-queue gate `CanInspect` did no token test at all; measured on the previous build, `CanInspect(secretToken)` invoked all four. Every site now routes through `safeUnitExists` / `safeUnitIsPlayer` / `safeUnitIsConnected` / `safeUnitIsDeadOrGhost`, and `CanInspect` rejects a secret token before any query runs. A unit the client will not let us read simply yields no row. Also covered: `UnitClass`, `UnitSex`, `UnitIsOtherPlayersPet`, `UnitIsSameServer`, and the nameplate scanner (where `type(v) == "string"` was being mistaken for a secrecy test — a secret string still reports `"string"`).
+  - **Item tooltips too.** The post-call payload can itself be a secret table, and indexing one raises — so `issecretvalue` is the wrong test for it. Every `data.<field>` read (item hyperlink/guid, unit guid) is now gated on the documented `canaccesstable`, which answers exactly "may this function index this table?". A payload that cannot be read draws no row instead of erroring.
+  - **Verify it yourself, solo, with no group and no instance** — the client can force the restrictions anywhere:
+    ```
+    /console addonEncounterRestrictionsForced 1
+    /console addonCombatRestrictionsForced 1
+    /console addonMapRestrictionsForced 1
+    ```
+    Hover players in a city and watch for errors; set them back to `0` afterwards (they do not persist across a restart).
 - 🌐 **<span style="color:#b4e634">Universal Engine Integrity:</span>** Complete zero-regression parity across Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`).
 
 ---
@@ -159,7 +172,8 @@ Configure TacoTip quickly from your chat bar using `/tt`, `/tacotip`, `/tip`, or
 | **<span style="color:#59f0dc">/tt default</span>** | Disables custom positioning and restores Blizzard's default tooltip anchor. |
 | **<span style="color:#59f0dc">/tt anchor &lt;point&gt;</span>** | Sets custom anchor point (`topleft`, `topright`, `bottomleft`, `bottomright`). |
 | **<span style="color:#59f0dc">/tt reset</span>** | Restores all configuration settings to their factory defaults. |
-| **<span style="color:#59f0dc">/tt diag</span>** | Opens the live diagnostic telemetry panel to inspect target range and addon health. |
+| **<span style="color:#59f0dc">/tt diag</span>** | Prints the live diagnostic telemetry to chat: target range, inspect flags, queue depth, and addon health. |
+| **<span style="color:#59f0dc">/tt diag ui</span>** | Opens the dashboard's interactive Diagnostics tab (copy button, live refresh, error/warning trace toggle). |
 
 ---
 
@@ -201,7 +215,7 @@ Access settings at any time by pressing **Esc → Options → AddOns → TacoTip
 **A:** Yes! Type `/tt custom` in chat. A green anchor button will appear on your screen. Drag it to your desired location and click **Save**. To reset back to default placement, type `/tt default`.
 
 **<span style="color:#59f0dc">Q: Something seems off with an inspection. How can I check what is happening?</span>**
-**A:** Target or hover the unit and type `/tt diag`. TacoTip will display real-time yardage, inspect capability flags (`CanInspect`, `CheckInteractDistance`), cache status, inspect queue depth, and any recent error history.
+**A:** Target or hover the unit and type `/tt diag`. TacoTip prints real-time yardage, inspect capability flags (`CanInspect`, `CheckInteractDistance`), cache status, inspect queue depth, and any recent error history to chat. Add `ui` (`/tt diag ui`) to read the same telemetry in the dashboard's interactive Diagnostics tab.
 
 ---
 
@@ -213,7 +227,7 @@ If something looks inert or an inspection fails to appear, run this command firs
 /tacotip diag
 ```
 
-It opens TacoTip's comprehensive live telemetry HUD:
+It prints TacoTip's comprehensive live telemetry to the chat frame (use `/tt diag ui` for the interactive Diagnostics tab):
 
 - **Active Unit Context:** Real-time inspect flags (`CanInspect`, `CheckInteractDistance`), live yardage, cache status, and in-flight queue state for your target or mouseover unit.
 - **Error History Ring Buffer:** Records the last 15 caught errors across all subsystems with relative timestamps.

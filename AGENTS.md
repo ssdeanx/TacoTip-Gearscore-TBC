@@ -6,7 +6,7 @@ edit. this file is an index, not a second copy.
 ## what this repo is
 
 two addons, one repo: **TacoTip** (root, v1.0.0) and **TacoTip Extras**
-(`TacoTip_Extras/`, v1.2.5), for five client families (era 11509, tbc
+(`TacoTip_Extras/`, v1.2.6), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
 
@@ -20,8 +20,17 @@ the five clients are two API worlds. never cross them.
   (`## AllowLoadGameType: classic, standard`). `LibForeverInspector`'s
   `spec_table` / `talents_table` are this data. **the old tables are classic
   clients and are not valid for forever.**
-- **forever 16001 is camelot.** `WOW_PROJECT_ID` is MAINLINE (1), like
-  retail; the split is the interface version, and the UI lives in the
+- **forever 16001 is camelot, and its project id is 18 — not MAINLINE.**
+  `Interface/AddOns/Blizzard_ProjectConstants/Camelot/ProjectConstants.lua:1-2`
+  is the whole file and reads `WOW_PROJECT_CAMELOT = 18; WOW_PROJECT_ID =
+  WOW_PROJECT_CAMELOT;`. older notes here said `WOW_PROJECT_ID` was MAINLINE
+  (1); they were wrong, and reading identity from MAINLINE alone makes
+  `isMainline` false on Forever, which then only reaches the right family via
+  the 16000-19999 interface-band fallback. when that slot is unreadable the
+  whole add-on classifies Forever as `unknown` and every `isForever` branch
+  switches off silently. `LibForeverInspector` reads `WOW_PROJECT_CAMELOT`
+  FIRST and keeps the band only as a fallback. the split is still the interface
+  version, and the UI lives in the
   `Camelot` folders (`Blizzard_PlayerSpells/Camelot/ClassTalents/…`,
   `Blizzard_InspectUI/Camelot/…`). In a Blizzard TOC, `[Game]` resolves to
   Camelot and `[Family]` resolves to the Mainline family.
@@ -74,6 +83,105 @@ the five clients are two API worlds. never cross them.
   (`GameTooltip.lua:994-1003`), so TacoTip must not add item rows, re-font,
   cap or restyle that tooltip. normal item tooltips are unaffected.
 
+## forever secrets — the rules that actually bite
+
+read this before touching any `Unit*` call. each rule is from the client
+source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://warcraft.wiki.gg/wiki/Secret_Values).
+
+- **`SecretArguments` governs the ARGUMENT, not the return.** a function
+  marked `SecretArguments = "AllowedWhenUntainted"` refuses a secret value
+  from add-on code with an immediate Lua error, e.g.
+  `bad argument #1 to 'UnitExists' (... Secret values are only allowed during
+  untainted execution for this argument.)`. add-on execution is *always*
+  tainted, so **never pass a possibly-secret token to such a function**.
+  `UnitExists`, `UnitIsPlayer`, `UnitIsConnected`, `UnitIsDeadOrGhost`,
+  `UnitInParty`, `UnitGroupRolesAssigned`, `UnitIsSameServer` and
+  `UnitDistanceSquared` are all in this class — their *returns* are plain, and
+  that is exactly what makes the argument hazard easy to miss.
+- **`type(v)` is not a secrecy test.** `type(secret)` returns the real type,
+  so a secret string reports `"string"` and a secret number reports
+  `"number"`. `type(v) == "string"` therefore does NOT prove a token is safe.
+  `type()` is safe to *call* on a secret, which is why nil tests use
+  `type(v) == "nil"` rather than `v == nil` — an `==` on the guard's first line
+  can raise before the `pcall` beneath it runs.
+- **`pcall` does not make the ANSWER safe.** the classic mistake is
+  `local ok, v = pcall(UnitCanAttack, ...)` then `if (ok and v == false)`: the
+  pcall guarded the call, and the **comparison** is what raises. this exact
+  shape was in `main.lua` and is now guarded. same trap for `UnitIsUnit`,
+  `UnitInRaid`, `UnitIsPVP`, and for `x ~= ""` on a secret string. test the
+  value (`issecretvalue`) before you compare it, or route through a `safe*`
+  helper.
+- **`UnitIsEnemy` is not a faction test on this client** (and TacoTip uses it
+  nowhere). Forever reports `UnitIsEnemy`/`UnitCanAttack` as "attackable right
+  now", false for an unflagged enemy, in a sanctuary or on another shard. a
+  faction comparison is `UnitFactionGroup(unit) ~= UnitFactionGroup("player")`,
+  and `UnitFactionGroup`'s argument is a cstring under `AllowedWhenUntainted`,
+  so the token is tested first.
+- **health is never read for display.** `UnitHealth`/`UnitHealthMax` can be
+  secret numbers; the safe sink is `StatusBar:SetMinMaxValues`/`SetValue`, which
+  is `AllowedWhenTainted` + `BarValue`. TacoTip does not read health at all —
+  the bar is Blizzard's own `GameTooltipStatusBar` and the client drives it.
+- **no `COMBAT_LOG_EVENT_UNFILTERED`.** it throws on Forever; use unit events
+  (`UNIT_HEALTH`, `UNIT_POWER_UPDATE`, `UNIT_SPELLCAST_*`, `PLAYER_REGEN_*`,
+  `ENCOUNTER_START`/`_END`, `ZONE_CHANGED_NEW_AREA`). neither addon registers it.
+- **only secret BOOLEANS fail a boolean test.** truthiness on a secret string
+  or number is allowed and always true; comparisons and arithmetic always
+  raise. so `if (secretUnitName)` is legal — `if UnitIsUnit(a,b) then` is not
+  (`SecretWhenUnitComparisonRestricted`), and `if (level > 0)` is not.
+- **`issecretvalue` / `canaccessvalue` throw too.** both are
+  `AllowedWhenUntainted`, so from tainted code a *refused* call returns
+  `ok = false` from `pcall` — and a throw means **is secret**. the guard is
+  `if (not okSecret or isSec == true) then return true end`; the weak form
+  `okSecret and isSec` inverts the one case it exists for.
+- **`pcall` does not clear a blocked protected call.** a refused protected
+  call can fail with no Lua error at all — the only symptom is the instance
+  action counter, which `/reload` does not reset. do not treat `pcall` success
+  as proof the call was permitted.
+- **a tooltip-data table is indexed only if `canaccesstable` says so.**
+  `issecretvalue(data)` is the WRONG test for the payload handed to an
+  Item/Unit post-call: once untainted code stores a secret value as a table
+  key, the table is flagged secret *and* inaccessible, and the **index itself**
+  raises ("attempted to index a forbidden table") before any test on the result
+  could run. `canaccesstable(table)` is the documented predicate ("permissions
+  to index secret tables"), is itself `AllowedWhenUntainted`, so `pcall` it and
+  read a throw as "not readable". `TT.tooltipDataReadable` is the gate; every
+  `data.<field>` read goes through it. this applies to item tooltips and unit
+  tooltips alike.
+- **`WorldFrame` is anchoring, not secrecy.** `TT:GetMouseFocus()` returns
+  `WorldFrame` as the sentinel for "the cursor is over the 3D world, not a UI
+  frame" (`main.lua:4803-4812`), and unit hovers in the world anchor off it
+  (`main.lua:4285`, `:4318`, `:4350`). it carries no secret payload; do not
+  confuse it with the tooltip-data rules above.
+- **`GameTooltip:SetUnit` / `SetLootItem` / `SetLootRollItem` are
+  secret-delegated on purpose** (`TooltipDataHandler.lua:582`, `:537-538`;
+  `AddTooltipDataAccessorDelegate` `:488-517`). hand a secret token to the
+  accessor and let the secure delegate strip taint; never try to re-derive or
+  read that token yourself first.
+- **test the restrictions without a group or an instance.** engine cvars
+  force them on anywhere (wiki-documented; not in the Lua mirror, so
+  unverifiable from source): `addonEncounterRestrictionsForced`,
+  `addonCombatRestrictionsForced`, `addonMapRestrictionsForced`,
+  `addonChallengeModeRestrictionsForced`, `addonPvPMatchRestrictionsForced`,
+  `addonChatRestrictionsForced`. they do not persist across a restart.
+- **the companion addon follows the SAME rules.** `TacoTip_Extras` has its own
+  strong `isSecretValue` (`Core.lua`) and local copy (`RankBrowser.lua`), never
+  overrides a `GameTooltip` method, uses no secure attributes, and makes no
+  bare `Unit*` call — but it had `x ~= ""` comparisons *before* the secret test
+  in `Scanner`/`Cache`/`Frames`/`RankBrowser`/`RankDB`/`RankSync`, and
+  `Scanner.capturePlayerCells` stored a possibly-secret `UnitClass` token and
+  `UnitLevel` into the rank record (where it was compared, then did `% 1`
+  arithmetic, then became a secret cache key). all fixed 2026-11-10. Extras also
+  **delegates client identity** to `inspector:IsForever()`/`IsClassic()` etc. and
+  must never re-derive it from `WOW_PROJECT_ID` — a MAINLINE test is false on
+  Forever.
+- **the boundary helpers are the pattern**: `safeUnitExists`,
+  `safeUnitIsPlayer`, `safeUnitIsConnected`, `safeUnitIsDeadOrGhost`,
+  `safeUnitGUID`, `safeUnitIsUnit` in `LibForeverInspector`, and the `TT.safe*`
+  twins in `main.lua`. a new `Unit*` call goes through one of them or states in
+  a comment why it cannot be secret. `detect_test` pins the nameplate
+  isolation separately from the token test — a refused token is *not* a
+  distance skip.
+
 ## read these first
 
 | file | holds |
@@ -100,8 +208,8 @@ the five clients are two API worlds. never cross them.
 
 ## commands
 
-    bash Tests/harness/run_all.sh                   # main, 72 invocations (repeat with LUA=lua5.4 / luajit)
-    bash TacoTip_Extras/Tests/harness/run_all.sh    # extras, 42 × 3 interpreters
+    bash Tests/harness/run_all.sh                   # main, 74 invocations (repeat with LUA=luajit)
+    bash TacoTip_Extras/Tests/harness/run_all.sh    # extras, 42 invocations (LUA=luajit to repeat)
     luacheck .                                     # 0 warnings / 0 errors
     bash Tools/verify_release.sh --worktree         # tacoTip package, must PASS
     bash Tools/verify_release_extras.sh --worktree  # extras package, must PASS

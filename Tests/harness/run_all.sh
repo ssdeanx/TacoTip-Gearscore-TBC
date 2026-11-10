@@ -159,6 +159,19 @@ run "tooltip_test RETAIL"       Tests/harness/tooltip_test.lua 1  120105 RETAIL 
 echo "== Forever unit-tooltip acceptance (talents / zone 0.9.8) =="
 run "forever_tooltip_test" Tests/harness/forever_tooltip_test.lua
 
+echo "== secret guards and custom_pos shape (red-proven regression pins) =="
+# The two pins the audit's defects needed. Every existing secret sentinel mocks
+# issecretvalue as a predicate that NEVER raises, so the guard's THROWING case --
+# the case it exists for on Forever/Retail -- was never exercised; and no pin
+# read the custom_pos writer's arity, so a five-element table with a frame name
+# in the relPoint slot passed the suite. Both pins were shown RED against
+# `git show HEAD:`-derived copies of the pre-fix files and GREEN on the tree
+# (the TACOTIP_*_OVERRIDE env hooks exist for that proof only and are never set
+# in a gate). Client-independent: the guard is file-local, the writer is not
+# family-gated.
+run "secretguard_test" Tests/harness/secretguard_test.lua
+run "custompos_test"   Tests/harness/custompos_test.lua
+
 echo "== GameMenu quit-block taint pins =="
 run "taint_test CLASSIC_ERA"  Tests/harness/taint_test.lua 2  11509 CLASSIC_ERA
 run "taint_test TBC_ANNIV"    Tests/harness/taint_test.lua 5  20506 TBC_ANNIV

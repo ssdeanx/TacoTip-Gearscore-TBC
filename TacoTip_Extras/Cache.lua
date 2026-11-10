@@ -30,6 +30,14 @@ local function isPositiveInteger(value)
 end
 
 local function validGUID(guid)
+    -- Secret test BEFORE the empty-string comparison, and before this value can
+    -- become a table key. `==`/`~= ""` on a secret string is a comparison and
+    -- raises, and a secret KEY marks the whole table inaccessible to tainted
+    -- code -- which would take the entire result cache down, not just one entry.
+    local Core = namespace.Core
+    if Core and type(Core.IsSecretValue) == "function" and Core.IsSecretValue(guid) then
+        return false
+    end
     return type(guid) == "string" and guid ~= ""
 end
 

@@ -16,7 +16,7 @@ namespace.RankBrowser = RankBrowser
 local L = _G.TACOEXTRAS_LOCALE or {}
 
 local function isSecretValue(val)
-    if val == nil then return false end
+    if type(val) == "nil" then return false end
     if type(issecretvalue) == "function" then
         local ok, isSec = pcall(issecretvalue, val)
         if not ok or isSec == true then return true end
@@ -516,7 +516,7 @@ local function classTokenOf(entry)
             return CLASS_FILE_BY_ID[id]
         end
         local stored = entry.class
-        if type(stored) == "string" and not (type(issecretvalue) == "function" and issecretvalue(stored)) then
+        if type(stored) == "string" and not isSecretValue(stored) then
             if stored ~= "" then
                 return stored
             end
@@ -530,7 +530,7 @@ end
 -- such API) -- the callers degrade to the class-colour-bar-only look.
 local function classAtlasOf(classToken)
     if type(classToken) ~= "string"
-        or (type(issecretvalue) == "function" and issecretvalue(classToken))
+        or isSecretValue(classToken)
         or classToken == ""
         or classToken == "UNKNOWN" then
         return nil
@@ -541,7 +541,7 @@ local function classAtlasOf(classToken)
     end
     local ok, atlas = pcall(getAtlas, classToken)
     if ok and type(atlas) == "string"
-        and not (type(issecretvalue) == "function" and issecretvalue(atlas))
+        and not isSecretValue(atlas)
         and atlas ~= "" then
         return atlas
     end
@@ -562,7 +562,7 @@ local function specDisplayOf(entry)
             if type(byID) == "function" then
                 local ok, _, name, _, icon = pcall(byID, specID)
                 if ok and type(name) == "string"
-                    and not (type(issecretvalue) == "function" and issecretvalue(name))
+                    and not isSecretValue(name)
                     and name ~= "" then
                     return name, icon
                 end
@@ -700,7 +700,8 @@ local function getPlayerGUID()
         return nil
     end
     local ok, guid = pcall(unitGUID, "player")
-    if ok and type(guid) == "string" and guid ~= "" and not isSecretValue(guid) then
+    -- Secret first: `~= ""` on a secret string is a comparison and raises.
+    if ok and type(guid) == "string" and not isSecretValue(guid) and guid ~= "" then
         return guid
     end
     return nil
@@ -1008,8 +1009,7 @@ local function applySpecIcon(row, entry)
     -- and absence hides the texture -- never an error, never an empty box.
     local _, resolvedIcon = specDisplayOf(entry)
     local icon = resolvedIcon or entry.specIcon
-    local isSec = (type(issecretvalue) == "function")
-    if isSec and issecretvalue(icon) then
+    if isSecretValue(icon) then
         tex:Hide()
         row.hasSpecIcon = false
         return
@@ -1041,7 +1041,7 @@ local function applyClassIcon(row, entry)
     local tex = row.classIconTexture
     if not tex then return end
     local atlas = classAtlasOf(classTokenOf(entry))
-    if not atlas or (type(issecretvalue) == "function" and issecretvalue(atlas)) then
+    if not atlas or isSecretValue(atlas) then
         tex:Hide()
         row.hasClassIcon = false
         return

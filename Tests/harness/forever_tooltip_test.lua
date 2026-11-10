@@ -1527,13 +1527,19 @@ do
         STD.string.find(inlineTxt, "[88]", 1, true) ~= nil,
         STD.string.gsub(inlineTxt, "\n", " | "))
     C.show_ilvl_inline = false
-    -- Realm variant: a cross-realm unit gains its Realm line.
+    -- Realm variant: GATED OFF on Forever.
+    --
+    -- Camelot has one realm per type (PvE / PvP / RP-PvP) and no connected
+    -- realms, so a player from "another connected server" cannot exist here and
+    -- the row must never render (operator observation, 2026-11-10). The client is
+    -- deliberately mocked to claim a DIFFERENT server, to prove the add-on does
+    -- not trust that answer on this family.
     local savedSame = REALG.UnitIsSameServer
     REALG.UnitIsSameServer = function() return false end
     seedPlayer()
     local realmTxt = drive("mouseover")
-    check("realm: cross-realm unit gains a Realm line",
-        STD.string.find(realmTxt, "Realm:", 1, true) ~= nil,
+    check("realm: Forever never gains a Realm line (no cross-realm exists here)",
+        STD.string.find(realmTxt, "Realm:", 1, true) == nil,
         STD.string.gsub(realmTxt, "\n", " | "))
     REALG.UnitIsSameServer = savedSame
     -- Separators: the style-2 player tooltip carries both of them. Counted
@@ -2488,6 +2494,54 @@ do
     check("scope: TacoTip never replaces GameTooltip.AddLine",
         rawget(GT, "_tacoTipForeignScoreBlock") == nil,
         "marker=" .. tostring(rawget(GT, "_tacoTipForeignScoreBlock")))
+end
+
+--------------------------------------------------------------------------
+-- Tooltip-data readability gate (canaccesstable).
+--
+-- The post-call payload can be a SECRET TABLE on Forever: once untainted code
+-- stores a secret value as a key, the table is flagged secret AND inaccessible,
+-- and indexing it raises ("attempted to index a forbidden table"). issecretvalue
+-- does not answer that -- the raise happens on the INDEX. The documented predicate
+-- is canaccesstable ("...permissions to index secret tables"), so every
+-- `data.<field>` read is gated on it.
+--
+-- This pins the predicate itself, including the two ways it can refuse: a false
+-- answer and a throwing call (it is itself AllowedWhenUntainted).
+--------------------------------------------------------------------------
+do
+    local savedCanAccess = REALG.canaccesstable
+    local readable = TT.tooltipDataReadable
+
+    check("tooltip data: the readability gate exists",
+        STD.type(readable) == "function", STD.type(readable))
+
+    if (STD.type(readable) == "function") then
+        check("tooltip data: nil is not readable", readable(nil) == false)
+        check("tooltip data: a non-table is not readable", readable("link") == false)
+
+        REALG.canaccesstable = function() return true end
+        check("tooltip data: an accessible table is readable",
+            readable({ hyperlink = "item:1" }) == true)
+
+        REALG.canaccesstable = function() return false end
+        check("tooltip data: canaccesstable(false) refuses the table",
+            readable({ hyperlink = "item:1" }) == false)
+
+        -- The call is SecretArguments="AllowedWhenUntainted", so a refusal is a
+        -- THROW. A throw must read as "not readable", never as "readable".
+        REALG.canaccesstable = function() error("secret values are only allowed during untainted execution") end
+        check("tooltip data: a THROWING canaccesstable refuses the table",
+            readable({ hyperlink = "item:1" }) == false)
+
+        -- And the gate is not a blanket refusal: with the API absent (classic
+        -- clients) a plain table still reads normally.
+        REALG.canaccesstable = nil
+        check("tooltip data: no canaccesstable still reads a plain table",
+            readable({ hyperlink = "item:1" }) == true)
+
+        REALG.canaccesstable = savedCanAccess
+    end
 end
 
 --------------------------------------------------------------------------

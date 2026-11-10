@@ -78,7 +78,7 @@ TT_PAWN = {}
 local TT_PAWN = TT_PAWN
 
 local function isSecretValue(v)
-    if (v == nil) then return false end
+    if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
         local okSecret, isSec = pcall(issecretvalue, v)
         if (not okSecret or isSec == true) then return true end
@@ -91,8 +91,44 @@ local function isSecretValue(v)
     return false
 end
 
+-- UnitIsUnit is RequiresComparableUnitTokens / SecretWhenUnitComparisonRestricted:
+-- in restricted combat its boolean is itself a secret, so `isUnit == true` on the
+-- pcall result is a boolean test on a secret value and throws -- the pcall guards
+-- the call, not the answer. The sanctioned pre-check is
+-- C_Secrets.CanCompareUnitTokens, which answers without returning a secret. That
+-- namespace is a client capability this add-on must not assume -- it never
+-- defines or replaces it, so it is feature-detected -- and when it is absent the
+-- pcall and the strong secret predicate above carry the guard. A comparison that
+-- cannot be verified reads as false -- this only skips the UnitIsUnit shortcut,
+-- and the GUID equality check inside GetScore stays authoritative.
+local function safeUnitIsUnit(unit1, unit2)
+    if (type(unit1) == "nil" or type(unit2) == "nil" or type(UnitIsUnit) ~= "function") then
+        return false
+    end
+    if (isSecretValue(unit1) or isSecretValue(unit2)) then
+        return false
+    end
+    local secretsApi = rawget(_G, "C_Secrets")
+    local canCompareUnitTokens = type(secretsApi) == "table" and secretsApi.CanCompareUnitTokens
+    if (type(canCompareUnitTokens) == "function") then
+        local compareOk, permitted = pcall(canCompareUnitTokens, unit1, unit2)
+        if (not compareOk or isSecretValue(permitted) or permitted == false) then
+            return false
+        end
+    end
+    local ok, isUnit = pcall(UnitIsUnit, unit1, unit2)
+    if (not ok or isSecretValue(isUnit)) then
+        return false
+    end
+    return isUnit == true
+end
+
 local function getPlayerGUID(arg)
-    if (arg and not isSecretValue(arg)) then
+    -- type()-based, not `arg and ...`: a truthiness test is itself a boolean
+    -- operation, so a secret value would be tested before the secret predicate
+    -- that exists to reject it ever runs. Unit tokens and GUIDs are strings, so
+    -- the type test is also the tighter contract.
+    if (type(arg) == "string" and not isSecretValue(arg)) then
         local okGIP, isPG = pcall(GUIDIsPlayer, arg)
         if (okGIP and isPG == true) then
             return arg
@@ -166,11 +202,8 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
         local isSelf = false
         if (unitorguid == "player") then
             isSelf = true
-        elseif (type(UnitIsUnit) == "function") then
-            local okUIU, isUnit = pcall(UnitIsUnit, unitorguid, "player")
-            if (okUIU and isUnit == true) then
-                isSelf = true
-            end
+        elseif (safeUnitIsUnit(unitorguid, "player")) then
+            isSelf = true
         end
         if (not isSelf) then
             local okP, playerGUID = pcall(UnitGUID, "player")

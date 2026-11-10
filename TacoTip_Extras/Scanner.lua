@@ -247,7 +247,9 @@ local function capturePlayerIdentity()
     end
 
     local okGUID, guid = pcall(UnitGUID, "player")
-    if not okGUID or type(guid) ~= "string" or guid == "" or Core.IsSecretValue(guid) then
+    -- Secret test BEFORE the empty-string comparison: `== ""` on a secret string
+    -- is a comparison and raises. type() alone cannot tell them apart.
+    if not okGUID or type(guid) ~= "string" or Core.IsSecretValue(guid) or guid == "" then
         return nil, "player-guid-unavailable"
     end
     return guid
@@ -314,8 +316,16 @@ local function captureSpecID(unit)
         end
     end
     if type(CSI) == "table" and type(CSI.GetInspectSpecialization) == "function" then
-        local ok, id = pcall(CSI.GetInspectSpecialization, unit)
-        if ok and type(id) == "number" and id > 0 then
+        -- SecretWhenUnitIdentityRestricted on Forever: the returned id can be a
+        -- secret number, so the read AND the numeric validation run inside one
+        -- pcall -- `id > 0` outside it would be a boolean test on a secret
+        -- value and throw. Only a validated plain number escapes the closure.
+        local ok, id = pcall(function()
+            local inspectedID = CSI.GetInspectSpecialization(unit)
+            if type(inspectedID) == "number" and inspectedID > 0 then return inspectedID end
+            return nil
+        end)
+        if ok and id then
             return math.floor(id)
         end
     end
@@ -505,7 +515,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     -- anything unresolvable degrades to ""/0, never a raise).
     local guild = captureGuildName(unit)
     local level = captureLevelNumber(levelCell)
-    if type(issecretvalue) == "function" and issecretvalue(level) then level = 0 end
+    if Core.IsSecretValue(level) then level = 0 end
     local specID = captureSpecID(unit)
     local pvpRank, arena = capturePvPFields(unit)
 
@@ -546,7 +556,17 @@ local function capturePlayerCells(unit)
     local classToken
     if type(UnitClass) == "function" then
         local ok, _, token = pcall(UnitClass, unit)
-        if ok and token then
+        -- UnitClass's class token is ConditionalSecret under
+        -- SecretWhenUnitIdentityRestricted, and UnitLevel is
+        -- SecretWhenUnitNameIdentityRestricted. Both are read for an ARBITRARY
+        -- inspected unit, so either can arrive secret. A secret must never enter
+        -- this record: it is compared below (`classToken ~= ""`), and a
+        -- comparison on a secret always raises; a secret number would then hit
+        -- `value % 1` in Cache.lua -- arithmetic on a secret, which raises too --
+        -- and would finally be written into the rank cache as a secret
+        -- key/value, marking the table inaccessible. Reject at the capture so
+        -- every downstream consumer only ever sees plain values.
+        if ok and token and not Core.IsSecretValue(token) then
             classToken = token
         end
     end
@@ -554,7 +574,7 @@ local function capturePlayerCells(unit)
     local level
     if type(UnitLevel) == "function" then
         local ok, value = pcall(UnitLevel, unit)
-        if ok and value then
+        if ok and value and not Core.IsSecretValue(value) then
             level = value
         end
     end
@@ -562,10 +582,10 @@ local function capturePlayerCells(unit)
     if (not classToken or not level) and inspector and type(inspector.GetUnitData) == "function" then
         local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
         if okData and type(cached) == "table" then
-            if not classToken and cached.class then
+            if not classToken and cached.class and not Core.IsSecretValue(cached.class) then
                 classToken = cached.class
             end
-            if not level and cached.level then
+            if not level and cached.level and not Core.IsSecretValue(cached.level) then
                 level = cached.level
             end
         end
