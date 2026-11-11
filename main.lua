@@ -2624,8 +2624,40 @@ end
 
 local mapZoneCache = {}
 
+-- The zone row is not drawn in combat or an instance encounter, and the client
+-- refuses the map query for tainted callers in those states anyway. Skip the
+-- read instead of asking and discarding the answer.
+--
+-- State comes from the client's own restriction API, not from a guess about the
+-- zone: origin/forever RestrictedActionsDocumentation.lua:55-66 documents
+-- IsAddOnRestrictionActive, and RestrictedActionsConstantsDocumentation.lua:19-33
+-- gives AddOnRestrictionType.Combat = 0 and .Encounter = 1. A refused call reads
+-- as "not restricted" so a client that cannot answer keeps the old behaviour;
+-- the classic family has no C_RestrictedActions at all and falls back to
+-- InCombatLockdown. Read-only: the add-on never defines or replaces either.
+local function isUnitZoneRowRestricted()
+    local restrictionTypes = Enum and Enum.AddOnRestrictionType
+    if (C_RestrictedActions and C_RestrictedActions.IsAddOnRestrictionActive and restrictionTypes) then
+        local okCombat, combatActive = pcall(C_RestrictedActions.IsAddOnRestrictionActive,
+            restrictionTypes.Combat)
+        if (okCombat and combatActive == true) then
+            return true
+        end
+        local okEncounter, encounterActive = pcall(C_RestrictedActions.IsAddOnRestrictionActive,
+            restrictionTypes.Encounter)
+        if (okEncounter and encounterActive == true) then
+            return true
+        end
+        return false
+    end
+    return (InCombatLockdown and InCombatLockdown()) and true or false
+end
+
 local function getUnitZoneName(unit)
     if (not unit or isSecretValue(unit) or not GetBestMapForUnit or not GetMapInfo) then
+        return nil
+    end
+    if (isUnitZoneRowRestricted()) then
         return nil
     end
     local okMap, mapID = pcall(GetBestMapForUnit, unit)

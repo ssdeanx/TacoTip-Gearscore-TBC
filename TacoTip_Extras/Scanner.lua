@@ -474,7 +474,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     end
     if (not pName) and inspector and type(inspector.GetUnitData) == "function" then
         local okData, cached = pcall(inspector.GetUnitData, inspector, guid or unit)
-        if okData and type(cached) == "table" and type(cached.name) == "string" and cached.name ~= "" then
+        if okData and type(cached) == "table" and type(cached.name) == "string" and not Core.IsSecretValue(cached.name) and cached.name ~= "" then
             pName = cached.name
         end
     end

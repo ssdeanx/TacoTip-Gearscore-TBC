@@ -4986,6 +4986,20 @@ local function createDashboard()
         scrollBar:SetValue(0)
         scrollBar:SetValueStep(1)
         if (scrollBar.SetObeyStepOnDrag) then scrollBar:SetObeyStepOnDrag(true) end
+        -- The template's thumb is the Blizzard options texture, which reads as a
+        -- foreign object on this flat table. Replace it with a plain tinted bar
+        -- in the dashboard gold; guarded because GetThumbTexture is not on every
+        -- client we ship to.
+        if (scrollBar.SetThumbTexture) then
+            scrollBar:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+        end
+        if (scrollBar.GetThumbTexture) then
+            local thumb = scrollBar:GetThumbTexture()
+            if (thumb and thumb.SetVertexColor) then
+                thumb:SetSize(6, 48)
+                thumb:SetVertexColor(0.87, 0.72, 0.20, 0.90)
+            end
+        end
 
         -- Bottom Status Strip
         local statusStrip = lbContainer:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")

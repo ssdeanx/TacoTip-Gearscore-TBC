@@ -1,4 +1,3 @@
-# ⚡ TacoTip ⚡
 
 ```ascii
 __              _____ _____
@@ -30,9 +29,9 @@ gates: run_all 75/75 (lua5.1 + luajit), luacheck 0/0 in 91 files, both verifiers
 updated: 2026-11-10
 ```
 
-<p align="center">
-  <img src="https://media.forgecdn.net/attachments/2065/485/2-png.png" alt="TacoTip Logo" width="128" height="128" />
-</p>
+# ⚡ TacoTip ⚡
+
+![tbc-ss1](https://media.forgecdn.net/attachments/2178/795/1-png.png)
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
@@ -68,9 +67,10 @@ updated: 2026-11-10
 
 **TacoTip** is the premier, all-in-one tooltip enhancement suite for World of Warcraft. Built with a unified dual-engine architecture, a single installation runs seamlessly across **every** World of Warcraft client family — from Classic Era and Season of Discovery to The Burning Crusade Anniversary, WotLK Titanforge, WoW Forever, and Retail Live:
 
-- 💬 **<span style="color:#5865F2"><span style="text-decoration:underline">Official Discord Community</span></span>** — <https://discord.gg/JuVJBwXqv>
-- 📦 **<span style="color:#f39c12"><span style="text-decoration:underline">CurseForge Page</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore>
-- 🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) *(Server leaderboard, guild rank browser & peer-to-peer gear sync)*
+💬 **<span style="color:#5865F2"><span style="text-decoration:underline">Official Discord Community</span></span>** — <https://discord.gg/JuVJBwXqv>
+📦 **<span style="color:#f39c12"><span style="text-decoration:underline">CurseForge Page</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore>
+🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) *(Server leaderboard, guild rank browser & peer-to-peer gear sync)*
+![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png)
 
 | Client Family | Supported Interface | Client Status | Architectural World |
 | :--- | :--- | :--- | :--- |
@@ -139,26 +139,15 @@ updated: 2026-11-10
 - 🚨 **<span style="color:#b4e634">Dungeon & Encounter Crash Fix — `bad argument #1 to 'UnitExists'`:</span>** This is the error players have been reporting in instances. `UnitExists`, `UnitIsPlayer`, `UnitIsConnected` and `UnitIsDeadOrGhost` are all `SecretArguments = "AllowedWhenUntainted"`, so handing one of them a secret unit token from add-on code is refused outright — and inside an instance encounter a tooltip's own unit token **is** secret. Eleven call sites in `LibForeverInspector` passed a caller-supplied token straight to those globals, and the inspect-queue gate `CanInspect` did no token test at all; measured on the previous build, `CanInspect(secretToken)` invoked all four. Every site now routes through `safeUnitExists` / `safeUnitIsPlayer` / `safeUnitIsConnected` / `safeUnitIsDeadOrGhost`, and `CanInspect` rejects a secret token before any query runs. A unit the client will not let us read simply yields no row. Also covered: `UnitClass`, `UnitSex`, `UnitIsOtherPlayersPet`, `UnitIsSameServer`, and the nameplate scanner (where `type(v) == "string"` was being mistaken for a secrecy test — a secret string still reports `"string"`).
   - **Item tooltips too.** The post-call payload can itself be a secret table, and indexing one raises — so `issecretvalue` is the wrong test for it. Every `data.<field>` read (item hyperlink/guid, unit guid) is now gated on the documented `canaccesstable`, which answers exactly "may this function index this table?". A payload that cannot be read draws no row instead of erroring.
   - **Verify it yourself, solo, with no group and no instance** — the client can force the restrictions anywhere:
+
     ```
     /console addonEncounterRestrictionsForced 1
     /console addonCombatRestrictionsForced 1
     /console addonMapRestrictionsForced 1
     ```
+
     Hover players in a city and watch for errors; set them back to `0` afterwards (they do not persist across a restart).
 - 🌐 **<span style="color:#b4e634">Universal Engine Integrity:</span>** Complete zero-regression parity across Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`).
-
----
-
-## <span style="color:#e67e23">What's New in v0.9.9</span>
-
-- 🎛️ **<span style="color:#59f0dc">All-New Standalone Dashboard (`/tt`):</span>** Re-architected settings into a high-performance standalone settings dashboard with 6 specialized tabs (`General`, `Unit Content`, `Appearance & Bars`, `Portrait & Icons`, `Positioning`, `Character & Inspect`) plus utility hubs for Diagnostics, Community Discord, and Configuration Reset. Features real-time search with live category filtering, gold pill toggles, visual radio preset cards, and a persistent footer with instant Mover and Reset controls.
-- 🌟 **<span style="color:#59f0dc">Dynamic TacoTip Extras Dashboard Hub:</span>** When the companion addon TacoTip Extras is installed, the dashboard automatically unlocks a dedicated "Extras" tab featuring direct 1-click launchers for the Server Leaderboard (`/ex ranks`), Peer-to-Peer Sync Now (`/ttgssync`), and Extras configuration.
-- ⚡ **<span style="color:#59f0dc">Power Bar Smooth Fade-Out & Default Enabled:</span>** Unit power bars are now enabled by default. Fixed tooltip unhover lifecycle so the power bar smoothly fades out alongside `GameTooltip` instead of instantly disappearing. Background polling tickers cleanly stop upon cursor exit.
-- 🛡️ **<span style="color:#59f0dc">Dungeon & Combat Secret-Value Immunity (WoW Forever / Retail):</span>** Fully immunized all tooltip rendering, inspect queue processing, and scoring logic against restricted secret string errors in dungeons and combat encounters (resolving `attempted to index a table that cannot be indexed with secret keys` and `attempt to compare local 'unitGUID' (a secret string value)`).
-- 🧭 **<span style="color:#59f0dc">Natural Zone Row Positioning:</span>** On WoW Forever party and raid frames, the `Zone:` row has been repositioned to the bottom of the tooltip (below Pawn and GearScore), creating a clean, natural tooltip hierarchy.
-- 🛠️ **<span style="color:#59f0dc">Root Settings Restructuring:</span>** Reorganized the main options panel with 1-click toggles for the most essential features: Player GearScore, Average Item Level, Talents & Specialization, Class Colors, Guild Names, Health Bars, and Power Bars.
-- 💬 **<span style="color:#59f0dc">Welcome Message:</span>** Login welcome prompt now guides players to use `/tt` to access the settings dashboard.
-- 🔍 **<span style="color:#59f0dc">Diagnostic Clean-Up:</span>** Resolved all language server annotations and typing constraints across tooltip lifecycle states.
 
 ---
 

@@ -255,14 +255,14 @@ local function tooltipUnit(target)
     if type(tooltipUtil) == "table" and type(tooltipUtil.GetDisplayedUnit) == "function" then
         local ok, _, dispUnit, dispGUID = pcall(tooltipUtil.GetDisplayedUnit, target)
         if ok then
-            if type(dispUnit) == "string" and dispUnit ~= "" and not Core.IsSecretValue(dispUnit) and type(_G.UnitExists) == "function" then
+            if type(dispUnit) == "string" and not Core.IsSecretValue(dispUnit) and dispUnit ~= "" and type(_G.UnitExists) == "function" then
                 local okE, exists = pcall(_G.UnitExists, dispUnit)
                 if okE and not Core.IsSecretValue(exists) and exists == true then
                     return dispUnit
                 end
             end
-            if type(dispGUID) == "string" and dispGUID ~= "" and type(_G.UnitGUID) == "function"
-                and not Core.IsSecretValue(dispGUID) then
+            if type(dispGUID) == "string" and not Core.IsSecretValue(dispGUID) and dispGUID ~= ""
+                and type(_G.UnitGUID) == "function" then
                 for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
                     local okUG, ug = pcall(_G.UnitGUID, u)
                     if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, dispGUID) then
@@ -278,22 +278,22 @@ local function tooltipUnit(target)
         if ok then
             -- In WoW API, GetUnit() returns (name, unit) on Classic and (name, unit, guid) on modern.
             -- When called via pcall(target.GetUnit, target), the return values are: ok, name, unit, guid.
-            if type(unit) == "string" and unit ~= "" and not Core.IsSecretValue(unit) and type(_G.UnitExists) == "function" then
+            if type(unit) == "string" and not Core.IsSecretValue(unit) and unit ~= "" and type(_G.UnitExists) == "function" then
                 local okU, exists = pcall(_G.UnitExists, unit)
                 if okU and not Core.IsSecretValue(exists) and exists == true then
                     return unit
                 end
             end
             -- If a mock or test returns the unit token as the single/first return value:
-            if type(name) == "string" and name ~= "" and not Core.IsSecretValue(name) and type(_G.UnitExists) == "function" then
+            if type(name) == "string" and not Core.IsSecretValue(name) and name ~= "" and type(_G.UnitExists) == "function" then
                 local okN, exists = pcall(_G.UnitExists, name)
                 if okN and not Core.IsSecretValue(exists) and exists == true then
                     return name
                 end
             end
             -- If guid matches a known unit token:
-            if type(guid) == "string" and guid ~= "" and type(_G.UnitGUID) == "function"
-                and not Core.IsSecretValue(guid) then
+            if type(guid) == "string" and not Core.IsSecretValue(guid) and guid ~= ""
+                and type(_G.UnitGUID) == "function" then
                 for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
                     local okUG, ug = pcall(_G.UnitGUID, u)
                     if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, guid) then

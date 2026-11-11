@@ -617,7 +617,11 @@ REALG.BackdropTemplateMixin = {}
 REALG.Item = { CreateFromItemLink = function() error("FOREVER_PIN_NO_ITEM_API") end }
 REALG.Settings = nil
 REALG.ColorPickerFrame = nil
-REALG.Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
+REALG.Enum = {
+    TooltipDataType = { Item = 0, Unit = 2 },
+    -- RestrictedActionsConstantsDocumentation.lua:19-33
+    AddOnRestrictionType = { Combat = 0, Encounter = 1, ChallengeMode = 2, PvPMatch = 3, Map = 4, Chat = 5 },
+}
 
 --------------------------------------------------------------------------
 -- Gear model. GEAR_MODE flips what the client reports for inspected units:
@@ -2080,6 +2084,34 @@ do
     check("P16: the Zone label comes from the client's ZONE string",
         STD.string.find(STD.table.concat(localizedLines, "\n"), "Gebiet:", 1, true) ~= nil,
         STD.table.concat(localizedLines, " | "))
+    -- The row must not run in combat or an encounter. State comes from the
+    -- client's restriction API, not from InCombatLockdown, because the engine
+    -- cvars force both classes out of combat for testing
+    -- (addonCombatRestrictionsForced, addonEncounterRestrictionsForced).
+    local restrictionActive = {}
+    REALG.C_RestrictedActions = {
+        IsAddOnRestrictionActive = function(restrictionType)
+            return restrictionActive[restrictionType] == true
+        end,
+    }
+    restrictionActive[REALG.Enum.AddOnRestrictionType.Combat] = true
+    local combatLines = render("player", "player", PLAYER_SEED)
+    check("P16: no Zone row while combat restriction is active",
+        STD.string.find(STD.table.concat(combatLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(combatLines, " | "))
+    restrictionActive[REALG.Enum.AddOnRestrictionType.Combat] = false
+    restrictionActive[REALG.Enum.AddOnRestrictionType.Encounter] = true
+    local encounterLines = render("player", "player", PLAYER_SEED)
+    check("P16: no Zone row while encounter restriction is active",
+        STD.string.find(STD.table.concat(encounterLines, "\n"), "Elwynn Forest", 1, true) == nil,
+        STD.table.concat(encounterLines, " | "))
+    restrictionActive[REALG.Enum.AddOnRestrictionType.Encounter] = false
+    local unrestrictedLines = render("player", "player", PLAYER_SEED)
+    check("P16: the Zone row returns when neither restriction is active",
+        STD.string.find(STD.table.concat(unrestrictedLines, "\n"), "Elwynn Forest", 1, true) ~= nil,
+        STD.table.concat(unrestrictedLines, " | "))
+    REALG.C_RestrictedActions = nil
+
     REALG.ZONE = savedZone
 
     currentUnit = savedCurrent

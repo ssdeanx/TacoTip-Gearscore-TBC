@@ -791,12 +791,22 @@ local function recordIsSameRealm(record)
     local sameServer = rawget(_G, "UnitIsSameServer")
     if type(resolve) == "function" and type(sameServer) == "function" then
         local ok, unit = pcall(resolve, guid)
-        if ok and type(unit) == "string" and unit ~= "" then
+        -- UnitTokenFromGUID's return is SecretWhenUnitIdentityRestricted, and
+        -- type() reports "string" for a secret string -- so the type test alone
+        -- is NOT a secrecy test, and `unit ~= ""` is a comparison that raises
+        -- on a secret. Test secrecy first: this function is the door every
+        -- locally scanned record passes through, so a raise here means the
+        -- record is silently never stored and the player never gets a rank.
+        if ok and not Core.IsSecretValue(unit) and type(unit) == "string" and unit ~= "" then
             local uName = rawget(_G, "UnitName")
             local targetName = nil
             if type(uName) == "function" then
                 local okName, name, realm = pcall(uName, unit)
-                if okName and type(realm) == "string" and realm ~= "" then
+                -- UnitName is SecretWhenUnitNameIdentityRestricted: same trap on
+                -- both returns. A secret realm must not be compared, and must
+                -- not be read as "different server" either -- fall through to
+                -- the client's same-server verdict below.
+                if okName and not Core.IsSecretValue(realm) and type(realm) == "string" and realm ~= "" then
                     local getNormRealm = rawget(_G, "GetNormalizedRealmName")
                     local localRealm = (type(getNormRealm) == "function" and getNormRealm())
                         or (rawget(_G, "GetRealmName") and _G.GetRealmName()) or nil
@@ -804,7 +814,7 @@ local function recordIsSameRealm(record)
                         return false
                     end
                 end
-                if okName and type(name) == "string" and name ~= "" then
+                if okName and not Core.IsSecretValue(name) and type(name) == "string" and name ~= "" then
                     targetName = name
                 end
             end

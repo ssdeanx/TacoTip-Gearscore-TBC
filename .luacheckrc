@@ -27,6 +27,11 @@ read_globals = {
     "C_NamePlate",
     "C_PaperDollInfo",
     "C_PlayerInfo",
+    -- Forever/Live restriction state: C_RestrictedActions.IsAddOnRestrictionActive
+    -- and GetAddOnRestrictionState over Enum.AddOnRestrictionType
+    -- (generated RestrictedActionsDocumentation.lua:26-66). Absent on the
+    -- classic family, so every read is nil-checked. The add-on only reads it.
+    "C_RestrictedActions",
     "C_SpecializationInfo",
     -- Camelot / WoW Forever talent API, read-only and origin/forever-qualified:
     --   C_Traits            -- SharedTraitsDocumentation.lua
