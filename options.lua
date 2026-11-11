@@ -33,6 +33,26 @@ local function safeCall(fn, ...)
     return xpcall(fn, geterrorhandler(), ...)
 end
 
+-- The player's GUID, as a value a comparison is allowed to consume.
+--
+-- UnitGUID is documented Nilable and SecretWhenUnitIdentityRestricted
+-- (Blizzard_APIDocumentationGenerated/UnitDocumentation.lua at the pin), so the
+-- result can arrive secret, and a secret value RAISES on `==` -- which is what
+-- every reader here does with it. main.lua's TT.safeUnitGUID is the boundary
+-- helper: pcall'd, type()-nil-tested and secrecy-tested, answering nil when the
+-- value cannot be read, so these "is this me" checks simply find no match
+-- instead of raising inside the options panel. options.lua never defines or
+-- replaces the helper, and it loads BEFORE main.lua, so it is resolved at call
+-- time rather than bound here; an absent helper means no highlight.
+---@return string?
+local function playerGUID()
+    local safeGUID = TT and TT.safeUnitGUID
+    if (type(safeGUID) ~= "function") then
+        return nil
+    end
+    return safeGUID("player")
+end
+
 -- Clamp a frame level to the documented WoW range [0, 100]. 0 is the
 -- lowest visible level within a strata, 100 is comfortably above the
 -- deepest Blizzard panel we ever sit under.
@@ -4978,7 +4998,7 @@ local function createDashboard()
         topBtn:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -10, 8)
 
         local myRankBtn = createFlatActionCard(lbContainer, 70, 20, "My Rank", "gold", function()
-            local myGUID = _G.UnitGUID and _G.UnitGUID("player")
+            local myGUID = playerGUID()
             if (myGUID) then
                 for idx, entry in ipairs(cachedLeaderboardList) do
                     if (entry.guid == myGUID) then
@@ -5062,7 +5082,7 @@ local function createDashboard()
             local maxScroll = math.max(0, total - visibleRowsCount)
             scrollBar:SetMinMaxValues(0, maxScroll)
 
-            local myGUID = _G.UnitGUID and _G.UnitGUID("player")
+            local myGUID = playerGUID()
             for r = 1, visibleRowsCount do
                 local entryIdx = currentOffset + r
                 local entry = cachedLeaderboardList[entryIdx]

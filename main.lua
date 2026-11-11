@@ -242,6 +242,7 @@ local RequestLoadItemDataByID = _G.C_Item and _G.C_Item.RequestLoadItemDataByID
 local GameTooltip_SetDefaultAnchor = _G.GameTooltip_SetDefaultAnchor
 local UnitClass = _G.UnitClass
 local UnitCanAttack = _G.UnitCanAttack
+---@secret-guard v is-secret
 function TT.isSecretValue(v)
     if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
@@ -256,7 +257,10 @@ function TT.isSecretValue(v)
     return false
 end
 
-local isSecretValue = TT.isSecretValue
+---@secret-guard v is-secret
+local function isSecretValue(v)
+    return TT.isSecretValue(v)
+end
 
 function TT.safeEquals(a, b)
     if (type(a) == "nil" or type(b) == "nil" or isSecretValue(a) or isSecretValue(b)) then
@@ -305,7 +309,9 @@ end
 function TT.safeUnitGUID(unit)
     if (type(unit) == "nil" or isSecretValue(unit) or type(UnitGUID) ~= "function") then return nil end
     local ok, guid = pcall(UnitGUID, unit)
-    if (not ok or not guid or isSecretValue(guid)) then return nil end
+    -- UnitGUID is documented Nilable; type() answers "is nil" without ever
+    -- comparing a value that can also arrive secret.
+    if (not ok or type(guid) == "nil" or isSecretValue(guid)) then return nil end
     return guid
 end
 
@@ -939,7 +945,12 @@ local questDifficultyColorCache = {}
 local lastPlayerLevel = nil
 local function getHostileDifficultyColor(unit)
     local GetQuestDifficultyColor = _G.GetQuestDifficultyColor
-    if (not unit or type(GetQuestDifficultyColor) ~= "function") then
+    -- UnitCanAttack / UnitIsPlayer / UnitLevel below all declare
+    -- SecretArguments = "AllowedWhenUntainted": a secret token is refused at the
+    -- call, before any pcall around it can protect the answer. A token the
+    -- caller cannot name gets no colour treatment -- the line keeps whatever
+    -- colour the client gave it.
+    if (type(unit) == "nil" or isSecretValue(unit) or type(GetQuestDifficultyColor) ~= "function") then
         return nil
     end
 
@@ -977,7 +988,10 @@ local function getHostileDifficultyColor(unit)
 end
 
 local function colorizeUnitLevelLine(tooltip, unit, textLine, lineIndex)
-    if (not textLine or isSecretValue(textLine) or textLine == "") then
+    -- The token guard is local as well as in getHostileDifficultyColor: both
+    -- UnitLevel calls on this unit below declare
+    -- SecretArguments = "AllowedWhenUntainted".
+    if (type(unit) == "nil" or isSecretValue(unit) or not textLine or isSecretValue(textLine) or textLine == "") then
         return textLine
     end
 
@@ -1645,14 +1659,11 @@ local function anchorTooltipPortrait(tooltip, portrait, fromShow)
         return
     end
 
-    ---@diagnostic disable-next-line: inject-field
     state.portraitSide = cachedSide
-    ---@diagnostic disable-next-line: inject-field
     -- For custom positions, the frame anchor does not depend on measuring the right screen edge.
     -- For unconfigured default, wait until the frame is laid out (tooltipRight > 0).
     state.portraitAnchored = shown and ((TacoTipConfig and TacoTipConfig.custom_pos ~= nil) or tooltipRight > 0)
     portrait._tacoTipScale = portraitScale
-    ---@diagnostic disable-next-line: inject-field
     portrait._tacoTipInvert = invertSide
     portrait._tacoTipAnchorSide = cachedSide
     portrait:ClearAllPoints()
@@ -1835,7 +1846,13 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 end
             else
                 -- 2D fallback only when 3D model creation failed (portrait is a Texture).
-                pcall(_G.SetPortraitTexture, portrait, unit)
+                -- resolveTooltipUnit only returns a token that passed safeUnitExists,
+                -- so it is already non-secret; SetPortraitTexture still declares
+                -- SecretArguments = "AllowedWhenUntainted", so the token is tested
+                -- at the call as well.
+                if (type(unit) ~= "nil" and not isSecretValue(unit)) then
+                    pcall(_G.SetPortraitTexture, portrait, unit)
+                end
             end
             -- The portrait keeps its own alpha. It used to be slaved to
             -- tooltip:GetAlpha() every render, plus a permanent 0.05s OnUpdate
@@ -1885,6 +1902,13 @@ end
 -- with SecretAspect.BarValue), so the bar must be shown and the values passed
 -- through untouched. Non-secret clients keep the original "max > 0" gate.
 local function tooltipUnitHasVisiblePower(unit)
+    -- UnitPowerMax declares SecretArguments = "AllowedWhenUntainted": a secret
+    -- token is refused at the call itself, so it is tested here first. An
+    -- unknown token reads as "no visible power", which is the same answer the
+    -- refused call produced through the pcall below.
+    if (type(unit) == "nil" or isSecretValue(unit) or type(UnitPowerMax) ~= "function") then
+        return false
+    end
     local okMax, maxPower = pcall(UnitPowerMax, unit)
     if (not okMax) then return false end
     if (isSecretValue(maxPower)) then
@@ -2516,7 +2540,10 @@ function TT:WarmGearItemData(guid)
         -- never change a score and a shirt the client cannot resolve must not
         -- add a request. Slot 17 stays: GetScore scores the offhand outside the
         -- slot loop.
-        if (link and slot ~= 4) then
+        if (type(link) ~= "nil" and not isSecretValue(link) and slot ~= 4) then
+            -- GetItemInfo declares SecretArguments = "AllowedWhenUntainted": a
+            -- secret link would be refused at the call and then raise again in
+            -- the item:(%d+) match below, so the token is tested before either.
             local okInfo, info = pcall(getItemInfo, link)
             if (not okInfo or info == nil) then
                 local itemID = tonumber(string.match(link, "item:(%d+)"))
@@ -3143,13 +3170,17 @@ local function onTooltipSetUnit(tooltip, data)
         end
         if (TacoTipConfig.show_honor_rank) then
             local okPVP, pvpName = pcall(UnitPVPName, tooltipUnit)
-            if (okPVP and pvpName and not isSecretValue(pvpName) and pvpName ~= "" and not safeEquals(pvpName, name)) then
-                if (wide_style) then
-                    addLineDouble((L["Honor Rank"] or "Honor Rank") .. ":", pvpName, NORMAL_FONT_COLOR.r,
-                        NORMAL_FONT_COLOR.g,
-                        NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
-                else
-                    addLineSingle(string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName), 1, 1, 1)
+            -- UnitPVPName returns a non-nil string that may be secret, so the
+            -- secrecy test is its own step before any comparison runs.
+            if (okPVP and pvpName and not isSecretValue(pvpName)) then
+                if (pvpName ~= "" and not safeEquals(pvpName, name)) then
+                    if (wide_style) then
+                        addLineDouble((L["Honor Rank"] or "Honor Rank") .. ":", pvpName, NORMAL_FONT_COLOR.r,
+                            NORMAL_FONT_COLOR.g,
+                            NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
+                    else
+                        addLineSingle(string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName), 1, 1, 1)
+                    end
                 end
             end
         end
@@ -3652,17 +3683,21 @@ local function onTooltipSetUnit(tooltip, data)
             rawset(TacoTipPowerBar, "Update", function(self, u)
                 if (TacoTipConfig.show_power_bar) then
                     local unit = u or resolveTooltipUnit(GameTooltip) or self._tacoTipUnit
-                    if (unit and safeUnitExists(unit)) then
+                    -- UnitPowerType / UnitPowerMax / UnitPower all declare
+                    -- SecretArguments = "AllowedWhenUntainted": the token is
+                    -- tested here, before any of the three is called, and
+                    -- safeUnitExists repeats that test for the existence answer.
+                    if (type(unit) ~= "nil" and not isSecretValue(unit) and safeUnitExists(unit)) then
                         local okType, _, power = pcall(UnitPowerType, unit)
                         local color = (okType and power and not isSecretValue(power) and PowerBarColor and PowerBarColor[power]) or
-                        FALLBACK_POWER_COLOR
+                            FALLBACK_POWER_COLOR
                         self:SetStatusBarColor(color.r or 0, color.g or 0, color.b or 1)
                         local okMax, max = pcall(UnitPowerMax, unit)
                         local okCur, cur = pcall(UnitPower, unit)
-                        if (okMax and max ~= nil) then
+                        if (okMax and type(max) ~= "nil") then
                             self:SetMinMaxValues(0, max)
                         end
-                        if (okCur and cur ~= nil) then
+                        if (okCur and type(cur) ~= "nil") then
                             self:SetValue(cur)
                         end
                         if (self.Text) then
@@ -3863,7 +3898,9 @@ local function resolveTooltipItem(tooltip, data)
         -- Classic branches this whole arm is skipped.
         if (data.guid and not isSecretValue(data.guid) and C_Item and C_Item.GetItemLinkByGUID) then
             local ok, link = pcall(C_Item.GetItemLinkByGUID, data.guid)
-            if (ok and link and not isSecretValue(link)) then return link end
+            -- itemLink is documented Nilable; type() answers "is nil" without
+            -- comparing a value that can also arrive secret.
+            if (ok and type(link) ~= "nil" and not isSecretValue(link)) then return link end
         end
         -- There is deliberately no itemID -> link fallback. C_Item.GetItemLink
         -- takes an ItemLocation, not an itemID, and no documented C_Item
@@ -3943,8 +3980,12 @@ local function itemToolTipHook(self, data)
                 local inspectIsHunter = false
                 if (InspectFrame and InspectFrame:IsShown() and InspectFrame.unit and not isSecretValue(InspectFrame.unit)) then
                     local okCls, _, cls = pcall(UnitClass, InspectFrame.unit)
-                    if (okCls and not isSecretValue(cls) and cls == "HUNTER") then
-                        inspectIsHunter = true
+                    -- cls is the classFilename return; the secrecy test is its own
+                    -- step so the comparison is never made on a secret.
+                    if (okCls and not isSecretValue(cls)) then
+                        if (cls == "HUNTER") then
+                            inspectIsHunter = true
+                        end
                     end
                 end
                 if (TacoTipConfig.show_gs_items_hs or IsModifierKeyDown() or playerClass == "HUNTER" or inspectIsHunter) then
@@ -5208,10 +5249,12 @@ local function collectActiveUnitSection()
         local distStr = nil
         if (type(_G.UnitDistanceSquared) == "function" and activeUnit and not isSecretValue(activeUnit)) then
             local okDist, d2, chk = pcall(_G.UnitDistanceSquared, activeUnit)
-            if (okDist and d2 ~= nil) then
-                if (isSecretValue(d2) or isSecretValue(chk)) then
-                    distStr = "protected (secret in combat)"
-                elseif (chk and type(d2) == "number" and d2 >= 0) then
+            if (okDist and (isSecretValue(d2) or isSecretValue(chk))) then
+                -- Secret test first: the reported distance is never compared,
+                -- formatted or converted while it may be restricted.
+                distStr = "protected (secret in combat)"
+            elseif (okDist and d2 ~= nil) then
+                if (chk and type(d2) == "number" and d2 >= 0) then
                     distStr = string.format("~%.1fyd (dist^2: %.1f)", math.sqrt(d2), d2)
                 end
             end
@@ -5268,7 +5311,10 @@ local function collectActiveUnitSection()
                 if (allCached and type(cached.items) == "table") then
                     for slot = 1, 18 do
                         local link = cached.items[slot]
-                        if (link) then
+                        -- Same argument contract as WarmGearItemData: GetItemInfo
+                        -- declares SecretArguments = "AllowedWhenUntainted", so a
+                        -- secret link must be tested before the call.
+                        if (type(link) ~= "nil" and not isSecretValue(link)) then
                             anyLink = true
                             local okInfo, info = pcall(getItemInfo, link)
                             if (not okInfo or not info) then
@@ -5293,7 +5339,7 @@ local function collectActiveUnitSection()
                     if (type(fnUnitClass) == "function") then
                         _, classToken = fnUnitClass(activeUnit)
                     end
-                    if (specIndex and classToken and CI.GetSpecializationName) then
+                    if (specIndex and classToken and not isSecretValue(classToken) and CI.GetSpecializationName) then
                         spec = CI:GetSpecializationName(classToken, specIndex)
                     end
                 end
@@ -5699,8 +5745,8 @@ function TT:FormatDiagnosticTraces()
     lines[#lines + 1] = "===== TACOTIP DETAILED TRACE & DIAGNOSTICS LOG ====="
     lines[#lines + 1] = "Addon Version: " .. tostring(addOnVersion)
     lines[#lines + 1] = "Client: " ..
-    tostring(CI and CI.family or "unknown") ..
-    " (Interface: " .. tostring(CI and CI.interfaceVersion or "unknown") .. ")"
+        tostring(CI and CI.family or "unknown") ..
+        " (Interface: " .. tostring(CI and CI.interfaceVersion or "unknown") .. ")"
     lines[#lines + 1] = "Total Errors Caught: " .. tostring(TT.totalErrorsCaught or 0)
     lines[#lines + 1] = "Pipeline Errors Suppressed: " .. tostring((TT.ev and TT.ev.pipelineErrorsSuppressed) or 0)
     lines[#lines + 1] = ""
@@ -6085,7 +6131,8 @@ function TT:EvaluatePlayerEquipment(isSilent, forceBaseline)
 
             if (not isSilent and ((oldSnap and slotGS > oldGS) or (not oldSnap and slotGS > 0) or isBaseline)) then
                 local deltaGS = (oldSnap and oldGS > 0 and not isBaseline) and (slotGS - oldGS) or slotGS
-                local deltaILvl = (oldSnap and oldILvl > 0 and not isBaseline) and math.max(0, slotILvl - oldILvl) or slotILvl
+                local deltaILvl = (oldSnap and oldILvl > 0 and not isBaseline) and math.max(0, slotILvl - oldILvl) or
+                    slotILvl
                 table.insert(rec.history, 1, {
                     time = now,
                     slotID = slotID,
@@ -6349,7 +6396,7 @@ local function onEvent(self, event, ...)
             end
             CAfter(3, function()
                 print("|cff59f0dcTacoTip v" ..
-                addOnVersion .. " " .. L["TEXT_HELP_WELCOME"] .. " (Type |cffffb81c/tt|r to open settings dashboard)")
+                    addOnVersion .. " " .. L["TEXT_HELP_WELCOME"] .. " (Type |cffffb81c/tt|r to open settings dashboard)")
                 if (first_login) then
                     print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_FIRST_LOGIN"])
                 end

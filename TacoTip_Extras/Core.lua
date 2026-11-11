@@ -58,6 +58,7 @@ function Core.RunUntainted(fn, ...)
     return fn(...)
 end
 
+---@secret-guard v is-secret
 function Core.IsSecretValue(v)
     if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then

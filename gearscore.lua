@@ -213,6 +213,7 @@ local GS_Quality = {
     [BRACKET_SIZE * 7] = { r = 0.92, g = 0.10, b = 0.10, label = "Artifact" },
 }
 
+---@secret-guard v is-secret
 local function isSecretValue(v)
     if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
@@ -259,6 +260,7 @@ local function safeUnitIsUnit(unit1, unit2)
     return isUnit == true
 end
 
+---@return string?
 local function getPlayerGUID(arg)
     -- type()-based, not `arg and ...`: a truthiness test is itself a boolean
     -- operation, so a secret value would be tested before the secret predicate
@@ -511,7 +513,13 @@ function TT_GS:GetScore(unitorguid, useCallback)
             cb_table = { ["guid"] = guid, ["items"] = {} }
         end
 
-        if (mainHandItem) then
+        -- Same secrecy test the slot loop below already applies to its item
+        -- (see the `not isSecretValue(item)` guard there). These are Item
+        -- objects, but each method call below is the ItemLocationMixin sugar
+        -- over a C_Item function whose itemLocation argument is declared
+        -- SecretArguments = "AllowedWhenUntainted" -- so the receiver is tested
+        -- before it is indexed, never after.
+        if (mainHandItem and not isSecretValue(mainHandItem)) then
             if (mainHandItem:IsItemDataCached()) then
                 mainHandLink = mainHandItem:GetItemLink()
             else
@@ -542,7 +550,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
                 end
             end
         end
-        if (offHandItem) then
+        if (offHandItem and not isSecretValue(offHandItem)) then
             if (offHandItem:IsItemDataCached()) then
                 offHandLink = offHandItem:GetItemLink()
             else

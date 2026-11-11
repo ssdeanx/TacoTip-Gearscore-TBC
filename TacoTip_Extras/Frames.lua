@@ -278,6 +278,7 @@ local function validPlayerGUID(guid)
     return true
 end
 
+---@return string?
 local function validateUnit(unit)
     if type(unit) ~= "string" or unit == ""
         or Core.IsSecretValue(unit)
@@ -984,6 +985,7 @@ local function renderLocal(state)
     return true
 end
 
+---@return string?, string?
 local function inspectUnit()
     local frame = _G.InspectFrame
     local unit = type(frame) == "table" and frame.unit or nil

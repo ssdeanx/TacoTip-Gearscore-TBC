@@ -232,6 +232,12 @@ local function requestItemData(
     end
 end
 
+---@secret-guard v is-secret
+local function isSecretValue(v)
+    return Core.IsSecretValue(v)
+end
+
+---@return string?, string?
 local function capturePlayerIdentity()
     if type(UnitExists) ~= "function"
         or type(UnitIsPlayer) ~= "function"
@@ -248,8 +254,12 @@ local function capturePlayerIdentity()
 
     local okGUID, guid = pcall(UnitGUID, "player")
     -- Secret test BEFORE the empty-string comparison: `== ""` on a secret string
-    -- is a comparison and raises. type() alone cannot tell them apart.
-    if not okGUID or type(guid) ~= "string" or Core.IsSecretValue(guid) or guid == "" then
+    -- is a comparison and raises. type() alone cannot tell them apart. UnitGUID's
+    -- result is nilable and may be secret, so both are rejected first.
+    if not okGUID or type(guid) ~= "string" or isSecretValue(guid) then
+        return nil, "player-guid-unavailable"
+    end
+    if guid == "" then
         return nil, "player-guid-unavailable"
     end
     return guid
@@ -592,8 +602,13 @@ local function capturePlayerCells(unit)
     end
 
     local classCell = blocked("unavailable", "player-class-unavailable")
-    if type(classToken) == "string" and classToken ~= "" then
-        classCell = complete(classToken)
+    -- classToken is only ever assigned after an IsSecretValue() rejection above
+    -- (UnitClass and the inspector cache both); re-assert it here so the
+    -- emptiness comparison is never made on a secret.
+    if type(classToken) == "string" and not isSecretValue(classToken) then
+        if classToken ~= "" then
+            classCell = complete(classToken)
+        end
     end
 
     local levelCell = blocked("unavailable", "player-level-unavailable")

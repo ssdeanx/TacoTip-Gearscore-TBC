@@ -15,6 +15,7 @@ namespace.RankBrowser = RankBrowser
 -- that reads them resolves through L at render time.
 local L = _G.TACOEXTRAS_LOCALE or {}
 
+---@secret-guard val is-secret
 local function isSecretValue(val)
     if type(val) == "nil" then return false end
     if type(issecretvalue) == "function" then
@@ -694,6 +695,7 @@ local function getRankColor(index, total)
     return MUTED_R, MUTED_G, MUTED_B
 end
 
+---@return string?
 local function getPlayerGUID()
     local unitGUID = _G.UnitGUID
     if type(unitGUID) ~= "function" then
@@ -701,7 +703,12 @@ local function getPlayerGUID()
     end
     local ok, guid = pcall(unitGUID, "player")
     -- Secret first: `~= ""` on a secret string is a comparison and raises.
-    if ok and type(guid) == "string" and not isSecretValue(guid) and guid ~= "" then
+    -- UnitGUID's result is nilable and may be secret, so both are rejected
+    -- before the emptiness test runs.
+    if not ok or type(guid) ~= "string" or isSecretValue(guid) then
+        return nil
+    end
+    if guid ~= "" then
         return guid
     end
     return nil

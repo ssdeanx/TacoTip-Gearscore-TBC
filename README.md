@@ -24,6 +24,9 @@ interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: pending in-game verification (2026-11-10)
+linter: wowlua_ls check — 0 errors, 0 secret-value findings (2026-11-10)
+contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
+gates: run_all 75/75 (lua5.1 + luajit), luacheck 0/0 in 91 files, both verifiers PASS (2026-11-10)
 updated: 2026-11-10
 ```
 

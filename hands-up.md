@@ -194,6 +194,22 @@ cannot settle it. **when neither applies:** proceed with the defensible
 default, note it in the journal, and keep going — that is what `guarded()`
 and the `checkpoint` signal are for.
 
+### 5. Dispatch, audit and helper process (2026-11-10)
+
+- **a task graph with no dependencies runs flat.** every task dispatches at once, including review and
+  release gates, which then run against unmodified code and report a meaningless PASS. dependencies must
+  be attached when the tasks are created, or by an `update_task` that lands **before** dispatch — a task
+  that has started cannot be edited, so the only repair is a new chained set of tasks.
+- **one model route is a single point of failure.** three consecutive `429 RATE_LIMIT` killed the first
+  attempt at the contract ledger. retrying the same task on the same route only burns attempts; check what
+  routes actually exist before promising a fallback, and if there is only one, say so instead of offering
+  a migration that cannot happen.
+- **suppressing a diagnostic is not a fix.** `---@diagnostic disable-next-line` hides the report, not the
+  hazard. when the analyzer cannot narrow a guard, restructure the guard — an early return, or the test in
+  its own `if` — rather than silence it. if a pre-existing suppression blocks a gate, fix the gate.
+- **a file in the linter's `library` set has no linter coverage.** its diagnostics are suppressed, so
+  "0 findings" there means "not checked"; evidence for such a file must be a manual row audit.
+
 ## journal note
 
 each signal also gets a marker in the desk's journal:

@@ -23,7 +23,8 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
 status: released
-updated: 2026-11-09
+linter: wowlua_ls check — 0 secret-value findings (2026-11-10)
+updated: 2026-11-10
 ```
 
 

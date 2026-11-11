@@ -5,6 +5,14 @@ All notable changes to TacoTip Extras are documented in this file.
 | Version | Date | Summary |
 | :--- | :--- | :--- |
 
+### 2026-11-10 — static secret-value analysis (folded into 1.2.6)
+
+Recorded here rather than as a new version: the token stays `1.2.6`.
+
+- **Every secret guard in Extras is declared, so static analysis can see it.** `Core.IsSecretValue` and `RankBrowser`'s local `isSecretValue` now carry `---@secret-guard`, and `validateUnit`, `inspectUnit`, `getPlayerGUID` and `capturePlayerIdentity` carry `---@return string?`. All four already rejected secrets at the source, but the analyzer could not see through them and reported 23 phantom `secret-comparison`/`secret-table-key` findings across the package. Annotations are comments: no runtime change.
+- **The three comparisons that shared a boolean expression with their guard were restructured, not suppressed.** `RankBrowser.lua` and `Scanner.lua` (player GUID) now reject a secret with an early `return` before the emptiness test runs, and `Scanner.lua`'s `classToken` retests secrecy in its own `if` instead of relying on the earlier assignment guards. `Scanner.lua` also gained a local `---@secret-guard` wrapper over `Core.IsSecretValue`, because an annotation on the dotted `Core.IsSecretValue` declaration was not honoured at its call sites. No `---@diagnostic disable` was added anywhere in the package.
+- **Gates:** `wowlua_ls check .` reports 0 secret-value findings; Extras suite 42/42; `luacheck` clean.
+
 ### 2026-11-10 — unpublished hardening (folded into 1.2.6)
 
 Recorded here rather than as a new version: the token stays `1.2.6`.

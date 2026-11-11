@@ -4,6 +4,65 @@ All notable changes to TacoTip are documented in this file.
 
 Test counts quoted inside an entry are that entry's gate state on its own date. The counts for the current tree are stated in the `1.0.0` entry: 74 `run_all.sh` invocations on lua5.1 (the runtime WoW ships) and on luajit (5.1 ABI), and 140/140 Forever pins.
 
+### 2026-11-10 — power-bar secret guard and static secret-value analysis (folded into 1.0.0)
+
+Recorded here rather than as a new version: the token stays `1.0.0`.
+
+- **The power bar no longer compares a possibly-secret value.** `main.lua` read `UnitPowerMax`/`UnitPower` through `pcall` and then tested `max ~= nil` / `cur ~= nil` *before* the `isSecretValue` check at `:3669`. `pcall` guards the call, not the answer: the `~=` is the operation that raises, so on Forever a restricted unit's secret power value would throw on the guard line and take the bar update with it. Both now use `type(v) ~= "nil"`, which decides presence without comparing, and the values still reach `SetMinMaxValues`/`SetValue` untouched — the sink Blizzard marks `AllowedWhenTainted` + `BarValue`.
+- **`TT.isSecretValue` is declared as a secret guard.** It was a local alias of the function, which static analysis does not follow; it is now an annotated local wrapper with identical behaviour, so `if (isSecretValue(v)) then return end` narrows for every consumer.
+- **Every guard in the root addon is declared.** `gearscore.lua` and `pawn.lua` carry `---@secret-guard` on their local `isSecretValue` and `---@return string?` on `getPlayerGUID`. The two comparisons that shared a boolean expression with their own guard — `pvpName` in the honor-rank row and `cls` in the hunter check — were **restructured, not suppressed**: the secrecy test now runs as its own `if`, so the `~=`/`==` is only reached once the value is known plain. No `---@diagnostic disable` was added anywhere in either addon.
+- **Return shapes were read from the generated client documentation, not assumed.** `UnitPVPName` returns one non-nil `string` that may be secret (`SecretWhenUnitIdentityRestricted`); `UnitClass` is `MayReturnNothing` with `className` `ConditionalSecret` but `classFilename` plain, so the third pcall result (`cls`) is the class filename; `UnitGUID` returns a nilable `WOWGUID` that may be secret. Each restructure follows from those, not from what the call "usually" looks like.
+- **Three stale `inject-field` suppressions removed.** The portrait-anchor path carried `---@diagnostic disable-next-line: inject-field` on `state.portraitSide`, `state.portraitAnchored` and `portrait._tacoTipInvert`. One of them pointed at a comment line rather than a statement, and the identical writes at `main.lua:1647`, `:1658` and `:1661` had no suppression at all. Deleting all three produces **zero** diagnostics, so the shipped code now contains no `---@diagnostic disable` anywhere.
+- **Tooling:** `wowlua_ls check .` is now the project's static gate (`.wowluarc.json`; four flavors; third-party libraries scanned as `library` so their types stay available). It reported 23 secret-value findings on this tree and now reports **0**.
+- **Full Unit/Item return-contract audit — 119 call sites.** Every `Unit*`, `C_Item.*` and `ItemLocation`
+  method call in `main.lua`, `options.lua`, `gearscore.lua`, `pawn.lua` and
+  `Libs/LibForeverInspector/LibForeverInspector.lua` was checked against its generated client
+  documentation — `Nilable`, `MayReturnNothing`, `SecretWhen*`, `ConditionalSecret` and
+  `SecretArguments` — not against how the call is usually shaped. 97 sites were already correct;
+  22 were corrected. Session record: `bench/audits/2026-11-10-secret-contract-audit-session.md`.
+- **`GetItemInfo` was called bare where the global does not exist.** `LibForeverInspector`'s fallback
+  item shim called `GetItemInfo` as a global. That global is only installed by
+  `Blizzard_DeprecatedItemScript`, which does not load on Forever or Retail, so the call raised
+  `attempt to call global 'GetItemInfo' (a nil value)`. It is now namespace-first
+  (`C_Item.GetItemInfo` with a bare fallback), function-guarded, with the pcall `ok` flag read as the
+  "may return nothing" answer and `type(itemName) ~= "nil"` as the cached check.
+- **Bare `UnitExists` calls replaced with the safe helper.** `PlayerGUIDToUnitToken` and the inspect-queue
+  drain called `UnitExists` directly; a still-secret `InspectFrame.unit` or queued token is refused by
+  `SecretArguments = "AllowedWhenUntainted"` with an immediate Lua error. Both now go through
+  `safeUnitExists`.
+- **The leaderboard compared a possibly-secret `UnitGUID` with `==`.** `options.lua` highlighted the
+  player's row by comparing `UnitGUID("player")` directly. It shipped because no harness ever builds the
+  `/tt` dashboard. A file-local `playerGUID()` now routes through `main.lua`'s `TT.safeUnitGUID`, so a
+  refused read drops the highlight instead of raising.
+- **`gearscore.lua` indexed Item receivers before the secrecy test.** The weapon-slot path called
+  `IsItemDataCached`/`GetItemLink`/`GetItemID` on receivers that the slot loop below already guards; the
+  same test is now applied before the receiver is indexed.
+- **`main.lua`: 14 rows corrected at 10 sites.** Token tests before `UnitCanAttack`/`UnitIsPlayer`/
+  `UnitLevel` (difficulty colour and level line) and before `UnitPowerType`/`UnitPowerMax`/`UnitPower`
+  (power bar); `safeUnitGUID` nilable type test; `GetItemLinkByGUID` nilable test; `GetItemInfo` link
+  secrecy tests in the warm-cache and `/tt diag` probes; `UnitDistanceSquared` secrecy-before-nil
+  reorder.
+- **Regression pins.** `Tests/harness/contract_pins_test.lua` adds 62 pins driven by an
+  `issecretvalue` that **throws**, with refusal counters at `SecretArguments` boundaries — the previous
+  never-raising sentinel could not tell the strong predicate from the weak one. 13 of the defects above
+  are red on `HEAD` under these pins. Harness goes from 74 to 75 invocations.
+- **Independent review: PASS.** 60 contracts re-derived from the client mirror at `origin/forever`
+  (1.60.1), all 37 diff hunks read, both reported surfaces proven: an item tooltip while item data is
+  unloaded, and the unit-tooltip GearScore row under forced combat/encounter restrictions. Six residual
+  observations recorded, none requiring a fix.
+- **Two latent secret hazards closed after review.** `main.lua` used the `UnitClass` second return as a
+  table key without a secrecy test (`classFilename` is documented without a secrecy flag, so this was
+  defence in depth), and `LibForeverInspector`'s fallback wrapper pattern-matched a link before testing it —
+  `string.match` on a secret is a read of the value. Both now test secrecy first; the wrapper is still
+  returned so callers keep their shape.
+- **Not claimed:** this is not "100% secret safe". Disposition-driven secrets
+  (`SecretWhenUnitIdentityRestricted`, `...HealthMaxRestricted`, `...PowerMaxRestricted`) are documented
+  with no combat clause, so they are handled rather than eliminated; the audit is static; and
+  `LibForeverInspector` remains in the linter's `library` set, so its evidence is a manual row audit.
+- **Gates:** `run_all.sh` 75/75 on lua5.1 and luajit; `luacheck` 0 warnings / 0 errors in 91 files;
+  `verify_release.sh --worktree` and `verify_release_extras.sh --worktree` PASS; `wowlua_ls check .`
+  0 errors / 0 secret-value findings; no `---@diagnostic disable` added.
+
 | Version | Date | Summary |
 | :--- | :--- | :--- |
 | `1.0.0` | `2026-11-09` | **Major 1.0.0 Release: Personal Progression & Gear Leveling system, 3D portrait unit-frame stabilization, expanded 1000×600 enterprise dashboard with embedded leaderboard & quality range bands, group role-priority inspection, zero-allocation fontstring caching, markdown diagnostic export, Pawn dual-spec caching, Shaman Blue client restriction, and deep combat/dungeon secret-value protection.** Added gamified local character progression with live Gear Ranks (Novice to Immortal Legend), XP progress bar, 10 milestone trophy achievements, and a 500-entry equipment upgrade chronicle with slot filtering and item tooltips. Overhauled 3D character model lifecycles with `CanSetUnit` support and retry budgets to completely eliminate strobing, rebuild loops, and set-failure spikes when hovering unit frames (`PlayerFrame`, `PetFrame`, `PartyMemberFrame`, `TargetFrame`, `CompactRaidFrame`). Expanded the standalone dashboard to `1000×600` with a narrowed 155px sidebar, streamlined 30px footer, and directly embedded 760×365px Server Leaderboard with faction tabs (`All Realm`, `Alliance`, `Horde`), dynamic search, and authentic GearScore quality range bands. Restricted the Shaman Blue color toggle exclusively to Classic Era. Added group role-priority inspection in dungeons and raids (Tank > Healer > DPS) ahead of ambient scans. Implemented zero-allocation line FontString caching on Classic/TBC/Titanforge and clean buffer recycling. Introduced 1-click Markdown diagnostic export (`/tt report` & `/tt export`) in the settings dashboard, with watchdog-recovered inspect timeouts categorized accurately. Hardened item hyperlinks, Pawn (`PawnGetItemData`, `PawnGetSingleValueFromItem`), map zone caches, group unit resolution, status text, `UnitDistanceSquared`, class/spec icons, trait trees (`C_Traits`), faction badges, and group roles against WoW Forever secret-value tainting in combat and restricted dungeons. Multi-spec Pawn caching now computes and persists dual-spec scores simultaneously for instant spec switching. Full zero-regression parity across all 5 client families. |

@@ -98,9 +98,11 @@ local function safeEquals(a, b)
 end
 
 local function safeUnitGUID(unit)
-    if (not unit or type(UnitGUID) ~= "function" or isSecretValue(unit)) then return nil end
+    if (type(unit) == "nil" or type(UnitGUID) ~= "function" or isSecretValue(unit)) then return nil end
     local ok, guid = pcall(UnitGUID, unit)
-    if (not ok or not guid or isSecretValue(guid)) then return nil end
+    -- UnitGUID is documented Nilable; type() answers "is nil" without ever
+    -- comparing a value that can also arrive secret.
+    if (not ok or type(guid) == "nil" or isSecretValue(guid)) then return nil end
     return guid
 end
 
@@ -4184,7 +4186,21 @@ local function createItemWrapper(link)
     local itemID = tonumber(string.match(link, "item:(%d+)"))
     return {
         IsItemDataCached = function()
-            return GetItemInfo(link) ~= nil
+            -- GetItemInfo is MayReturnNothing and
+            -- SecretArguments="AllowedWhenUntainted" (ItemDocumentation.lua at
+            -- the pin). The bare global is only the deprecated alias installed
+            -- by Blizzard_DeprecatedItemScript, which is absent on Forever and
+            -- Retail, so resolve the C_Item namespace first and guard the
+            -- function -- the old bare call raised "attempt to call global
+            -- 'GetItemInfo'" there. A secret link is refused at the call, so
+            -- the token is tested before it; the pcall owns any refusal, and
+            -- the ok flag is the call result while a nil first value is the
+            -- "not cached yet" answer this predicate reports.
+            if (isSecretValue(link)) then return false end
+            local getItemInfo = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+            if (type(getItemInfo) ~= "function") then return false end
+            local ok, itemName = pcall(getItemInfo, link)
+            return ok and type(itemName) ~= "nil"
         end,
         GetItemLink = function()
             return link
@@ -4924,7 +4940,14 @@ function lib:PlayerGUIDToUnitToken(guid)
         if (safeEquals(safeUnitGUID("focus"), guid)) then return "focus" end
         if (safeEquals(safeUnitGUID("mouseover"), guid)) then return "mouseover" end
         local insFrame = rawget(_G, "InspectFrame")
-        if (insFrame and insFrame.unit and UnitExists and UnitExists(insFrame.unit) and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
+        -- InspectFrame.unit is Blizzard's own token and can be secret in an
+        -- encounter (it is the token InspectFrame_Show was handed). UnitExists
+        -- declares SecretArguments = "AllowedWhenUntainted", so the token is
+        -- tested before the call: a bare UnitExists here was the argument
+        -- hazard. safeUnitExists also carries the type(UnitExists) check the
+        -- old `UnitExists and` performed.
+        if (insFrame and safeUnitExists(insFrame.unit)
+                and safeEquals(safeUnitGUID(insFrame.unit), guid)) then
             return insFrame.unit
         end
         if (type(IsInGroup) == "function" and IsInGroup()) then
@@ -5970,7 +5993,12 @@ inspectQueueTick = function()
             if (isSecretValue(guid)) then guid = nil end
             local unitHint = type(item) == "table" and item.unit or nil
             local unit
-            if (unitHint and type(UnitExists) == "function" and UnitExists(unitHint) and safeEquals(safeUnitGUID(unitHint), guid)) then
+            -- The queued token is plain by construction -- DoInspect rejects a
+            -- secret token before it can enqueue one and PlayerGUIDToUnitToken
+            -- answers with literal tokens -- but UnitExists declares
+            -- SecretArguments = "AllowedWhenUntainted", so the token still goes
+            -- through the boundary helper rather than a bare call.
+            if (safeUnitExists(unitHint) and safeEquals(safeUnitGUID(unitHint), guid)) then
                 unit = unitHint
             else
                 unit = guid and lib:PlayerGUIDToUnitToken(guid)

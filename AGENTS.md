@@ -107,7 +107,11 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
 - **`pcall` does not make the ANSWER safe.** the classic mistake is
   `local ok, v = pcall(UnitCanAttack, ...)` then `if (ok and v == false)`: the
   pcall guarded the call, and the **comparison** is what raises. this exact
-  shape was in `main.lua` and is now guarded. same trap for `UnitIsUnit`,
+  shape lived in the power bar, `main.lua:3662` and `:3665`, where
+  `max ~= nil` / `cur ~= nil` ran *before* the `isSecretValue` test at `:3669`;
+  both now test `type(v) ~= "nil"` so the value still reaches
+  `SetMinMaxValues`/`SetValue` untouched. every other site routes through a
+  `safe*` helper or tests the value first. same trap for `UnitIsUnit`,
   `UnitInRaid`, `UnitIsPVP`, and for `x ~= ""` on a secret string. test the
   value (`issecretvalue`) before you compare it, or route through a `safe*`
   helper.
@@ -173,7 +177,10 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
   arithmetic, then became a secret cache key). all fixed 2026-11-10. Extras also
   **delegates client identity** to `inspector:IsForever()`/`IsClassic()` etc. and
   must never re-derive it from `WOW_PROJECT_ID` — a MAINLINE test is false on
-  Forever.
+  Forever. that rule is **not held yet**: `Scoring.lua:124-150` defines its own
+  `isRetailClient`/`isForeverClient` from `GetBuildInfo` bands, `Scoring.lua:164`
+  and `Scanner.lua:637` read `WOW_PROJECT_ID` directly, and the `Scoring` fallback
+  still names the retired `LibClassicInspector`.
 - **the boundary helpers are the pattern**: `safeUnitExists`,
   `safeUnitIsPlayer`, `safeUnitIsConnected`, `safeUnitIsDeadOrGhost`,
   `safeUnitGUID`, `safeUnitIsUnit` in `LibForeverInspector`, and the `TT.safe*`
@@ -208,7 +215,7 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
 
 ## commands
 
-    bash Tests/harness/run_all.sh                   # main, 74 invocations (repeat with LUA=luajit)
+    bash Tests/harness/run_all.sh                   # main, 75 invocations (repeat with LUA=luajit)
     bash TacoTip_Extras/Tests/harness/run_all.sh    # extras, 42 invocations (LUA=luajit to repeat)
     luacheck .                                     # 0 warnings / 0 errors
     bash Tools/verify_release.sh --worktree         # tacoTip package, must PASS
@@ -216,6 +223,48 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
 
 `--worktree` validates the tree you ship; the default validates a commit you
 are probably not shipping.
+
+## tooling — linter and editor
+
+**`wowlua-ls` is the project LSP.** run it as `wowlua_ls`; the headless form is
+`wowlua_ls check .` and exits 1 on any diagnostic. `.wowluarc.json` follows the
+official reference
+(`tradeskillmaster.github.io/wowlua-ls/reference/configuration.html`) — do not
+invent keys. `flavors` takes four values, `retail` (alias `mainline`),
+`classic`, `classic_era`, `forever`, and we declare all four: era 11509 →
+`classic_era`, tbc 20506 → `classic` (rolling progression, MoP included),
+forever 16001 → `forever`, retail 120105 → `retail`. **Titanforge 38002 has no
+flavor and no alias** — the tool models four game versions — so never write
+`titanforge`; it is rejected as unknown on every run. third-party code goes in
+`library` (scanned for types, diagnostics suppressed), not `ignore` (skipped
+entirely), so `LibStub`/`CallbackHandler`/`LibDetours` types stay available.
+`ignore`, `flavors`, `diagnostics` and `globals` are **isolated** per config
+file: a nested `.wowluarc.json` that omits `flavors` resets them to defaults
+instead of inheriting ours.
+
+**the `wowlua` compiler (wowlua.dev, 0.13.9) is rejected, not deferred.** four
+independent reasons: no Titanforge flavor (E4004, and `wowlua init` writes a TOC
+without 38002); `check`/`toc`/`build` all abort on E5001 over `main.lua`'s
+upvalue count, and `toc` cannot be run without passing `check`; its `release`
+profile bundles and minifies, while our two verifiers demand a 1:1 archive with
+the five interface numbers plus one `.toc` per package; and our locale files
+execute code and depend on load order, not being JSON data. re-open only with a
+Titanforge flavor and a TOC-layout story.
+
+**the LSP's silence is not evidence.** nilability and secrecy are independent
+flags in the client's own API docs — `Nilable` and `NeverSecret` per value,
+plus the function's `SecretWhen…` predicate — so a secret value can be nil and a
+nil value can be secret. a nil test decides presence, never secrecy: ours use
+`type(v) == "nil"` so the guard line never compares. the LSP treats `==`/`~=`
+against `nil` as allowed, so it cannot stand in for that rule. it also cannot
+see through an unannotated guard helper: mark ours
+`---@secret-guard value is-secret` or every call site reads as unguarded. and
+secrets only appear under the restriction conditions, which in
+practice means instanced combat and encounters, so a clean run anywhere else
+proves nothing — force them with `addonCombatRestrictionsForced` and
+`addonEncounterRestrictionsForced`. it called the power-bar sites clean and
+missed `main.lua:3662`/`:3665`, so it supplements the rules here; it does not
+replace them.
 
 ## do not
 

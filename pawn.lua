@@ -77,6 +77,7 @@ end
 TT_PAWN = {}
 local TT_PAWN = TT_PAWN
 
+---@secret-guard v is-secret
 local function isSecretValue(v)
     if (type(v) == "nil") then return false end
     if (type(issecretvalue) == "function") then
@@ -123,6 +124,7 @@ local function safeUnitIsUnit(unit1, unit2)
     return isUnit == true
 end
 
+---@return string?
 local function getPlayerGUID(arg)
     -- type()-based, not `arg and ...`: a truthiness test is itself a boolean
     -- operation, so a secret value would be tested before the secret predicate

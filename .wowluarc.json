@@ -1,16 +1,29 @@
 {
-    "ignore": [
-        "Libs/",
-        "docs/",
-        "tests/",
-        "Media/"
-    ],
+    "$schema": "https://raw.githubusercontent.com/TradeSkillMaster/wowlua-ls/main/editors/vscode/wowluarc.schema.json",
     "flavors": [
         "retail",
         "classic",
-        "classic_anniversary",
-        "titanforge",
+        "classic_era",
         "forever"
+    ],
+    "library": [
+        "Libs/LibStub/",
+        "Libs/CallbackHandler-1.0/",
+        "Libs/LibDetours-1.0/",
+        "Libs/LibForeverInspector/"
+    ],
+    "ignore": [
+        "docs/",
+        "Tests/",
+        "Media/",
+        "OLD/",
+        "bench/",
+        "desks/",
+        "mnemon-mirror/",
+        "Libs/LibDataBroker-1.1/",
+        "Libs/LibDBIcon-1.0/",
+        "Libs/LibRangeCheck-2.0/",
+        "Libs/LibSharedMedia-3.0/"
     ],
     "diagnostics": {
         "enable": [
@@ -18,6 +31,14 @@
             "undefined-global",
             "missing-return",
             "duplicate-set-field"
-        ]
+        ],
+        "severity": {
+            "secret-arithmetic": "error",
+            "secret-comparison": "error",
+            "secret-condition": "error",
+            "secret-table-key": "error",
+            "secret-access": "error",
+            "secret-argument": "error"
+        }
     }
 }

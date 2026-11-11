@@ -105,6 +105,97 @@ not style choices. each one has a release behind it.
 - **no state-changing git** — nothing is staged or committed by design; the two
   package verifiers are the only permitted git invocations.
 
+## unit and item return contracts — check before every call
+
+read from `Blizzard_APIDocumentationGenerated/UnitDocumentation.lua` and
+`ItemDocumentation.lua` at the pin, never from memory. four independent flags
+decide how a return may be used, and they do **not** imply each other:
+
+- `Nilable` — the call can return `nil` **when it succeeds**.
+- `MayReturnNothing` — the call can return *no values at all*, so every return
+  goes nil together. this is not the same as `Nilable = true`.
+- `SecretWhen…` on the function / `ConditionalSecret` per field — the value may
+  be secret. a return can be nilable and secret, or plain and non-nilable.
+- `SecretArguments = "AllowedWhenUntainted"` — the **argument** is refused if it
+  is secret. this is an argument hazard, not a return hazard.
+
+**setting a variable to `nil` taints nothing.** taint is execution path plus
+secret provenance, never the value being nil. the hazard is a *comparison* on a
+possibly-secret value — including `== nil` — which is why nil tests are written
+`type(v) == "nil"`.
+
+| call | succeeds with | nil? | nothing? | secret |
+| :--- | :--- | :--- | :--- | :--- |
+| `UnitExists`, `UnitIsPlayer`, `UnitIsConnected`, `UnitIsDeadOrGhost`, `UnitCanAttack`, `UnitIsVisible`, `UnitInParty`, `UnitIsOtherPlayersPet`, `UnitIsSameServer` | `bool` | never | no | plain |
+| `UnitIsUnit` | `bool` | never | no | `SecretWhenUnitComparisonRestricted` |
+| `UnitIsPVP` | `bool` | never | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitLevel` | `number` | never | no | plain |
+| `UnitHealthMax` | `number` | never | no | `SecretWhenUnitHealthMaxRestricted` |
+| `UnitPower`, `UnitPowerMax` | `number` | never | no | `SecretWhenUnitPowerRestricted` / `…PowerMaxRestricted` |
+| `UnitFactionGroup` | 2 × `cstring` | never | no | plain |
+| `UnitGroupRolesAssigned` | `cstring` (`"NONE"` when none) | never | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitName` | 2 × `cstring` | never | no | `SecretWhenUnitNameIdentityRestricted`; **args** accept tainted |
+| `UnitPVPName` | `string` | never | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitDistanceSquared` | `number`, `bool` | never | no | plain |
+| `UnitGUID` | `WOWGUID` | **nilable** | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitInRaid` | `luaIndex` (a number, not a bool) | **nilable** — nil = not in a raid | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitSex` | `number` | **nilable** | no | `SecretWhenUnitIdentityRestricted` |
+| `UnitClass` | `className` (`ConditionalSecret`), `classFilename` (plain), `classID` (plain) | — | **yes** | identity |
+| `UnitRace` | race name, english name, `raceID` | — | **yes** | identity |
+| `UnitPowerType` | `powerType`, token, 3 × `number` | — | **yes** | plain |
+| `GetItemInfo` / `C_Item.GetItemInfo` | 18 returns; only `setID` is nilable | — | **yes** | args untainted-only |
+| `GetItemInfoInstant` | 7 returns, none nilable | — | **yes** | plain |
+| `GetItemLink`, `GetItemLinkByGUID`, `C_Item.GetItemLink`, `C_Item.GetItemLinkByGUID` | `itemLink` | **nilable** | no | plain |
+| `GetItemID`, `C_Item.IsEquippableItem` | `number` / `bool` | never | no | plain |
+| `C_Item.RequestLoadItemDataByID` | nothing | — | returns nothing | plain |
+
+rules that follow, and the mistakes they prevent:
+
+- a **nilable** return is nil-tested with `type(v) == "nil"`, never `v == nil`,
+  because the value may also be secret.
+- a **`MayReturnNothing`** call is detected by the `ok` flag from `pcall`, not by
+  testing one of its returns — when it returns nothing, every return is nil and
+  the shape is not a failure.
+- `GetItemInfo` returning nil means **"not loaded yet"**, not "no such item";
+  the cache/retry path owns that distinction (`RequestLoadItemDataByID`).
+- `UnitInRaid` returns a **raid index**, not a boolean. `type(inR) == "number"`
+  is the predicate; `nil` is a normal answer outside a raid.
+- destructuring a `pcall` counts the `ok` first: for `UnitClass`,
+  `local ok, _, cls = pcall(UnitClass, u)` puts the **classFilename** in `cls`
+  and the classID one position further out.
+- every listed call has `SecretArguments = "AllowedWhenUntainted"`, so a unit
+  token that may be secret must be tested **before** the call, not after.
+
+### enumerating call sites — grep will lie to you
+
+a scan for `Fn(` finds only direct calls, and most Unit calls are not direct. count these five forms:
+
+    Fn(args)                      direct
+    pcall(Fn, args)               how most Unit calls are made — no paren after the name
+    _G.Fn(args)                   feature-detect / fallback idiom, carries a dot
+    local X = _G.Fn ... X(...)    file-scope alias, including `or` fallbacks
+    item:GetItemLink()            ItemLocationMixin method, not a standalone API
+
+enumerate identifiers and resolve them, then prove the count: rows must equal occurrences from the same
+scan. also check the documentation parse — `ItemDocumentation.lua` indents its entries differently from
+`UnitDocumentation.lua`, and a parser that assumes one layout silently produces zero `C_Item.*` keys
+instead of failing.
+
+### three traps that shipped real defects
+
+- **`GetItemInfo` is not always a global.** the bare global is installed by
+  `Blizzard_DeprecatedItemScript`, which does not load on Forever or Retail; calling it there raises
+  `attempt to call global 'GetItemInfo' (a nil value)`. read `C_Item.GetItemInfo` first, fall back to the
+  global, and guard that the fallback is a function.
+- **`item:GetItemLink()` is not a separate API.** it is `ItemLocationMixin` sugar over
+  `C_Item.GetItemLink(itemLocation)`, and that argument is `SecretArguments = "AllowedWhenUntainted"` —
+  so the receiver is an argument hazard and `itemLink` comes back nilable. `GetItemID` is non-nil and
+  `IsItemDataCached` returns a non-nil bool.
+- **`---@secret-guard` on a dotted function is not honoured at call sites.** annotating
+  `function Core.IsSecretValue(v)` leaves every `Core.IsSecretValue(x)` un-narrowed; the analyzer follows a
+  local annotated wrapper (`local function isSecretValue(v) return Core.IsSecretValue(v) end`), not the
+  dotted declaration, and not a `local isSecretValue = TT.isSecretValue` alias either.
+
 ## what the client actually does
 
 facts worth not re-deriving. all verified against the mirror or the client db

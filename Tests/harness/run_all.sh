@@ -172,6 +172,21 @@ echo "== secret guards and custom_pos shape (red-proven regression pins) =="
 run "secretguard_test" Tests/harness/secretguard_test.lua
 run "custompos_test"   Tests/harness/custompos_test.lua
 
+echo "== Unit/Item return contracts: the corrected call sites, pinned =="
+# One harness for the contract corrections in t9/t10/t11 (see
+# bench/audits/2026-11-10-api-contract-ledger.md and workshop.md ->
+# "unit and item return contracts"). It owns what no other harness does:
+# a THROWING issecretvalue (the client's tainted-call contract -- never a
+# never-raising sentinel), the nilable shapes (UnitGUID nil/secret-nil,
+# UnitInRaid nil-vs-raid-index, GetItemLink nil for an unloaded item), the
+# MayReturnNothing shapes (UnitClass nothing, GetItemInfo nothing), the two
+# operator-reported surfaces (item tooltip while unloaded; unit-tooltip
+# GearScore row under combat/encounter restrictions), the argument-hazard
+# sites, and the LibForeverInspector/options.lua/gearscore.lua corrections.
+# Red-proven against `git show HEAD:` copies of the pre-fix files and against
+# defect-shaped copies; the header lists which pin traps which fix.
+run "contract_pins_test" Tests/harness/contract_pins_test.lua
+
 echo "== GameMenu quit-block taint pins =="
 run "taint_test CLASSIC_ERA"  Tests/harness/taint_test.lua 2  11509 CLASSIC_ERA
 run "taint_test TBC_ANNIV"    Tests/harness/taint_test.lua 5  20506 TBC_ANNIV
