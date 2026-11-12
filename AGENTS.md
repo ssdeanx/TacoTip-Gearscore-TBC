@@ -5,8 +5,8 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v1.0.0) and **TacoTip Extras**
-(`TacoTip_Extras/`, v1.2.6), for five client families (era 11509, tbc
+two addons, one repo: **TacoTip** (root, v1.0.1) and **TacoTip Extras**
+(`TacoTip_Extras/`, v1.2.7), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
 the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
 

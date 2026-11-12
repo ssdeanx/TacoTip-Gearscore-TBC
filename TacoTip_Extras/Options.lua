@@ -2066,9 +2066,23 @@ local function tacoTipCategoryName()
         end
     end
     if type(_G.GetAddOnMetadata) == "function" then
-        local ok, title = pcall(_G.GetAddOnMetadata, "TacoTip", "Title")
-        if ok and type(title) == "string" and title ~= "" then
-            return title
+        local index
+        if type(_G.GetNumAddOns) == "function"
+            and type(_G.GetAddOnInfo) == "function" then
+            local count = _G.GetNumAddOns()
+            for i = 1, count do
+                local name = _G.GetAddOnInfo(i)
+                if name == "TacoTip" then
+                    index = i
+                    break
+                end
+            end
+        end
+        if type(index) == "number" then
+            local ok, title = pcall(_G.GetAddOnMetadata, index, "Title")
+            if ok and type(title) == "string" and title ~= "" then
+                return title
+            end
         end
     end
     return "TacoTip"

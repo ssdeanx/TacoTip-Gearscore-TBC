@@ -516,7 +516,10 @@ end
 -- permanent rejection. The value is still reported in diagnostics, so a future
 -- library that does publish one becomes visible.
 local function inspectorVersion(library)
-    if type(library) ~= "table" or type(library.Version) ~= "function" then
+    if type(library) ~= "table" then
+        return nil
+    end
+    if type(library.Version) ~= "function" then
         return nil
     end
     local ok, value = pcall(library.Version, library)
@@ -733,10 +736,12 @@ local function captureEquipmentCompatibility(contextKey)
     local version = tostring(getMetadataVersion() or "unavailable")
     local libraryVersion = inspectorVersion(library)
     local refresh = type(tacoTip) == "table"
+        and type(spec) == "table"
         and type(tacoTip[spec.refreshMethod]) == "function"
     local init = type(tacoTip) == "table"
+        and type(spec) == "table"
         and type(tacoTip[spec.initMethod]) == "function"
-    local existingFonts = allNamedFontsPresent(spec)
+    local existingFonts = type(spec) == "table" and allNamedFontsPresent(spec) or false
     local initPath = init and "method"
         or (existingFonts and "existing-fonts" or "missing")
     local hook = type(_G.hooksecurefunc) == "function"
@@ -795,11 +800,11 @@ local function captureEquipmentCompatibility(contextKey)
     }
 
     local refreshFunction = nil
-    if tacoTip and refresh then
+    if tacoTip and spec and refresh then
         refreshFunction = tacoTip[spec.refreshMethod]
     end
     local initFunction = nil
-    if tacoTip and init then
+    if tacoTip and spec and init then
         initFunction = tacoTip[spec.initMethod]
     end
 
@@ -839,6 +844,9 @@ end
 
 local function equipmentRuntimeValid(contextKey)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
+    if type(spec) ~= "table" then
+        return false, contextKey .. "-context-unknown"
+    end
     local captured = equipmentCompatibility[contextKey]
     if type(captured) ~= "table" or not captured.supported then
         return false, captured and captured.reason or "not-initialized"
@@ -863,13 +871,20 @@ local function equipmentRuntimeValid(contextKey)
     end
     local currentTacoTip = resolveTacoTipTable()
     if currentTacoTip ~= captured.tacoTip
-        or type(currentTacoTip) ~= "table"
-        or currentTacoTip[spec.refreshMethod] ~= captured.refreshFunction then
+        or type(currentTacoTip) ~= "table" then
+        return false, contextKey .. "-refresh-capability-changed"
+    end
+    if currentTacoTip == nil then
+        return false, contextKey .. "-refresh-capability-changed"
+    end
+    ---@cast currentTacoTip table
+    if currentTacoTip[spec.refreshMethod] ~= captured.refreshFunction then
         return false, contextKey .. "-refresh-capability-changed"
     end
     if not captured.refreshHookInstalled then
         return false, contextKey .. "-refresh-hook-missing"
     end
+    ---@cast currentTacoTip table
     local currentInit = currentTacoTip[spec.initMethod]
     if captured.initPath == "method" then
         if currentInit ~= captured.initFunction
@@ -907,6 +922,11 @@ end
 
 local function captureEquipmentParents(contextKey)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
+    if not spec then
+        return nil, contextKey == "inspect"
+            and "inspect-not-loaded"
+            or "character-not-ready"
+    end
     local parents = {}
     for index = 1, #spec.parentNames do
         local name = spec.parentNames[index]
@@ -927,6 +947,11 @@ end
 
 local function captureEquipmentSnapshot(contextKey)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
+    if not spec then
+        return nil, contextKey == "inspect"
+            and "inspect-not-loaded"
+            or "character-not-ready", true
+    end
     local parents, parentReason = captureEquipmentParents(contextKey)
     if not parents then
         return nil, parentReason, true
@@ -1072,9 +1097,15 @@ end
 local function validateLeasedObjects(contextKey, allowNewMovers)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
     local state = equipmentStates[contextKey]
+    if not state then
+        return false, contextKey .. "-state-missing", nil
+    end
     local currentLease = state.lease
     if not currentLease then
         return false, contextKey .. "-lease-missing", nil
+    end
+    if not spec then
+        return false, contextKey .. "-spec-missing", nil
     end
 
     for index = 1, #spec.parentNames do
@@ -1187,6 +1218,13 @@ end
 
 local function deferEquipmentAction(contextKey, action, reason)
     local state = equipmentStates[contextKey]
+    if not state then
+        state = {
+            requested = false,
+            active = false,
+        }
+        equipmentStates[contextKey] = state
+    end
     state.deferred = action
     state.reason = reason
     ensureDeferredEquipmentFrame()
@@ -1196,10 +1234,13 @@ local function refreshNativeAfterRelease(contextKey)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
     local captured = equipmentCompatibility[contextKey]
     local currentTacoTip = resolveTacoTipTable()
+    local refreshMethod = spec and spec.refreshMethod
     if not captured
+        or not spec
+        or not refreshMethod
         or currentTacoTip ~= captured.tacoTip
         or type(currentTacoTip) ~= "table"
-        or currentTacoTip[spec.refreshMethod] ~= captured.refreshFunction then
+        or (currentTacoTip and currentTacoTip[refreshMethod]) ~= captured.refreshFunction then
         return true
     end
     local ok = pcall(captured.refreshFunction, captured.tacoTip)
@@ -1212,6 +1253,13 @@ end
 
 releaseEquipmentLease = function(contextKey, refreshNative, preserveReason)
     local state = equipmentStates[contextKey]
+    if not state then
+        state = {
+            requested = false,
+            active = false,
+        }
+        equipmentStates[contextKey] = state
+    end
     if not state.lease then
         state.active = false
         if state.deferred == "release" then
@@ -1256,6 +1304,13 @@ end
 
 local function invalidateEquipmentContext(contextKey, reason, abandonLease)
     local state = equipmentStates[contextKey]
+    if not state then
+        state = {
+            requested = false,
+            active = false,
+        }
+        equipmentStates[contextKey] = state
+    end
     local captured = equipmentCompatibility[contextKey]
     local wasActive = state.active == true
     state.requested = false
@@ -1284,7 +1339,11 @@ end
 
 local function auditEquipmentLease(contextKey)
     local state = equipmentStates[contextKey]
-    if not state.lease or not state.active then
+    if not state or not state.lease then
+        return false
+    end
+    if not state.active then
+        invalidateEquipmentContext(contextKey, contextKey .. "-inactive-lease", false)
         return false
     end
     local runtimeValid, runtimeReason = equipmentRuntimeValid(contextKey)
@@ -1329,8 +1388,10 @@ end
 acquireEquipmentLease = function(contextKey, allowRefresh)
     local state = equipmentStates[contextKey]
     local captured = equipmentCompatibility[contextKey]
-    if not state.requested or not captured or not captured.supported then
-        state.reason = captured and captured.reason or "not-initialized"
+    if not state or not state.requested or not captured or not captured.supported then
+        if state then
+            state.reason = captured and captured.reason or "not-initialized"
+        end
         return false
     end
     if state.lease then
@@ -1398,6 +1459,9 @@ end
 
 handleEquipmentLifecycle = function(contextKey)
     local state = equipmentStates[contextKey]
+    if not state then
+        return
+    end
     state.hookGeneration = (state.hookGeneration or 0) + 1
     if not state.requested then
         return
@@ -1473,7 +1537,7 @@ end
 invokeEquipmentRefresh = function(contextKey)
     local state = equipmentStates[contextKey]
     local captured = equipmentCompatibility[contextKey]
-    if not state.requested or not captured or not captured.supported then
+    if not state or not state.requested or not captured or not captured.supported then
         return false
     end
     if inCombatLockdown() then
@@ -1526,6 +1590,14 @@ local function installEquipmentHook(contextKey, methodName, hookKind)
     if not captured or not captured.supported then
         return false
     end
+    if not captured.tacoTip then
+        captured.supported = false
+        captured.reason = contextKey .. "-tacoTip-missing"
+        if equipmentStates[contextKey] then
+            equipmentStates[contextKey].reason = captured.reason
+        end
+        return false
+    end
     local callback = function()
         local ok = pcall(handleEquipmentLifecycle, contextKey)
         if not ok then
@@ -1557,10 +1629,16 @@ end
 local function installEquipmentHooks(contextKey)
     local spec = EQUIPMENT_CONTEXTS[contextKey]
     local captured = equipmentCompatibility[contextKey]
-    if not captured or not captured.supported then
+    if not spec or not captured or not captured.supported then
         return
     end
     if not installEquipmentHook(contextKey, spec.refreshMethod, "refresh") then
+        return
+    end
+    if not captured.tacoTip then
+        captured.supported = false
+        captured.reason = contextKey .. "-tacoTip-missing"
+        equipmentStates[contextKey].reason = captured.reason
         return
     end
     captured.refreshFunction = captured.tacoTip[spec.refreshMethod]
@@ -1582,24 +1660,28 @@ processEquipmentDeferred = function()
     for index = 1, #contexts do
         local contextKey = contexts[index]
         local state = equipmentStates[contextKey]
-        local action = state.deferred
-        if action then
-            state.deferred = nil
-            local ok = pcall(function()
-                if action == "release" or not state.requested then
-                    releaseEquipmentLease(contextKey, true, false)
-                elseif action == "rehide" and state.lease then
-                    handleEquipmentLifecycle(contextKey)
-                else
-                    acquireEquipmentLease(contextKey, true)
+        if not state then
+            -- no state for this context; skip
+        else
+            local action = state.deferred
+            if action then
+                state.deferred = nil
+                local ok = pcall(function()
+                    if action == "release" or not state.requested then
+                        releaseEquipmentLease(contextKey, true, false)
+                    elseif action == "rehide" and state.lease then
+                        handleEquipmentLifecycle(contextKey)
+                    else
+                        acquireEquipmentLease(contextKey, true)
+                    end
+                end)
+                if not ok then
+                    invalidateEquipmentContext(
+                        contextKey,
+                        contextKey .. "-deferred-action-failed",
+                        false
+                    )
                 end
-            end)
-            if not ok then
-                invalidateEquipmentContext(
-                    contextKey,
-                    contextKey .. "-deferred-action-failed",
-                    false
-                )
             end
         end
     end
@@ -1617,7 +1699,7 @@ local function hasSourceInspectionPath(config)
     end
     return config.show_pawn_player == true
         and tonumber(_G.PawnClassicLastUpdatedVersion) ~= nil
-        and tonumber(_G.PawnClassicLastUpdatedVersion) >= 2.0538
+        and (tonumber(_G.PawnClassicLastUpdatedVersion) or 0) >= 2.0538
         and type(_G.TT_PAWN) == "table"
         and type(_G.TT_PAWN.GetScore) == "function"
 end
@@ -2005,6 +2087,8 @@ function Adapter.GetInspector()
     return inspector
 end
 
+--- Register a callback to be invoked when inventory is ready.
+--- @param callback function
 function Adapter.RegisterInventoryReady(callback)
     if callbackRegistered then
         return true
@@ -2013,8 +2097,7 @@ function Adapter.RegisterInventoryReady(callback)
         internalReason = "inspector-callback-registration-failed"
         return false
     end
-    if type(inspector) ~= "table"
-        or type(inspector.RegisterCallback) ~= "function" then
+    if not (type(inspector) == "table" and type(inspector.RegisterCallback) == "function") then
         internalReason = "inspector-callback-registration-failed"
         return false
     end
@@ -2032,14 +2115,16 @@ function Adapter.RegisterInventoryReady(callback)
     -- If a future rename happens, LEGACY_CALLBACK_OWNERS is the single place to
     -- add the previous name to -- `addonName` itself stays derived, so a rename
     -- never needs a second edit to stay correct.
-    for index = 1, #LEGACY_CALLBACK_OWNERS do
-        local legacy = LEGACY_CALLBACK_OWNERS[index]
-        if legacy ~= addonName and type(inspector.UnregisterCallback) == "function" then
+    local legacyOwners = LEGACY_CALLBACK_OWNERS
+    for index = 1, legacyOwners and #legacyOwners or 0 do
+        local legacy = legacyOwners[index]
+        if legacy ~= addonName and inspector and type(inspector.UnregisterCallback) == "function" then
             pcall(inspector.UnregisterCallback, legacy, "INVENTORY_READY")
         end
     end
+    local registerCallback = inspector and inspector.RegisterCallback
     local ok, registered = pcall(
-        inspector.RegisterCallback,
+        registerCallback,
         addonName,
         "INVENTORY_READY",
         callback
@@ -2090,6 +2175,9 @@ function Adapter.SetEquipmentSurfaceEnabled(contextKey, enabled)
         return false
     end
     local state = equipmentStates[contextKey]
+    if not state then
+        return false
+    end
     state.requested = enabled == true
     local captured = equipmentCompatibility[contextKey]
     if state.requested and (not captured or not captured.supported) then
@@ -2116,6 +2204,9 @@ function Adapter.IsEquipmentSurfaceActive(contextKey)
         return false
     end
     local state = equipmentStates[contextKey]
+    if not state then
+        return false
+    end
     if not state.requested or state.deferred == "rehide" then
         return false
     end
@@ -2138,6 +2229,9 @@ function Adapter.ReleaseEquipmentContext(contextKey)
         return false
     end
     local state = equipmentStates[contextKey]
+    if not state then
+        return false
+    end
     state.requested = false
     if not state.lease then
         state.active = false
@@ -2159,7 +2253,7 @@ function Adapter.GetEquipmentSurfaceReason(contextKey)
     end
     local state = equipmentStates[contextKey]
     local captured = equipmentCompatibility[contextKey]
-    if state.reason then
+    if state and state.reason then
         return state.reason
     end
     if captured then
@@ -2173,7 +2267,7 @@ function Adapter.GetEquipmentSurfaceDiagnostics(contextKey)
     if not spec then
         return nil
     end
-    local state = equipmentStates[contextKey]
+    local state = equipmentStates[contextKey] or {}
     local captured = equipmentCompatibility[contextKey]
     local capturedFonts = 0
     local capturedMovers = 0

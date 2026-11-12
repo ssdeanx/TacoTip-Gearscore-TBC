@@ -293,7 +293,7 @@ function Core.GetVersion()
         )
         if ok
             and type(value) == "string"
-            and string.match(value, "^%d+%.%d+%.%d+$") then
+            and string.match(value or "", "^%d+%.%d+%.%d+$") then
             return value
         end
     end
@@ -365,7 +365,7 @@ function Core.IsClassicEraClient()
         return false
     end
     local ok, inspector = pcall(adapter.GetInspector)
-    if ok and type(inspector) == "table" and type(inspector.IsClassic) == "function" then
+    if ok and inspector and type(inspector) == "table" and type(inspector.IsClassic) == "function" then
         local answered, result = pcall(inspector.IsClassic, inspector)
         if answered and result == true then
             return true
@@ -430,8 +430,8 @@ function Core.ClientHasSockets()
         return false
     end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return false
         elseif iface >= 20000 and iface < 40000 then
@@ -456,8 +456,8 @@ function Core.GetTargetEnhancementLevel()
         end
     end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return 60
         end

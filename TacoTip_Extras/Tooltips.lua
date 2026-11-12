@@ -188,9 +188,13 @@ local NEUTRAL_RED, NEUTRAL_GREEN, NEUTRAL_BLUE = 0.82, 0.82, 0.82
 local COMPACT_DELTA_LABEL = "\206\148"
 
 local function validPlayerGUID(guid)
-    if type(guid) ~= "string"
-        or Core.IsSecretValue(guid)
-        or not string.match(guid, "^Player%-%d+%-%x+$") then
+    if type(guid) ~= "string" then
+        return false
+    end
+    if Core.IsSecretValue(guid) then
+        return false
+    end
+    if not string.match(guid, "^Player%-%d+%-%x+$") then
         return false
     end
     if type(_G.GUIDIsPlayer) == "function" then
@@ -532,8 +536,8 @@ end
 
 local function isForeverClient()
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4, _, ret6 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret6) == "number" and ret6) or 0
         if iface >= 16000 and iface < 20000 then
             return true
         end
@@ -583,8 +587,10 @@ end
 
 local function completionParts(metrics)
     local value, metric = completeMetric(metrics, "completion")
-    if type(value) ~= "table"
-        or type(value.opportunities) ~= "number"
+    if type(value) ~= "table" then
+        return nil, metric
+    end
+    if type(value.opportunities) ~= "number"
         or value.opportunities <= 0
         or type(value.displayPercent) ~= "number"
         or type(value.ratio) ~= "number" then
@@ -1490,6 +1496,9 @@ end
 
 local function refreshBinding()
     local current = binding
+    if not current then
+        return false
+    end
     if refreshing or rendering or not visibleBindingIsCurrent(current) then
         if current and not visibleBindingIsCurrent(current) then
             clearBinding()

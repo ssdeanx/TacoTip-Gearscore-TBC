@@ -123,8 +123,8 @@ end
 
 local function isRetailClient()
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4, _, _ = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 100000 then
             return true
         end
@@ -137,8 +137,8 @@ end
 
 local function isForeverClient()
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return true
         end
@@ -172,8 +172,8 @@ local function clientHasSockets()
         return true
     end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return false
         elseif iface >= 20000 and iface < 40000 then
@@ -511,7 +511,12 @@ end
 
 local function calculateBaseItem(item, classToken, classBlocker, equipLoc, equipLocBlocker)
     local blocker = mergeBlocker(classBlocker, equipLocBlocker)
-    local slotPolicy = SLOT_POLICIES[(type(equipLoc) == "string" and string.upper(equipLoc)) or equipLoc]
+    local slotPolicy
+    if equipLoc == nil then
+        slotPolicy = nil
+    else
+        slotPolicy = SLOT_POLICIES[(type(equipLoc) == "string" and string.upper(equipLoc)) or equipLoc]
+    end
     local nativeLink, linkBlocker = readCell(
         item.nativeLink,
         "native-link",
@@ -570,6 +575,10 @@ end
 local function readPotentialEnchantEligibility(item, equipLoc, equipLocBlocker)
     if equipLocBlocker then
         return nil, equipLocBlocker
+    end
+
+    if equipLoc == nil then
+        return false, nil
     end
 
     local slotPolicy = SLOT_POLICIES[(type(equipLoc) == "string" and string.upper(equipLoc)) or equipLoc]
@@ -927,7 +936,7 @@ function Scoring.Evaluate(revision, policy)
             completionBlocker = mergeBlocker(completionBlocker, slotBlocker)
             averageBlocker = mergeBlocker(averageBlocker, slotBlocker)
             result.items[slotID] = { state = slot and slot.state or "unknown" }
-        elseif slot.state == "confirmed-empty" then
+        elseif slot and slot.state == "confirmed-empty" then
             result.items[slotID] = { state = "confirmed-empty" }
         else
             local itemResult = evaluateOccupiedItem(slot, classToken, classBlocker)
@@ -935,32 +944,35 @@ function Scoring.Evaluate(revision, policy)
             result.items[slotID] = itemResult
 
             if itemResult.base.status == "complete" then
-                baseTotal = baseTotal + itemResult.base.value
+                baseTotal = baseTotal + (itemResult.base.value or 0)
             else
                 baseBlocker = mergeBlocker(baseBlocker, itemResult.base)
             end
 
             if itemResult.current.status == "complete" then
-                currentTotal = currentTotal + itemResult.current.value
+                currentTotal = currentTotal + (itemResult.current.value or 0)
             else
                 currentBlocker = mergeBlocker(currentBlocker, itemResult.current)
             end
 
             if itemResult.potentialDelta.status == "complete" then
-                potentialDeltaTotal = potentialDeltaTotal + itemResult.potentialDelta.value
+                potentialDeltaTotal = potentialDeltaTotal + (itemResult.potentialDelta.value or 0)
             else
                 potentialEvidenceBlocker = mergeBlocker(potentialEvidenceBlocker, itemResult.potentialDelta)
             end
 
             if itemResult.completion.status == "complete" then
-                filledOpportunities = filledOpportunities + itemResult.completion.value.filled
-                totalOpportunities = totalOpportunities + itemResult.completion.value.opportunities
+                local completionValue = itemResult.completion.value
+                if type(completionValue) == "table" then
+                    filledOpportunities = filledOpportunities + (completionValue.filled or 0)
+                    totalOpportunities = totalOpportunities + (completionValue.opportunities or 0)
+                end
             else
                 completionBlocker = mergeBlocker(completionBlocker, itemResult.completion)
             end
 
             local effectiveItemLevel, averageItemBlocker = readCell(
-                slot.effectiveItemLevel,
+                slot and slot.effectiveItemLevel,
                 "effective-item-level",
                 function(value) return isFiniteNumber(value) and value >= 0 end
             )

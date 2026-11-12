@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.0
+version: 1.0.1
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,11 +22,11 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-10)
-linter: wowlua_ls check — 0 errors, 0 secret-value findings (2026-11-10)
+status: pending in-game verification (2026-11-12)
+linter: wowlua_ls check — 0 errors, no secret-value findings; 136 warnings (70 `need-check-nil`, 56 `undefined-field`, 5 `redundant-parameter`, 3 `invalid-op`, 2 `type-mismatch`) (2026-11-12)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
-gates: run_all 75/75 (lua5.1 + luajit), luacheck 0/0 in 91 files, both verifiers PASS (2026-11-10)
-updated: 2026-11-10
+gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42 (lua5.1/lua5.4/luajit), luacheck 2 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-12)
+updated: 2026-11-12
 ```
 
 # ⚡ TacoTip ⚡
@@ -35,7 +35,7 @@ updated: 2026-11-10
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.0-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.1-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -116,6 +116,20 @@ updated: 2026-11-10
 | `/tt custom` | Show the draggable green anchor button to set custom tooltip position |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.1</span>
+
+🧱 **<span style="color:#b4e634">Static-analysis hardening pass (no player-visible change intended):</span>** The tooltip, overlay and options paths were given explicit type and nil guards for the states `wowlua_ls` can now see. The unit-tooltip renderer no longer assumes a tooltip object or a well-formed line record — `NumLines()` is called only when it exists, the guild/level line bookkeeping is written only with a tooltip present, `AddLine`/`AddDoubleLine` are guarded, and a nil record ends the loop instead of raising. On the non-wide path the line record's own shape decides where its colours live, so a double record's right-hand **text** can no longer be handed to `SetTextColor`/`AddLine` as a colour: every channel is `tonumber`'d and the fallback is white.
+
+🎯 **<span style="color:#b4e634">Pawn and power-bar guards:</span>** A Pawn score that is not a number is coerced to `0` before the `> 0` test rather than compared, and the power bar's `Update` — installed with `rawset` on the frame at runtime — is called only when it is actually a function.
+
+🛡️ **<span style="color:#b4e634">Character &amp; inspect overlay initialisers:</span>** `InitCharacterFrame` now returns `true` once the font strings exist, and `RefreshCharacterFrame` captures the method once and calls it as a function. `InitInspectFrame` marks itself done on entry; `RefreshInspectFrame` captures it, stops if it answers `false`, and the three event arms (`ADDON_LOADED` for TacoTip, `ADDON_LOADED` for `Blizzard_InspectUI`, and `INVENTORY_READY`/`TALENTS_READY`) call it through a `type(...) == "function"` test and `pcall`.
+
+🧩 **<span style="color:#b4e634">Options and diagnostics:</span>** Dropdown labels and descriptions fall back to `UIParent` when no parent is supplied, the dashboard's trophy unlock date is `tostring`'d before concatenation, a non-string unit is refused before a tooltip refresh, `GetItemInfo` is called only with an item link, and `CollectDiagnostics`' pcall result is named so the error table and the collected table can never share a name.
+
+🔧 **<span style="color:#b4e634">Tooling:</span>** `.wowluarc.json` no longer suppresses the eight documentation diagnostics (`doc-field-no-class`, `doc-func-no-function`, `duplicate-doc-alias`, `duplicate-doc-field`, `duplicate-doc-param`, `undefined-doc-class`, `undefined-doc-name`, `undefined-doc-param`), so `wowlua_ls` reports them again. On this tree the linter reports 0 errors and 136 warnings — 70 `need-check-nil`, 56 `undefined-field`, 5 `redundant-parameter`, 3 `invalid-op`, 2 `type-mismatch` — recorded, not suppressed.
 
 ---
 

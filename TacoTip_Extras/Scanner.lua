@@ -660,8 +660,8 @@ local function clientHasSockets()
         return true
     end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return false
         elseif iface >= 20000 and iface < 40000 then
@@ -687,8 +687,8 @@ local function isRetailClient()
         end
     end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _, ret7 = _G.GetBuildInfo()
-        local iface = (type(ret4) == "number" and ret4) or (type(ret7) == "number" and ret7) or 0
+        local _, _, _, ret4 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 100000 then
             return true
         end

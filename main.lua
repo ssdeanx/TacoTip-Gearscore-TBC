@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.0"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.1"
 
 
 
@@ -2234,9 +2234,12 @@ function TT:RefreshOpenUnitTooltip()
     if (not safeUnitExists(unit)) then
         return false
     end
+    if (type(unit) ~= "string") then
+        return false
+    end
     local ok, err = pcall(refreshUnitTooltip, unit, true)
     if (not ok and err) then
-        TT:RecordError("RefreshOpenUnitTooltip", err)
+        TT:RecordError("RefreshOpenUnitTooltip", tostring(err))
     end
     return ok
 end
@@ -2905,7 +2908,7 @@ local function onTooltipSetUnit(tooltip, data)
     linesToAddCount = 0
     local text = pooledTooltipText
     local linesToAdd = pooledLinesToAdd
-    local numLines = tooltip:NumLines()
+    local numLines = (tooltip and type(tooltip.NumLines) == "function") and tooltip:NumLines() or 0
     for i = 1, numLines do
         local leftLine = getTooltipLeftLine(tooltip, i)
         text[i] = leftLine and leftLine:GetText()
@@ -3144,18 +3147,18 @@ local function onTooltipSetUnit(tooltip, data)
                 newText[2] = guildTag
             end
             newText[3] = levelLine
-            tooltip.TacoTipGuildLineIndex = 2
-            tooltip.TacoTipLevelColorLineIndex = 3
+            if (tooltip) then tooltip.TacoTipGuildLineIndex = 2 end
+            if (tooltip) then tooltip.TacoTipLevelColorLineIndex = 3 end
             -- Ownership proof for the clears above: without it they blank line
             -- 2/3 unconditionally and destroy any other addon's line that has
             -- shifted into that slot.
-            tooltip.TacoTipGuildLineText = newText[2]
-            tooltip.TacoTipLevelColorLineText = levelLine
+            if (tooltip) then tooltip.TacoTipGuildLineText = newText[2] end
+            if (tooltip) then tooltip.TacoTipLevelColorLineText = levelLine end
         else
             newText[2] = levelLine
-            tooltip.TacoTipGuildLineIndex = nil
-            tooltip.TacoTipLevelColorLineIndex = 2
-            tooltip.TacoTipLevelColorLineText = levelLine
+            if (tooltip) then tooltip.TacoTipGuildLineIndex = nil end
+            if (tooltip) then tooltip.TacoTipLevelColorLineIndex = 2 end
+            if (tooltip) then tooltip.TacoTipLevelColorLineText = levelLine end
         end
 
         text = newText
@@ -3504,12 +3507,13 @@ local function onTooltipSetUnit(tooltip, data)
                             guid, not needGsScore, activeGroup)
                         if (pawnOk) then
                             pawnScore, specName, specColor = pScore, pSpec, pColor
+                            if (type(pawnScore) ~= "number") then pawnScore = 0 end
                         else
                             TT:RecordError("Pawn", pScore, "GetScore")
                             pawnScore = 0
                             pReady = false
                         end
-                        if (pawnScore and pawnScore > 0) then
+                        if (type(pawnScore) == "number" and pawnScore > 0) then
                             if (not needGsScore) then
                                 TT.clearGearScoreRetry(guid)
                             end
@@ -3619,7 +3623,7 @@ local function onTooltipSetUnit(tooltip, data)
                     line:SetText(text[i])
                 end
             else
-                tooltip:AddLine(text[i], 1, 1, 1)
+                if (tooltip) then tooltip:AddLine(text[i], 1, 1, 1) end
             end
         end
     end
@@ -3640,10 +3644,11 @@ local function onTooltipSetUnit(tooltip, data)
         end
         for i = 1, linesToAddCount do
             local v = linesToAdd[i]
+            if (not v) then break end
             if (v.isDouble) then
-                tooltip:AddDoubleLine(v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8])
+                if (tooltip) then tooltip:AddDoubleLine(v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]) end
             else
-                tooltip:AddLine(v[1], v[2] or 1, v[3] or 1, v[4] or 1)
+                if (tooltip) then tooltip:AddLine(v[1], v[2] or 1, v[3] or 1, v[4] or 1) end
             end
         end
         local nextLeft = getTooltipLeftLine(tooltip, n + 1)
@@ -3666,21 +3671,41 @@ local function onTooltipSetUnit(tooltip, data)
     else
         for i = 1, linesToAddCount do
             local v = linesToAdd[i]
-            local txt = v[1]
-            local r, g, b = v[2], v[3], v[4]
+            if (not v) then break end
+            -- The record shape decides where the colours live: addLineDouble
+            -- keeps the right-hand text in [2] and its colours in [3]..[8],
+            -- addLineSingle keeps its colours in [2]..[4]. Reading a double
+            -- record as a single one therefore hands the right-hand TEXT to a
+            -- colour parameter, which the C API refuses.
+            --
+            -- Testing the flag is not enough on its own either: a record that
+            -- matches neither shape must still never reach SetTextColor /
+            -- AddLine as a string, so every channel is coerced.
+            local txt, r, g, b
+            if (v.isDouble) then
+                -- Non-wide tooltips have no right column; render the double
+                -- record as a single concatenated line instead of AddDoubleLine.
+                txt = tostring(v[1])
+                if (v[2] ~= nil and v[2] ~= "") then
+                    txt = txt .. "  " .. tostring(v[2])
+                end
+                r, g, b = tonumber(v[3]), tonumber(v[4]), tonumber(v[5])
+            else
+                txt = v[1]
+                r, g, b = tonumber(v[2]), tonumber(v[3]), tonumber(v[4])
+            end
+            if (not (r and g and b)) then
+                r, g, b = 1, 1, 1
+            end
             if (n < numLines) then
                 n = n + 1
                 local left = getTooltipLeftLine(tooltip, n)
                 if (left) then
-                    left:SetTextColor(r or 1, g or 1, b or 1)
+                    left:SetTextColor(r, g, b)
                     left:SetText(txt)
                 end
-            else
-                if (r and g and b) then
-                    tooltip:AddLine(txt, r, g, b)
-                else
-                    tooltip:AddLine(txt, 1, 1, 1)
-                end
+            elseif (tooltip) then
+                tooltip:AddLine(txt, r, g, b)
             end
         end
         while (n < numLines) do
@@ -3770,7 +3795,15 @@ local function onTooltipSetUnit(tooltip, data)
                 TacoTipPowerBar:SetPoint("TOPRIGHT", GameTooltip, "BOTTOMRIGHT", -2, barOffsetY)
                 TacoTipPowerBar._tacoTipAnchorY = barOffsetY
             end
-            TacoTipPowerBar:Update(tooltipUnit)
+            -- Update is installed with rawset on the frame a few lines above,
+            -- so a static analyser still reads TacoTipPowerBar as a bare
+            -- StatusBar and calls the method undefined. The cast is only there
+            -- to make that rawset method visible; the runtime object is the
+            -- same either way.
+            local powerBar = TacoTipPowerBar --[[@as any]]
+            if (type(powerBar.Update) == "function") then
+                powerBar:Update(tooltipUnit)
+            end
             TacoTipPowerBar:Show()
             startPowerBarTicker()
             if (TacoTipPowerBar._tacoTipUnit ~= tooltipUnit) then
@@ -3799,14 +3832,14 @@ local function onTooltipSetUnit(tooltip, data)
 
     -- Unconditional in the old code: not even a capability check, let alone a
     -- value comparison, on a path that runs at the end of every render.
-    if (tooltip.SetClampRectInsets and not (type(InCombatLockdown) == "function" and InCombatLockdown())) then
+    if (tooltip and tooltip.SetClampRectInsets and not (type(InCombatLockdown) == "function" and InCombatLockdown())) then
         if (tooltip._tacoTipClampBottom ~= 15) then
             pcall(tooltip.SetClampRectInsets, tooltip, 0, 0, 15, 15)
             tooltip._tacoTipClampBottom = 15
         end
     end
 
-    if (tooltip.SetMinimumWidth) then
+    if (tooltip and tooltip.SetMinimumWidth) then
         local currentMin = (tooltip.GetMinimumWidth and tooltip:GetMinimumWidth()) or -1
         if (currentMin ~= 0) then
             tooltip:SetMinimumWidth(0)
@@ -4662,15 +4695,17 @@ function TT:InitCharacterFrame()
     PersonalAvgItemLvlText:RefreshPosition()
 
     PaperDollFrame:HookScript("OnShow", TT.RefreshCharacterFrame)
+    return true
 end
 
 function TT:RefreshCharacterFrame()
-    if (TT.InitCharacterFrame) then
+    local initCharacterFrame = TT.InitCharacterFrame
+    if (initCharacterFrame) then
         -- InitCharacterFrame marks itself done, so the nil assignment here is
         -- redundant. It stays out of this path deliberately: on a client with no
         -- character paper doll there are no font strings to update, and running
         -- on would index four nil globals on every refresh.
-        if (not TT:InitCharacterFrame()) then
+        if (not initCharacterFrame(TT)) then
             return
         end
     end
@@ -4768,6 +4803,7 @@ local function guardBlizzardInspectGuildFrame()
 end
 
 function TT:InitInspectFrame()
+    TT.InitInspectFrame = nil
     guardBlizzardInspectGuildFrame()
     InspectModelFrame:CreateFontString("InspectGearScore")
     InspectGearScore:SetFont(L["INSPECT_FRAME_GS_VALUE_FONT"], L["INSPECT_FRAME_GS_VALUE_FONT_SIZE"])
@@ -4813,6 +4849,7 @@ function TT:InitInspectFrame()
     InspectFrame:HookScript("OnHide", function()
         InspectGearScore:Hide()
         InspectAvgItemLvl:Hide()
+    return true
     end)
 end
 
@@ -4820,12 +4857,14 @@ function TT:RefreshInspectFrame()
     if (InCombatLockdown()) then
         return
     end
-    if (TT.InitInspectFrame) then
+    local initInspectFrame = TT.InitInspectFrame
+    if (initInspectFrame) then
         if (not InspectModelFrame or not InspectPaperDollFrame) then
             return
         end
-        TT:InitInspectFrame()
-        TT.InitInspectFrame = nil
+        if (not initInspectFrame(TT)) then
+            return
+        end
     end
     local inspect_gs, inspect_avg, r, g, b = 0, 0, 0, 0, 0
     if (TacoTipConfig.show_gs_character or TacoTipConfig.show_avg_ilvl) then
@@ -5694,9 +5733,12 @@ end
 
 function TT:CollectDiagnostics()
     local elapsed, uptimeText = diagUptime()
-    local okProblems, problems = pcall(collectProblems)
-    if (not okProblems or type(problems) ~= "table") then
-        problems = { { severity = "error", text = "problem collection failed: " .. tostring(problems) } }
+    local okProblems, rawProblems = pcall(collectProblems)
+    local problems
+    if (not okProblems or type(rawProblems) ~= "table") then
+        problems = { { severity = "error", text = "problem collection failed: " .. tostring(rawProblems) } }
+    else
+        problems = rawProblems
     end
     local sections = collectDiagnosticSections(problems)
     sections[#sections + 1] = collectProblemSection(problems)
@@ -6153,7 +6195,7 @@ function TT:EvaluatePlayerEquipment(isSilent, forceBaseline)
                 slotGS = tonumber(gs) or 0
                 slotILvl = tonumber(ilvl) or 0
             end
-            if (type(GetItemInfo) == "function") then
+            if (type(GetItemInfo) == "function" and link) then
                 local okInfo, _, _, r = pcall(GetItemInfo, link)
                 if (okInfo and not isSecretValue(r) and r) then itemRarity = r end
             end
@@ -6422,8 +6464,8 @@ local function onEvent(self, event, ...)
             if (characterFrameHost) then
                 TT:RefreshCharacterFrame()
             end
-            if (TT.InitInspectFrame and InspectModelFrame and InspectPaperDollFrame) then
-                TT:InitInspectFrame()
+            if (type(TT.InitInspectFrame) == "function" and InspectModelFrame and InspectPaperDollFrame) then
+                pcall(TT.InitInspectFrame, TT)
                 TT.InitInspectFrame = nil
             end
             CAfter(3, function()
@@ -6434,8 +6476,8 @@ local function onEvent(self, event, ...)
                 end
             end)
         elseif (addon == "Blizzard_InspectUI") then
-            if (TT.InitInspectFrame and InspectModelFrame and InspectPaperDollFrame) then
-                TT:InitInspectFrame()
+            if (type(TT.InitInspectFrame) == "function" and InspectModelFrame and InspectPaperDollFrame) then
+                pcall(TT.InitInspectFrame, TT)
                 TT.InitInspectFrame = nil
             end
         end
@@ -6459,8 +6501,8 @@ local function onEvent(self, event, ...)
             end
         end
     elseif (event == "INVENTORY_READY" or event == "TALENTS_READY") then
-        if (TT.InitInspectFrame and InspectModelFrame and InspectPaperDollFrame) then
-            TT:InitInspectFrame()
+        if (type(TT.InitInspectFrame) == "function" and InspectModelFrame and InspectPaperDollFrame) then
+            pcall(TT.InitInspectFrame, TT)
             TT.InitInspectFrame = nil
         end
         local guid = ...

@@ -183,7 +183,14 @@ local function newFrame(kind, name, parent)
         -- hook tests parent.action / parent.spellId / owner.unit for
         -- presence, and a function there is truthy, which would make every
         -- menu look like an action button.
-        if (k == "action" or k == "spellId" or k == "unit") then return nil end
+        --
+        -- `mover` belongs here for the same reason: the character-pane overlay
+        -- keeps its drag handle in Foo.mover and creates it with
+        -- `if (not Foo.mover) then Foo.mover = CreateMover(...) end`. The
+        -- client has no such field until the addon writes one, so a catch-all
+        -- function made the overlay skip CreateMover and then call
+        -- `Foo.mover:Hide()` on a function.
+        if (k == "action" or k == "spellId" or k == "unit" or k == "mover") then return nil end
         return function() return nil end
     end
     return setmetatable(f, mt)

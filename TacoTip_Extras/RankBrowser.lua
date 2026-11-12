@@ -1332,7 +1332,7 @@ function RankBrowser.StyleScanButton(button, explain)
                 return
             end
             pcall(tip.SetOwner, tip, self, "ANCHOR_RIGHT")
-            pcall(tip.SetText, tip, SYNC_TOOLTIP_TITLE, 1, 0.82, 0.4, true)
+            pcall(tip.SetText, tip, SYNC_TOOLTIP_TITLE, 1, 0.82, 0.4)
             if type(tip.AddLine) == "function" then
                 pcall(tip.AddLine, tip, SYNC_TOOLTIP_DESC, 1, 1, 1, true)
             end
@@ -1618,8 +1618,16 @@ local function sessionItemLevel(itemID)
         return nil
     end
     local ok, _, _, _, itemLevel = pcall(itemAPI.GetItemInfo, itemID)
-    if ok and type(itemLevel) == "number" and itemLevel > 0 then
-        return math.floor(itemLevel)
+    local levelOk = false
+    if ok and type(itemLevel) == "number" and not isSecretValue(itemLevel) then
+        local cmpOk, isPositive = pcall(function() return itemLevel > 0 end)
+        levelOk = cmpOk and isPositive == true
+    end
+    if levelOk then
+        local floorOk, floored = pcall(math.floor, itemLevel)
+        if floorOk and type(floored) == "number" then
+            return floored
+        end
     end
     -- Prime the cache for the next open; this open renders the literal.
     if type(itemAPI.RequestLoadItemDataByID) == "function" then
@@ -2023,7 +2031,7 @@ function RankBrowser.ShowGear(entry)
         elseif persistedMap and persistedMap[spec.slot] then
             anyPersisted = true
             gearFrame.rows[index]:SetText("|cff808080" .. slotLabel(spec)
-                .. ":  item:" .. persistedMap[spec.slot] .. "|r")
+                .. ":  item:" .. (persistedMap[spec.slot] or "") .. "|r")
             setDot(gearFrame.dotEnchant[index], false)
             setDot(gearFrame.dotSocket[index], false)
         else
@@ -2478,9 +2486,11 @@ local function refreshSortHeaders()
         -- The arrow reports the DIRECTION, not the column (A2/G2): it used to
         -- hard-code "up" for last-seen while the list below it sorted down.
         local arrow = sortAsc and ARROW_UP or ARROW_DOWN
+        local sortLabelKey = SORTS[currentSort]
+        local sortLabel = (type(sortLabelKey) == "string") and (L[sortLabelKey] or "") or ""
         sortHint:SetText(string.format(
             L["LB_SORTED_BY"] or "Sorted by %s %s",
-            SORTS[currentSort] and (L[SORTS[currentSort]] or "") or "",
+            sortLabel,
             arrow))
     end
 end

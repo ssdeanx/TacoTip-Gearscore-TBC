@@ -215,7 +215,7 @@ end
 local function currentMode()
     local equipment = equipmentSettings()
     local mode = equipment and equipment.mode
-    if MODES[mode] then
+    if type(mode) == "string" and MODES[mode] then
         return mode
     end
     return "Disabled"
@@ -438,8 +438,10 @@ local function metricRow(label, value, formatter, red, green, blue)
 end
 
 local function completionRow(value)
-    if type(value) ~= "table"
-        or not isFiniteNumber(value.filled)
+    if type(value) ~= "table" then
+        return nil
+    end
+    if not isFiniteNumber(value.filled)
         or not isFiniteNumber(value.opportunities) then
         return nil
     end
@@ -649,8 +651,8 @@ local function readRect(frame)
     end
     local ok, left, bottom, width, height = pcall(frame.GetRect, frame)
     if not ok or not isFiniteNumber(left) or not isFiniteNumber(bottom)
-        or not isFiniteNumber(width) or width <= 0
-        or not isFiniteNumber(height) or height <= 0 then
+        or not isFiniteNumber(width) or (width or 0) <= 0
+        or not isFiniteNumber(height) or (height or 0) <= 0 then
         return nil
     end
     return left, bottom, width, height
@@ -1045,6 +1047,9 @@ end
 
 renderRemote = function(snapshot)
     local context = CONTEXTS.inspect
+    if not context then
+        return false
+    end
     if not context.bound or not inspectPaperDollActive(context) or not featureRequested() then
         return false
     end
@@ -1073,6 +1078,9 @@ renderRemote = function(snapshot)
         if not context.generation then
             renderState(context, "pending")
         end
+        return false
+    end
+    if type(snapshot) ~= "table" then
         return false
     end
     context.generation = snapshot.generation

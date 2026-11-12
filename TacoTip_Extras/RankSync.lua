@@ -430,6 +430,8 @@ local RECORD_FIELDS = 13
 --
 -- This is why the format is parsed by position and every field is optional in
 -- the middle: an empty string is data, not absence.
+---@param payload string
+---@return string[]
 local function splitFields(payload)
     local fields, start, length = {}, 1, #payload
     while true do

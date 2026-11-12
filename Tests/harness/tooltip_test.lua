@@ -1172,6 +1172,15 @@ local TT = REALG.TacoTip_Forever
 local GT = REALG.GameTooltip
 local TT_INSPECTOR = REALG.LibStub and REALG.LibStub("LibForeverInspector", true) or nil
 
+-- The inspect overlay's initialiser is a ONE-SHOT: main.lua clears
+-- TT.InitInspectFrame on entry, and every arm that calls it clears the field
+-- afterwards too. Earlier blocks in this suite run against stub inspect frames,
+-- so by the time the guild-guard block installs Blizzard's global the one-shot
+-- is spent. Keep the reference at load so that block can put the client back in
+-- the state the guard exists for: Blizzard_InspectUI loading while the overlay
+-- has not been initialised yet.
+local INIT_INSPECT_FRAME = TT.InitInspectFrame
+
 -- Seed the tooltip with stock Blizzard-style content so the addon has lines to
 -- read and rewrite, exactly as it would in game.
 local function seedTooltip()
@@ -4130,7 +4139,13 @@ do
     if (REALG.InspectFrame) then REALG.InspectFrame.unit = "target" end
 
     -- The install path: the addon installs the guard from the ADDON_LOADED
-    -- handler, when Blizzard_InspectUI itself loads.
+    -- handler, when Blizzard_InspectUI itself loads. Re-arm the one-shot first:
+    -- main.lua's initialiser clears itself on entry, so a call made earlier in
+    -- this suite (against a stub inspect frame) leaves TT.InitInspectFrame nil
+    -- and the handler with nothing to run. The real client reaches this pass
+    -- with the overlay still pending whenever Blizzard_InspectUI loads after
+    -- the add-on, which is the case the guard exists for.
+    TT.InitInspectFrame = INIT_INSPECT_FRAME
     local frame = TT.frame
     local handler = frame and frame.__scripts and frame.__scripts.OnEvent or nil
     check("event handler present for the guild-guard install pin", type(handler) == "function")

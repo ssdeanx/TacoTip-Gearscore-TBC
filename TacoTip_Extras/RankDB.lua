@@ -205,7 +205,7 @@ local function sanitizeString(val, maxLen)
     if type(val) ~= "string" then return nil end
     if Core.IsSecretValue(val) then return nil end
     local s = val:gsub("[%c;]", ""):match("^%s*(.-)%s*$")
-    if s == "" then return nil end
+    if not s or s == "" then return nil end
     if maxLen and #s > maxLen then
         s = s:sub(1, maxLen)
         -- Never cut inside a UTF-8 multibyte sequence; drop stray
@@ -994,7 +994,11 @@ function RankDB.StoreGear(guid, t, ids, realm)
     end
     for _, pair in ipairs(ordered) do
         local slotText, itemText = pair:match("^(%d+)=(%d+)$")
-        slotMap[tonumber(slotText)] = tonumber(itemText)
+        local slot = tonumber(slotText)
+        local itemID = tonumber(itemText)
+        if slot and itemID then
+            slotMap[slot] = itemID
+        end
     end
     -- Enforce the documented capacity AT INSERT, not only at the next prune.
     --

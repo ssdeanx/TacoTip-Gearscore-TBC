@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.0"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.1"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -1518,10 +1518,11 @@ local function createOptionsDropdown(parent, globalName, label, description, val
     end
     dropDown.values = values or {}
     dropDown.onValueChanged = onValueChanged
-    dropDown.label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    local contentParent = parent or _G.UIParent
+    dropDown.label = contentParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     dropDown.label:SetJustifyH("LEFT")
     dropDown.label:SetText(label or "")
-    dropDown.description = description and createWrappedText(parent, "GameFontHighlightSmall", 280, description) or nil
+    dropDown.description = description and createWrappedText(contentParent, "GameFontHighlightSmall", 280, description) or nil
 
     _G.UIDropDownMenu_SetWidth(dropDown, 240)
     _G.UIDropDownMenu_Initialize(dropDown, function(frame, level, menuList)
@@ -4392,7 +4393,7 @@ local function createDashboard()
                 local desc = self.def.desc or ""
                 if (tr and tr.unlockedAt) then
                     local dateFn = _G.date
-                    local dateStr = (type(dateFn) == "function") and dateFn("%Y-%m-%d %H:%M", tr.unlockedAt) or tostring(tr.unlockedAt)
+                    local dateStr = (type(dateFn) == "function") and tostring(dateFn("%Y-%m-%d %H:%M", tr.unlockedAt)) or tostring(tr.unlockedAt)
                     desc = desc .. "\n\n|cffb4e634✓ Unlocked: " .. dateStr .. "|r"
                     if (tr.score) then
                         desc = desc .. string.format("\n|cffffd100GearScore at unlock: %d|r", tr.score)
