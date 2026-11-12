@@ -121,6 +121,8 @@ updated: 2026-11-12
 
 ## <span style="color:#e67e23">What's New in v1.0.1</span>
 
+🌍 **<span style="color:#b4e634">Names in another script render on any client:</span>** A guild name is the hovered player's own string, not a translated one, so a Russian or Chinese guild name on an English client used to draw one missing-glyph box per character — on that line only, while the rest of the tooltip read normally. TacoTip now carries its own faces under `Media/Fonts/` (Noto Sans for Cyrillic, NanumGothic for Korean, WenQuanYi Micro Hei for Chinese) and chooses the face **per tooltip line, from the script the text is actually in**. Latin lines keep the client face, a roman client is never handed one of these fonts, and a SharedMedia font you picked yourself is never overridden. In instanced combat and encounters, where the client's tooltip text is secret, the line keeps the face it was last readable with — nothing restricted is read or compared.
+
 🧱 **<span style="color:#b4e634">Static-analysis hardening pass (no player-visible change intended):</span>** The tooltip, overlay and options paths were given explicit type and nil guards for the states `wowlua_ls` can now see. The unit-tooltip renderer no longer assumes a tooltip object or a well-formed line record — `NumLines()` is called only when it exists, the guild/level line bookkeeping is written only with a tooltip present, `AddLine`/`AddDoubleLine` are guarded, and a nil record ends the loop instead of raising. On the non-wide path the line record's own shape decides where its colours live, so a double record's right-hand **text** can no longer be handed to `SetTextColor`/`AddLine` as a colour: every channel is `tonumber`'d and the fallback is white.
 
 🎯 **<span style="color:#b4e634">Pawn and power-bar guards:</span>** A Pawn score that is not a number is coerced to `0` before the `> 0` test rather than compared, and the power bar's `Update` — installed with `rawset` on the frame at runtime — is called only when it is actually a function.
@@ -285,6 +287,8 @@ Bundled third-party libraries under `Libs/` keep their **own** licenses and are 
 | `CallbackHandler-1.0` | MIT | Icedragon and contributors |
 | `LibDetours-1.0` | MIT | kebabstorm |
 | `LibForeverInspector` | MIT | AcidBomb (part of this project) |
+
+The three bundled fonts under `Media/Fonts/` keep their **own** licenses, shipped beside each file: **Noto Sans** (SIL OFL 1.1), **NanumGothic** (SIL OFL 1.1) and **WenQuanYi Micro Hei** (Apache 2.0). They are used for player names and guild names in another script, never as a replacement for the client's own UI face.
 
 Full attribution and license notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 GearScore calculation behavior derives from GearScoreTBCClassic; see the notices in [TacoTip Extras' THIRD_PARTY_NOTICES.md](TacoTip_Extras/THIRD_PARTY_NOTICES.md).

@@ -1,0 +1,14 @@
+{
+  "signal_type": "execution",
+  "subtype": "done",
+  "timestamp": "2026-11-12T15:50:00Z",
+  "run_id": "forever-item-tooltip-taint-2026-11-12",
+  "agent_name": "forever-item-tooltip-taint",
+  "self_assessment": { "intent": 4, "confidence": 4, "accuracy": 4, "completeness": 4 },
+  "patterns": {
+    "what_worked": "Reading origin/forever first found the exact taint contract (GameTooltip.lua:994-1003, TooltipDataHandler.lua:489-505) and the post-call payload as the sanctioned hand-off; payload-only resolution then fell out cleanly and red-proved against HEAD copies.",
+    "what_was_hard": "The GetItemInfo wrapper referenced isSecretValue above its declaration; the first run aborted every unit render at the GearScore line and looked like a harness regression (92/144).",
+    "skill_gap": "Check local declaration order before wiring a guard helper into an earlier file-scope wrapper."
+  },
+  "escalation": { "reason": null, "blocked_on": null, "recommendation": null }
+}

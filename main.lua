@@ -616,6 +616,10 @@ function TT:RecordWarning(subsystem, message, context)
     end
     local text = tostring(message)
     local now = (type(GetTime) == "function") and GetTime() or 0
+    -- Lifetime total. The log is capped at 30 and drops the oldest entry, so
+    -- #warningLog alone would UNDERSTATE the warnings a session actually hit --
+    -- exactly the "the report hid a warning" failure this counter prevents.
+    TT.totalWarnings = (TT.totalWarnings or 0) + 1
     local fnDebugStack = rawget(_G, "debugstack")
     local stack = (type(fnDebugStack) == "function") and fnDebugStack(2, 6, 6) or nil
     local log = TT.warningLog
@@ -633,9 +637,60 @@ function TT:RecordWarning(subsystem, message, context)
     end
 end
 
+-- Per-API tally of refused secret arguments. A refusal is an immediate Lua
+-- error from an AllowedWhenUntainted function; the boundary helpers pcall it and
+-- read the throw as "secret". Counting it here answers the question the error
+-- text cannot: WHICH gate fired, and how often. Keys are literal names, never a
+-- value, so the tally itself cannot touch a secret.
+function TT:NoteSecretRefusal(api)
+    if (type(api) ~= "string") then return end
+    local ev = TT.ev
+    local tally = ev.secretRefused
+    if (type(tally) ~= "table") then
+        tally = {}
+        ev.secretRefused = tally
+    end
+    tally[api] = (tally[api] or 0) + 1
+end
+
+-- Read-only snapshot of the client's active add-on restriction classes. This is
+-- state, not a secret: it answers "was this hover inside combat / an encounter /
+-- a restricted map" in the report. Feature-detected and secret-safe throughout;
+-- returns "not exposed" when the client has no C_RestrictedActions.
+function TT:RestrictionSnapshot()
+    local ra = _G.C_RestrictedActions
+    local restrictionEnum = _G.Enum and Enum.AddOnRestrictionType
+    if (type(ra) ~= "table" or type(ra.IsAddOnRestrictionActive) ~= "function"
+            or type(restrictionEnum) ~= "table") then
+        return "not exposed"
+    end
+    local names = { "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map" }
+    local parts = {}
+    for i = 1, #names do
+        local value = restrictionEnum[names[i]]
+        if (value ~= nil) then
+            local okActive, active = pcall(ra.IsAddOnRestrictionActive, value)
+            local stateText = "?"
+            if (okActive) then
+                if (isSecretValue(active)) then
+                    stateText = "?"
+                elseif (active == true) then
+                    stateText = "on"
+                else
+                    stateText = "off"
+                end
+            end
+            parts[#parts + 1] = names[i] .. "=" .. stateText
+        end
+    end
+    if (#parts == 0) then return "not exposed" end
+    return table.concat(parts, ", ")
+end
+
 function TT:ClearDiagnosticLogs()
     TT.errorLog = {}
     TT.warningLog = {}
+    TT.totalWarnings = 0
     TT.totalErrorsCaught = 0
     TT.lastTooltipError = nil
     reportedErrors = {}
@@ -1243,7 +1298,90 @@ end
 -- to body size.
 local TOOLTIP_NAME_FONT_SIZE_DELTA = 2
 
-local function applyTooltipFonts(tooltip)
+-- The face ONE tooltip line should be drawn with.
+--
+-- applyTooltipFonts applies a single path to every line, which is right for the
+-- addon's own rows but not for the client's header: a name or a guild name is
+-- the hovered player's data, so it can be in a script the resolved face has no
+-- glyphs for (a Russian guild name on a roman client renders one box per
+-- character). textures.lua owns the coverage table and the bundled faces; this
+-- only feeds it the line's text.
+--
+-- The text is read from the FontString, so it can be a SECRET string on Forever
+-- (an item tooltip's client rows carry secret line data). `find` on a secret
+-- string raises, and a raise here would abort the rest of the appearance pass
+-- (portrait, border, bars) for that render, so the secrecy test comes first --
+-- and a text we may not read simply keeps the resolved face.
+-- Remembered script masks, per unit GUID and line index.
+--
+-- A restricted tooltip may not be read, but the client still DRAWS it. So the
+-- mask a line carried while it was readable (a bare number, derived from text
+-- the addon was allowed to read) is kept, and the restricted pass re-uses it:
+-- a Cyrillic guild name keeps its glyphs in instanced combat without a single
+-- secret value being touched or compared.
+TT._unitLineScript = TT._unitLineScript or {}
+TT._unitLineScriptCount = TT._unitLineScriptCount or 0
+local UNIT_LINE_SCRIPT_CAP = 256
+
+local function rememberUnitLineScript(guid, index, mask)
+    if (type(guid) ~= "string" or type(index) ~= "number" or type(mask) ~= "number") then
+        return
+    end
+    local store = TT._unitLineScript
+    local lines = store[guid]
+    if (not lines) then
+        if ((TT._unitLineScriptCount or 0) >= UNIT_LINE_SCRIPT_CAP) then
+            store = {}
+            TT._unitLineScript = store
+            TT._unitLineScriptCount = 0
+        end
+        lines = {}
+        store[guid] = lines
+        TT._unitLineScriptCount = (TT._unitLineScriptCount or 0) + 1
+    end
+    lines[index] = mask
+end
+
+local function unitLineScriptMasks(guid)
+    if (type(guid) ~= "string") then return nil end
+    local store = TT._unitLineScript
+    local lines = store and store[guid]
+    if (type(lines) == "table") then
+        return lines
+    end
+    return nil
+end
+
+local function lineTooltipFont(basePath, line, index, tooltip)
+    if (type(basePath) ~= "string" or basePath == "" or not line
+            or type(line.GetText) ~= "function" or not TT.GetScriptFontPath) then
+        return basePath
+    end
+    local text = line:GetText()
+    if (type(text) ~= "string") then
+        return basePath
+    end
+    local state = getTooltipState(tooltip)
+    local guid = state and state.currentUnitGUID
+    if (isSecretValue(text)) then
+        -- Unreadable now -- instanced combat, an encounter, a secret line. Use
+        -- the mask this unit's line had the last time it WAS readable. Nothing
+        -- here reads or compares the secret: only a cached number and a path
+        -- from the addon's own table.
+        local masks = unitLineScriptMasks(guid)
+        return TT.PickScriptFont(basePath, masks and masks[index] or 0)
+    end
+    local mask = TT.DetectScripts(text)
+    if (mask ~= 0) then
+        rememberUnitLineScript(guid, index, mask)
+    end
+    return TT.PickScriptFont(basePath, mask)
+end
+
+-- rememberedMasks: optional { [lineIndex] = scriptMask } for a tooltip whose
+-- lines may not be read. In that mode no text is read at all -- the face comes
+-- from the cached mask, so nothing restricted is touched.
+local function applyTooltipFonts(tooltip, rememberedMasks)
     if (not tooltip) then
         return
     end
@@ -1271,27 +1409,55 @@ local function applyTooltipFonts(tooltip)
         -- next render by itself.
         local lineSize = (i == 1) and nameSize or fontSize
         if (left) then
-            if (left._tacoTipFont ~= fontPath or left._tacoTipFontSize ~= lineSize) then
-                local okFont = callLabeled("applyTooltipFonts", left, "SetFont", fontPath, lineSize)
+            local wantFont = rememberedMasks
+                and TT.PickScriptFont(fontPath, rememberedMasks[i] or 0)
+                or lineTooltipFont(fontPath, left, i, tooltip)
+            if (left._tacoTipFont ~= wantFont or left._tacoTipFontSize ~= lineSize) then
+                local okFont = callLabeled("applyTooltipFonts", left, "SetFont", wantFont, lineSize)
                 -- SetFont returns false when the path is not loaded (for
                 -- example a font the client does not ship). Do not cache that
                 -- as success or the line is never retried with a real face.
                 if (okFont ~= false) then
-                    left._tacoTipFont, left._tacoTipFontSize = fontPath, lineSize
+                    left._tacoTipFont, left._tacoTipFontSize = wantFont, lineSize
                 end
             end
         end
         if (right) then
-            if (right._tacoTipFont ~= fontPath or right._tacoTipFontSize ~= lineSize) then
-                local okFont = callLabeled("applyTooltipFonts", right, "SetFont", fontPath, lineSize)
+            local wantFont = rememberedMasks
+                and TT.PickScriptFont(fontPath, rememberedMasks[i] or 0)
+                or lineTooltipFont(fontPath, right, i, tooltip)
+            if (right._tacoTipFont ~= wantFont or right._tacoTipFontSize ~= lineSize) then
+                local okFont = callLabeled("applyTooltipFonts", right, "SetFont", wantFont, lineSize)
                 if (okFont ~= false) then
-                    right._tacoTipFont, right._tacoTipFontSize = fontPath, lineSize
+                    right._tacoTipFont, right._tacoTipFontSize = wantFont, lineSize
                 end
             end
         end
     end
 end
 
+
+-- Re-font a tooltip whose text may not be read, from the masks the same unit
+-- recorded while it was readable. Returns false when nothing is remembered.
+-- The caller is the unreadable-header path of onTooltipSetUnit, which otherwise
+-- leaves the client's own text in whatever face the pooled FontStrings happen
+-- to carry.
+local function applyRememberedLineFonts(tooltip, guid)
+    if (not tooltip or type(guid) ~= "string" or not TT.PickScriptFont) then
+        return false
+    end
+    local masks = unitLineScriptMasks(guid)
+    if (not masks) then
+        return false
+    end
+    applyTooltipFonts(tooltip, masks)
+    return true
+end
+-- Reached through TT, never as a captured upvalue: onTooltipSetUnit sits on
+-- Lua 5.1's 60-upvalue ceiling (the realm-row comment inside it records the
+-- same constraint), and a 61st upvalue makes main.lua fail to LOAD on 5.1 and
+-- luajit. TT is already captured there.
+TT.ApplyRememberedLineFonts = applyRememberedLineFonts
 
 local function getOrCreateBackdropFrame(tooltip)
     if (not tooltip) then
@@ -2304,6 +2470,10 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
         return
     end
     local state = getTooltipState(tooltip)
+    -- Forever: the item post-call marks the tooltip as item content so OnShow
+    -- knows not to read its tooltip info (see onTooltipShow). Every recycle
+    -- clears it, so a unit, spell or map tooltip never inherits it.
+    state.itemTooltip = nil
     if (not preservePendingItem) then
         state.generation = state.generation + 1
         cancelItemLoadRefresh(tooltip)
@@ -2914,8 +3084,18 @@ local function onTooltipSetUnit(tooltip, data)
         text[i] = leftLine and leftLine:GetText()
     end
 
-    if (not text[1] or isSecretValue(text[1]) or text[1] == "") then return end
-    if (safeUnitIsPlayer(tooltipUnit) and (not text[2] or isSecretValue(text[2]) or text[2] == "")) then return end
+    if (not text[1] or isSecretValue(text[1]) or text[1] == "") then
+        -- The header cannot be read (instanced combat / an encounter on
+        -- Forever). Nothing here may look at it, but the face this unit's lines
+        -- were last drawn with is remembered, so the client's own text keeps
+        -- its glyphs instead of falling back to the box-per-character roman one.
+        TT.ApplyRememberedLineFonts(tooltip, guid)
+        return
+    end
+    if (safeUnitIsPlayer(tooltipUnit) and (not text[2] or isSecretValue(text[2]) or text[2] == "")) then
+        TT.ApplyRememberedLineFonts(tooltip, guid)
+        return
+    end
 
     -- Find the actual level line: players in guilds have the guild on line 2,
     -- so the level text shifts to line 3.
@@ -3946,12 +4126,21 @@ TT.HookedTooltipScripts.Unit = TT.HookedTooltipScripts.Unit
         end,
         { { GameTooltip, "GameTooltip" } })
 
-local function resolveTooltipItem(tooltip, data)
-    if (tooltip and tooltip.GetItem) then
+local function resolveTooltipItem(tooltip, data, payloadOnly)
+    -- payloadOnly is the data-pipeline client (Forever). The post-call payload
+    -- is the client's sanctioned hand-off: the secure delegate behind the
+    -- accessor strips taint from it, so we forward it rather than re-derive
+    -- anything. `GetItem` / `GetDisplayedItem` are tooltip-INFO reads, and
+    -- Blizzard's own comment says reading that from a tainted hook can carry
+    -- taint into ProcessInfo, which makes a tooltip with secret line data
+    -- display no lines (GameTooltip.lua:994-1003). A pipeline client always
+    -- has the payload, so the reads are skipped there; the classic families
+    -- have no payload and keep both reads byte-identical.
+    if (not payloadOnly and tooltip and tooltip.GetItem) then
         local ok, _, itemLink = pcall(tooltip.GetItem, tooltip)
         if (ok and itemLink and not isSecretValue(itemLink)) then return itemLink end
     end
-    if (TooltipUtil and TooltipUtil.GetDisplayedItem and tooltip) then
+    if (not payloadOnly and TooltipUtil and TooltipUtil.GetDisplayedItem and tooltip) then
         local ok, _, dispLink = pcall(TooltipUtil.GetDisplayedItem, tooltip)
         if (ok and dispLink and not isSecretValue(dispLink)) then return dispLink end
     end
@@ -3959,6 +4148,12 @@ local function resolveTooltipItem(tooltip, data)
         -- `hyperlink` is what the post-call actually supplies for an item, so
         -- this is the branch that fires in practice on Retail / WoW Forever.
         if (data.hyperlink and not isSecretValue(data.hyperlink)) then return data.hyperlink end
+        if (data.hyperlink) then
+            -- A link the client marked secret: dropped before any C_Item call,
+            -- and counted so /tt diag can say this is what happened.
+            TT.ev.itemSecretLink = (TT.ev.itemSecretLink or 0) + 1
+            TT:NoteSecretRefusal("item-link")
+        end
         -- GetItemLinkByGUID is documented only on Forever and Retail; on the
         -- Classic branches this whole arm is skipped.
         if (data.guid and not isSecretValue(data.guid) and C_Item and C_Item.GetItemLinkByGUID) then
@@ -3988,9 +4183,41 @@ local function itemToolTipHook(self, data)
     end
     clearTooltipVisuals(self, nil, nil, "item")
 
-    local itemLink = resolveTooltipItem(self, data)
+    local state = getTooltipState(self)
+    -- Diagnostics for the item path (see /tt diag). Cheap inline counters, the
+    -- same shape as TT.ev elsewhere: no allocation beyond the table field, no
+    -- client read, nothing that can perturb the render being measured.
+    local ev = TT.ev
+    ev.itemHook = (ev.itemHook or 0) + 1
+    local rowsBefore = (type(self.NumLines) == "function") and self:NumLines() or 0
+    local payloadReadable
+    if (data == nil) then
+        ev.itemPayloadMissing = (ev.itemPayloadMissing or 0) + 1
+    else
+        payloadReadable = TT.tooltipDataReadable(data)
+        if (not payloadReadable) then
+            -- The client supplied a payload we are not allowed to index (a
+            -- secret table). Rows are skipped rather than read; this counter is
+            -- the one a user report needs, because it says whether their
+            -- tooltip data was secret at that moment.
+            ev.itemPayloadUnreadable = (ev.itemPayloadUnreadable or 0) + 1
+            TT:NoteSecretRefusal("tooltip-data")
+        end
+    end
+    -- Forever / Camelot: remember that this tooltip is ITEM content. The
+    -- OnShow hook runs right after this post-call and must not read the item
+    -- tooltip's info (see resolveTooltipItem and onTooltipShow); this marker is
+    -- how it knows, without a tooltip-info read of its own.
+    if (isForever) then
+        state.itemTooltip = true
+    end
+
+    local itemLink = resolveTooltipItem(self, data, isForever)
+    if (itemLink == nil) then
+        ev.itemNoLink = (ev.itemNoLink or 0) + 1
+    end
     if (itemLink and not isSecretValue(itemLink)) then
-        getTooltipState(self).currentItemLink = itemLink
+        state.currentItemLink = itemLink
     end
     -- Both item features off: skip the IsEquippableItem/GetItemInfo work
     -- entirely instead of fetching data no line will ever display.
@@ -4007,6 +4234,10 @@ local function itemToolTipHook(self, data)
         local okEq, resEq = pcall(IsEquippableItem, itemLink)
         if (okEq and not isSecretValue(resEq) and resEq == true) then
             isEquippable = true
+        elseif (not okEq) then
+            -- IsEquippableItem is AllowedWhenUntainted: a refusal here is the
+            -- argument being secret, not "not equippable". Count it.
+            TT:NoteSecretRefusal("IsEquippableItem")
         end
     end
     if (isEquippable) then
@@ -4027,6 +4258,8 @@ local function itemToolTipHook(self, data)
             local okInfo, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14 = pcall(getItemInfoFn, itemLink)
             if (okInfo and not isSecretValue(i1)) then
                 itemInfo = { i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14 }
+            elseif (not okInfo) then
+                TT:NoteSecretRefusal("GetItemInfo")
             end
         end
         if (not itemInfo[2] or not itemInfo[4]) then
@@ -4062,6 +4295,33 @@ local function itemToolTipHook(self, data)
             end
         end
     end
+
+    -- Row-count delta: the client's own lines must survive our hook. Record the
+    -- last before/after pair and warn if a hover ends with FEWER lines than it
+    -- started with -- that is the signature of the reported "client rows went
+    -- missing" class, and it must never be silent.
+    local rowsAfter = (type(self.NumLines) == "function") and self:NumLines() or 0
+    ev.itemRowsLastBefore = rowsBefore
+    ev.itemRowsLastAfter = rowsAfter
+    if (rowsAfter < rowsBefore) then
+        ev.itemRowsRemoved = (ev.itemRowsRemoved or 0) + 1
+        TT:RecordWarning("tooltip", string.format(
+            "item hook ended with fewer client rows (before=%d after=%d)", rowsBefore, rowsAfter))
+    end
+    -- Last item hover fingerprint: one report line that says what the last item
+    -- tooltip actually was, so a user report does not depend on memory.
+    local lastItemID
+    if (type(itemLink) == "string" and not isSecretValue(itemLink)) then
+        lastItemID = tonumber(string.match(itemLink, "item:(%d+)"))
+    end
+    ev.lastItem = {
+        id = lastItemID,
+        rowsAdded = rowsAfter - rowsBefore,
+        payload = (data == nil) and "none" or (payloadReadable and "readable" or "unreadable"),
+        linkSecret = (ev.itemSecretLink or 0) > 0,
+        restrictions = TT:RestrictionSnapshot(),
+        at = (type(GetTime) == "function") and GetTime() or 0,
+    }
 
     -- Apply cosmetic appearance (font, backdrop texture, border texture) to
     -- item tooltips so user-selected visual style carries through.  Skip
@@ -4143,6 +4403,11 @@ scheduleItemTooltipRefresh = function(tooltip, itemLink)
             return
         end
         if (tooltip.UpdateTooltip) then
+            -- GameTooltip has no UpdateTooltip method on the data-pipeline
+            -- clients (GameTooltip_OnUpdate routes to the OWNER's
+            -- UpdateTooltip, then self.RefreshData), so this branch is a silent
+            -- no-op on Forever and Retail. It is kept for the clients that do
+            -- expose it; it is not a repaint we can rely on there.
             pcall(tooltip.UpdateTooltip, tooltip)
         end
     end
@@ -4221,12 +4486,20 @@ local function onTooltipShow(tooltip)
     applyFrameScale(tooltip, scale)
 
     local state = getTooltipState(tooltip)
+    -- Forever: the item post-call marked this tooltip as item content. Its
+    -- tooltip info is the client's payload, which may carry secret line data in
+    -- instances; reading it from this tainted hook is exactly what Blizzard
+    -- guards (GameTooltip.lua:994-1003). Use the link the post-call already
+    -- stored and skip the reads below.
+    local itemTooltip = isForever and state.itemTooltip == true
     local shownItemLink
     -- The loot-window tooltip is deliberately not read here: reading its
     -- tooltip info from this tainted OnShow hook is the read Blizzard guards
     -- with securecallfunction (GameTooltip.lua:994-1003), and the tooltip is
     -- left untouched on Forever anyway (see isForeverLootTooltip).
-    if (not isForeverLootTooltip(tooltip) and tooltip and tooltip.GetItem) then
+    if (itemTooltip) then
+        shownItemLink = state.currentItemLink
+    elseif (not isForeverLootTooltip(tooltip) and tooltip and tooltip.GetItem) then
         local itemOk, _, itemLink = pcall(tooltip.GetItem, tooltip)
         shownItemLink = itemLink
         if (not itemOk) then
@@ -4245,7 +4518,7 @@ local function onTooltipShow(tooltip)
     local lootTooltip = isForeverLootTooltip(tooltip)
     local isUnit = false
     local unit
-    if (not lootTooltip) then
+    if (not lootTooltip and not itemTooltip) then
         if (tooltip) then
             if (tooltip.IsTooltipType and Enum and Enum.TooltipDataType and tooltip:IsTooltipType(Enum.TooltipDataType.Unit)) then
                 isUnit = true
@@ -5190,10 +5463,41 @@ local function collectProblems()
             portraitFailed))
     end
 
+    local unreadablePayload = tonumber(TT.ev and TT.ev.itemPayloadUnreadable) or 0
+    if (unreadablePayload > 0) then
+        add("warn", string.format("%d item tooltip(s) supplied an unreadable (secret) payload; "
+            .. "TacoTip skipped its rows and left the client's own lines alone", unreadablePayload))
+    end
+    local secretLinksDropped = tonumber(TT.ev and TT.ev.itemSecretLink) or 0
+    if (secretLinksDropped > 0) then
+        add("warn", string.format("%d item link(s) arrived secret and were dropped before C_Item.GetItemInfo",
+            secretLinksDropped))
+    end
+    local lostRows = tonumber(TT.ev and TT.ev.itemRowsRemoved) or 0
+    if (lostRows > 0) then
+        add("warn", string.format("%d item hover(s) ended with FEWER tooltip lines than they started with",
+            lostRows))
+    end
+    local refusedTally = TT.ev and TT.ev.secretRefused
+    if (type(refusedTally) == "table") then
+        local total, names = 0, {}
+        for key, count in pairs(refusedTally) do
+            total = total + (tonumber(count) or 0)
+            names[#names + 1] = tostring(key)
+        end
+        table.sort(names)
+        if (total > 0) then
+            add("warn", string.format(
+                "%d secret refusal(s) by API (%s); those calls answered unknown rather than raising",
+                total, table.concat(names, ", ")))
+        end
+    end
+
     local warningCount = (type(TT.warningLog) == "table") and #TT.warningLog or 0
     if (warningCount > 0) then
-        add("warn", string.format("%d warning(s) logged (last: '%s')",
-            warningCount, tostring(TT.warningLog[warningCount].message or "unknown")))
+        add("warn", string.format("%d warning(s) recorded (%d kept in the log) (last: '%s')",
+            tonumber(TT.totalWarnings) or warningCount, warningCount,
+            tostring(TT.warningLog[warningCount].message or "unknown")))
     end
 
     if (type(InCombatLockdown) == "function" and InCombatLockdown()) then
@@ -5527,6 +5831,57 @@ local function collectTooltipSection()
     end
     local portraitFailed = tonumber(ev.portraitSetFailed) or 0
     diagRow(s, "portrait set failures", portraitFailed, portraitFailed > 0 and "warn" or "ok")
+    local itemHooks = tonumber(ev.itemHook) or 0
+    if (itemHooks > 0) then
+        local unreadablePayload = tonumber(ev.itemPayloadUnreadable) or 0
+        local secretLinks = tonumber(ev.itemSecretLink) or 0
+        diagRow(s, "item tooltip hooks", string.format(
+            "renders=%s, unreadable payload=%s, no payload=%s, secret link=%s, no link=%s",
+            tostring(itemHooks), tostring(unreadablePayload),
+            tostring(tonumber(ev.itemPayloadMissing) or 0), tostring(secretLinks),
+            tostring(tonumber(ev.itemNoLink) or 0)),
+            (unreadablePayload + secretLinks) > 0 and "warn" or "info")
+    end
+    -- Secret restrictions that are active right now. This is the row a user
+    -- report needs: it answers "was this reported hover inside combat /
+    -- an encounter / a restricted map" without the user having to know, and it
+    -- is a read-only client state probe (no addon restrictions applied).
+    diagRow(s, "secret restrictions", TT:RestrictionSnapshot(), "info")
+    local itemRowsBefore = tonumber(ev.itemRowsLastBefore)
+    local itemRowsAfter = tonumber(ev.itemRowsLastAfter)
+    if (itemRowsBefore and itemRowsAfter) then
+        local lost = tonumber(ev.itemRowsRemoved) or 0
+        diagRow(s, "item row delta", string.format(
+            "last hover: %s -> %s (ours %+d), hovers that LOST rows=%s",
+            tostring(itemRowsBefore), tostring(itemRowsAfter), itemRowsAfter - itemRowsBefore,
+            tostring(lost)), lost > 0 and "warn" or "info")
+    end
+    local refusedTally = ev.secretRefused
+    if (type(refusedTally) == "table") then
+        local list = {}
+        for key, count in pairs(refusedTally) do
+            list[#list + 1] = { key = tostring(key), count = tonumber(count) or 0 }
+        end
+        table.sort(list, function(a, b)
+            if (a.count ~= b.count) then return a.count > b.count end
+            return a.key < b.key
+        end)
+        local parts = {}
+        for i = 1, #list do
+            parts[#parts + 1] = list[i].key .. "=" .. tostring(list[i].count)
+        end
+        if (#parts > 0) then
+            diagRow(s, "secret refusals by API", table.concat(parts, ", "), "warn")
+        end
+    end
+    local lastItem = ev.lastItem
+    if (type(lastItem) == "table") then
+        diagRow(s, "last item hover", string.format(
+            "id=%s, ours=%+d rows, payload=%s, secret link=%s, restrictions=%s, at %ss",
+            tostring(lastItem.id or "?"), tonumber(lastItem.rowsAdded) or 0,
+            tostring(lastItem.payload), tostring(lastItem.linkSecret),
+            tostring(lastItem.restrictions), tostring(tonumber(lastItem.at) or 0)), "info")
+    end
     if (portraitFailed > 0) then
         s.notes[#s.notes + 1] = "portraitSetFailed counts 3D SetUnit failures; the attempt denominator "
             .. "is not instrumented, so a failure rate is not derivable without new code."
@@ -5632,7 +5987,9 @@ local function collectErrorsSection()
     local s = diagSection("errors", "error history")
     diagRow(s, "total errors caught", TT.totalErrorsCaught or 0, "info")
     local warnCount = (type(TT.warningLog) == "table") and #TT.warningLog or 0
-    diagRow(s, "total warnings logged", warnCount, warnCount > 0 and "warn" or "info")
+    diagRow(s, "total warnings recorded", string.format("%s (log holds %s)",
+        tostring(TT.totalWarnings or warnCount), tostring(warnCount)),
+        (tonumber(TT.totalWarnings) or warnCount) > 0 and "warn" or "info")
     diagRow(s, "pipeline suppressed", (TT.ev and TT.ev.pipelineErrorsSuppressed) or 0, "info")
     diagRow(s, "last tooltip error", TT.lastTooltipError or "none",
         TT.lastTooltipError and "warn" or "info")

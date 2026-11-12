@@ -17,6 +17,22 @@ terms allow. TacoTip bundles them unmodified.
 | `LibDetours-1.0` | MIT | kebabstorm |
 | `LibForeverInspector` | MIT | AcidBomb (part of this project) |
 
+The three fonts under `Media/Fonts/` are third-party too, each under its own
+license, shipped unmodified beside its own license file so a package carries
+both:
+
+| Font | File | License | Copyright |
+| :--- | :--- | :--- | :--- |
+| Noto Sans Regular | `Media/Fonts/NotoSans-Regular.ttf` | SIL OFL 1.1 (`OFL-NotoSans.txt`) | The Noto Project Authors |
+| NanumGothic Regular | `Media/Fonts/NanumGothic-Regular.ttf` | SIL OFL 1.1 (`OFL-NanumGothic.txt`) | NHN Corporation / Naver |
+| WenQuanYi Micro Hei | `Media/Fonts/WenQuanYiMicroHei.ttf` | Apache 2.0 (`LICENSE-WenQuanYiMicroHei.txt`) | WenQuanYi Project contributors |
+
+They are used only to draw a player name or a guild name whose script the
+client's own face cannot draw (a Russian or Chinese guild name on an English
+client). The WenQuanYi file is face 0 of the upstream `.ttc`, extracted with
+fontTools without touching a glyph; the other two are the upstream TTFs as
+published.
+
 ---
 
 ## LibStub

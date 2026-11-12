@@ -1774,6 +1774,27 @@ do
         if (TT.InvalidateResolvedMediaCache) then TT:InvalidateResolvedMediaCache() end
     end
 
+    -- ---- the per-line script pick, on EVERY family ------------------------
+    --
+    -- The three Classic branches annotate no API with SecretWhen at all (all
+    -- five document issecretvalue/canaccessvalue/canaccesstable, but only
+    -- Forever and Live gate them with SecretArguments="AllowedWhenUntainted"),
+    -- so on Classic the secrecy test answers "not secret" and costs nothing.
+    -- The READABLE path is the same code on all five families, so the bundled
+    -- face has to be applied here too -- not only in the Forever pins.
+    do
+        local savedGI = REALG.GetGuildInfo
+        local savedShown = GT.__shown
+        REALG.GetGuildInfo = function() return "Кровь и Пепел", "Глава" end
+        settleUnitRender("player")
+        local guildLine = lineN(2)
+        check("script font: the Cyrillic guild line takes the bundled Cyrillic face on this family",
+            guildLine and guildLine._tacoTipFont == (TT.bundledTooltipFonts or {}).ruRU,
+            "applied=" .. tostring(guildLine and guildLine._tacoTipFont))
+        REALG.GetGuildInfo = savedGI
+        GT.__shown = savedShown
+    end
+
     -- ---- FIX 1: the portrait side cache is never invalidated -------------
     --
     -- The side is cached in tooltip state and only recomputed when the cache is

@@ -1737,6 +1737,44 @@ do
 end
 
 --------------------------------------------------------------------------
+-- H. gearscore -- the GetItemInfo choke point (the file-scope wrapper).
+--    C_Item.GetItemInfo is MayReturnNothing + SecretArguments =
+--    "AllowedWhenUntainted" (ItemDocumentation.lua:626-640 on Forever): the
+--    LINK is the gated input and the returns carry no secret predicate. So the
+--    wrapper must test the link (a secret link never reaches the call), pcall
+--    the call, and answer nil when it refuses -- nil is every caller's existing
+--    "not cached" shape, while a raise would abort the item-tooltip post-call.
+-- ---------------------------------------------------------------------------
+do
+    throwingSecret()
+    local calls = 0
+    local saved = REALG.C_Item.GetItemInfo
+    REALG.C_Item.GetItemInfo = function(link)
+        calls = calls + 1
+        if (STD.rawequal(link, SECRET)) then
+            STD.error("bad argument #1 to 'GetItemInfo' (Secret values are only "
+                .. "allowed during untainted execution for this argument.)", 0)
+        end
+        return nil
+    end
+
+    local okSecret, secretScore = STD.pcall(REALG.TT_GS.GetItemScore, REALG.TT_GS, SECRET)
+    check("gearscore: a secret link never reaches C_Item.GetItemInfo and answers 0",
+        okSecret and secretScore == 0 and calls == 0,
+        "ok=" .. describe(okSecret) .. " score=" .. describe(secretScore)
+            .. " calls=" .. describe(calls))
+
+    REALG.C_Item.GetItemInfo = function() STD.error("refused", 0) end
+    local okRefuse, refusedScore = STD.pcall(REALG.TT_GS.GetItemScore, REALG.TT_GS, "item:12345")
+    check("gearscore: a refused GetItemInfo answers 0 instead of raising",
+        okRefuse and refusedScore == 0,
+        "ok=" .. describe(okRefuse) .. " score=" .. describe(refusedScore))
+
+    REALG.C_Item.GetItemInfo = saved
+    clearSecret()
+end
+
+--------------------------------------------------------------------------
 -- Report.
 --------------------------------------------------------------------------
 local fails = 0

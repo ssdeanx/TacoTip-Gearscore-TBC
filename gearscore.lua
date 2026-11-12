@@ -116,13 +116,6 @@ local function RequestLoadItemDataByID(itemID)
     end
     pcall(rawRequestLoadItemDataByID, itemID)
 end
-local function GetItemInfo(...)
-    if not ... then return nil end
-    local fn = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
-    if fn then
-        return fn(...)
-    end
-end
 local floor = math.floor
 
 _G.TT_GS = {}
@@ -226,6 +219,27 @@ local function isSecretValue(v)
         if (not okAccess or canAcc == false) then return true end
     end
     return false
+end
+
+-- C_Item.GetItemInfo is MayReturnNothing + SecretArguments = "AllowedWhenUntainted"
+-- on the Forever / Camelot client (ItemDocumentation.lua:626-640 at the 1.60.1
+-- pin). The LINK is the gated input: handing a secret link to it from add-on
+-- code raises immediately, because add-on execution is always tainted. The
+-- returns themselves carry no secret predicate, and the whole list is simply
+-- absent while the item is not cached. So test the argument first, pcall the
+-- call, and answer nil -- every caller's existing "not cached / not knowable"
+-- shape -- instead of letting a refusal throw into the item-tooltip post-call.
+-- Callers read the 18 documented returns by position (slot 9 is itemEquipLoc),
+-- so the captures stay positional; a table would drop trailing nils.
+---@secret-guard itemLink is-secret
+local function GetItemInfo(itemLink)
+    if (not itemLink or isSecretValue(itemLink)) then return nil end
+    local fn = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+    if (type(fn) ~= "function") then return nil end
+    local ok, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18 =
+        pcall(fn, itemLink)
+    if (not ok) then return nil end
+    return r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18
 end
 
 -- UnitIsUnit is RequiresComparableUnitTokens / SecretWhenUnitComparisonRestricted:

@@ -8,6 +8,42 @@ end
 -- ============================================================================
 -- FONTS
 -- ============================================================================
+-- TacoTip's OWN faces, one per non-roman language, shipped under Media/Fonts/.
+--
+-- The client ships one face per alphabet and only for the alphabet of its own
+-- locale: FRIZQT___CYR on ruRU, 2002 on koKR, ARKai_T on zhCN, blei00d on zhTW.
+-- Two consequences the list has to respect, and neither is the client's fault:
+--
+--   * a ROMAN client has no face for a name or a guild name in another script,
+--     so that line renders one missing-glyph box per character -- the reported
+--     "russian player shows squares". No client face can draw it, so the addon
+--     carries its own.
+--   * a non-roman client cannot be served by a face aimed at a DIFFERENT
+--     script, so each language gets its own entry rather than one universal
+--     face.
+--
+-- Coverage was measured with fontTools against the shipped files (cmap, not a
+-- guess): Noto Sans = Latin-1 + Latin-Ext-A + Cyrillic 256/256;
+-- NanumGothic = Latin + Hangul 11172/11172; WenQuanYi Micro Hei = Latin +
+-- accented Latin + CJK unified 20932/20992 + Hangul + kana, which is why it
+-- serves zhCN and zhTW from ONE 4.4 MB file instead of the 17.7 MB / 11.9 MB
+-- Noto SC/TC builds. Droid Sans Fallback was measured and rejected: it has no
+-- basic Latin at all (0/52 letters), so a mixed "<Chinese> name" line would be
+-- boxes on the Latin half.
+--
+-- Each license travels beside its face (OFL-NotoSans.txt,
+-- OFL-NanumGothic.txt, LICENSE-WenQuanYiMicroHei.txt).
+local BUNDLED_FONT_DIR = "Interface\\AddOns\\" .. tostring(addOnName) .. "\\Media\\Fonts\\"
+local BUNDLED_FONT_CYRILLIC = BUNDLED_FONT_DIR .. "NotoSans-Regular.ttf"
+local BUNDLED_FONT_KOREAN = BUNDLED_FONT_DIR .. "NanumGothic-Regular.ttf"
+local BUNDLED_FONT_CHINESE = BUNDLED_FONT_DIR .. "WenQuanYiMicroHei.ttf"
+TT.bundledTooltipFonts = {
+    ruRU = BUNDLED_FONT_CYRILLIC,
+    koKR = BUNDLED_FONT_KOREAN,
+    zhCN = BUNDLED_FONT_CHINESE,
+    zhTW = BUNDLED_FONT_CHINESE,
+}
+
 TT.builtinTooltipFonts = {
     { value = "Fonts\\2002.TTF",                text = "Blizzard - 2002" },
     { value = "Fonts\\2002B.TTF",               text = "Blizzard - 2002 Bold" },
@@ -27,6 +63,11 @@ TT.builtinTooltipFonts = {
     -- CJK tooltip faces used by the client itself (verified in Fonts.xml).
     { value = "Fonts\\ARKai_T.ttf",             text = "Blizzard - ARKai (Simplified Chinese)" },
     { value = "Fonts\\blei00d.TTF",             text = "Blizzard - Blei (Traditional Chinese)" },
+    -- TacoTip's own faces, for the four non-roman languages only (see the
+    -- BUNDLED_FONT_DIR block above). A roman client never offers them.
+    { value = BUNDLED_FONT_CYRILLIC,            text = "TacoTip - Noto Sans (Cyrillic)" },
+    { value = BUNDLED_FONT_KOREAN,              text = "TacoTip - NanumGothic (Korean)" },
+    { value = BUNDLED_FONT_CHINESE,             text = "TacoTip - WenQuanYi Micro Hei (Chinese)" },
 }
 
 -- ============================================================================
@@ -456,18 +497,25 @@ local SCRIPT_FONTS = {
         ["fonts\\2002.ttf"] = true,
         ["fonts\\2002b.ttf"] = true,
         ["fonts\\k_pagetext.ttf"] = true,
+        -- TacoTip's bundled face: Latin + full Cyrillic (see the list above).
+        [BUNDLED_FONT_CYRILLIC:lower()] = true,
     },
     koKR = {
         ["fonts\\2002.ttf"] = true,
         ["fonts\\2002b.ttf"] = true,
         ["fonts\\k_pagetext.ttf"] = true,
+        -- TacoTip's bundled face: Latin + all 11172 Hangul syllables.
+        [BUNDLED_FONT_KOREAN:lower()] = true,
     },
     zhCN = {
         ["fonts\\arkai_t.ttf"] = true,
         ["fonts\\arkai_c.ttf"] = true,
+        -- TacoTip's bundled face: Latin + Simplified + Traditional glyphs.
+        [BUNDLED_FONT_CHINESE:lower()] = true,
     },
     zhTW = {
         ["fonts\\blei00d.ttf"] = true,
+        [BUNDLED_FONT_CHINESE:lower()] = true,
     },
 }
 
@@ -499,6 +547,13 @@ local function ttFilterFontList(list, displayLocale)
             keep = false
         elseif (isDetailsFont) then
             keep = false
+        elseif (not scriptFonts and lower:find("\\media\\fonts\\", 1, true)) then
+            -- TacoTip's bundled faces exist for the four non-roman languages
+            -- (each one is claimed by its SCRIPT_FONTS set above). A roman
+            -- client already draws its own script with the client faces, so
+            -- offering Noto Sans / WenQuanYi there would only replace the
+            -- player's UI face for nothing.
+            keep = false
         end
         if keep then
             out[#out + 1] = entry
@@ -512,3 +567,114 @@ end
 -- that is still empty while addon files execute. options.lua filters the list
 -- at runtime through this function.
 TT.filterBuiltinTooltipFonts = ttFilterFontList
+
+-- ============================================================================
+-- SCRIPT COVERAGE PER FACE, AND THE PER-LINE PICK
+-- ============================================================================
+-- applyTooltipFonts applies ONE face to every line of the tooltip. That is
+-- correct only while every line carries the client's own alphabet. A player
+-- name and a guild name are the OTHER player's data: a Russian guild name on a
+-- roman client is drawn by a face that has no Cyrillic, so that line renders
+-- one missing-glyph box per character while the rest of the tooltip reads
+-- normally -- the reported "russian player shows squares".
+--
+-- No single client face fixes it (the client only ships the alphabet of its own
+-- locale), so the faces under Media/Fonts/ above are the raw material and this
+-- is the pick: per LINE, measure the text, and if the face that would be
+-- applied cannot draw the script that text is in, put that line on the bundled
+-- face for the script.
+--
+-- The coverage numbers below are what the files actually contain, not what
+-- their names suggest. Client faces: the client's own FontFamily mapping names
+-- one file per alphabet (FRIZQT roman, FRIZQT___CYR Cyrillic, 2002 Korean,
+-- ARKai Chinese, blei00d Chinese). Bundled faces: measured cmap with fontTools
+-- (Noto Sans Cyrillic 256/256; NanumGothic Hangul 11172/11172; WenQuanYi
+-- Micro Hei CJK 20932/20992 + Hangul + kana).
+local SCRIPT_CYRILLIC, SCRIPT_HANGUL, SCRIPT_CJK = 1, 2, 4
+
+local FACE_SCRIPT_COVERAGE = {
+    ["fonts\\frizqt__.ttf"] = 0,                     -- roman only: the defect case
+    ["fonts\\frizqt___cyr.ttf"] = SCRIPT_CYRILLIC,   -- Cyrillic + basic Latin, no é/ï/ö
+    -- ARIALN is in ruRU's SCRIPT_FONTS set on LibSharedMedia's coverage table
+    -- (Cyrillic + Latin), and a Russian player who picked it must keep it.
+    ["fonts\\arialn.ttf"] = SCRIPT_CYRILLIC,
+    ["fonts\\2002.ttf"] = SCRIPT_HANGUL,
+    ["fonts\\2002b.ttf"] = SCRIPT_HANGUL,
+    ["fonts\\k_pagetext.ttf"] = SCRIPT_HANGUL,
+    ["fonts\\arkai_t.ttf"] = SCRIPT_CJK,
+    ["fonts\\arkai_c.ttf"] = SCRIPT_CJK,
+    ["fonts\\blei00d.ttf"] = SCRIPT_CJK,
+    [BUNDLED_FONT_CYRILLIC:lower()] = SCRIPT_CYRILLIC,
+    [BUNDLED_FONT_KOREAN:lower()] = SCRIPT_HANGUL,
+    [BUNDLED_FONT_CHINESE:lower()] = SCRIPT_CJK + SCRIPT_HANGUL,
+}
+
+-- Masks are 1/2/4, so a bit test is one division. No bit library: the classic
+-- clients this ships to have no `bit` namespace.
+local function hasScript(mask, flag)
+    return (mask % (flag * 2)) >= flag
+end
+
+-- The scripts a text carries, as a mask. UTF-8 lead bytes:
+--   U+0400-U+04FF  Cyrillic         D0-D3
+--   U+AC00-U+D7A3  Hangul syllables EA-ED
+--   U+3000-U+30FF / U+4E00-U+9FFF   CJK symbols, kana, CJK unified   E3-E9
+-- ASCII short-circuits first: almost every line is plain Latin and must not
+-- pay three pattern scans for it.
+local function detectScripts(text)
+    if (type(text) ~= "string" or text == "") then return 0 end
+    if (not string.find(text, "[\128-\255]")) then return 0 end
+    local mask = 0
+    if (string.find(text, "[\208-\211]")) then mask = mask + SCRIPT_CYRILLIC end
+    if (string.find(text, "[\234-\237]")) then mask = mask + SCRIPT_HANGUL end
+    if (string.find(text, "[\227-\233]")) then mask = mask + SCRIPT_CJK end
+    return mask
+end
+
+-- The face a LINE should be drawn with, given the face the tooltip resolved.
+-- Returns basePath unchanged in every case that is not the reported defect:
+--   * the text carries no non-roman script (or is not a string yet),
+--   * the base face is not in the coverage table -- a SharedMedia face is the
+--     player's own explicit pick and is never overridden here,
+--   * the base face already draws every script the text is in.
+-- CJK outranks Hangul outranks Cyrillic: one bundled face draws CJK together
+-- with Hangul, while no bundled face draws Cyrillic together with CJK, so a
+-- mixed line keeps the larger script and is still readable.
+-- The same pick, from an already-measured mask.
+--
+-- A restricted tooltip cannot be read, but it is still drawn by the client, so
+-- main.lua remembers the mask a line carried while it was readable and passes
+-- it back here. That is why the decision is split: a mask is a plain number
+-- derived from text the addon was allowed to read, never a secret value, and
+-- the restricted pass touches no text at all.
+function TT.PickScriptFont(basePath, mask)
+    if (type(basePath) ~= "string" or basePath == "") then
+        return basePath
+    end
+    if (type(mask) ~= "number" or mask == 0) then
+        return basePath
+    end
+    local have = FACE_SCRIPT_COVERAGE[basePath:lower()]
+    if (have == nil) then
+        return basePath
+    end
+    if (hasScript(mask, SCRIPT_CJK) and not hasScript(have, SCRIPT_CJK)) then
+        return BUNDLED_FONT_CHINESE
+    end
+    if (hasScript(mask, SCRIPT_HANGUL) and not hasScript(have, SCRIPT_HANGUL)) then
+        return BUNDLED_FONT_KOREAN
+    end
+    if (hasScript(mask, SCRIPT_CYRILLIC) and not hasScript(have, SCRIPT_CYRILLIC)) then
+        return BUNDLED_FONT_CYRILLIC
+    end
+    return basePath
+end
+
+function TT.GetScriptFontPath(basePath, text)
+    return TT.PickScriptFont(basePath, detectScripts(text))
+end
+
+-- Exposed for the line pin in the harness: the detector is the part that
+-- decides, and it is pure, so it can be graded without a widget.
+TT.DetectScripts = detectScripts
+TT.SCRIPT_MASKS = { CYRILLIC = SCRIPT_CYRILLIC, HANGUL = SCRIPT_HANGUL, CJK = SCRIPT_CJK }

@@ -184,7 +184,7 @@ while IFS= read -r f; do
     TacoTip.toc|CHANGELOG.md|LICENSE|README.md|THIRD_PARTY_NOTICES.md|tt.tga|logo.tga) ;;
     */*)
       case "$f" in
-        Locale/*.lua|Libs/*) ;;
+        Locale/*.lua|Libs/*|Media/Fonts/*) ;;
         *) unexpected="$unexpected$f"$'\n' ;;
       esac
       ;;

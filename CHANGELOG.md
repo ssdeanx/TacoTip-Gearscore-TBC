@@ -4,6 +4,70 @@ All notable changes to TacoTip are documented in this file.
 
 Test counts quoted inside an entry are that entry's gate state on its own date. The counts for the current tree are stated in the `1.0.1` entry: 75 `run_all.sh` invocations on lua5.1 and on luajit, TacoTip Extras 42/42 across lua5.1/lua5.4/luajit, and `luacheck` 2 warnings / 0 errors in 91 files.
 
+### 2026-11-12 — one bundled face per non-roman language, picked per tooltip line
+
+- **The reported defect.** A player's name and guild name are the *other*
+  player's data, so they can be in a script the client's own face has no glyphs
+  for. `applyTooltipFonts` applied **one** face — `TT:GetResolvedTooltipFont()`,
+  resolved from the client/addon locale — to every line, including Blizzard's
+  own header rows. On an English client that face is the roman
+  `Fonts\FRIZQT__.TTF`, so a Russian guild name drew one missing-glyph box per
+  character on line 2 while every other line read normally. The face was keyed
+  off the wrong thing: a guild name is not a locale string, and it never appears
+  in `TACOTIP_LOCALE`, so no locale — client or addon — can describe it.
+- **The pick is per line now.** `textures.lua` owns a face→script coverage table
+  and `TT.GetScriptFontPath(basePath, text)`; `main.lua`'s `applyTooltipFonts`
+  asks it per line and caches the answer on the existing `_tacoTipFont` field, so
+  a re-render is still zero work. The detector keys on UTF-8 lead bytes —
+  Cyrillic `D0-D3`, Hangul syllables `EA-ED`, CJK/kana `E3-E9` — with an ASCII
+  fast path that bails on one byte-class scan. CJK outranks Hangul outranks
+  Cyrillic for a mixed line, because one bundled face draws CJK with Hangul
+  while none draws Cyrillic with CJK.
+- **TacoTip carries its own faces** under `Media/Fonts/`, one per non-roman
+  language: **Noto Sans Regular** (569 KB; Latin-1 + Latin-Ext-A + Cyrillic
+  256/256), **NanumGothic Regular** (2.05 MB; Latin + Hangul 11172/11172) and
+  **WenQuanYi Micro Hei** (4.63 MB; Latin + accents + CJK unified 20932/20992 +
+  Hangul + kana, which is why it serves zhCN and zhTW from one file). Sizes are
+  the decision, measured not guessed: Noto Sans SC/TC/KR are 17.7 / 11.9 /
+  10.4 MB. Droid Sans Fallback (3.45 MB) was measured and rejected — it has
+  **no basic Latin at all** (`A-Za-z` 0/52), so a mixed `<中文> name` line would
+  be boxes on the Latin half.
+- **A roman client is not given a font.** The bundled entries are claimed per
+  language in `SCRIPT_FONTS` and dropped from the picker when the display locale
+  is roman: they exist to fix a line, not to restyle the player's interface.
+  A SharedMedia face the player picked is never overridden — it is not in the
+  coverage table, and an unknown face keeps the player's choice.
+- **A secret text is never read.** The line's text can be secret on Forever (an
+  item tooltip's client rows carry secret line data) and `find` on a secret
+  raises; the secrecy test runs first, and a text that may not be read keeps the
+  resolved face rather than aborting the rest of the appearance pass.
+- **A restricted tooltip still gets its glyphs.** In instanced combat and
+  encounters the client's own tooltip lines are secret: the addon may not read
+  them, but the client still draws them. The mask a line carried while it *was*
+  readable is now remembered per unit GUID and line index (`TT._unitLineScript`,
+  capped at 256 units), and the unreadable-header path re-fonts the tooltip from
+  that mask through `TT.ApplyRememberedLineFonts`. A mask is a whole number
+  derived from text the addon was allowed to read — no secret value is read,
+  compared, formatted or stored on that pass, so a Russian guild name keeps the
+  Cyrillic face in a boss fight instead of falling back to box-per-character.
+  A unit that was never readable records nothing and is drawn by the client as
+  before. `textures.lua` splits the decision into `TT.PickScriptFont(basePath,
+  mask)` (the restricted path) and `TT.GetScriptFontPath(basePath, text)` (the
+  readable one). The pin drives a sentinel whose `__tostring`, `__eq` and
+  `__concat` all raise, so any accidental touch is a hard failure.
+- **Licenses travel with the files** (`OFL-NotoSans.txt`,
+  `OFL-NanumGothic.txt`, `LICENSE-WenQuanYiMicroHei.txt`), the package
+  allowlist admits `Media/Fonts/*`, and the font rows are in
+  `THIRD_PARTY_NOTICES.md`.
+- **Pins.** `font_test` grades the detector and every pick case (roman /
+  Cyrillic / Korean / Chinese base × four scripts, SharedMedia untouched, nil
+  text, bundled Chinese already covering Hangul). `forever_tooltip_test` P12b
+  renders a Cyrillic guild line and asserts both that line's face and its Latin
+  neighbour's — red on a pre-fix `main.lua` copy, green now. Gates: **75/75
+  `run_all.sh` invocations**, `font_test` / `locale_test` / `textures_test` ALL
+  PASS, `verify_release --worktree` PASS.
+
+
 ### 2026-11-10 — power-bar secret guard and static secret-value analysis (folded into 1.0.0)
 
 Recorded here rather than as a new version: the token stays `1.0.0`.

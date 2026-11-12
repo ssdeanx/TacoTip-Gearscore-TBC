@@ -163,7 +163,10 @@ local function makeWidget(kind, name, parent, template, depth)
     w.SetText = function(_, t) w.__text = t end
     w.GetText = function() return w.__text end
     w.SetFontObject = function() end
-    w.SetFont = function() end
+    -- Recorded, not discarded: the script pin below must prove WHICH face a
+    -- line was drawn with, and the addon's own _tacoTipFont cache is the
+    -- record of what it decided to apply.
+    w.SetFont = function(_, font, size) w.__font, w.__fontSize = font, size end
     w.SetJustifyH = function() end
     w.SetJustifyV = function() end
     w.SetWordWrap = function() end
@@ -1594,6 +1597,137 @@ do
 end
 
 --------------------------------------------------------------------------
+-- P12b: the guild line's SCRIPT decides its face, not the client's locale.
+--
+-- Reported: a Russian player's guild name on an English client rendered one
+-- missing-glyph box per character, on line 2 only, while every other line read
+-- normally -- because one face was applied to the whole tooltip and the roman
+-- face has no Cyrillic. The line carrying the script must move to TacoTip's
+-- bundled Cyrillic face; Latin lines must keep the client face untouched.
+--------------------------------------------------------------------------
+do
+    local savedGI = REALG.GetGuildInfo
+    local bundled = TT.bundledTooltipFonts or {}
+    REALG.GetGuildInfo = function() return "Кровь и Пепел", "Глава" end
+    GT:ClearLines()
+    GT:AddLine("Rusplayer")
+    GT:AddLine("<Кровь и Пепел> Глава")
+    GT:AddLine("Level 60 Warrior")
+    local ptxt = drive("mouseover")
+    local guildLine = GT:GetLeftLine(2)
+    check("script font: the Cyrillic guild line is drawn with the bundled Cyrillic face",
+        guildLine and guildLine._tacoTipFont == bundled.ruRU,
+        "applied=" .. tostring(guildLine and guildLine._tacoTipFont)
+            .. " want=" .. tostring(bundled.ruRU))
+    check("script font: the same line really received that face from SetFont",
+        guildLine and guildLine.__font == bundled.ruRU,
+        "SetFont got=" .. tostring(guildLine and guildLine.__font))
+    check("script font: the Cyrillic guild line keeps its text",
+        guildLine and type(guildLine:GetText()) == "string"
+            and STD.string.find(guildLine:GetText(), "<", 1, true) ~= nil,
+        tostring(guildLine and guildLine:GetText()))
+    local nameLine = GT:GetLeftLine(1)
+    check("script font: a Latin line keeps the resolved client face",
+        nameLine and nameLine._tacoTipFont == "Fonts\\FRIZQT__.TTF",
+        "applied=" .. tostring(nameLine and nameLine._tacoTipFont))
+    checkCleanRender(ptxt, "cyrillic guild render")
+    REALG.GetGuildInfo = savedGI
+end
+
+--------------------------------------------------------------------------
+-- P12c: a RESTRICTED tooltip keeps the face it was readable with.
+--
+-- Instanced combat and encounters make the client's tooltip lines secret: the
+-- addon may not read them, but the client still DRAWS them. The pass must touch
+-- no secret (no read, no compare, no tostring) and must still put the
+-- remembered Cyrillic face on the line, so the client's own text keeps its
+-- glyphs instead of falling back to box-per-character.
+--------------------------------------------------------------------------
+do
+    local savedGI = REALG.GetGuildInfo
+    local savedGetUnit = GT.GetUnit
+    local savedGetOwner = GT.GetOwner
+    local savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
+    local savedIsSecret = REALG.issecretvalue
+    local bundled = TT.bundledTooltipFonts or {}
+
+    -- A sentinel that explodes on every operation the addon must not perform on
+    -- a secret: tostring, ==, and concatenation. Anything touching it raises.
+    local SECRET_STR = setmetatable({}, {
+        __tostring = function() error("cannot tostring secret value") end,
+        __eq = function() error("cannot compare secret value") end,
+        __concat = function() error("cannot concatenate secret value") end,
+    })
+
+    local function renderUnit(unitToken, guid)
+        GT.GetOwner = function() return { unit = unitToken } end
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", unitToken, guid end
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = guid })
+        end
+    end
+
+    -- 1. readable Cyrillic render: records the mask and draws the bundled face
+    REALG.GetGuildInfo = function() return "Кровь и Пепел", "Глава" end
+    GT:ClearLines()
+    GT:AddLine("Rusplayer")
+    GT:AddLine("<Кровь и Пепел> Глава")
+    GT:AddLine("Level 60 Warrior")
+    renderUnit("mouseover", "Player-6-000006")
+    check("restricted: the readable pass records and draws the bundled Cyrillic face",
+        GT:GetLeftLine(2)._tacoTipFont == bundled.ruRU,
+        "applied=" .. STD.tostring(GT:GetLeftLine(2)._tacoTipFont))
+
+    -- 2. another player puts the POOLED line back on the client face, so the
+    --    next check cannot pass on leftovers from step 1
+    REALG.GetGuildInfo = function() return "Testguild", "Testrealm" end
+    GT:ClearLines()
+    GT:AddLine("Partymate")
+    GT:AddLine("<Testguild>")
+    GT:AddLine("Level 60 Warrior")
+    renderUnit("party1", "Player-9-000009")
+    check("restricted: a Latin render puts the pooled line back on the client face",
+        GT:GetLeftLine(2)._tacoTipFont == "Fonts\\FRIZQT__.TTF",
+        "applied=" .. STD.tostring(GT:GetLeftLine(2)._tacoTipFont))
+
+    -- 3. the same unit, now UNREADABLE: no text may be read, and the line must
+    --    still carry the remembered face
+    REALG.issecretvalue = function(v) return v == SECRET_STR end
+    GT:ClearLines()
+    GT:AddLine(SECRET_STR)
+    GT:AddLine(SECRET_STR)
+    GT:AddLine(SECRET_STR)
+    local okRestricted, errRestricted = STD.pcall(function()
+        renderUnit("mouseover", "Player-6-000006")
+    end)
+    check("restricted: the unreadable render does not raise", okRestricted == true,
+        STD.tostring(errRestricted))
+    check("restricted: the remembered Cyrillic face is re-applied without reading it",
+        GT:GetLeftLine(2)._tacoTipFont == bundled.ruRU,
+        "applied=" .. STD.tostring(GT:GetLeftLine(2)._tacoTipFont))
+
+    -- 4. a unit never seen readable invents nothing: no memory is recorded and
+    --    the render still does not raise
+    GT:ClearLines()
+    GT:AddLine(SECRET_STR)
+    GT:AddLine(SECRET_STR)
+    GT:AddLine(SECRET_STR)
+    local okNoMem, errNoMem = STD.pcall(function()
+        renderUnit("party2", "Player-7-000777")
+    end)
+    check("restricted: a unit with no readable history records no memory",
+        okNoMem == true and TT._unitLineScript["Player-7-000777"] == nil,
+        "ok=" .. STD.tostring(okNoMem) .. " err=" .. STD.tostring(errNoMem))
+
+    REALG.issecretvalue = savedIsSecret
+    REALG.GetGuildInfo = savedGI
+    GT.GetUnit = savedGetUnit
+    GT.GetOwner = savedGetOwner
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayed
+end
+
+--------------------------------------------------------------------------
 -- P8: NPC tooltips keep rendering on Forever. The tooltip still builds
 -- cleanly -- header lines, target line, no invented score rows. NPC row
 -- handling beyond that is the client's own business, not this lane's.
@@ -2235,10 +2369,13 @@ end
 --------------------------------------------------------------------------
 do
     local itemPost
+    local unitPost
     for _, rec in STD.ipairs(POSTCALLS) do
         if (rec.typ == REALG.Enum.TooltipDataType.Item) then itemPost = rec.fn end
+        if (rec.typ == REALG.Enum.TooltipDataType.Unit) then unitPost = rec.fn end
     end
     local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
     local lootOwner = {
         GetSlotIndex = function() return 1 end,
         GetItemSlotType = function() return 1 end,
@@ -2273,9 +2410,11 @@ do
     -- GetDisplayedUnit (which goes through GetPrimaryTooltipData) are the
     -- tooltip-info reads Blizzard warns about for secret tooltip data.
     local reads = 0
+    local unitAnswer = nil
     local savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
     REALG.TooltipUtil.GetDisplayedUnit = function(...)
         reads = reads + 1
+        if (unitAnswer) then return unitAnswer() end
         return savedDisplayed(...)
     end
     local savedGetItem = GT.GetItem
@@ -2289,7 +2428,14 @@ do
     check("P17: OnShow reads no tooltip data for the loot-window tooltip",
         reads == 0, "reads=" .. STD.tostring(reads))
 
+    -- A unit tooltip always runs its own post-call before Show, and that call
+    -- is what clears the item marker the control above set. Model it here
+    -- rather than showing a unit tooltip that still carries an item marker no
+    -- real client can produce.
     GT.GetOwner = function() return { unit = "player" } end
+    GT.GetUnit = function() return "n", "player" end
+    unitAnswer = function() return "n", "player", UNITS.player.guid end
+    if (unitPost) then STD.pcall(unitPost, GT, { guid = UNITS.player.guid }) end
     local beforeReads = reads
     if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
     check("P17: OnShow still resolves the unit for a normal tooltip",
@@ -2297,6 +2443,169 @@ do
 
     REALG.TooltipUtil.GetDisplayedUnit = savedDisplayed
     GT.GetItem = savedGetItem
+    GT.GetUnit = savedGetUnit
+    GT.GetOwner = savedOwner
+end
+
+--------------------------------------------------------------------------
+-- P-ITEM: the Forever ITEM tooltip resolves its link from the client's own
+-- post-call payload, never from tooltip-info reads.
+--
+-- The post-call payload is the sanctioned hand-off (the secure delegate behind
+-- the accessor strips taint). `GetItem` / `GetDisplayedItem` are tooltip-INFO
+-- reads, and Blizzard's own note says that reading one from a tainted hook can
+-- carry taint into ProcessInfo, which makes a tooltip carrying secret line data
+-- display no lines (GameTooltip.lua:994-1003). Item tooltips with secret lines
+-- exist in instances, so the reads must be absent on the pipeline client.
+--------------------------------------------------------------------------
+do
+    local itemPost
+    for _, rec in STD.ipairs(POSTCALLS) do
+        if (rec.typ == REALG.Enum.TooltipDataType.Item) then itemPost = rec.fn end
+    end
+    local savedOwner, savedGetItem = GT.GetOwner, GT.GetItem
+    local savedDisplayedItem = REALG.TooltipUtil.GetDisplayedItem
+    local reads = 0
+    GT.GetItem = function(...) reads = reads + 1; return savedGetItem(...) end
+    REALG.TooltipUtil.GetDisplayedItem = function(...)
+        reads = reads + 1
+        return savedDisplayedItem(...)
+    end
+
+    GT.GetOwner = function() return { unit = "player" } end
+    GT:ClearLines()
+    GT:AddLine("Test Helm")
+    local okPost = STD.pcall(itemPost, GT, { hyperlink = GEAR_LINK })
+    check("P-ITEM: the Forever item post-call performs no tooltip-info reads",
+        okPost and reads == 0,
+        "reads=" .. STD.tostring(reads) .. " err=" .. STD.tostring(okPost))
+    check("P-ITEM: the item rows are still added from the payload",
+        okPost and STD.string.find(allText(), "GearScore", 1, true) ~= nil,
+        STD.string.gsub(allText(), "\n", " | "))
+
+    if (GT.__hooks.OnShow) then STD.pcall(GT.__hooks.OnShow, GT) end
+    check("P-ITEM: OnShow performs no tooltip-info reads for an item tooltip",
+        reads == 0, "reads=" .. STD.tostring(reads))
+
+    -- A secret link in the payload: no raise, no score row. issecretvalue
+    -- THROWS on the sentinel -- the client contract the strong guard reads as
+    -- "is secret".
+    local SECRET_LINK = STD.setmetatable({}, {
+        __tostring = function() STD.error("cannot tostring a secret value") end,
+    })
+    local savedIsSecret = REALG.issecretvalue
+    REALG.issecretvalue = function(v)
+        if (STD.rawequal(v, SECRET_LINK)) then
+            STD.error("issecretvalue on a secret value from tainted execution", 0)
+        end
+        return false
+    end
+    GT:ClearLines()
+    GT:AddLine("Test Helm")
+    local secretCountBefore = TT.ev.itemSecretLink or 0
+    local okSecret = STD.pcall(itemPost, GT, { hyperlink = SECRET_LINK })
+    check("P-ITEM: a secret item link neither raises nor adds a score row",
+        okSecret and STD.string.find(allText(), "GearScore", 1, true) == nil,
+        "ok=" .. STD.tostring(okSecret) .. " text=" .. STD.string.gsub(allText(), "\n", " | "))
+    check("P-ITEM: the dropped secret link is counted for /tt diag",
+        (TT.ev.itemSecretLink or 0) == secretCountBefore + 1,
+        "itemSecretLink=" .. STD.tostring(TT.ev.itemSecretLink))
+    check("P-ITEM: the refusal is tallied per API",
+        STD.type(TT.ev.secretRefused) == "table"
+            and (TT.ev.secretRefused["item-link"] or 0) >= 1,
+        "tally=" .. STD.tostring(TT.ev.secretRefused and TT.ev.secretRefused["item-link"]))
+    check("P-ITEM: the row delta and the last-hover fingerprint are recorded",
+        STD.type(TT.ev.itemRowsLastBefore) == "number"
+            and STD.type(TT.ev.itemRowsLastAfter) == "number"
+            and STD.type(TT.ev.lastItem) == "table"
+            and TT.ev.itemRowsLastAfter >= TT.ev.itemRowsLastBefore,
+        "before=" .. STD.tostring(TT.ev.itemRowsLastBefore)
+            .. " after=" .. STD.tostring(TT.ev.itemRowsLastAfter)
+            .. " last=" .. STD.tostring(STD.type(TT.ev.lastItem)))
+    REALG.issecretvalue = savedIsSecret
+
+    -- An unreadable payload (a secret table): no rows, and a counter the user's
+    -- report can be read from.
+    local savedCanAccess = REALG.canaccesstable
+    REALG.canaccesstable = function() return false end
+    local unreadableBefore = TT.ev.itemPayloadUnreadable or 0
+    GT:ClearLines()
+    GT:AddLine("Test Helm")
+    local okUnreadable = STD.pcall(itemPost, GT, { hyperlink = GEAR_LINK })
+    check("P-ITEM: an unreadable payload is counted and adds no score row",
+        okUnreadable and (TT.ev.itemPayloadUnreadable or 0) == unreadableBefore + 1
+            and STD.string.find(allText(), "GearScore", 1, true) == nil,
+        "ok=" .. STD.tostring(okUnreadable)
+            .. " unreadable=" .. STD.tostring(TT.ev.itemPayloadUnreadable))
+    REALG.canaccesstable = savedCanAccess
+
+    -- The report itself: the counters must reach /tt diag as a row and as a
+    -- problem, or the numbers exist but nobody can see them.
+    local diagOk, diag = STD.pcall(TT.CollectDiagnostics, REALG.TT)
+    local itemRow, problemText = nil, ""
+    local rowsByLabel = {}
+    if (diagOk and STD.type(diag) == "table" and STD.type(diag.sections) == "table") then
+        for i = 1, #diag.sections do
+            local section = diag.sections[i]
+            if (section.id == "tooltip" and STD.type(section.rows) == "table") then
+                for j = 1, #section.rows do
+                    rowsByLabel[section.rows[j].label] = section.rows[j]
+                end
+            end
+        end
+        itemRow = rowsByLabel["item tooltip hooks"]
+        if (STD.type(diag.problems) == "table") then
+            for i = 1, #diag.problems do
+                problemText = problemText .. STD.tostring(diag.problems[i].text) .. "\n"
+            end
+        end
+    end
+    check("P-ITEM: /tt diag reports the item payload counters",
+        diagOk and itemRow ~= nil
+            and STD.string.find(STD.tostring(itemRow.value),
+                "unreadable payload=" .. STD.tostring(TT.ev.itemPayloadUnreadable), 1, true) ~= nil,
+        "diagOk=" .. STD.tostring(diagOk) .. " row=" .. STD.tostring(itemRow and itemRow.value))
+    check("P-ITEM: an unreadable payload is reported as a problem",
+        STD.string.find(problemText, "unreadable", 1, true) ~= nil,
+        STD.string.gsub(problemText, "\n", " | "))
+    check("P-ITEM: the refusal tally, row delta and fingerprint reach the report",
+        rowsByLabel["secret refusals by API"] ~= nil
+            and rowsByLabel["item row delta"] ~= nil
+            and rowsByLabel["last item hover"] ~= nil,
+        "tally=" .. STD.tostring(rowsByLabel["secret refusals by API"] and
+            rowsByLabel["secret refusals by API"].value)
+            .. " delta=" .. STD.tostring(rowsByLabel["item row delta"] and
+            rowsByLabel["item row delta"].value)
+            .. " last=" .. STD.tostring(rowsByLabel["last item hover"] and
+            rowsByLabel["last item hover"].value))
+
+    -- The warning log is capped, so #log can understate the session. The report
+    -- must show the lifetime total, not the surviving slice.
+    for _ = 1, 31 do TT:RecordWarning("pin", "warning overflow pin") end
+    local diagWarnOk, diagWarn = STD.pcall(TT.CollectDiagnostics, TT)
+    local warnRow
+    if (diagWarnOk and STD.type(diagWarn) == "table") then
+        for i = 1, #(diagWarn.sections or {}) do
+            local section = diagWarn.sections[i]
+            if (section.id == "errors" and STD.type(section.rows) == "table") then
+                for j = 1, #section.rows do
+                    if (section.rows[j].label == "total warnings recorded") then
+                        warnRow = section.rows[j]
+                    end
+                end
+            end
+        end
+    end
+    check("P-ITEM: the report shows the lifetime warning total, not the capped log",
+        warnRow ~= nil
+            and STD.string.find(STD.tostring(warnRow.value),
+                STD.tostring(TT.totalWarnings), 1, true) ~= nil
+            and STD.string.find(STD.tostring(warnRow.value), "log holds 30", 1, true) ~= nil,
+        "row=" .. STD.tostring(warnRow and warnRow.value)
+            .. " total=" .. STD.tostring(TT.totalWarnings))
+
+    GT.GetItem = savedGetItem
+    REALG.TooltipUtil.GetDisplayedItem = savedDisplayedItem
     GT.GetOwner = savedOwner
 end
 
