@@ -3117,6 +3117,51 @@ do
     end
 end
 
+-- 1.0.2: Priority 2 group role-bucket optimization + no duplicate CanInspect probe
+do
+    local canProbes = 0
+    local notifiedUnit = nil
+    local roles = {}
+    for i = 1, 40 do roles["raid" .. i] = "DAMAGER" end
+    roles["raid10"] = "HEALER"
+    roles["raid20"] = "TANK"
+    local queueTick
+    local ciRaid = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        IsInGroup = function() return true end,
+        IsInRaid = function() return true end,
+        UnitExists = function(u)
+            return u == "player" or (type(u) == "string" and u:match("^raid%d+$") ~= nil)
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        UnitGroupRolesAssigned = function(u) return roles[u] or "NONE" end,
+        UnitDistanceSquared = function() return 100, true end,
+        CanInspect = function() canProbes = canProbes + 1 return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u) notifiedUnit = u return true end,
+        GetTime = function() return 1000 end,
+        GetNamePlates = function() return {} end,
+        C_Timer = {
+            NewTicker = function(interval, fn)
+                if (interval == 0.5) then queueTick = fn end
+            end,
+        },
+    })
+    check("1.0.2 raid role buckets: queueTick captured", type(queueTick) == "function")
+    if (queueTick and ciRaid) then
+        queueTick()
+        check("1.0.2 raid role buckets: selects TANK (raid20) ahead of HEALER/DAMAGER with single CanInspect probe",
+            notifiedUnit == "raid20" and canProbes == 1,
+            "notified=" .. tostring(notifiedUnit) .. " canProbes=" .. tostring(canProbes))
+    end
+end
+
 STD.io.write(table.concat(results, "\n") .. "\n")
 STD.io.write("\n" .. (allok and "ALL PASS" or "*** FAILURES ***") .. "\n")
 STD.os.exit(allok and 0 or 1)

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.1"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.2"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -3477,6 +3477,318 @@ local function createDashboard()
         "Close", "Close the dashboard (ESC also works).")
     close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
 
+    -- Header Overall GearScore Progression Tracking Bar (0 GS -> Client Max BiS Cap)
+    local HEADER_PROG_MAX_PINS = 18
+    local headerProg = CreateFrame("Button", nil, header)
+    headerProg:SetPoint("LEFT", title, "RIGHT", 18, 0)
+    headerProg:SetPoint("RIGHT", close, "LEFT", -16, 0)
+    headerProg:SetHeight(44)
+    headerProg:EnableMouse(true)
+
+    local hProgLeft = headerProg:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hProgLeft:SetPoint("TOPLEFT", headerProg, "TOPLEFT", 2, -1)
+    hProgLeft:SetJustifyH("LEFT")
+    hProgLeft:SetText("|cffffd100GS Progress|r")
+
+    local hProgRight = headerProg:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hProgRight:SetPoint("TOPRIGHT", headerProg, "TOPRIGHT", -2, -1)
+    hProgRight:SetJustifyH("RIGHT")
+    hProgRight:SetText("0 / 1400 GS (0%)")
+
+    local hProgTrack = CreateFrame("Frame", nil, headerProg)
+    hProgTrack:SetPoint("TOPLEFT", headerProg, "TOPLEFT", 0, -16)
+    hProgTrack:SetPoint("TOPRIGHT", headerProg, "TOPRIGHT", 0, -16)
+    hProgTrack:SetHeight(12)
+    paintFlatBox(hProgTrack, { 0.06, 0.07, 0.09, 0.96 }, DASH_THEME.borderSubtle)
+
+    local hProgFill = hProgTrack:CreateTexture(nil, "ARTWORK")
+    hProgFill:SetPoint("TOPLEFT", hProgTrack, "TOPLEFT", 1, -1)
+    hProgFill:SetPoint("BOTTOMLEFT", hProgTrack, "BOTTOMLEFT", 1, 1)
+    hProgFill:SetWidth(1)
+    hProgFill:SetTexture(WHITE8X8)
+    hProgFill:SetVertexColor(0.18, 0.72, 0.40, 0.92)
+
+    local hProgCursor = hProgTrack:CreateTexture(nil, "OVERLAY")
+    hProgCursor:SetSize(2, 12)
+    hProgCursor:SetPoint("RIGHT", hProgFill, "RIGHT", 0, 0)
+    hProgCursor:SetTexture(WHITE8X8)
+    hProgCursor:SetVertexColor(1.0, 0.92, 0.45, 0.95)
+    hProgCursor:Hide()
+
+    local hProgPeak = hProgTrack:CreateTexture(nil, "OVERLAY")
+    hProgPeak:SetSize(2, 12)
+    hProgPeak:SetTexture(WHITE8X8)
+    hProgPeak:SetVertexColor(1.0, 0.78, 0.12, 0.55)
+    hProgPeak:Hide()
+
+    local hProgBracketTicks = {}
+    for b = 1, 6 do
+        local div = hProgTrack:CreateTexture(nil, "OVERLAY")
+        div:SetSize(1, 10)
+        div:SetTexture(WHITE8X8)
+        div:SetVertexColor(1, 1, 1, 0.14)
+        hProgBracketTicks[b] = div
+    end
+
+    local hProgMinLabel = headerProg:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    hProgMinLabel:SetPoint("BOTTOMLEFT", headerProg, "BOTTOMLEFT", 2, 1)
+    hProgMinLabel:SetText("0 GS")
+
+    local hProgHintLabel = headerProg:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    hProgHintLabel:SetPoint("BOTTOM", headerProg, "BOTTOM", 0, 1)
+    hProgHintLabel:SetText("Hover ticks for snapshots · Click to view")
+
+    local hProgMaxLabel = headerProg:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    hProgMaxLabel:SetPoint("BOTTOMRIGHT", headerProg, "BOTTOMRIGHT", -2, 1)
+    hProgMaxLabel:SetText("1400 GS Max")
+
+    local hProgSnapTicks = {}
+    for idx = 1, HEADER_PROG_MAX_PINS do
+        local pin = CreateFrame("Button", nil, hProgTrack)
+        pin:SetSize(9, 16)
+        pin:SetFrameLevel(hProgTrack:GetFrameLevel() + 3)
+        pin:EnableMouse(true)
+        pin:Hide()
+
+        local line = pin:CreateTexture(nil, "OVERLAY")
+        line:SetSize(2, 14)
+        line:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        line:SetTexture(WHITE8X8)
+        line:SetVertexColor(0.35, 0.94, 0.86, 0.90)
+        pin._line = line
+
+        pin:SetScript("OnEnter", function(self)
+            self._line:SetSize(3, 16)
+            self._line:SetVertexColor(1.0, 0.84, 0.15, 1.0)
+            local snap = self._snapData
+            if (snap and GameTooltip) then
+                GameTooltip:SetOwner(self, "ANCHOR_BOTTOM", 0, -4)
+                GameTooltip:ClearLines()
+                local tierHex = snap.tierColorHex or "FFFFD100"
+                GameTooltip:AddLine(string.format("Snapshot #%d · |c%sLv.%d %s|r",
+                    self._snapIndex or 1, tierHex, snap.level or 1, snap.title or "Gear"), 1, 0.82, 0.1)
+                local dateFn = _G.date
+                if (snap.time and snap.time > 0) then
+                    local dtStr = (type(dateFn) == "function")
+                        and tostring(dateFn("%Y-%m-%d %H:%M", snap.time))
+                        or tostring(snap.time)
+                    GameTooltip:AddDoubleLine("Recorded:", dtStr, 0.65, 0.70, 0.78, 0.9, 0.9, 0.9)
+                end
+                local capVal = self._barCap or 1400
+                local sGS = tonumber(snap.totalGS) or 0
+                local pct = (capVal > 0) and math.floor((sGS / capVal) * 100 + 0.5) or 0
+                GameTooltip:AddDoubleLine("GearScore:",
+                    string.format("|cffffd100%d|r / %d GS (%d%%)", sGS, capVal, pct),
+                    0.65, 0.70, 0.78, 1, 1, 1)
+                if ((tonumber(snap.avgILvl) or 0) > 0) then
+                    GameTooltip:AddDoubleLine("Avg Item Level:",
+                        string.format("%d", math.floor(snap.avgILvl or 0)),
+                        0.65, 0.70, 0.78, 1, 1, 1)
+                end
+                if (snap.equippedCount and snap.totalSlots) then
+                    GameTooltip:AddDoubleLine("Equipped Slots:",
+                        string.format("%d / %d", snap.equippedCount, snap.totalSlots),
+                        0.65, 0.70, 0.78, 1, 1, 1)
+                end
+                if (snap.slotName or snap.newLink) then
+                    local itemPart = snap.newLink or "Update"
+                    local deltaTxt = (snap.deltaGS and snap.deltaGS ~= 0)
+                        and string.format(" (%+d GS)", snap.deltaGS) or ""
+                    GameTooltip:AddLine("Milestone: |cffffd100" .. tostring(snap.slotName or "Gear")
+                        .. "|r " .. tostring(itemPart) .. "|cffb4e634" .. deltaTxt .. "|r", 1, 1, 1, true)
+                end
+                local curGS = self._currentScore or 0
+                local diffNow = curGS - sGS
+                local diffColor = (diffNow > 0) and "|cffb4e634" or (diffNow < 0 and "|cffff6b6b" or "|cff9ba3ae")
+                GameTooltip:AddLine(string.format("Compared to Now: %s%+d GS|r", diffColor, diffNow), 0.85, 0.85, 0.85)
+                GameTooltip:Show()
+            end
+        end)
+        pin:SetScript("OnLeave", function(self)
+            self._line:SetSize(2, 14)
+            if (self._isPeak) then
+                self._line:SetVertexColor(1.0, 0.82, 0.15, 0.95)
+            else
+                self._line:SetVertexColor(0.35, 0.94, 0.86, 0.90)
+            end
+            if (GameTooltip) then
+                GameTooltip:Hide()
+            end
+        end)
+        pin:SetScript("OnClick", function()
+            if (frame.SelectTab) then
+                frame:SelectTab("progression")
+            end
+        end)
+
+        hProgSnapTicks[idx] = pin
+    end
+
+    headerProg:SetScript("OnEnter", function(self)
+        if (hProgTrack.SetFlatColors) then
+            hProgTrack:SetFlatColors(nil, DASH_THEME.borderGold)
+        end
+        if (GameTooltip) then
+            local rec = TT and TT.GetPlayerProgression and TT:GetPlayerProgression() or {}
+            local curGS = rec.currentScore or 0
+            local peakGS = math.max(curGS, rec.peakScore or 0)
+            local cap, bracketSize = 1400, 200
+            if (TT and TT.GetGearScoreProgressCap) then
+                cap, bracketSize = TT:GetGearScoreProgressCap(curGS, peakGS)
+            end
+            local lvl = (TT and TT.GetGearLevelInfo) and TT:GetGearLevelInfo(curGS) or { level = 1, title = "Novice" }
+            local pct = (cap > 0) and math.min(100, math.floor((curGS / cap) * 100 + 0.5)) or 0
+            local gsGlobal = rawget(_G, "TT_GS")
+            local tierLabel = "Starter"
+            local r, g, b = 1, 1, 1
+            if (gsGlobal and gsGlobal.GetQuality) then
+                local qr, qg, qb, qDesc = gsGlobal:GetQuality(curGS)
+                r, g, b = qr or 1, qg or 1, qb or 1
+                if (qDesc and qDesc ~= "") then
+                    tierLabel = qDesc
+                end
+            end
+            local remaining = math.max(0, cap - curGS)
+            local snaps = self._snapCount or 0
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM", 0, -4)
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine("Overall GearScore Progression", 1, 0.82, 0.1)
+            GameTooltip:AddDoubleLine("Current / Best-in-Game Cap:",
+                string.format("%d / %d GS (%d%%)", curGS, cap, pct), 0.7, 0.75, 0.82, r, g, b)
+            GameTooltip:AddDoubleLine("Remaining to Max Cap:",
+                string.format("%d GS", remaining), 0.7, 0.75, 0.82, 1, 1, 1)
+            GameTooltip:AddDoubleLine("Quality Tier:",
+                string.format("%s (%d GS/tier)", tierLabel, bracketSize), 0.7, 0.75, 0.82, r, g, b)
+            GameTooltip:AddDoubleLine("Gear Level / Avg iLvl:",
+                string.format("Lv.%d %s · iLvl %d", lvl.level or 1, lvl.title or "Novice",
+                    math.floor(rec.avgItemLevel or 0)), 0.7, 0.75, 0.82, 1, 1, 1)
+            GameTooltip:AddDoubleLine("All-Time Peak / Snapshots:",
+                string.format("%d GS · %d pin(s)", peakGS, snaps), 0.7, 0.75, 0.82, 0.35, 0.94, 0.86)
+            GameTooltip:AddLine("Hover any vertical cyan/gold line on the bar to inspect past snapshot stats. Click bar to open Progression.", 0.65, 0.7, 0.78, true)
+            GameTooltip:Show()
+        end
+    end)
+    headerProg:SetScript("OnLeave", function()
+        if (hProgTrack.SetFlatColors) then
+            hProgTrack:SetFlatColors(nil, DASH_THEME.borderSubtle)
+        end
+        if (GameTooltip) then
+            GameTooltip:Hide()
+        end
+    end)
+    headerProg:SetScript("OnClick", function()
+        if (frame.SelectTab) then
+            frame:SelectTab("progression")
+        end
+    end)
+
+    frame.RefreshHeaderProgress = function()
+        if (not (TT and TT.GetPlayerProgression and TT.GetGearLevelInfo)) then
+            return
+        end
+        local rec = TT:GetPlayerProgression()
+        local curGS = tonumber(rec.currentScore) or 0
+        local peakGS = math.max(curGS, tonumber(rec.peakScore) or 0)
+        local cap, bracketSize = 1400, 200
+        if (TT.GetGearScoreProgressCap) then
+            cap, bracketSize = TT:GetGearScoreProgressCap(curGS, peakGS)
+        end
+        local lvl = TT:GetGearLevelInfo(curGS)
+        local tierHex = lvl.tierColorHex or "FFFFD100"
+        local pct = (cap > 0) and math.min(100, math.max(0, math.floor((curGS / cap) * 100 + 0.5))) or 0
+
+        hProgLeft:SetText(string.format("|cffffd100Overall Gear|r · |c%sLv.%d %s|r",
+            tierHex, lvl.level or 1, lvl.title or "Novice"))
+        hProgRight:SetText(string.format("|c%s%d|r / %d GS (|cffffd100%d%%|r)",
+            tierHex, curGS, cap, pct))
+        hProgMinLabel:SetText("0 GS")
+        hProgMaxLabel:SetText(string.format("%d GS BiS Cap", cap))
+
+        local trackW = (hProgTrack.GetWidth and hProgTrack:GetWidth()) or 0
+        if (trackW < 100) then
+            trackW = 470
+        end
+        local innerW = math.max(10, trackW - 2)
+        local ratio = (cap > 0) and math.min(1, math.max(0, curGS / cap)) or 0
+        local fillW = math.max(1, math.floor(innerW * ratio + 0.5))
+        hProgFill:SetWidth(fillW)
+
+        local gsGlobal = rawget(_G, "TT_GS")
+        local r, g, b = 0.18, 0.72, 0.40
+        if (curGS > 0 and gsGlobal and gsGlobal.GetQuality) then
+            local qr, qg, qb = gsGlobal:GetQuality(curGS)
+            if (qr and qg and qb) then
+                r, g, b = qr, qg, qb
+            end
+        elseif (curGS == 0) then
+            r, g, b = 0.35, 0.38, 0.44
+        end
+        hProgFill:SetVertexColor(r, g, b, 0.92)
+        if (curGS > 0) then
+            hProgCursor:Show()
+        else
+            hProgCursor:Hide()
+        end
+
+        if (peakGS > curGS and cap > 0) then
+            local peakX = math.min(innerW - 1, math.max(1, math.floor(innerW * math.min(1, peakGS / cap) + 0.5)))
+            hProgPeak:ClearAllPoints()
+            hProgPeak:SetPoint("LEFT", hProgTrack, "LEFT", peakX, 0)
+            hProgPeak:Show()
+        else
+            hProgPeak:Hide()
+        end
+
+        for bracketIdx = 1, 6 do
+            local threshold = bracketIdx * bracketSize
+            local tick = hProgBracketTicks[bracketIdx]
+            if (tick and cap > 0 and threshold < cap) then
+                local divX = math.floor(innerW * (threshold / cap) + 0.5)
+                tick:ClearAllPoints()
+                tick:SetPoint("LEFT", hProgTrack, "LEFT", divX, 0)
+                tick:Show()
+            elseif (tick) then
+                tick:Hide()
+            end
+        end
+
+        local snaps = (TT.GetProgressionBarSnapshots and TT:GetProgressionBarSnapshots(HEADER_PROG_MAX_PINS)) or {}
+        headerProg._snapCount = #snaps
+        hProgHintLabel:SetText(#snaps > 0
+            and string.format("%d snapshot(s) · Hover ticks for stats", #snaps)
+            or "Hover bar for stats · Click to open Progression")
+        for idx = 1, HEADER_PROG_MAX_PINS do
+            local pin = hProgSnapTicks[idx]
+            local snap = snaps[idx]
+            if (pin and snap and cap > 0) then
+                local sGS = tonumber(snap.totalGS) or 0
+                local sRatio = math.min(1, math.max(0, sGS / cap))
+                local pinX = math.min(innerW, math.max(1, math.floor(innerW * sRatio + 0.5)))
+                pin._snapData = snap
+                pin._snapIndex = idx
+                pin._barCap = cap
+                pin._currentScore = curGS
+                pin._isPeak = (sGS >= peakGS and peakGS > 0)
+                if (pin._isPeak) then
+                    pin._line:SetVertexColor(1.0, 0.82, 0.15, 0.95)
+                else
+                    pin._line:SetVertexColor(0.35, 0.94, 0.86, 0.90)
+                end
+                pin:ClearAllPoints()
+                pin:SetPoint("CENTER", hProgTrack, "LEFT", pinX, 0)
+                pin:Show()
+            elseif (pin) then
+                pin._snapData = nil
+                pin:Hide()
+            end
+        end
+    end
+
+    frame._headerProg = headerProg
+    frame._headerProgTicks = hProgSnapTicks
+    frame._headerProgFill = hProgFill
+    frame._headerProgRightText = hProgRight
+
     -- Left Sidebar (Narrower: 155px wide, compact tab buttons)
     local sidebar = CreateFrame("Frame", nil, frame)
     sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
@@ -4800,8 +5112,13 @@ local function createDashboard()
     end
 
     TT.RefreshProgressionDashboard = function()
-        if (frame:IsShown() and frame.activeTab == "progression" and frame.RefreshProgression) then
-            frame:RefreshProgression()
+        if (frame:IsShown()) then
+            if (frame.RefreshHeaderProgress) then
+                frame:RefreshHeaderProgress()
+            end
+            if (frame.activeTab == "progression" and frame.RefreshProgression) then
+                frame:RefreshProgression()
+            end
         end
     end
 
@@ -5536,6 +5853,7 @@ local function createDashboard()
             syncControls.class_icon_size:SetValue(TacoTipConfig.class_icon_size or 20)
         end
         if (frame.RefreshDiagnostics) then frame:RefreshDiagnostics() end
+        if (frame.RefreshHeaderProgress) then frame:RefreshHeaderProgress() end
         if (frame.RefreshProgression and frame.activeTab == "progression") then frame:RefreshProgression() end
     end
 

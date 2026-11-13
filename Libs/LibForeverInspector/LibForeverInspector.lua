@@ -3214,15 +3214,14 @@ local function getPlayerGUID(arg)
         if (string.find(arg, "Player-", 1, true) == 1) then
             return arg
         end
-        if (C_PlayerInfo and C_PlayerInfo.GUIDIsPlayer and C_PlayerInfo.GUIDIsPlayer(arg)) then
-            return arg
+        if (C_PlayerInfo and C_PlayerInfo.GUIDIsPlayer) then
+            local okIsPlayer, isP = pcall(C_PlayerInfo.GUIDIsPlayer, arg)
+            if (okIsPlayer and not isSecretValue(isP) and isP == true) then
+                return arg
+            end
         end
     end
-    -- Guarded with type(...) == "function", like every other UnitIsPlayer call
-    -- in this file: the workspace stub declares the global with no parameters,
-    -- so the call is flagged as a redundant-parameter warning.
-    ---@diagnostic disable-next-line: redundant-parameter
-    if (type(UnitIsPlayer) == "function" and UnitIsPlayer(arg)) then
+    if (safeUnitIsPlayer(arg)) then
         return safeUnitGUID(arg)
     end
     return nil
@@ -3366,17 +3365,26 @@ local function getModernSpecInfo(specIndex, isInspect, isPet, inspectTarget, sex
     if (not (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo)) then
         return nil
     end
+    if ((specIndex ~= nil and isSecretValue(specIndex))
+            or (inspectTarget ~= nil and isSecretValue(inspectTarget))) then
+        return nil
+    end
     local ok, specID, name, _, icon, _, _, pointsSpent, _, previewPointsSpent =
         pcall(C_SpecializationInfo.GetSpecializationInfo, specIndex, isInspect, isPet,
             inspectTarget, sex, groupIndex, classID)
     if (not ok) then
         return nil
     end
+    if (isSecretValue(specID)) then specID = nil end
+    if (isSecretValue(name)) then name = nil end
+    if (isSecretValue(icon)) then icon = nil end
+    local spent = (not isSecretValue(pointsSpent) and tonumber(pointsSpent)) or 0
+    local preview = (not isSecretValue(previewPointsSpent) and tonumber(previewPointsSpent)) or 0
     return {
         specID = specID,
         name = name,
         icon = icon,
-        points = (tonumber(pointsSpent) or 0) + (tonumber(previewPointsSpent) or 0),
+        points = spent + preview,
     }
 end
 
@@ -3404,7 +3412,7 @@ local function getModernSpecData(unit, groupIndex)
     local activeSpecID
     local activeSpecIndex
     local specOk, specId = pcall(C_SpecializationInfo.GetSpecialization, not isSelf, false, groupIndex, 1)
-    if (specOk) then
+    if (specOk and not isSecretValue(specId)) then
         if (isForever) then
             -- Forever returns a 1-based specialization INDEX here. Blizzard
             -- passes it straight to GetSpecializationInfo, which takes an index
@@ -3424,8 +3432,12 @@ local function getModernSpecData(unit, groupIndex)
     -- both legacy fallbacks answer with an ID.
     if (not isForever and (type(activeSpecID) ~= "number" or activeSpecID <= 0) and isSelf) then
         if (_G.GetSpecialization) then
-            local gOk, gId = pcall(_G.GetSpecialization, false, nil, groupIndex)
-            if (gOk and type(gId) == "number" and gId > 0) then activeSpecID = gId end
+            local gOk, gId = pcall(function()
+                local id = _G.GetSpecialization(false, nil, groupIndex)
+                if (not isSecretValue(id) and type(id) == "number" and id > 0) then return id end
+                return nil
+            end)
+            if (gOk and gId) then activeSpecID = gId end
         end
     end
     if (not isForever and (type(activeSpecID) ~= "number" or activeSpecID <= 0)
@@ -3436,7 +3448,7 @@ local function getModernSpecData(unit, groupIndex)
         -- throws, which is why the whole read-and-validate now runs protected.
         local iOk, iId = pcall(function()
             local id = C_SpecializationInfo.GetInspectSpecialization(unit)
-            if (type(id) == "number" and id > 0) then return id end
+            if (not isSecretValue(id) and type(id) == "number" and id > 0) then return id end
             return nil
         end)
         if (iOk and iId) then activeSpecID = iId end
@@ -3446,7 +3458,7 @@ local function getModernSpecData(unit, groupIndex)
             and C_SpecializationInfo.GetInspectSpecialization) then
         local iOk, iId = pcall(function()
             local id = C_SpecializationInfo.GetInspectSpecialization(unit)
-            if (type(id) == "number" and id > 0) then return id end
+            if (not isSecretValue(id) and type(id) == "number" and id > 0) then return id end
             return nil
         end)
         if (iOk and iId) then activeSpecID = iId end
@@ -3465,7 +3477,7 @@ local function getModernSpecData(unit, groupIndex)
     local classID
     if (type(activeSpecID) == "number" and activeSpecID > 0 and C_SpecializationInfo.GetClassIDFromSpecID) then
         local ok, id = pcall(C_SpecializationInfo.GetClassIDFromSpecID, activeSpecID)
-        if (ok) then classID = id end
+        if (ok and not isSecretValue(id) and type(id) == "number") then classID = id end
     end
     if (isForever and not classID and type(_G.UnitClass) == "function") then
         -- UnitClass is SecretWhenUnitIdentityRestricted: on a restricted unit the
@@ -4102,7 +4114,8 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
     if (not (isRetail or isForever)) then
         return nil
     end
-    if (not specIndex) then
+    if (not specIndex or isSecretValue(specIndex) or isSecretValue(groupIndex)
+            or (target ~= nil and isSecretValue(target))) then
         return nil
     end
     groupIndex = groupIndex or 1
@@ -4131,6 +4144,9 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
     end
 
     local icon = queryTalentIcon(specIndex, groupIndex, isInspect, target)
+    if (isSecretValue(icon)) then
+        icon = nil
+    end
 
     -- The fallback below is ONLY valid for the local player.
     --
@@ -4148,8 +4164,15 @@ function lib:GetModernSpecializationIcon(specIndex, groupIndex, isInspect, targe
     -- wrong.
     if (icon == nil and not isInspect
             and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) then
-        local ok, _, _, _, specIcon = pcall(C_SpecializationInfo.GetSpecializationInfo, specIndex)
-        if (ok and (type(specIcon) == "number" or type(specIcon) == "string") and specIcon ~= 0) then
+        local ok, _, _, _, specIcon = pcall(function()
+            local a, b, c, d = C_SpecializationInfo.GetSpecializationInfo(specIndex)
+            if (isSecretValue(d)) then return nil, nil, nil, nil end
+            if ((type(d) == "number" or type(d) == "string") and d ~= 0) then
+                return a, b, c, d
+            end
+            return nil, nil, nil, nil
+        end)
+        if (ok and specIcon ~= nil and not isSecretValue(specIcon)) then
             icon = specIcon
         end
     end
@@ -4295,7 +4318,7 @@ local function inventoryItemLink(unit, slot)
     local api = _G.GetInventoryItemLink
     if (type(api) ~= "function") then return nil end
     local ok, link = pcall(api, unit, slot)
-    if (ok and type(link) == "string") then
+    if (ok and type(link) == "string" and not isSecretValue(link)) then
         return link
     end
     return nil
@@ -4324,34 +4347,30 @@ local CACHE_FAILED_BACKOFF = 20
 -- lookup here, not the value.
 local CACHE_EVICT_AGE = 600
 
-local function cacheEntryCount()
-    local n = 0
-    for _ in pairs(lib.cache) do n = n + 1 end
-    return n
-end
-
 -- Evicts only entries that can no longer be in use: older than ten minutes,
 -- not resolvable to a live unit token, and with no retry in flight. Failed
 -- reads are reclaimable too, aged by their last attempt -- otherwise records
 -- that never completed could not be deleted at all and the ceiling would stop
 -- holding as soon as enough of them accumulated. Soft ceiling: if every
 -- survivor is live or retrying, the cache stays above it rather than dropping
--- a player that is being looked at right now.
+-- a player that is being looked at right now. Single-pass over lib.cache.
 local function evictCacheEntries(currentGuid, now)
-    if (cacheEntryCount() <= CACHE_MAX_ENTRIES) then return end
-    local victims = {}
+    local count = 0
+    local victims
     for guid, entry in pairs(lib.cache) do
+        count = count + 1
         local retrying = (type(entry) == "table") and entry.incomplete and entry.retryPending
         if (not safeEquals(guid, currentGuid) and type(entry) == "table" and not retrying) then
             local stamp = entry.time or entry.lastAttempt
             if (stamp and (now - stamp) > CACHE_EVICT_AGE
                     and not lib:PlayerGUIDToUnitToken(guid)) then
+                victims = victims or {}
                 victims[#victims + 1] = { guid = guid, time = stamp }
             end
         end
     end
+    if (count <= CACHE_MAX_ENTRIES or not victims) then return end
     table.sort(victims, function(a, b) return a.time < b.time end)
-    local count = cacheEntryCount()
     for i = 1, #victims do
         if (count <= CACHE_MAX_ENTRIES) then break end
         lib.cache[victims[i].guid] = nil
@@ -4432,6 +4451,7 @@ local function cacheUnitData(unit, guid, isRetry)
     end
     if (not anyMissingEquipped) then
         data.items = staged
+        data._itemsRev = (data._itemsRev or 0) + 1
         data.time = now
         data.incomplete = nil
         data.retryCount = nil
@@ -4529,7 +4549,7 @@ local function cacheUnitData(unit, guid, isRetry)
     -- Achievements (WotLK / Retail)
     if (GetComparisonAchievementPoints) then
         local ok, pts = pcall(GetComparisonAchievementPoints)
-        if (ok and pts and pts > 0) then
+        if (ok and not isSecretValue(pts) and type(pts) == "number" and pts > 0) then
             data.achievements = pts
         end
     end
@@ -5086,6 +5106,30 @@ local function isRangeRejection(err)
     return (string.find(lower, "range", 1, true) ~= nil)
 end
 
+local REJECT_LEDGER_CAP = 512
+
+local function pruneRejectLedger(tbl, now, maxAge, isTimeTable)
+    if (not tbl) then return end
+    local count = 0
+    for _ in pairs(tbl) do count = count + 1 end
+    if (count < REJECT_LEDGER_CAP) then return end
+    for k, v in pairs(tbl) do
+        local ts = isTimeTable and (type(v) == "table" and v.time or tonumber(v)) or tonumber(v)
+        if (not ts or (now > 0 and (now - ts) >= maxAge)) then
+            tbl[k] = nil
+            count = count - 1
+        end
+    end
+    if (count >= REJECT_LEDGER_CAP) then
+        local targetCount = math.floor(REJECT_LEDGER_CAP / 2)
+        for k in pairs(tbl) do
+            tbl[k] = nil
+            count = count - 1
+            if (count <= targetCount) then break end
+        end
+    end
+end
+
 local function noteInspectRejectedImpl(unit, yards, err)
     if (lib.inspectStats) then
         lib.inspectStats.rejected = (lib.inspectStats.rejected or 0) + 1
@@ -5095,9 +5139,13 @@ local function noteInspectRejectedImpl(unit, yards, err)
         lib.inspectStats.lastRejectedTime = (type(GetTime) == "function") and GetTime() or 0
     end
     local guid = safeUnitGUID(unit)
+    local now = (type(GetTime) == "function") and GetTime() or 0
     if (guid and not isSecretValue(guid)) then
         lib.inspectRejected = lib.inspectRejected or {}
-        lib.inspectRejected[guid] = (type(GetTime) == "function") and GetTime() or 0
+        if (not lib.inspectRejected[guid]) then
+            pruneRejectLedger(lib.inspectRejected, now, INSPECT_REJECT_COOLDOWN, false)
+        end
+        lib.inspectRejected[guid] = now
     end
     if (yards and lib.family) then
         lib.inspectRangeLimit = lib.inspectRangeLimit or {}
@@ -5119,8 +5167,11 @@ local function noteInspectRejectedImpl(unit, yards, err)
         -- The previous code lifted as soon as dist <= 20yd, which for a refused
         -- unit sitting at 15yd lifted immediately and re-triggered NotifyInspect
         -- every cooldown -- the spam the user reported on Classic Era.
+        if (not lib.inspectOutOfRange[guid]) then
+            pruneRejectLedger(lib.inspectOutOfRange, now, 120, true)
+        end
         lib.inspectOutOfRange[guid] = {
-            time = (type(GetTime) == "function") and GetTime() or 0,
+            time = now,
             dist = inspectDistance(unit),
         }
     end
@@ -5220,10 +5271,12 @@ noteInspectRejected = noteInspectRejectedImpl
 isInspectCoolingDown = isInspectCoolingDownImpl
 exceedsLearnedRange = exceedsLearnedRangeImpl
 
-local function requestInspectImpl(unit)
+local function requestInspectImpl(unit, gateAlreadyChecked)
     if (type(_G.NotifyInspect) ~= "function") then return false end
     if (not safeUnitGUID(unit)) then return false end
-    if (isInspectCoolingDown(unit) or exceedsLearnedRange(unit)) then return false end
+    if (not gateAlreadyChecked) then
+        if (isInspectCoolingDown(unit) or exceedsLearnedRange(unit)) then return false end
+    end
     -- Measure before the request: afterwards the unit may be gone.
     local yards = inspectDistance(unit)
     -- ONE ARGUMENT, ALWAYS, and the call goes through the probe guard.
@@ -5251,44 +5304,48 @@ local function requestInspectImpl(unit)
     -- `CanInspect` is the call that displays the message is not shown by the
     -- mirror either way, so it must not be asked about a unit a cheaper check has
     -- already rejected. The other four clients keep the order they shipped with.
-    ---@type boolean|nil
-    local canOk = true
-    ---@type boolean|nil
-    local canAllowed = nil
-    if (isClassic or isTBC) then
-        if (type(_G.CheckInteractDistance) == "function") then
-            if (not probeInteractDistance(unit)) then
-                noteInspectRejected(unit, nil)
-                return false
+    -- When the caller just passed lib:CanInspect(unit) on the same call stack
+    -- (gateAlreadyChecked == true), avoid running the same probe pair a second time.
+    if (not gateAlreadyChecked) then
+        ---@type boolean|nil
+        local canOk = true
+        ---@type boolean|nil
+        local canAllowed = nil
+        if (isClassic or isTBC) then
+            if (type(_G.CheckInteractDistance) == "function") then
+                if (not probeInteractDistance(unit)) then
+                    noteInspectRejected(unit, nil)
+                    return false
+                end
+            end
+            if (type(_G.CanInspect) == "function") then
+                canOk, canAllowed = probeCanInspect(unit)
+            end
+        else
+            if (type(_G.CanInspect) == "function") then
+                canOk, canAllowed = probeCanInspect(unit)
+            end
+            -- Classic-family distance signal, re-checked at the single point
+            -- NotifyInspect is actually called, so a caller that arrives through the
+            -- queue cannot slip a unit past it. Mainline clients keep Blizzard's
+            -- either-signal policy untouched.
+            if (not (isRetail or isForever) and type(_G.CheckInteractDistance) == "function") then
+                if (not probeInteractDistance(unit)) then
+                    noteInspectRejected(unit, nil)
+                    return false
+                end
             end
         end
-        if (type(_G.CanInspect) == "function") then
-            canOk, canAllowed = probeCanInspect(unit)
+        if (canOk and canAllowed == false) then
+            -- Refused for a reason we did not ask for. Count it and apply the per-guid
+            -- cooldown so the caller's telemetry stays comparable, but learn NOTHING:
+            -- this gate refusing says nothing about distance, and passing `yards` here
+            -- would tighten the learned range limit to wherever the unit happened to be
+            -- -- which then blocked that same unit from being inspected when it was
+            -- plainly close. err is omitted, so no out-of-range mark is set either.
+            noteInspectRejected(unit, nil)
+            return false
         end
-    else
-        if (type(_G.CanInspect) == "function") then
-            canOk, canAllowed = probeCanInspect(unit)
-        end
-        -- Classic-family distance signal, re-checked at the single point
-        -- NotifyInspect is actually called, so a caller that arrives through the
-        -- queue cannot slip a unit past it. Mainline clients keep Blizzard's
-        -- either-signal policy untouched.
-        if (not (isRetail or isForever) and type(_G.CheckInteractDistance) == "function") then
-            if (not probeInteractDistance(unit)) then
-                noteInspectRejected(unit, nil)
-                return false
-            end
-        end
-    end
-    if (canOk and canAllowed == false) then
-        -- Refused for a reason we did not ask for. Count it and apply the per-guid
-        -- cooldown so the caller's telemetry stays comparable, but learn NOTHING:
-        -- this gate refusing says nothing about distance, and passing `yards` here
-        -- would tighten the learned range limit to wherever the unit happened to be
-        -- -- which then blocked that same unit from being inspected when it was
-        -- plainly close. err is omitted, so no out-of-range mark is set either.
-        noteInspectRejected(unit, nil)
-        return false
     end
     -- Send it, through the guard. The request is attributed to this unit
     -- (pendingRefusal), so a refusal arriving asynchronously -- a server answer
@@ -5823,7 +5880,7 @@ function lib:DoInspect(unitorguid)
             pendingRefusal = nil
         end
         if (not inspectPendingUnit) then
-            return requestInspect(unit)
+            return requestInspect(unit, true)
         end
     else
         for i = 1, #queue do
@@ -5909,15 +5966,15 @@ inspectQueueTick = function()
         local guid = safeUnitGUID("target")
         if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                 and isCloseEnoughToAsk("target") and lib:CanInspect("target")) then
-            if (requestInspect("target")) then
+            if (requestInspect("target", true)) then
                 return
             end
         end
     end
 
     -- Priority 2: In-group members (party/raid) prioritized by role: Tank > Healer > DPS.
-    -- In dungeons and raids this takes precedence over ambient open-world queued inspects,
-    -- so group GearScore and specialization data are populated immediately upon grouping.
+    -- Collect cheap candidates into 4 role buckets without probing CanInspect on all 40
+    -- members every tick, then validate CanInspect + requestInspect lazily in priority order.
     local function getGroupUnitRolePriority(unit)
         if (type(UnitGroupRolesAssigned) == "function") then
             local ok, role = pcall(UnitGroupRolesAssigned, unit)
@@ -5932,52 +5989,32 @@ inspectQueueTick = function()
     end
 
     if (type(IsInGroup) == "function" and IsInGroup()) then
-        local groupCandidates = {}
-        if (type(IsInRaid) == "function" and IsInRaid()) then
-            for i = 1, 40 do
-                local u = "raid" .. i
-                local okExists, exists = pcall(UnitExists, u)
-                if (okExists and not isSecretValue(exists) and exists == true) then
-                    local guid = safeUnitGUID(u)
-                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
-                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
-                        groupCandidates[#groupCandidates + 1] = {
-                            unit = u,
-                            guid = guid,
-                            roleRank = getGroupUnitRolePriority(u),
-                            index = i,
-                        }
-                    end
-                end
-            end
-        else
-            for i = 1, 4 do
-                local u = "party" .. i
-                local okExists, exists = pcall(UnitExists, u)
-                if (okExists and not isSecretValue(exists) and exists == true) then
-                    local guid = safeUnitGUID(u)
-                    if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
-                            and isCloseEnoughToAsk(u) and lib:CanInspect(u)) then
-                        groupCandidates[#groupCandidates + 1] = {
-                            unit = u,
-                            guid = guid,
-                            roleRank = getGroupUnitRolePriority(u),
-                            index = i,
-                        }
-                    end
+        local selfGUID = safeUnitGUID("player")
+        local buckets = { {}, {}, {}, {} }
+        local isRaid = (type(IsInRaid) == "function" and IsInRaid())
+        local prefix = isRaid and "raid" or "party"
+        local count = isRaid and 40 or 4
+        for i = 1, count do
+            local u = prefix .. i
+            if (safeUnitExists(u)) then
+                local guid = safeUnitGUID(u)
+                if (guid and not isSecretValue(guid) and not safeEquals(guid, selfGUID)
+                        and not isCacheFresh(lib.cache[guid])
+                        and not isInspectCoolingDown(u)
+                        and not exceedsLearnedRange(u)
+                        and isCloseEnoughToAsk(u)) then
+                    local rank = getGroupUnitRolePriority(u)
+                    local bucket = buckets[rank]
+                    bucket[#bucket + 1] = u
                 end
             end
         end
 
-        if (#groupCandidates > 0) then
-            table.sort(groupCandidates, function(a, b)
-                if (a.roleRank ~= b.roleRank) then
-                    return a.roleRank < b.roleRank
-                end
-                return a.index < b.index
-            end)
-            for _, candidate in ipairs(groupCandidates) do
-                if (requestInspect(candidate.unit)) then
+        for rank = 1, 4 do
+            local bucket = buckets[rank]
+            for j = 1, #bucket do
+                local u = bucket[j]
+                if (lib:CanInspect(u) and requestInspect(u, true)) then
                     return
                 end
             end
@@ -6005,7 +6042,7 @@ inspectQueueTick = function()
             end
             if (unit and guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
                     and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
-                if (requestInspect(unit)) then
+                if (requestInspect(unit, true)) then
                     return
                 end
             end
@@ -6514,7 +6551,11 @@ end
 function lib:GetTotalAchievementPoints(unitorguid)
     local guid = getPlayerGUID(unitorguid)
     if (guid and safeEquals(guid, safeUnitGUID("player")) and GetTotalAchievementPoints) then
-        return GetTotalAchievementPoints()
+        local okSelf, ptsSelf = pcall(GetTotalAchievementPoints)
+        if (okSelf and not isSecretValue(ptsSelf) and type(ptsSelf) == "number") then
+            return ptsSelf
+        end
+        return nil
     end
     local cached = guid and lib.cache[guid]
     if (cached and cached.achievements) then
@@ -6522,7 +6563,9 @@ function lib:GetTotalAchievementPoints(unitorguid)
     end
     if (GetComparisonAchievementPoints) then
         local ok, pts = pcall(GetComparisonAchievementPoints)
-        if (ok and pts and pts > 0) then return pts end
+        if (ok and not isSecretValue(pts) and type(pts) == "number" and pts > 0) then
+            return pts
+        end
     end
     return nil
 end

@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.1"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.2"
 
 
 
@@ -167,30 +167,33 @@ local function applyTooltipMaxWidth(tooltip)
         return
     end
 
-    local leftCap, rightCap = 0, 0
-    if (maxWidth > 0) then
-        leftCap = maxWidth
-        rightCap = math.floor(maxWidth * 0.5)
-    end
+    local leftCap = (type(maxWidth) == "number" and maxWidth > 0) and maxWidth or nil
 
     -- Walk a little past the current line count: the pooled lines are reused
     -- across hovers, so a line left over from a longer previous tooltip still
     -- carries the old cap and would keep the tooltip wide.
+    --
+    -- Never call SetWidth(0) on an untouched line when maxWidth == 0, and
+    -- never mutate rightLine: on Forever/Retail 12.x C++, TextRight strings are
+    -- right-justified single-anchor columns inside AddDoubleLine and SetWidth(0)
+    -- collapses their intrinsic width to 0 (rendering "...").
     local scan = math.max(numLines + 4, 20)
     for i = 1, scan do
         local leftLine = getTooltipLeftLine(tooltip, i)
         if (leftLine and type(leftLine.SetWidth) == "function") then
-            if (leftLine._tacoTipMaxWidth ~= leftCap) then
-                pcall(leftLine.SetWidth, leftLine, leftCap)
-                leftLine._tacoTipMaxWidth = leftCap
+            if (leftCap) then
+                if (leftLine._tacoTipMaxWidth ~= leftCap) then
+                    pcall(leftLine.SetWidth, leftLine, leftCap)
+                    leftLine._tacoTipMaxWidth = leftCap
+                end
+            elseif (leftLine._tacoTipMaxWidth and leftLine._tacoTipMaxWidth > 0) then
+                pcall(leftLine.SetWidth, leftLine, 0)
+                leftLine._tacoTipMaxWidth = nil
             end
         end
         local rightLine = getTooltipRightLine(tooltip, i)
-        if (rightLine and type(rightLine.SetWidth) == "function") then
-            if (rightLine._tacoTipMaxWidth ~= rightCap) then
-                pcall(rightLine.SetWidth, rightLine, rightCap)
-                rightLine._tacoTipMaxWidth = rightCap
-            end
+        if (rightLine and rightLine._tacoTipMaxWidth ~= nil) then
+            rightLine._tacoTipMaxWidth = nil
         end
     end
 end
@@ -434,7 +437,7 @@ local nilTooltipState = { generation = 0 }
 ---@return tacoTipTooltipState
 local function getTooltipState(tooltip)
     if (not tooltip) then
-        return nilTooltipState
+        return nilTooltipState --[[@as tacoTipTooltipState]]
     end
     if (not tooltip._tacoTipState) then
         tooltip._tacoTipState = { generation = 0 }
@@ -687,9 +690,95 @@ function TT:RestrictionSnapshot()
     return table.concat(parts, ", ")
 end
 
+local PORTRAIT_TRACE_MAX = 32
+TT.portraitTrace = TT.portraitTrace or {}
+
+local function safeDiagValue(val)
+    if (type(val) == "nil") then
+        return "nil"
+    end
+    if (isSecretValue(val)) then
+        return "<secret>"
+    end
+    return tostring(val)
+end
+
+local function recordPortraitTrace(op, reason, tooltip, portrait, extra)
+    if (not tooltip or (tooltip ~= GameTooltip and not tooltip.TacoTipPortrait3D and not tooltip.TacoTipPortrait)) then
+        return
+    end
+    local ring = TT.portraitTrace
+    if (type(ring) ~= "table") then
+        ring = {}
+        TT.portraitTrace = ring
+    end
+    local head = (ring._head or 0) % PORTRAIT_TRACE_MAX + 1
+    ring._head = head
+    ring._count = math.min(PORTRAIT_TRACE_MAX, (ring._count or 0) + 1)
+    ring._seq = (ring._seq or 0) + 1
+
+    local entry = ring[head]
+    if (type(entry) ~= "table") then
+        entry = {}
+        ring[head] = entry
+    end
+    local ttShown = (tooltip.IsShown and pcall(tooltip.IsShown, tooltip)) and (tooltip:IsShown() == true) or false
+    local p3 = rawget(tooltip, "TacoTipPortrait3D")
+    if (type(p3) ~= "table") then p3 = nil end
+    local p2 = rawget(tooltip, "TacoTipPortrait")
+    if (type(p2) ~= "table") then p2 = nil end
+    local p3Shown = (p3 and p3.IsShown and p3:IsShown() == true) or false
+    local p2Shown = (p2 and p2.IsShown and p2:IsShown() == true) or false
+    local state = rawget(tooltip, "_tacoTipState")
+
+    entry.seq = ring._seq
+    entry.time = (type(GetTime) == "function") and GetTime() or 0
+    entry.op = tostring(op or "?")
+    entry.reason = reason and tostring(reason) or nil
+    entry.tooltip = (tooltip.GetName and tooltip:GetName()) or "tooltip"
+    entry.ttShown = ttShown
+    entry.p3Shown = p3Shown
+    entry.p2Shown = p2Shown
+    entry.curGUID = safeDiagValue(state and state.currentUnitGUID)
+    entry.prevKey = safeDiagValue(extra and extra.prevKey or (portrait and portrait.tacoTipModelKey))
+    entry.newKey = safeDiagValue(extra and extra.newKey)
+    entry.unit = safeDiagValue(extra and extra.unit)
+    entry.keepModel = extra and extra.keepModel and true or false
+    entry.retainModel = extra and extra.retainModel and true or false
+    entry.outcome = extra and extra.outcome and tostring(extra.outcome) or nil
+end
+
+local function getPortraitTraceEntries()
+    local ring = TT.portraitTrace
+    local out = {}
+    if (type(ring) ~= "table") then
+        return out
+    end
+    local count = ring._count or 0
+    local head = ring._head or 0
+    if (count > 0 and head > 0) then
+        local startOffset = count - 1
+        for offset = startOffset, 0, -1 do
+            local idx = ((head - 1 - offset) % PORTRAIT_TRACE_MAX) + 1
+            local e = ring[idx]
+            if (type(e) == "table") then
+                out[#out + 1] = e
+            end
+        end
+    else
+        for i = 1, #ring do
+            if (type(ring[i]) == "table") then
+                out[#out + 1] = ring[i]
+            end
+        end
+    end
+    return out
+end
+
 function TT:ClearDiagnosticLogs()
     TT.errorLog = {}
     TT.warningLog = {}
+    TT.portraitTrace = {}
     TT.totalWarnings = 0
     TT.totalErrorsCaught = 0
     TT.lastTooltipError = nil
@@ -698,6 +787,16 @@ function TT:ClearDiagnosticLogs()
         TT.ev.pipelineErrorsSuppressed = 0
         TT.ev.resolveTooltipUnitFailed = 0
         TT.ev.portraitSetFailed = 0
+        TT.ev.portraitSetAttempts = 0
+        TT.ev.portraitSetSucceeded = 0
+        TT.ev.portraitCanSetFalse = 0
+        TT.ev.portraitKeyHits = 0
+        TT.ev.portrait2DSets = 0
+        TT.ev.portraitClearModelCalls = 0
+        TT.ev.portraitOnHideRan = 0
+        TT.ev.portraitOnHideSkipped = 0
+        TT.ev.portraitOnClearSkipped = 0
+        TT.ev.portraitStateMismatch = 0
     end
 end
 
@@ -1955,10 +2054,12 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- character, and a token-keyed cache would reload a model that is
             -- already showing the right person. UnitGUID is the identity that
             -- actually decides which mesh is correct.
+            local hidePortrait = false
             if (is3D and portrait.SetUnit) then
                 local uGuid = (unit and safeUnitGUID(unit)) or nil
                 local modelKey = (uGuid and not isSecretValue(uGuid)) and uGuid or unit
                 if (portrait.tacoTipModelKey ~= modelKey) then
+                    local prevKey = portrait.tacoTipModelKey
                     local canSet = true
                     if (type(portrait.CanSetUnit) == "function") then
                         local okCan, allowed = pcall(portrait.CanSetUnit, portrait, unit)
@@ -1967,14 +2068,30 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                         end
                     end
                     if (not canSet) then
-                        portrait.tacoTipModelKey = modelKey
+                        -- CanSetUnit returned false (unit not stream-ready/valid):
+                        -- clear any previous character mesh instead of caching the
+                        -- incoming modelKey over an unrelated or empty model.
+                        if (type(portrait.ClearModel) == "function") then
+                            pcall(portrait.ClearModel, portrait)
+                            TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
+                        end
+                        portrait.tacoTipModelKey = nil
                         portrait.tacoTipSetRetries = nil
+                        portrait._tacoTipZoom = nil
+                        TT.ev.portraitCanSetFalse = (TT.ev.portraitCanSetFalse or 0) + 1
+                        hidePortrait = true
+                        recordPortraitTrace("canset-false", "appearance", tooltip, portrait, {
+                            unit = unit, prevKey = prevKey, newKey = modelKey, outcome = "hidden",
+                        })
                     else
                         -- Clear first so the previous character's mesh cannot persist
                         -- while the new one streams in (pcall: ClearModel may be absent
                         -- on some clients).
+                        TT.ev.portraitSetAttempts = (TT.ev.portraitSetAttempts or 0) + 1
                         local okClear, errClear = pcall(portrait.ClearModel, portrait)
-                        if (not okClear and errClear) then
+                        if (okClear) then
+                            TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
+                        elseif (errClear) then
                             TT:RecordError("Portrait", errClear, "ClearModel")
                         end
                         local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
@@ -1983,11 +2100,15 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                         -- would leave the previous character's mesh under the new
                         -- tooltip and make the retry counter unreachable.
                         if (okCall and setResult ~= false) then
+                            TT.ev.portraitSetSucceeded = (TT.ev.portraitSetSucceeded or 0) + 1
                             portrait.tacoTipModelKey = modelKey
                             portrait.tacoTipSetRetries = nil
                             -- SetUnit loads a fresh mesh and the camera returns to
                             -- its default; re-apply the configured zoom after it.
                             portrait._tacoTipZoom = nil
+                            recordPortraitTrace("setunit-ok", "appearance", tooltip, portrait, {
+                                unit = unit, prevKey = prevKey, newKey = modelKey, outcome = "ok",
+                            })
                         else
                             local retries = (portrait.tacoTipSetRetries or 0) + 1
                             portrait.tacoTipSetRetries = retries
@@ -2002,13 +2123,23 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                             else
                                 portrait.tacoTipModelKey = nil
                             end
+                            recordPortraitTrace("setunit-fail", "appearance", tooltip, portrait, {
+                                unit = unit,
+                                prevKey = prevKey,
+                                newKey = portrait.tacoTipModelKey,
+                                outcome = "retry-" .. tostring(retries),
+                            })
                         end
                     end
+                else
+                    TT.ev.portraitKeyHits = (TT.ev.portraitKeyHits or 0) + 1
                 end
-                local zoom = TacoTipConfig.tooltip_portrait_zoom or 0.7
-                if (portrait._tacoTipZoom ~= zoom) then
-                    pcall(portrait.SetPortraitZoom, portrait, zoom)
-                    portrait._tacoTipZoom = zoom
+                if (not hidePortrait) then
+                    local zoom = TacoTipConfig.tooltip_portrait_zoom or 0.7
+                    if (portrait._tacoTipZoom ~= zoom) then
+                        pcall(portrait.SetPortraitZoom, portrait, zoom)
+                        portrait._tacoTipZoom = zoom
+                    end
                 end
             else
                 -- 2D fallback only when 3D model creation failed (portrait is a Texture).
@@ -2018,6 +2149,10 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
                 -- at the call as well.
                 if (type(unit) ~= "nil" and not isSecretValue(unit)) then
                     pcall(_G.SetPortraitTexture, portrait, unit)
+                    TT.ev.portrait2DSets = (TT.ev.portrait2DSets or 0) + 1
+                    recordPortraitTrace("set-2d", "appearance", tooltip, portrait, {
+                        unit = unit, outcome = "2d",
+                    })
                 end
             end
             -- The portrait keeps its own alpha. It used to be slaved to
@@ -2028,13 +2163,24 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- unusable value and then walked back up by the poll, which is what
             -- read as the portrait dropping into frame. A frame that is not
             -- shown has no meaningful alpha to copy, so it is not copied.
-            if (portrait.SetAlpha and (not portrait.GetAlpha or portrait:GetAlpha() ~= 1)) then
-                portrait:SetAlpha(1)
-            end
-            if (not portrait.IsShown or not portrait:IsShown()) then
-                portrait:Show()
+            if (hidePortrait) then
+                if (portrait.Hide) then
+                    portrait:Hide()
+                end
+            else
+                if (portrait.SetAlpha and (not portrait.GetAlpha or portrait:GetAlpha() ~= 1)) then
+                    portrait:SetAlpha(1)
+                end
+                if (not portrait.IsShown or not portrait:IsShown()) then
+                    portrait:Show()
+                end
             end
         else
+            if (portrait.IsShown and portrait:IsShown()) then
+                recordPortraitTrace("hide-disabled", "appearance", tooltip, portrait, {
+                    unit = unit, outcome = "hidden",
+                })
+            end
             portrait:Hide()
         end
     end
@@ -2095,51 +2241,97 @@ end
 --
 -- It is a timestamp, not a state machine: no timer is scheduled and no work is
 -- done between attempts. The next due time is checked on the next render.
-local GS_RETRY_FIRST = 0.5
-local GS_RETRY_MAX = 8
-local GS_RETRY_CAP = 512
+do
+    local GS_RETRY_FIRST = 0.5
+    local GS_RETRY_MAX = 8
+    local GS_RETRY_CAP = 512
 
-function TT.clearGearScoreRetry(guid)
-    if (not guid or TT.isSecretValue(guid)) then return end
-    local retries = TT._gsRetry
-    if (retries and retries[guid]) then
-        retries[guid] = nil
-        TT._gsRetryCount = math.max((TT._gsRetryCount or 0) - 1, 0)
-    end
-end
-
-function TT.gearScoreRetryDue(guid, now)
-    if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
-        return true
-    end
-    local retries = TT._gsRetry
-    local entry = retries and retries[guid]
-    return (not entry) or now >= entry.at
-end
-
-function TT.noteGearScoreRetry(guid, now)
-    if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
-        return
-    end
-    local retries = TT._gsRetry
-    if (not retries) then
-        retries = {}
-        TT._gsRetry = retries
-        TT._gsRetryCount = 0
-    end
-    local entry = retries[guid]
-    if (not entry) then
-        if ((TT._gsRetryCount or 0) >= GS_RETRY_CAP) then
-            retries = {}
-            TT._gsRetry = retries
-            TT._gsRetryCount = 0
+    local function pruneRetryLedger(retries, count, now)
+        local remaining = count or 0
+        if (remaining < GS_RETRY_CAP) then
+            return remaining
         end
-        entry = { delay = GS_RETRY_FIRST }
-        retries[guid] = entry
-        TT._gsRetryCount = (TT._gsRetryCount or 0) + 1
+        for k, v in pairs(retries) do
+            if (type(v) ~= "table" or (now > 0 and (v.at or 0) <= now)) then
+                retries[k] = nil
+                remaining = math.max(remaining - 1, 0)
+            end
+        end
+        if (remaining >= GS_RETRY_CAP) then
+            local targetCount = math.floor(GS_RETRY_CAP / 2)
+            for k in pairs(retries) do
+                retries[k] = nil
+                remaining = math.max(remaining - 1, 0)
+                if (remaining <= targetCount) then break end
+            end
+        end
+        return remaining
     end
-    entry.at = now + entry.delay
-    entry.delay = math.min(entry.delay * 2, GS_RETRY_MAX)
+
+    local function clearRetryLedger(tableKey, countKey, guid)
+        if (not guid or TT.isSecretValue(guid)) then return end
+        local retries = TT[tableKey]
+        if (retries and retries[guid]) then
+            retries[guid] = nil
+            TT[countKey] = math.max((TT[countKey] or 0) - 1, 0)
+        end
+    end
+
+    local function retryLedgerDue(tableKey, guid, now)
+        if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
+            return true
+        end
+        local retries = TT[tableKey]
+        local entry = retries and retries[guid]
+        return (not entry) or now >= entry.at
+    end
+
+    local function noteRetryLedger(tableKey, countKey, guid, now)
+        if (not guid or TT.isSecretValue(guid) or type(now) ~= "number" or now <= 0) then
+            return
+        end
+        local retries = TT[tableKey]
+        if (not retries) then
+            retries = {}
+            TT[tableKey] = retries
+            TT[countKey] = 0
+        end
+        local entry = retries[guid]
+        if (not entry) then
+            if ((TT[countKey] or 0) >= GS_RETRY_CAP) then
+                TT[countKey] = pruneRetryLedger(retries, TT[countKey] or 0, now)
+            end
+            entry = { delay = GS_RETRY_FIRST }
+            retries[guid] = entry
+            TT[countKey] = (TT[countKey] or 0) + 1
+        end
+        entry.at = now + entry.delay
+        entry.delay = math.min(entry.delay * 2, GS_RETRY_MAX)
+    end
+
+    function TT.clearGearScoreRetry(guid)
+        clearRetryLedger("_gsRetry", "_gsRetryCount", guid)
+    end
+
+    function TT.gearScoreRetryDue(guid, now)
+        return retryLedgerDue("_gsRetry", guid, now)
+    end
+
+    function TT.noteGearScoreRetry(guid, now)
+        noteRetryLedger("_gsRetry", "_gsRetryCount", guid, now)
+    end
+
+    function TT.clearPawnRetry(guid)
+        clearRetryLedger("_pawnRetry", "_pawnRetryCount", guid)
+    end
+
+    function TT.pawnRetryDue(guid, now)
+        return retryLedgerDue("_pawnRetry", guid, now)
+    end
+
+    function TT.notePawnRetry(guid, now)
+        noteRetryLedger("_pawnRetry", "_pawnRetryCount", guid, now)
+    end
 end
 
 -- Positive-score memo. Once every equipped item's data is cached, GetScore is a
@@ -2165,7 +2357,9 @@ function TT.getGearScoreMemo(guid, items)
 end
 
 function TT.setGearScoreMemo(guid, items, score, ilvl)
-    if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number" or score <= 0) then
+    if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number"
+            or TT.isSecretValue(score) or score <= 0
+            or (ilvl ~= nil and TT.isSecretValue(ilvl))) then
         return
     end
     local memo = TT._gsMemo
@@ -2175,9 +2369,14 @@ function TT.setGearScoreMemo(guid, items, score, ilvl)
         TT._gsMemoCount = 0
     end
     if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
-        memo = {}
-        TT._gsMemo = memo
-        TT._gsMemoCount = 0
+        local target = math.floor(GS_SCORE_MEMO_CAP / 2)
+        local remaining = TT._gsMemoCount or 0
+        for k in pairs(memo) do
+            memo[k] = nil
+            remaining = math.max(remaining - 1, 0)
+            if (remaining <= target) then break end
+        end
+        TT._gsMemoCount = remaining
     end
     local entry = memo[guid]
     if (not entry) then
@@ -2232,9 +2431,12 @@ function TT.getPawnScoreMemo(guid, items, activeGroup)
 end
 
 function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number" or pawnScore < 0) then
+    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number"
+            or TT.isSecretValue(pawnScore) or pawnScore < 0) then
         return
     end
+    if (TT.isSecretValue(specName)) then specName = nil end
+    if (TT.isSecretValue(specColor)) then specColor = nil end
     activeGroup = activeGroup or 1
     if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
         TT._selfPawnMemo = TT._selfPawnMemo or {}
@@ -2260,9 +2462,14 @@ function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, spec
         TT._gsMemoCount = 0
     end
     if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
-        memo = {}
-        TT._gsMemo = memo
-        TT._gsMemoCount = 0
+        local target = math.floor(GS_SCORE_MEMO_CAP / 2)
+        local remaining = TT._gsMemoCount or 0
+        for k in pairs(memo) do
+            memo[k] = nil
+            remaining = math.max(remaining - 1, 0)
+            if (remaining <= target) then break end
+        end
+        TT._gsMemoCount = remaining
     end
     local entry = memo[guid]
     if (not entry) then
@@ -2341,6 +2548,7 @@ function TacoTip_GSCallback(guid)
     -- The data this ladder was waiting for has arrived (or the client has just
     -- finished with it); the next render starts from a clean attempt.
     TT.clearGearScoreRetry(guid)
+    TT.clearPawnRetry(guid)
     TT.clearGearScoreMemo(guid)
     if (gsCallbackActive) then
         gsCallbackPending = guid
@@ -2473,6 +2681,7 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     -- Forever: the item post-call marks the tooltip as item content so OnShow
     -- knows not to read its tooltip info (see onTooltipShow). Every recycle
     -- clears it, so a unit, spell or map tooltip never inherits it.
+    ---@class tacoTipTooltipState.itemTooltip
     state.itemTooltip = nil
     if (not preservePendingItem) then
         state.generation = state.generation + 1
@@ -2512,6 +2721,17 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     if (not keepModel) then
         state.portraitSide = nil
         state.portraitAnchored = false
+        for i = 2, 20 do
+            local leftLine = getTooltipLeftLine(tooltip, i)
+            if (leftLine and leftLine._tacoTipWideAnchor) then
+                leftLine._tacoTipWideAnchor = nil
+                local prevLeft = getTooltipLeftLine(tooltip, i - 1)
+                if (leftLine.ClearAllPoints and leftLine.SetPoint and prevLeft) then
+                    leftLine:ClearAllPoints()
+                    leftLine:SetPoint("TOPLEFT", prevLeft, "BOTTOMLEFT", 0, -2)
+                end
+            end
+        end
         clearTooltipPlayerClassColor(tooltip)
         resetTooltipBorderToDefault(tooltip)
         if (tooltip.TacoTipPortrait) then
@@ -2568,58 +2788,40 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     -- So hide, destroy and drop the loaded-unit cache together, in one branch,
     -- and only when the model is genuinely being let go.
     if (tooltip.TacoTipPortrait3D) then
-        -- THREE separate decisions, previously collapsed into keepModel:
-        --   hide    -- must happen whenever the unit is not being re-rendered,
-        --              or a previous character's portrait bleeds onto an item or
-        --              spell tooltip;
-        --   destroy -- only when the character demonstrably changed;
-        --   anchor  -- must recompute whenever the tooltip may have moved,
-        --              which includes every clear and hide.
-        --
-        -- keepModel   = same character, re-rendered: do nothing at all.
-        -- retainModel = character unproven: hide and re-anchor, but keep the
-        --               loaded model so an unchanged character does not pay an
-        --               async reload (and a visible blank) for every render.
-        -- neither      = genuine teardown.
-        --
-        -- Passing keepModel=true for a retain case was a real bug: it also
-        -- suppressed state.portraitAnchored, freezing the portrait side, and
-        -- three Classic assertions caught it.
+        local portrait3D = tooltip.TacoTipPortrait3D
+        local prevKey = portrait3D.tacoTipModelKey
+        local wasShown = (portrait3D.IsShown and portrait3D:IsShown() == true) or false
         if (not keepModel) then
-            tooltip.TacoTipPortrait3D:Hide()
-            -- Hide() gets a counter of its own, here, on EVERY hide.
-            --
-            -- TT.ev.portraitHide sits inside the retainModel guard two lines
-            -- below, so it counts teardowns and cannot see this call at all --
-            -- and the two assertions named for the portrait blink read
-            -- portraitHide, so moving this Hide() out of its guard left the whole
-            -- suite green. A counter that cannot observe the call it is named
-            -- after is worse than none: it reads as evidence and is not.
+            portrait3D:Hide()
             TT.ev.portraitModelHidden = (TT.ev.portraitModelHidden or 0) + 1
             if (not retainModel) then
                 TT.ev.portraitHide = (TT.ev.portraitHide or 0) + 1
                 TT.ev.portraitDestroy = (TT.ev.portraitDestroy or 0) + 1
-                -- WHICH path let go of the model. portraitHide alone could not
-                -- distinguish them, and a wrong fix shipped on top of that: the
-                -- unresolved-unit path was patched and the blink stayed, because
-                -- a different call site was the one actually firing.
                 if (reason) then
                     TT.ev.teardownBy = TT.ev.teardownBy or {}
                     TT.ev.teardownBy[reason] = (TT.ev.teardownBy[reason] or 0) + 1
                 end
-                if (tooltip.TacoTipPortrait3D.ClearModel) then
-                    pcall(tooltip.TacoTipPortrait3D.ClearModel, tooltip.TacoTipPortrait3D)
+                if (portrait3D.ClearModel) then
+                    local okClr = pcall(portrait3D.ClearModel, portrait3D)
+                    if (okClr) then
+                        TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
+                    end
                 end
-                if (tooltip.TacoTipPortrait3D.SetAlpha) then
-                    tooltip.TacoTipPortrait3D:SetAlpha(1)
+                if (portrait3D.SetAlpha) then
+                    portrait3D:SetAlpha(1)
                 end
-                -- The loaded-unit cache MUST be dropped alongside the model.
-                -- ApplyTooltipAppearance only reloads when the cached key
-                -- differs from the incoming unit, so leaving it set here would
-                -- make the next unit tooltip -- very often the SAME character,
-                -- re-hovered after passing over something else -- skip the
-                -- reload and show a permanently blank portrait.
-                tooltip.TacoTipPortrait3D.tacoTipModelKey = nil
+                portrait3D.tacoTipModelKey = nil
+                portrait3D.tacoTipSetRetries = nil
+                portrait3D._tacoTipZoom = nil
+                if (wasShown or prevKey ~= nil) then
+                    recordPortraitTrace("clear-destroy", reason, tooltip, portrait3D, {
+                        prevKey = prevKey, keepModel = false, retainModel = false, outcome = "cleared",
+                    })
+                end
+            elseif (wasShown or prevKey ~= nil) then
+                recordPortraitTrace("clear-retain", reason, tooltip, portrait3D, {
+                    prevKey = prevKey, keepModel = false, retainModel = true, outcome = "hidden-retained",
+                })
             end
         end
     end
@@ -2701,10 +2903,27 @@ function TT:WarmGearItemData(guid)
     if (type(getItemInfo) ~= "function") then return false, 0 end
     local now = (type(GetTime) == "function") and GetTime() or 0
     local warmAt = TT._gearWarmAt
-    if (type(warmAt) ~= "table" or (TT._gearWarmCount or 0) > GEAR_WARM_ENTRY_CAP) then
+    if (type(warmAt) ~= "table") then
         warmAt = {}
         TT._gearWarmAt = warmAt
         TT._gearWarmCount = 0
+    elseif ((TT._gearWarmCount or 0) > GEAR_WARM_ENTRY_CAP) then
+        local remaining = TT._gearWarmCount or 0
+        for itemID, ts in pairs(warmAt) do
+            if (type(ts) ~= "number" or (now > 0 and (now - ts) >= GEAR_WARM_COOLDOWN)) then
+                warmAt[itemID] = nil
+                remaining = math.max(remaining - 1, 0)
+            end
+        end
+        if (remaining > GEAR_WARM_ENTRY_CAP) then
+            local targetCount = math.floor(GEAR_WARM_ENTRY_CAP / 2)
+            for itemID in pairs(warmAt) do
+                warmAt[itemID] = nil
+                remaining = math.max(remaining - 1, 0)
+                if (remaining <= targetCount) then break end
+            end
+        end
+        TT._gearWarmCount = remaining
     end
     local requested = 0
     for slot = 1, 18 do
@@ -3394,7 +3613,8 @@ local function onTooltipSetUnit(tooltip, data)
                             NORMAL_FONT_COLOR.g,
                             NORMAL_FONT_COLOR.b, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b)
                     else
-                        addLineSingle(string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName), 1, 1, 1)
+                        addLineSingle(string.format("%s: |cFFFFFFFF%s|r", L["Honor Rank"] or "Honor Rank", pvpName), 1, 1,
+                            1)
                     end
                 end
             end
@@ -3624,13 +3844,18 @@ local function onTooltipSetUnit(tooltip, data)
             local needGsScore = TacoTipConfig.show_gs_player and true or false
             local needPawnScore = (isPawnLoaded and TT_PAWN and TT_PAWN.GetScore and TacoTipConfig.show_pawn_player)
                 and true or false
-            local scoreData, items, scoreNow, retryDue
-            local retryNoted = false
+            local scoreData, items, scoreNow, retryDue, pawnDue
+            local warmedThisRender = false
             if ((needGsScore or needPawnScore) and guid) then
                 scoreData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
                 items = scoreData and scoreData.items or nil
                 scoreNow = (type(GetTime) == "function") and GetTime() or 0
-                retryDue = TT.gearScoreRetryDue(guid, scoreNow)
+                if (needGsScore) then
+                    retryDue = TT.gearScoreRetryDue(guid, scoreNow)
+                end
+                if (needPawnScore) then
+                    pawnDue = TT.pawnRetryDue(guid, scoreNow)
+                end
             end
             if (needGsScore) then
                 local gearscore, avg_ilvl = TT.getGearScoreMemo(guid, items)
@@ -3649,8 +3874,8 @@ local function onTooltipSetUnit(tooltip, data)
                             -- callback re-drive this render. The gate above keeps a
                             -- stationary hover from re-registering on every render.
                             TT.noteGearScoreRetry(guid, scoreNow)
-                            retryNoted = true
                             TT:WarmGearItemData(guid)
+                            warmedThisRender = true
                         end
                     end
                 end
@@ -3679,7 +3904,7 @@ local function onTooltipSetUnit(tooltip, data)
                 local pawnScore, specName, specColor = TT.getPawnScoreMemo(guid, items, activeGroup)
                 if (pawnScore == nil) then
                     pawnScore, specName, specColor = 0, nil, nil
-                    if (retryDue or isSelf) then
+                    if (pawnDue or isSelf) then
                         -- Pawn is an external addon. A throw here used to abort
                         -- the whole render before the write-back, taking the
                         -- already-queued GearScore/iLvl lines with it; isolate it.
@@ -3694,9 +3919,7 @@ local function onTooltipSetUnit(tooltip, data)
                             pReady = false
                         end
                         if (type(pawnScore) == "number" and pawnScore > 0) then
-                            if (not needGsScore) then
-                                TT.clearGearScoreRetry(guid)
-                            end
+                            TT.clearPawnRetry(guid)
                             TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
 
                             -- Dual-spec pre-calculation: if the character has a secondary spec group,
@@ -3716,13 +3939,14 @@ local function onTooltipSetUnit(tooltip, data)
                                 end
                             end
                         elseif (pReady == false) then
-                            if (not retryNoted) then
-                                TT.noteGearScoreRetry(guid, scoreNow)
+                            TT.notePawnRetry(guid, scoreNow)
+                            if (not warmedThisRender) then
                                 TT:WarmGearItemData(guid)
                             end
                         else
                             -- All items were cached locally, but Pawn produced 0 (e.g. no scale for class/spec).
                             -- Memoize 0 so we don't re-run the 18-slot check on every tooltip render tick!
+                            TT.clearPawnRetry(guid)
                             TT.setPawnScoreMemo(guid, items, activeGroup, 0, specName or "", specColor or "|cffffffff")
                         end
                     end
@@ -3844,7 +4068,10 @@ local function onTooltipSetUnit(tooltip, data)
             -- but a FontString is a Region and has neither on a real client, so
             -- that check would hold in the harness and do nothing in game.
             if (nextLeft._tacoTipWideAnchor ~= anchorLine) then
-                nextLeft:SetPoint("TOP", anchorLine, "BOTTOM", 0, -2)
+                if (nextLeft.ClearAllPoints) then
+                    nextLeft:ClearAllPoints()
+                end
+                nextLeft:SetPoint("TOPLEFT", anchorLine, "BOTTOMLEFT", 0, -2)
                 nextLeft._tacoTipWideAnchor = anchorLine
             end
         end
@@ -4622,6 +4849,9 @@ local function registerTooltipVisualClearing(tooltipFrame)
     if (tooltipFrame:HasScript("OnTooltipCleared")) then
         tooltipFrame:HookScript("OnTooltipCleared", function(tFrame)
             if (isUnitFramePeriodicUpdate(tFrame)) then
+                if (tFrame == GameTooltip) then
+                    TT.ev.portraitOnClearSkipped = (TT.ev.portraitOnClearSkipped or 0) + 1
+                end
                 return
             end
             cancelDelayedTooltip(tFrame)
@@ -4635,8 +4865,17 @@ local function registerTooltipVisualClearing(tooltipFrame)
     end
     if (tooltipFrame:HasScript("OnHide")) then
         tooltipFrame:HookScript("OnHide", function(tFrame)
-            if (isUnitFramePeriodicUpdate(tFrame)) then
+            -- Only suppress OnHide as a periodic unit-frame update race if the
+            -- tooltip is actually still shown (a stale FadeOut finishing after
+            -- a quick re-hover); a genuinely hidden tooltip must always reset.
+            if (tFrame.IsShown and tFrame:IsShown() and isUnitFramePeriodicUpdate(tFrame)) then
+                if (tFrame == GameTooltip) then
+                    TT.ev.portraitOnHideSkipped = (TT.ev.portraitOnHideSkipped or 0) + 1
+                end
                 return
+            end
+            if (tFrame == GameTooltip) then
+                TT.ev.portraitOnHideRan = (TT.ev.portraitOnHideRan or 0) + 1
             end
             cancelDelayedTooltip(tFrame)
             -- Same reasoning as OnTooltipCleared: a hide is not proof the
@@ -5122,7 +5361,7 @@ function TT:InitInspectFrame()
     InspectFrame:HookScript("OnHide", function()
         InspectGearScore:Hide()
         InspectAvgItemLvl:Hide()
-    return true
+        return true
     end)
 end
 
@@ -5458,9 +5697,41 @@ local function collectProblems()
 
     local portraitFailed = tonumber(TT.ev and TT.ev.portraitSetFailed) or 0
     if (portraitFailed > 0) then
+        local attempts = tonumber(TT.ev and TT.ev.portraitSetAttempts) or 0
+        if (attempts > 0) then
+            add("error", string.format(
+                "Portrait model failed to load %d time(s) out of %d attempt(s); the tooltip retries on the next render",
+                portraitFailed, attempts))
+        else
+            add("error", string.format(
+                "Portrait model failed to load %d time(s); the tooltip retries on the next render",
+                portraitFailed))
+        end
+    end
+    local canSetBlocked = tonumber(TT.ev and TT.ev.portraitCanSetFalse) or 0
+    if (canSetBlocked > 0) then
         add("warn", string.format(
-            "Portrait model failed to load %d time(s); the tooltip retries on the next render",
-            portraitFailed))
+            "Portrait CanSetUnit refused %d time(s) (old mesh cleared rather than retained)",
+            canSetBlocked))
+    end
+    if (type(GameTooltip) == "table") then
+        local okShow, ttShown = pcall(function() return GameTooltip.IsShown and GameTooltip:IsShown() == true end)
+        ttShown = okShow and ttShown or false
+        local p3 = rawget(GameTooltip, "TacoTipPortrait3D")
+        if (type(p3) ~= "table") then p3 = nil end
+        local p2 = rawget(GameTooltip, "TacoTipPortrait")
+        if (type(p2) ~= "table") then p2 = nil end
+        local p3Shown = (p3 and p3.IsShown and pcall(p3.IsShown, p3) and p3:IsShown() == true) or false
+        local p2Shown = (p2 and p2.IsShown and pcall(p2.IsShown, p2) and p2:IsShown() == true) or false
+        if ((p3Shown or p2Shown) and not ttShown) then
+            add("warn", "Portrait frame is still shown while GameTooltip is hidden (stale reset state)")
+        end
+        if (p3Shown and p2Shown) then
+            add("warn", "Both 3D and 2D portrait frames are shown simultaneously on GameTooltip")
+        end
+        if ((p3Shown or p2Shown) and cfg and cfg.tooltip_portrait == false) then
+            add("warn", "Portrait frame is shown even though tooltip_portrait is disabled")
+        end
     end
 
     local unreadablePayload = tonumber(TT.ev and TT.ev.itemPayloadUnreadable) or 0
@@ -5831,15 +6102,65 @@ local function collectTooltipSection()
     end
     local portraitFailed = tonumber(ev.portraitSetFailed) or 0
     diagRow(s, "portrait set failures", portraitFailed, portraitFailed > 0 and "warn" or "ok")
+    local portraitAttempts = tonumber(ev.portraitSetAttempts) or 0
+    local portraitOk = tonumber(ev.portraitSetSucceeded) or 0
+    local portraitBlocked = tonumber(ev.portraitCanSetFalse) or 0
+    local portraitKeyHits = tonumber(ev.portraitKeyHits) or 0
+    local portrait2D = tonumber(ev.portrait2DSets) or 0
+    local failRate = (portraitAttempts > 0)
+        and ((diagRate(portraitFailed, portraitAttempts) or "0.0% (0 of ") .. tostring(portraitAttempts) .. ")")
+        or "n/a"
+    diagRow(s, "portrait pipeline", string.format(
+            "attempts=%s, ok=%s, fail=%s (%s), canSet=false=%s, key-hits=%s, 2d=%s",
+            tostring(portraitAttempts), tostring(portraitOk), tostring(portraitFailed), failRate,
+            tostring(portraitBlocked), tostring(portraitKeyHits), tostring(portrait2D)),
+        (portraitFailed > 0 or portraitBlocked > 0) and "warn" or "info")
+    if (type(GameTooltip) == "table") then
+        local okShown, ttShown = pcall(function() return GameTooltip.IsShown and GameTooltip:IsShown() == true end)
+        ttShown = okShown and ttShown or false
+        local p3 = rawget(GameTooltip, "TacoTipPortrait3D")
+        if (type(p3) ~= "table") then p3 = nil end
+        local p2 = rawget(GameTooltip, "TacoTipPortrait")
+        if (type(p2) ~= "table") then p2 = nil end
+        local p3Shown = (p3 and p3.IsShown and pcall(p3.IsShown, p3) and p3:IsShown() == true) or false
+        local p2Shown = (p2 and p2.IsShown and pcall(p2.IsShown, p2) and p2:IsShown() == true) or false
+        local p3Pts = (p3 and p3.GetNumPoints and pcall(p3.GetNumPoints, p3)) and tostring(p3:GetNumPoints()) or "?"
+        local p3Alpha = (p3 and p3.GetAlpha and pcall(p3.GetAlpha, p3)) and
+            string.format("%.2f", tonumber(p3:GetAlpha()) or 0) or "?"
+        local gState = rawget(GameTooltip, "_tacoTipState")
+        local desync = ((p3Shown or p2Shown) and not ttShown) or (p3Shown and p2Shown)
+        diagRow(s, "portrait live state", string.format(
+                "ttShown=%s | 3d=%s(shown=%s, alpha=%s, key=%s, retries=%s, side=%s, pts=%s) | 2d=%s(shown=%s) | state(cur=%s, owner=%s, anchored=%s)",
+                tostring(ttShown),
+                tostring(p3 ~= nil), tostring(p3Shown), p3Alpha,
+                safeDiagValue(p3 and p3.tacoTipModelKey),
+                tostring(p3 and p3.tacoTipSetRetries or 0),
+                tostring(p3 and p3._tacoTipAnchorSide or "none"), p3Pts,
+                tostring(p2 ~= nil), tostring(p2Shown),
+                safeDiagValue(gState and gState.currentUnitGUID),
+                safeDiagValue(gState and gState.ownerUnitGUID),
+                tostring(gState and gState.portraitAnchored or false)),
+            desync and "warn" or "info")
+    end
+    local traceEntries = getPortraitTraceEntries()
+    if (#traceEntries > 0) then
+        local last = traceEntries[#traceEntries]
+        diagRow(s, "portrait last event", string.format(
+            "#%s %s (%s) [tt=%s p3=%s] prev=%s -> new=%s (%s)",
+            tostring(last.seq or #traceEntries), tostring(last.op or "?"),
+            tostring(last.reason or "-"), tostring(last.ttShown), tostring(last.p3Shown),
+            tostring(last.prevKey or "nil"), tostring(last.newKey or "nil"),
+            tostring(last.outcome or "-")), "info")
+    end
     local itemHooks = tonumber(ev.itemHook) or 0
     if (itemHooks > 0) then
         local unreadablePayload = tonumber(ev.itemPayloadUnreadable) or 0
         local secretLinks = tonumber(ev.itemSecretLink) or 0
         diagRow(s, "item tooltip hooks", string.format(
-            "renders=%s, unreadable payload=%s, no payload=%s, secret link=%s, no link=%s",
-            tostring(itemHooks), tostring(unreadablePayload),
-            tostring(tonumber(ev.itemPayloadMissing) or 0), tostring(secretLinks),
-            tostring(tonumber(ev.itemNoLink) or 0)),
+                "renders=%s, unreadable payload=%s, no payload=%s, secret link=%s, no link=%s",
+                tostring(itemHooks), tostring(unreadablePayload),
+                tostring(tonumber(ev.itemPayloadMissing) or 0), tostring(secretLinks),
+                tostring(tonumber(ev.itemNoLink) or 0)),
             (unreadablePayload + secretLinks) > 0 and "warn" or "info")
     end
     -- Secret restrictions that are active right now. This is the row a user
@@ -5882,9 +6203,8 @@ local function collectTooltipSection()
             tostring(lastItem.payload), tostring(lastItem.linkSecret),
             tostring(lastItem.restrictions), tostring(tonumber(lastItem.at) or 0)), "info")
     end
-    if (portraitFailed > 0) then
-        s.notes[#s.notes + 1] = "portraitSetFailed counts 3D SetUnit failures; the attempt denominator "
-            .. "is not instrumented, so a failure rate is not derivable without new code."
+    if (portraitFailed > 0 and portraitAttempts == 0) then
+        s.notes[#s.notes + 1] = "portraitSetFailed was incremented outside SetUnit instrumentation."
     end
     return s
 end
@@ -5952,6 +6272,23 @@ local function collectEventSection()
         tostring(ev.portraitHide or 0),
         tostring(ev.portraitDestroy or 0)), "info")
     diagRow(s, "portrait re-anchors", ev.portraitAnchor or 0, "info")
+    diagRow(s, "portrait clear/hide ops", string.format(
+        "clearModel=%s, onClearSkipped=%s, onHideRan=%s, onHideSkipped=%s",
+        tostring(ev.portraitClearModelCalls or 0),
+        tostring(ev.portraitOnClearSkipped or 0),
+        tostring(ev.portraitOnHideRan or 0),
+        tostring(ev.portraitOnHideSkipped or 0)), "info")
+    local recentTrace = getPortraitTraceEntries()
+    if (#recentTrace > 0) then
+        local parts = {}
+        local first = math.max(1, #recentTrace - 4)
+        for i = first, #recentTrace do
+            local t = recentTrace[i]
+            parts[#parts + 1] = string.format("%s(%s->%s)",
+                tostring(t.op), tostring(t.reason or "-"), tostring(t.outcome or "-"))
+        end
+        diagRow(s, "portrait last 5 events", table.concat(parts, " -> "), "info")
+    end
     diagRow(s, "teardowns by reason", diagTeardownText(ev.teardownBy), "info")
     return s
 end
@@ -5988,7 +6325,7 @@ local function collectErrorsSection()
     diagRow(s, "total errors caught", TT.totalErrorsCaught or 0, "info")
     local warnCount = (type(TT.warningLog) == "table") and #TT.warningLog or 0
     diagRow(s, "total warnings recorded", string.format("%s (log holds %s)",
-        tostring(TT.totalWarnings or warnCount), tostring(warnCount)),
+            tostring(TT.totalWarnings or warnCount), tostring(warnCount)),
         (tonumber(TT.totalWarnings) or warnCount) > 0 and "warn" or "info")
     diagRow(s, "pipeline suppressed", (TT.ev and TT.ev.pipelineErrorsSuppressed) or 0, "info")
     diagRow(s, "last tooltip error", TT.lastTooltipError or "none",
@@ -6223,14 +6560,40 @@ function TT:FormatDiagnosticTraces()
     lines[#lines + 1] = string.format("  Unit Renders: %s | Unit Resolve Failures: %s (Last cause: %s)",
         tostring(ev.unitRender or 0), tostring(ev.resolveTooltipUnitFailed or 0),
         tostring(ev.resolveTooltipUnitLastCause or "none"))
-    lines[#lines + 1] = string.format("  Portrait Teardowns: %s (Destroys: %s, Set Failures: %s, Anchors: %s)",
-        tostring(ev.portraitHide or 0), tostring(ev.portraitDestroy or 0), tostring(ev.portraitSetFailed or 0),
-        tostring(ev.portraitAnchor or 0))
+    lines[#lines + 1] = string.format(
+        "  Portrait Teardowns: %s (Destroys: %s, ClearModels: %s, Hidden: %s, Anchors: %s)",
+        tostring(ev.portraitHide or 0), tostring(ev.portraitDestroy or 0), tostring(ev.portraitClearModelCalls or 0),
+        tostring(ev.portraitModelHidden or 0), tostring(ev.portraitAnchor or 0))
+    lines[#lines + 1] = string.format(
+        "  Portrait Pipeline: Attempts=%s, Succeeded=%s, SetFailed=%s, CanSetFalse=%s, KeyHits=%s, 2DSets=%s",
+        tostring(ev.portraitSetAttempts or 0), tostring(ev.portraitSetSucceeded or 0),
+        tostring(ev.portraitSetFailed or 0), tostring(ev.portraitCanSetFalse or 0),
+        tostring(ev.portraitKeyHits or 0), tostring(ev.portrait2DSets or 0))
+    lines[#lines + 1] = string.format("  Portrait Hooks: OnHideRan=%s, OnHideSkipped=%s, OnClearSkipped=%s",
+        tostring(ev.portraitOnHideRan or 0), tostring(ev.portraitOnHideSkipped or 0),
+        tostring(ev.portraitOnClearSkipped or 0))
     lines[#lines + 1] = string.format("  GearScore Callbacks: %s (Reentrant: %s, Wrong Unit: %s, Misses: %s)",
         tostring(ev.gsCallback or 0), tostring(ev.gsCallbackReentrant or 0), tostring(ev.gsCallbackWrongUnit or 0),
         tostring(ev.gsCallbackNoUnit or 0))
     if (ev.teardownBy) then
         lines[#lines + 1] = "  Teardown Reasons: " .. diagTeardownText(ev.teardownBy)
+    end
+    lines[#lines + 1] = ""
+
+    local portraitTrace = getPortraitTraceEntries()
+    lines[#lines + 1] = string.format("--- Portrait Lifecycle Trace (%d entries) ---", #portraitTrace)
+    if (#portraitTrace == 0) then
+        lines[#lines + 1] = "  (No portrait lifecycle events recorded since reload)"
+    else
+        for i = 1, #portraitTrace do
+            local p = portraitTrace[i]
+            lines[#lines + 1] = string.format(
+                "  [#%s %.2fs] %-12s reason=%-18s tt=%s p3=%s p2=%s cur=%s prevKey=%s newKey=%s keep=%s retain=%s out=%s",
+                tostring(p.seq or i), tonumber(p.time) or 0, tostring(p.op or "?"),
+                tostring(p.reason or "-"), tostring(p.ttShown), tostring(p.p3Shown), tostring(p.p2Shown),
+                tostring(p.curGUID or "nil"), tostring(p.prevKey or "nil"), tostring(p.newKey or "nil"),
+                tostring(p.keepModel), tostring(p.retainModel), tostring(p.outcome or "-"))
+        end
     end
     lines[#lines + 1] = "================================================="
 
@@ -6298,6 +6661,21 @@ function TT:FormatDiagnosticExport()
             if (w.stack) then
                 lines[#lines + 1] = tostring(w.stack)
             end
+        end
+        lines[#lines + 1] = ""
+    end
+
+    local portraitTrace = getPortraitTraceEntries()
+    if (#portraitTrace > 0) then
+        lines[#lines + 1] = string.format("## Portrait Lifecycle Trace (%d)", #portraitTrace)
+        for i = 1, #portraitTrace do
+            local p = portraitTrace[i]
+            lines[#lines + 1] = string.format(
+                "- [#%s %.2fs] `%s` (%s) ttShown=%s p3Shown=%s cur=%s prevKey=%s newKey=%s keep=%s retain=%s out=%s",
+                tostring(p.seq or i), tonumber(p.time) or 0, tostring(p.op or "?"),
+                tostring(p.reason or "-"), tostring(p.ttShown), tostring(p.p3Shown),
+                tostring(p.curGUID or "nil"), tostring(p.prevKey or "nil"), tostring(p.newKey or "nil"),
+                tostring(p.keepModel), tostring(p.retainModel), tostring(p.outcome or "-"))
         end
         lines[#lines + 1] = ""
     end
@@ -6456,8 +6834,124 @@ function TT:GetPlayerProgression()
     end
     if (type(rec.snapshots) ~= "table") then rec.snapshots = {} end
     if (type(rec.history) ~= "table") then rec.history = {} end
+    if (type(rec.timeline) ~= "table") then rec.timeline = {} end
     if (type(rec.trophies) ~= "table") then rec.trophies = {} end
     return rec, key
+end
+
+function TT:GetGearScoreProgressCap(currentScore, peakScore)
+    local gs = TT_GS or GearScore
+    local bracketSize = (gs and type(gs.BRACKET_SIZE) == "number" and gs.BRACKET_SIZE > 0) and gs.BRACKET_SIZE or nil
+    if (not bracketSize) then
+        if (CI and CI.IsTBC and CI:IsTBC()) then
+            bracketSize = 400
+        elseif (CI and ((CI.IsWotlk and CI:IsWotlk()) or (CI.IsRetail and CI:IsRetail()))) then
+            bracketSize = 1000
+        else
+            bracketSize = 200
+        end
+    end
+    local baseCap = (gs and type(gs.MAX_SCORE) == "number" and gs.MAX_SCORE > 0)
+        and gs.MAX_SCORE or (bracketSize * 7)
+    local topObserved = math.max(tonumber(currentScore) or 0, tonumber(peakScore) or 0)
+    local cap = baseCap
+    if (topObserved > cap) then
+        cap = math.ceil(topObserved / bracketSize) * bracketSize
+    end
+    return cap, bracketSize, baseCap
+end
+
+function TT:GetProgressionBarSnapshots(maxPins)
+    maxPins = maxPins or 18
+    local rec = TT:GetPlayerProgression()
+    local timeline = rec.timeline
+    local history = rec.history
+    local cap = TT:GetGearScoreProgressCap(rec.currentScore, rec.peakScore)
+    local candidates = {}
+
+    if (type(timeline) == "table" and #timeline > 0) then
+        for i = 1, #timeline do
+            local e = timeline[i]
+            if (type(e) == "table" and (tonumber(e.totalGS) or 0) > 0) then
+                candidates[#candidates + 1] = e
+            end
+        end
+    elseif (type(history) == "table" and #history > 0) then
+        -- Backfill timeline markers cleanly for characters with existing upgrade logs.
+        for i = #history, 1, -1 do
+            local h = history[i]
+            if (type(h) == "table" and (tonumber(h.totalGS) or 0) > 0) then
+                local info = TT:GetGearLevelInfo(h.totalGS)
+                candidates[#candidates + 1] = {
+                    time = h.time or 0,
+                    totalGS = h.totalGS,
+                    avgILvl = h.newILvl or rec.avgItemLevel or 0,
+                    level = h.level or info.level,
+                    title = info.title,
+                    tierColorHex = info.tierColorHex,
+                    slotName = h.slotName,
+                    newLink = h.newLink,
+                    deltaGS = h.deltaGS,
+                    newGS = h.newGS,
+                }
+            end
+        end
+    end
+
+    if (#candidates == 0) then
+        return {}, cap
+    end
+
+    -- Deduplicate markers too close in GS (~2% of bar width) while preserving
+    -- the earliest, highest peak, and latest progression milestones.
+    local minGap = math.max(8, math.floor(cap * 0.02))
+    local filtered = {}
+    local peakIdx, peakVal = 1, tonumber(candidates[1].totalGS) or 0
+    for i = 2, #candidates do
+        local gsVal = tonumber(candidates[i].totalGS) or 0
+        if (gsVal >= peakVal) then
+            peakVal = gsVal
+            peakIdx = i
+        end
+    end
+
+    for i = 1, #candidates do
+        local c = candidates[i]
+        local gsVal = tonumber(c.totalGS) or 0
+        local keep = (i == 1 or i == #candidates or i == peakIdx)
+        if (not keep) then
+            keep = true
+            for j = 1, #filtered do
+                if (math.abs((tonumber(filtered[j].totalGS) or 0) - gsVal) < minGap) then
+                    keep = false
+                    break
+                end
+            end
+        end
+        if (keep) then
+            filtered[#filtered + 1] = c
+        end
+    end
+
+    if (#filtered > maxPins) then
+        local thinned = {}
+        local step = (#filtered - 1) / math.max(1, maxPins - 1)
+        for p = 0, maxPins - 1 do
+            local pick = math.min(#filtered, math.floor(1 + p * step + 0.5))
+            if (thinned[#thinned] ~= filtered[pick]) then
+                thinned[#thinned + 1] = filtered[pick]
+            end
+        end
+        filtered = thinned
+    end
+
+    table.sort(filtered, function(a, b)
+        local ga, gb = tonumber(a.totalGS) or 0, tonumber(b.totalGS) or 0
+        if (ga ~= gb) then return ga < gb end
+        return (tonumber(a.time) or 0) < (tonumber(b.time) or 0)
+    end)
+
+    return filtered, cap
 end
 
 function TT:CheckTrophies(rec, currentScore, levelInfo, isSilent)
@@ -6530,6 +7024,7 @@ function TT:EvaluatePlayerEquipment(isSilent, forceBaseline)
     local soundKit = _G.SOUNDKIT
 
     local historyCountBefore = #rec.history
+    local lastChangedSlotName, lastChangedLink, lastDeltaGS
 
     for _, slotID in ipairs(GEAR_SLOTS_ORDERED) do
         local link = nil
@@ -6559,6 +7054,11 @@ function TT:EvaluatePlayerEquipment(isSilent, forceBaseline)
 
             local oldGS = (oldSnap and not isBaseline) and oldSnap.gs or 0
             local oldILvl = (oldSnap and not isBaseline) and oldSnap.ilvl or 0
+            if (isChange or isBaseline) then
+                lastChangedSlotName = GEAR_SLOT_NAMES[slotID] or ("Slot " .. slotID)
+                lastChangedLink = link
+                lastDeltaGS = (oldSnap and oldGS > 0 and not isBaseline) and (slotGS - oldGS) or slotGS
+            end
 
             if (not isSilent and ((oldSnap and slotGS > oldGS) or (not oldSnap and slotGS > 0) or isBaseline)) then
                 local deltaGS = (oldSnap and oldGS > 0 and not isBaseline) and (slotGS - oldGS) or slotGS
@@ -6640,6 +7140,38 @@ function TT:EvaluatePlayerEquipment(isSilent, forceBaseline)
         rec.peakDate = now
     end
 
+    local equippedCount, epicCount = 0, 0
+    for _, slotID in ipairs(GEAR_SLOTS_ORDERED) do
+        local snap = rec.snapshots[slotID]
+        if (snap and snap.link and snap.link ~= "") then
+            equippedCount = equippedCount + 1
+            if (snap.rarity and snap.rarity >= 4) then
+                epicCount = epicCount + 1
+            end
+        end
+    end
+    local prevTimeline = rec.timeline[#rec.timeline]
+    if ((not prevTimeline) or forceBaseline or math.abs((prevTimeline.totalGS or 0) - currentScore) >= 1) then
+        rec.timeline[#rec.timeline + 1] = {
+            time = now,
+            totalGS = currentScore,
+            avgILvl = avgILvl,
+            level = levelInfo.level,
+            title = levelInfo.title,
+            tierColorHex = levelInfo.tierColorHex,
+            equippedCount = equippedCount,
+            totalSlots = #GEAR_SLOTS_ORDERED,
+            epicCount = epicCount,
+            slotName = lastChangedSlotName,
+            newLink = lastChangedLink,
+            deltaGS = lastDeltaGS,
+        }
+        local maxTimeline = 80
+        while (#rec.timeline > maxTimeline) do
+            table.remove(rec.timeline, 1)
+        end
+    end
+
     -- Level-up detection
     if (not isSilent and levelInfo.level > previousLevel and previousLevel > 0) then
         rec.currentLevel = levelInfo.level
@@ -6681,6 +7213,7 @@ end
 function TT:ClearPlayerProgression()
     local rec, _ = TT:GetPlayerProgression()
     rec.history = {}
+    rec.timeline = {}
     rec.trophies = {}
     rec.peakScore = rec.currentScore or 0
     rec.peakDate = (type(GetServerTime) == "function" and GetServerTime()) or time()
@@ -6864,12 +7397,31 @@ local function onEvent(self, event, ...)
         end
         local guid = ...
         if (guid and not TT.isSecretValue(guid)) then
-            -- A completed inspection supersedes any backoff from the previous
-            -- data; the next render may attempt immediately.
-            TT.clearGearScoreRetry(guid)
-            TT.clearGearScoreMemo(guid)
-            if (event == "INVENTORY_READY") then
+            local invData = (CI and type(CI.GetUnitData) == "function") and CI:GetUnitData(guid) or nil
+            local rev = invData and invData._itemsRev
+            TT._lastItemsRev = TT._lastItemsRev or {}
+            local prevRev = TT._lastItemsRev[guid]
+            local itemsUpdated = (not invData) or (not invData.incomplete) or (rev ~= nil and rev ~= prevRev)
+            -- Only reset GearScore retry/memo when committed gear actually completed or
+            -- changed; intermediate incomplete cacheUnitData retries must NOT reset the
+            -- exponential backoff ladder or spam WarmGearItemData.
+            if (event == "INVENTORY_READY" and itemsUpdated) then
+                if (rev ~= nil) then
+                    if (TT._lastItemsRev[guid] == nil) then
+                        TT._lastItemsRevCount = (TT._lastItemsRevCount or 0) + 1
+                        if (TT._lastItemsRevCount > GS_SCORE_MEMO_CAP) then
+                            TT._lastItemsRev = {}
+                            TT._lastItemsRevCount = 1
+                        end
+                    end
+                    TT._lastItemsRev[guid] = rev
+                end
+                TT.clearGearScoreRetry(guid)
+                TT.clearPawnRetry(guid)
+                TT.clearGearScoreMemo(guid)
                 TT:WarmGearItemData(guid)
+            elseif (event == "TALENTS_READY") then
+                TT.clearPawnRetry(guid)
             end
             local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and TT.safeEquals(TT.safeUnitGUID(ttUnit), guid)) then

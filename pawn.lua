@@ -215,15 +215,22 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
         end
         if (not isSelf) then
             local okCT, _, invTime = pcall(CI.GetLastCacheTime, CI, guid)
-            if (not okCT or not invTime or invTime == 0) then
+            if (not okCT or isSecretValue(invTime) or type(invTime) ~= "number" or invTime == 0) then
                 return 0, "", "|cffffffff", false
             end
         end
 
         local activeGroup = specGroup or (CI and CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
+        if (isSecretValue(activeGroup) or type(activeGroup) ~= "number") then
+            activeGroup = 1
+        end
         local spec = CI:GetSpecialization(guid, activeGroup) or 1
+        if (isSecretValue(spec) or type(spec) ~= "number") then
+            spec = 1
+        end
         local ppOk, _, PlayerEnglishClass = pcall(GetPlayerInfoByGUID, guid)
-        local class = ppOk and PlayerEnglishClass or nil
+        local class = (ppOk and not isSecretValue(PlayerEnglishClass) and type(PlayerEnglishClass) == "string")
+            and PlayerEnglishClass or nil
         local pawnScore = 0
         local IsReady = true
 
@@ -240,27 +247,34 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
             -- helper exists to eliminate, including the VgerCore.Fail chat path.
             local scaleName = pawnLoadedScaleName(class, spec)
             local cb_table
-            if (useCallback) then
+            if (useCallback and scaleName) then
                 cb_table = { ["guid"] = guid, ["items"] = {} }
             end
             for i = 1, 18 do
                 if (i ~= 4) then
                     local item = CI:GetInventoryItemMixin(guid, i)
                     if (item and not isSecretValue(item)) then
-                        if (item.IsItemDataCached and item:IsItemDataCached()) then
-                            if (scaleName) then
-                                local link = item.GetItemLink and item:GetItemLink()
-                                if (link and not isSecretValue(link)) then
+                        local okCached, isCached = false, false
+                        if (type(item.IsItemDataCached) == "function") then
+                            okCached, isCached = pcall(item.IsItemDataCached, item)
+                        end
+                        if (okCached and isCached == true) then
+                            if (scaleName and type(item.GetItemLink) == "function") then
+                                local okLink, link = pcall(item.GetItemLink, item)
+                                if (okLink and link and not isSecretValue(link)) then
                                     local tempScore = TT_PAWN:GetItemScore(link, class, spec, scaleName)
                                     if (tempScore and not isSecretValue(tempScore)) then
                                         pawnScore = pawnScore + tempScore
                                     end
                                 end
                             end
-                        else
+                        elseif (scaleName) then
                             IsReady = false
-                            local itemID = item.GetItemID and item:GetItemID()
-                            if (itemID and not isSecretValue(itemID)) then
+                            local okID, itemID = false, nil
+                            if (type(item.GetItemID) == "function") then
+                                okID, itemID = pcall(item.GetItemID, item)
+                            end
+                            if (okID and itemID and not isSecretValue(itemID)) then
                                 if (useCallback and cb_table and cb_table.items) then
                                     -- Dedupe identical item ids before
                                     -- registering; see gearscore.lua for the
@@ -274,12 +288,14 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
                                     end
                                     if (not alreadyPending) then
                                         table.insert(cb_table.items, itemID)
+                                        if (type(item.ContinueOnItemLoad) == "function") then
+                                            item:ContinueOnItemLoad(function()
+                                                itemcacheCB(cb_table, itemID)
+                                            end)
+                                        end
                                     end
-                                    item:ContinueOnItemLoad(function()
-                                        itemcacheCB(cb_table, itemID)
-                                    end)
                                 elseif (RequestLoadItemDataByID) then
-                                    RequestLoadItemDataByID(itemID)
+                                    pcall(RequestLoadItemDataByID, itemID)
                                 end
                             end
                         end
@@ -298,11 +314,15 @@ function TT_PAWN:GetScore(unitorguid, useCallback, specGroup)
             -- error to chat by itself.
             if (scaleName and type(PawnGetScaleColor) == "function") then
                 local pcOk, pcResult = pcall(PawnGetScaleColor, scaleName, true)
-                pawnColor = pcOk and pcResult or nil
+                pawnColor = (pcOk and not isSecretValue(pcResult) and type(pcResult) == "string") and pcResult or nil
             else
                 pawnColor = nil
             end
-            return pawnScore, CI:GetSpecializationName(class, spec, true), pawnColor or "|cffffffff", IsReady
+            local okSpecName, specName = pcall(CI.GetSpecializationName, CI, class, spec, true)
+            if (not okSpecName or isSecretValue(specName) or type(specName) ~= "string") then
+                specName = ""
+            end
+            return pawnScore, specName, pawnColor or "|cffffffff", IsReady
         end
     end
     return 0, "", "|cffffffff", false

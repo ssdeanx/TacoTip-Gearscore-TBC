@@ -79,6 +79,7 @@ for _, m in ipairs({
     "SetClampRectInsets","GetMinMaxValues","GetValue","GetValueStep","GetScale",
     "SetChecked","RegisterUnitEvent","GetNumPoints","GetNumChildren","GetChildren",
     "SetClampedToScreen","SetToplevel","SetID","GetID","IsForbidden","SetPassThroughButtons",
+    "SetMultiLine","HighlightText","ClearFocus","SetCursorPosition",
 }) do WIDGET_METHODS[m] = true end
 
 local created = {}
@@ -1314,6 +1315,88 @@ do
     cfg.class_icon_size = 20
     cfg.show_titles = true
     TT:SafeSanitizeConfig(cfg)
+end
+
+--------------------------------------------------------------------------
+-- Issue 2 regression pins:
+--  1) Client-scaled GearScore progression cap & auto-extension above cap.
+--  2) Progression timeline snapshot recording, thinning, and clearing.
+--  3) Standalone dashboard header progression bar opens, refreshes ticks,
+--     and handles OnEnter / OnLeave cleanly without missing-method errors.
+--------------------------------------------------------------------------
+do
+    local gsGlobal = rawget(REALG, "TT_GS")
+    local cap0, br0 = TT:GetGearScoreProgressCap(0, 0)
+    local expBracket = gsGlobal and gsGlobal.BRACKET_SIZE or 200
+    local expCap = expBracket * 7
+    check("progression bar cap matches client 7-bracket max score",
+        cap0 == expCap and br0 == expBracket,
+        "cap=" .. tostring(cap0) .. " exp=" .. tostring(expCap) .. " br=" .. tostring(br0))
+
+    local capHigh = TT:GetGearScoreProgressCap(expCap + 50, expCap + 50)
+    check("progression bar cap auto-extends in bracket steps when exceeded",
+        capHigh == expCap + expBracket,
+        "capHigh=" .. tostring(capHigh) .. " exp=" .. tostring(expCap + expBracket))
+
+    local rec = TT:GetPlayerProgression()
+    local savedCur, savedPeak, savedTimeline = rec.currentScore, rec.peakScore, rec.timeline
+    rec.currentScore = 420
+    rec.peakScore = 510
+    rec.timeline = {
+        { time = 1000, totalGS = 120, level = 2, title = "Initiate", tierColorHex = "FF1EFF00", avgILvl = 12 },
+        { time = 2000, totalGS = 420, level = 4, title = "Defender", tierColorHex = "FF0070DD", avgILvl = 24,
+          slotName = "Main Hand", newLink = "[Staff]", deltaGS = 45 },
+        { time = 2500, totalGS = 510, level = 5, title = "Vanguard", tierColorHex = "FFA335EE", avgILvl = 30 },
+    }
+    local snaps = TT:GetProgressionBarSnapshots(18)
+    check("progression bar snapshots returns recorded timeline chronologically",
+        #snaps == 3 and snaps[1].totalGS == 120 and snaps[3].totalGS == 510,
+        "count=" .. tostring(#snaps))
+
+    -- Open dashboard and exercise header progression bar + pin hover scripts.
+    local okShow, errShow = pcall(TT.ShowStandaloneDashboard, TT, "progression")
+    local dash = rawget(REALG, "TacoTipDashboard")
+    if (not dash) then
+        for _, w in ipairs(created) do
+            if (w.__name == "TacoTipDashboard") then
+                dash = w
+            end
+        end
+    end
+    check("standalone dashboard opens cleanly with header progression bar",
+        okShow and dash ~= nil and dash._headerProg ~= nil and dash.RefreshHeaderProgress ~= nil,
+        "ok=" .. tostring(okShow) .. " err=" .. tostring(errShow))
+    if (dash and dash._headerProg) then
+        local onShowDash = dash.GetScript and dash:GetScript("OnShow")
+        if (onShowDash) then onShowDash(dash) end
+        local onEnterBar = dash._headerProg.GetScript and dash._headerProg:GetScript("OnEnter")
+        local onLeaveBar = dash._headerProg.GetScript and dash._headerProg:GetScript("OnLeave")
+        local okBarEnter, errBarEnter = pcall(function()
+            if (onEnterBar) then onEnterBar(dash._headerProg) end
+            if (onLeaveBar) then onLeaveBar(dash._headerProg) end
+        end)
+        check("header progression bar OnEnter/OnLeave runs cleanly (uses SetFlatColors)",
+            okBarEnter, "err=" .. tostring(errBarEnter))
+
+        local tick1 = dash._headerProgTicks and dash._headerProgTicks[1]
+        local onEnterPin = tick1 and tick1.GetScript and tick1:GetScript("OnEnter")
+        local onLeavePin = tick1 and tick1.GetScript and tick1:GetScript("OnLeave")
+        local okPin, errPin = pcall(function()
+            if (onEnterPin) then onEnterPin(tick1) end
+            if (onLeavePin) then onLeavePin(tick1) end
+        end)
+        check("snapshot pin OnEnter/OnLeave inspects stats cleanly",
+            tick1 ~= nil and tick1:IsShown() and okPin,
+            "shown=" .. tostring(tick1 and tick1:IsShown()) .. " err=" .. tostring(errPin))
+        if (dash.Hide) then dash:Hide() end
+    end
+
+    TT:ClearPlayerProgression()
+    check("ClearPlayerProgression empties timeline snapshots",
+        type(rec.timeline) == "table" and #rec.timeline == 0,
+        "len=" .. tostring(rec.timeline and #rec.timeline))
+    rec.currentScore, rec.peakScore, rec.timeline = savedCur, savedPeak, savedTimeline
+    TT.RefreshProgressionDashboard()
 end
 
 local fails = 0

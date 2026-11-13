@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.1
+version: 1.0.2
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -35,7 +35,7 @@ updated: 2026-11-12
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.1-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.2-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -48,7 +48,7 @@ updated: 2026-11-12
   <img src="https://img.shields.io/badge/WoW%20Forever-16.0.01-9b59b6?style=flat-square&logo=battledotnet&logoColor=white" alt="WoW Forever" />
   <img src="https://img.shields.io/badge/Retail%20Live-12.01.05-e74c3c?style=flat-square&logo=battledotnet&logoColor=white" alt="Retail" />
   <img src="https://img.shields.io/badge/Quality-0%20Warnings-success?style=flat-square&logo=checkmarx&logoColor=white" alt="Luacheck Clean" />
-  <img src="https://img.shields.io/badge/Verification-74%2F74%20Automated%20Harness-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="Automated harness 74/74 (offline pins, not in-game verification)" />
+  <img src="https://img.shields.io/badge/Verification-75%2F75%20Automated%20Harness-brightgreen?style=flat-square&logo=githubactions&logoColor=white" alt="Automated harness 75/75 (offline pins, not in-game verification)" />
 </p>
 
 ---
@@ -116,6 +116,20 @@ updated: 2026-11-12
 | `/tt custom` | Show the draggable green anchor button to set custom tooltip position |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.2</span>
+
+🖼️ **<span style="color:#b4e634">Wide Style Right-Edge Ellipsis (`...`) Fix:</span>** Fixed non-unit item/spell tooltips showing clipped `...` on `Two-Hand` / damage rows when `Tooltip Style` was set to `Wide`. Wrapping width clamping (`ApplyTooltipMaxWidth`) strictly to unit tooltips prevents Blizzard's right-justified item sub-lines from being constrained to narrow fallback widths on Forever, Retail, and Classic clients.
+
+📊 **<span style="color:#b4e634">Dashboard Header GearScore Progression Bar:</span>** Added an interactive `0 GS -> Client Max BiS` progression tracker right beside the `TacoTip` header badge in `/tt`. Displays live completion % (`currentGS / maxCap`) with interactive milestone pins (up to 18 deduplicated chronological markers) you can hover to inspect historical timestamp, GearScore, Gear Rank, tier title, average iLvl, and equipped upgrade link.
+
+🎭 **<span style="color:#b4e634">Portrait Reset Stabilization & Deep Lifecycle Diagnostics:</span>** Hardened `ApplyTooltipAppearance` and `OnHide` so `CanSetUnit=false` clears stale model state immediately and portrait cleanup runs deterministically whenever the tooltip hides or resets across unit frames, plus rich diagnostic ring logs (`CanSetUnit`, `SetUnit`, skipped/forced hides, and model key state) surfaced in `/tt diag`.
+
+⚡ **<span style="color:#b4e634">Inspect, Cache & Queue Optimization (`LibForeverInspector` + `main.lua` + `pawn.lua`):</span>** Replaced the 40-member upfront `CanInspect` scan and `table.sort` in `inspectQueueTick` with 4 role-priority buckets (`Tank > Healer > DPS > None`) evaluated lazily only until an inspect dispatches; eliminated redundant double `CanInspect`/`CheckInteractDistance` engine probes on synchronous dispatches; unified `evictCacheEntries` into a single pass and bounded inspect reject/out-of-range ledgers; verified WoW Forever maintains the 40-yard (`NEARBY_ASK_YARDS = 40`) either-signal inspect gate (`CanInspect` OR `CheckInteractDistance`).
+
+🔒 **<span style="color:#b4e634">Secret-Safe Caches & Decoupled Retry/Fallback Backoffs:</span>** Filtered inventory item links, achievement points, specialization info/icons, and Pawn spec metadata/memo entries against restricted secret values before caching; decoupled Pawn's retry ledger (`_pawnRetry`) from GearScore's exponential backoff (`_gsRetry`) so neither system clears or re-arms the other; gated `INVENTORY_READY` retry resets on `_itemsRev` completion so intermediate partial-gear retries preserve backoff; replaced wholesale 512-entry cooldown/memo wipes with expired-entry pruning and half-table trimming.
 
 ---
 

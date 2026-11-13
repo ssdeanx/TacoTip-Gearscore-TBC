@@ -31,6 +31,7 @@
             "*"
         ],
         "write": [
+            "TacoTip_GSCallback",
             "*"
         ],
         "allowBindingGlobals": true
@@ -113,7 +114,6 @@
             "trailing-space",
             "type-mismatch",
             "unbalanced-assignments",
-            "undefined-field",
             "undefined-global",
             "unknown-callback-event",
             "unknown-cast-variable",

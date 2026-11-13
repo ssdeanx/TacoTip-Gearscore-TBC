@@ -1158,8 +1158,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "1.0.1",
-        "1.0.1: TacoTip.toc declares version 1.0.1 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "1.0.2",
+        "1.0.2: TacoTip.toc declares version 1.0.2 (got " .. tostring(tocVer) .. ")" }
     checks[#checks + 1] = { type(TT.GetClassIconMarkup) == "function",
         "0.9.0: TT.GetClassIconMarkup is exposed" }
     checks[#checks + 1] = { TT:GetClassIconMarkup(nil) == "",
@@ -1599,7 +1599,7 @@ do
         local text7 = table.concat(lines7, "\n")
         check("0.8.8: collection failure still prints the minimal facts",
             okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
-            and text7:find("version: 1.0.1", 1, true) ~= nil
+            and text7:find("version: 1.0.2", 1, true) ~= nil
             and text7:find("load OK:", 1, true) ~= nil
             and text7:find("client family:", 1, true) ~= nil
             and text7:find("interface:", 1, true) ~= nil,
@@ -1666,6 +1666,44 @@ do
         check("0.8.8: load failure is a problem with the stage named",
             hasProblem(d10, "main.lua did not finish loading (stage: tooltip-hooks)")
             and d10.verdict.healthy == false)
+
+        -- 11. Portrait diagnostics: CanSetUnit counter, live desync check, trace & export strings.
+        resetClean(5)
+        TT.ev.portraitCanSetFalse = 2
+        TT.ev.portraitSetAttempts = 5
+        TT.ev.portraitSetSucceeded = 3
+        TT.ev.portraitOnHideRan = 4
+        local d11 = TT:CollectDiagnostics()
+        local ttSec11 = findSection(d11, "tooltip")
+        local pipeRow11 = ttSec11 and findRow(ttSec11, "portrait pipeline")
+        check("portrait pipeline diagnostic row surfaces attempts/succeeded/canSet=false",
+            pipeRow11 ~= nil and pipeRow11.value:find("attempts=5", 1, true) ~= nil
+            and pipeRow11.value:find("canSet=false=2", 1, true) ~= nil
+            and hasProblem(d11, "Portrait CanSetUnit refused 2 time(s)"),
+            "row=" .. tostring(pipeRow11 and pipeRow11.value))
+
+        local tracesTxt = TT:FormatDiagnosticTraces()
+        local exportTxt = TT:FormatDiagnosticExport()
+        check("diagnostic trace & export include portrait pipeline and trace header",
+            tracesTxt:find("Portrait Pipeline:", 1, true) ~= nil
+            and tracesTxt:find("Portrait Hooks:", 1, true) ~= nil
+            and tracesTxt:find("Portrait Lifecycle Trace", 1, true) ~= nil
+            and exportTxt:find("portrait pipeline", 1, true) ~= nil)
+
+        -- Simulate desynced portrait still shown while GameTooltip is hidden.
+        local gt = REALG.GameTooltip
+        local prevIsShown = gt.IsShown
+        local prevP3 = rawget(gt, "TacoTipPortrait3D")
+        gt.IsShown = function() return false end
+        rawset(gt, "TacoTipPortrait3D", { IsShown = function() return true end, GetNumPoints = function() return 1 end, GetAlpha = function() return 1 end })
+        local d12 = TT:CollectDiagnostics()
+        local liveRow12 = findRow(findSection(d12, "tooltip"), "portrait live state")
+        check("portrait diagnostics detects stale shown portrait while tooltip hidden",
+            hasProblem(d12, "Portrait frame is still shown while GameTooltip is hidden")
+            and liveRow12 ~= nil and liveRow12.status == "warn",
+            "live=" .. tostring(liveRow12 and liveRow12.status))
+        gt.IsShown = prevIsShown
+        rawset(gt, "TacoTipPortrait3D", prevP3)
 
         -- Restore the fixture for everything after this block.
         TT.ev = savedEv

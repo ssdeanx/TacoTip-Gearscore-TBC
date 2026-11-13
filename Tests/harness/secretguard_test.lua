@@ -745,6 +745,95 @@ do
     end
 end
 
+-- ---- inspector & pawn cache secrecy (1.0.2) --------------------------------
+
+do
+    local secrets = {}
+    local function markSecret(val)
+        secrets[val] = true
+        return val
+    end
+    local savedLink = nil
+    local env = sandbox({
+        WOW_PROJECT_ID = 18,
+        WOW_PROJECT_CAMELOT = 18,
+        WOW_PROJECT_MAINLINE = 1,
+        WOW_PROJECT_CLASSIC = 2,
+        WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5,
+        GetBuildInfo = function() return "16.0.1", "69722", "date", 16001, "us", "release" end,
+        GetTime = function() return 500 end,
+        strlower = STD.string.lower,
+        print = function() end,
+        CreateFrame = function()
+            return {
+                RegisterEvent = function() end,
+                SetScript = function() end,
+                HookScript = function() end,
+            }
+        end,
+        issecretvalue = function(v)
+            if (secrets[v]) then
+                STD.error("secret value read from tainted code", 0)
+            end
+            return false
+        end,
+        UnitExists = function(u) return u == "target" or u == "player" end,
+        UnitIsPlayer = function() return true end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-1-00000001" end
+            if (u == "target") then return "Player-1-00000002" end
+            return nil
+        end,
+        GetInventoryItemLink = function() return savedLink end,
+        GetComparisonAchievementPoints = function() return markSecret(9999) end,
+        C_SpecializationInfo = {
+            GetSpecializationInfo = function()
+                return 1, "Shaman", "", markSecret(136048), "", "", 0, nil, 0
+            end,
+        },
+        LibStub = setmetatable({}, {
+            __call = function(_, name)
+                if (name == "CallbackHandler-1.0") then
+                    return { New = function() return { RegisterCallback = function() end, Fire = function() end } end }
+                end
+                return nil
+            end,
+            __index = {
+                NewLibrary = function() return {} end,
+                GetLibrary = function(_, name)
+                    if (name == "CallbackHandler-1.0") then
+                        return { New = function() return { RegisterCallback = function() end, Fire = function() end } end }
+                    end
+                    return nil
+                end,
+            },
+        }),
+    })
+    local lib = { cache = {} }
+    env.LibStub.NewLibrary = function(_, name)
+        if (name == "LibForeverInspector") then return lib end
+        return {}
+    end
+
+    local okLoad, loadErr = STD.pcall(sandboxChunk(LIB_PATH, env), "TacoTip_Forever")
+    check("inspector 1.0.2 loads for cache-secrecy check", okLoad, STD.tostring(loadErr))
+    if (okLoad and lib.frame and lib.frame.scripts and lib.frame.scripts.OnEvent) then
+        savedLink = markSecret("|Hitem:12345::::::::70:::::|h[Secret]|h")
+        local okEvt = STD.pcall(lib.frame.scripts.OnEvent, lib.frame.scripts, "INSPECT_READY", "Player-1-00000002")
+        local cached = lib.cache["Player-1-00000002"]
+        check("inspector 1.0.2: INSPECT_READY with secret item/achievements does not raise",
+            okEvt and cached ~= nil)
+        check("inspector 1.0.2: secret inventory link never enters cache.items",
+            cached ~= nil and (cached.items == nil or cached.items[1] == nil))
+        check("inspector 1.0.2: secret achievement points never enter cache.achievements",
+            cached ~= nil and cached.achievements == nil)
+
+        local okIcon, icon = STD.pcall(lib.GetModernSpecializationIcon, lib, 1, 1, false, markSecret("target"))
+        check("inspector 1.0.2: GetModernSpecializationIcon rejects secret target cleanly",
+            okIcon and icon == nil)
+    end
+end
+
 -- ---- report ---------------------------------------------------------------
 
 STD.io.write("secret guard: gearscore=" .. GEARSCORE_PATH .. "\n")

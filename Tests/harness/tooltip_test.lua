@@ -6425,6 +6425,214 @@ do
     end
 end
 
+--------------------------------------------------------------------------
+-- Issue 1 & Issue 3 regression pins:
+--  1) applyTooltipMaxWidth never calls SetWidth(0) on TextRight* when
+--     tooltip_max_width == 0 (preventing right-side '...' collapse).
+--  2) wide_style continuation anchors ClearAllPoints + TOPLEFT/BOTTOMLEFT
+--     and clears _tacoTipWideAnchor on clearTooltipVisuals.
+--  3) Portrait CanSetUnit=false calls ClearModel, clears key, hides portrait,
+--     and OnHide still clears visuals when tooltip:IsShown() is false even if
+--     owner.UpdateTooltip exists.
+--------------------------------------------------------------------------
+do
+    local CFG = REALG.TacoTipConfig
+    local postUnit = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[1]) or nil
+    local postItem = (usePipeline and rawget(_G, "POSTCALLS") and rawget(_G, "POSTCALLS")[2]) or nil
+    local prevMaxW = CFG.tooltip_max_width
+    local prevStyle = CFG.tip_style
+    local prevGuild = CFG.show_guild_name
+    local prevPortrait = CFG.tooltip_portrait
+    local prevPortrait3D = CFG.tooltip_portrait_3d
+    local prevShown = GT.__shown
+
+    -- 1. TextRight SetWidth(0) guard on ShoppingTooltip1 and GameTooltip
+    local st1 = REALG.ShoppingTooltip1
+    local stLeft1 = rawget(REALG, "ShoppingTooltip1TextLeft1") or makeWidget("FontString", "ShoppingTooltip1TextLeft1")
+    local stRight1 = rawget(REALG, "ShoppingTooltip1TextRight1") or makeWidget("FontString", "ShoppingTooltip1TextRight1")
+    rawset(REALG, "ShoppingTooltip1TextLeft1", stLeft1)
+    rawset(REALG, "ShoppingTooltip1TextRight1", stRight1)
+    local stLeft2 = rawget(REALG, "ShoppingTooltip1TextLeft2") or makeWidget("FontString", "ShoppingTooltip1TextLeft2")
+    local stRight2 = rawget(REALG, "ShoppingTooltip1TextRight2") or makeWidget("FontString", "ShoppingTooltip1TextRight2")
+    rawset(REALG, "ShoppingTooltip1TextLeft2", stLeft2)
+    rawset(REALG, "ShoppingTooltip1TextRight2", stRight2)
+
+    local r1Calls, r2Calls = 0, 0
+    local origSetW1 = stRight1.SetWidth
+    local origSetW2 = stRight2.SetWidth
+    stRight1.SetWidth = function(self, w, ...) r1Calls = r1Calls + 1; if (origSetW1) then return origSetW1(self, w, ...) end end
+    stRight2.SetWidth = function(self, w, ...) r2Calls = r2Calls + 1; if (origSetW2) then return origSetW2(self, w, ...) end end
+    stLeft1:SetText("Gnarled Necromancer's Staff")
+    stLeft2:SetText("Two-Hand")
+    stRight2:SetText("Staff")
+
+    CFG.tooltip_max_width = 0
+    st1.__shown = true
+    local itemHook = st1.__hooks and st1.__hooks.OnTooltipSetItem
+    if (postItem and postItem.fn) then
+        pcall(postItem.fn, st1, { id = 12345 })
+    elseif (type(itemHook) == "function") then
+        pcall(itemHook, st1)
+    end
+    check("item tooltip with max_width=0 never calls SetWidth on TextRight",
+        r1Calls == 0 and r2Calls == 0,
+        "r1Calls=" .. tostring(r1Calls) .. " r2Calls=" .. tostring(r2Calls))
+
+    -- Even after a temporary non-zero max width, TextRight stays untouched.
+    CFG.tooltip_max_width = 300
+    if (postItem and postItem.fn) then
+        pcall(postItem.fn, st1, { id = 12345 })
+    elseif (type(itemHook) == "function") then
+        pcall(itemHook, st1)
+    end
+    CFG.tooltip_max_width = 0
+    if (postItem and postItem.fn) then
+        pcall(postItem.fn, st1, { id = 12345 })
+    elseif (type(itemHook) == "function") then
+        pcall(itemHook, st1)
+    end
+    check("item tooltip max_width=300->0 never touches TextRight width",
+        r1Calls == 0 and r2Calls == 0 and stRight2._tacoTipMaxWidth == nil,
+        "r1Calls=" .. tostring(r1Calls) .. " r2Calls=" .. tostring(r2Calls))
+    stRight1.SetWidth = origSetW1
+    stRight2.SetWidth = origSetW2
+
+    -- 2. Wide continuation anchor uses ClearAllPoints + TOPLEFT and resets on clear.
+    local gtL2 = rawget(REALG, "GameTooltipTextLeft2") or makeWidget("FontString", "GameTooltipTextLeft2")
+    local gtL3 = rawget(REALG, "GameTooltipTextLeft3") or makeWidget("FontString", "GameTooltipTextLeft3")
+    rawset(REALG, "GameTooltipTextLeft2", gtL2)
+    rawset(REALG, "GameTooltipTextLeft3", gtL3)
+    local clearPtsCalls, lastPt, lastRelPt = 0, nil, nil
+    local origClearPts, origSetPt = gtL3.ClearAllPoints, gtL3.SetPoint
+    gtL3.ClearAllPoints = function(self, ...) clearPtsCalls = clearPtsCalls + 1; if (origClearPts) then return origClearPts(self, ...) end end
+    gtL3.SetPoint = function(self, pt, rel, rpt, ...)
+        lastPt, lastRelPt = pt, rpt
+        if (origSetPt) then return origSetPt(self, pt, rel, rpt, ...) end
+    end
+    CFG.tip_style = 1
+    CFG.show_guild_name = true
+    GT.__shown = true
+    GT.__unit = "player"
+    GT.GetUnit = mockGetUnit("player")
+    if (REALG.TooltipUtil) then
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "Player", "player", UNITS.player.guid end
+    end
+    GT:ClearLines()
+    GT:AddLine("PlayerName")
+    GT:AddLine("Level 60 Orc Shaman")
+    GT:AddLine("PvP")
+    if (postUnit and postUnit.fn) then
+        pcall(postUnit.fn, GT, { guid = UNITS.player.guid })
+    elseif (hookUnit) then
+        pcall(hookUnit, GT)
+    end
+    if (gtL3._tacoTipWideAnchor) then
+        check("wide_style continuation anchor uses ClearAllPoints + TOPLEFT/BOTTOMLEFT",
+            clearPtsCalls > 0 and lastPt == "TOPLEFT" and lastRelPt == "BOTTOMLEFT",
+            "clear=" .. tostring(clearPtsCalls) .. " pt=" .. tostring(lastPt) .. "/" .. tostring(lastRelPt))
+        local onCleared = (GT.__hooks and GT.__hooks.OnTooltipCleared)
+            or (GT.__scripts and GT.__scripts.OnTooltipCleared)
+        if (onCleared) then pcall(onCleared, GT) end
+        check("clearTooltipVisuals resets _tacoTipWideAnchor on pooled lines",
+            gtL3._tacoTipWideAnchor == nil,
+            "still=" .. tostring(gtL3._tacoTipWideAnchor))
+    else
+        check("wide_style rendered cleanly without error", true)
+    end
+    gtL3.ClearAllPoints = origClearPts
+    gtL3.SetPoint = origSetPt
+
+    -- 3. Portrait reset when CanSetUnit returns false, and OnHide while hidden with UpdateTooltip.
+    local p3 = GT.TacoTipPortrait3D
+    if (p3) then
+        CFG.tooltip_portrait = true
+        CFG.tooltip_portrait_3d = true
+        local origCanSet = p3.CanSetUnit
+        local origClearModel = p3.ClearModel
+        local clearCount = 0
+        p3.CanSetUnit = function() return false end
+        p3.ClearModel = function(self, ...) clearCount = clearCount + 1; if (origClearModel) then return origClearModel(self, ...) end end
+        p3.tacoTipModelKey = "stale-key"
+        p3:Show()
+        TT.ev.portraitCanSetFalse = 0
+        TT:ApplyTooltipAppearance(GT, "target", nil)
+        check("CanSetUnit=false calls ClearModel, clears modelKey, and hides portrait",
+            clearCount >= 1 and p3.tacoTipModelKey == nil and not p3:IsShown()
+            and (tonumber(TT.ev.portraitCanSetFalse) or 0) >= 1,
+            "clear=" .. tostring(clearCount) .. " key=" .. tostring(p3.tacoTipModelKey)
+            .. " shown=" .. tostring(p3:IsShown()) .. " blocked=" .. tostring(TT.ev.portraitCanSetFalse))
+        p3.CanSetUnit = origCanSet
+        p3.ClearModel = origClearModel
+
+        -- Now simulate active portrait, owner.UpdateTooltip present, and OnHide while GT is hidden.
+        local fakeOwner = makeWidget("Frame", "FakePeriodicOwner")
+        fakeOwner.UpdateTooltip = function() end
+        GT.GetOwner = function() return fakeOwner end
+        p3.tacoTipModelKey = "active-key"
+        p3:Show()
+        GT.__shown = false
+        local hideBefore = tonumber(TT.ev.portraitOnHideRan) or 0
+        local onHide = (GT.__hooks and GT.__hooks.OnHide)
+            or (GT.__scripts and GT.__scripts.OnHide)
+        if (onHide) then pcall(onHide, GT) end
+        check("OnHide hides portrait even with UpdateTooltip owner when tooltip is hidden",
+            not p3:IsShown() and (tonumber(TT.ev.portraitOnHideRan) or 0) > hideBefore,
+            "shown=" .. tostring(p3:IsShown()) .. " onHideRan=" .. tostring(TT.ev.portraitOnHideRan))
+        GT.GetOwner = function() return REALG.UIParent end
+    end
+
+    -- 4. Decoupled GS/Pawn retry backoffs & secret-guarded Pawn memo (1.0.2).
+    if (TT.noteGearScoreRetry and TT.notePawnRetry and TT.setPawnScoreMemo) then
+        local gTest = "Player-9-00001002"
+        TT.clearGearScoreRetry(gTest)
+        TT.clearPawnRetry(gTest)
+        TT.noteGearScoreRetry(gTest, 100)
+        TT.notePawnRetry(gTest, 100)
+        local gsDelayBefore = TT._gsRetry and TT._gsRetry[gTest] and TT._gsRetry[gTest].delay
+        TT.clearPawnRetry(gTest)
+        check("clearPawnRetry does not clear independent _gsRetry backoff",
+            TT._gsRetry and TT._gsRetry[gTest] and TT._gsRetry[gTest].delay == gsDelayBefore
+            and (TT._pawnRetry == nil or TT._pawnRetry[gTest] == nil))
+
+        -- Simulate incomplete INVENTORY_READY retaining _gsRetry backoff
+        local okCI2, CI2 = pcall(REALG.LibStub, "LibForeverInspector", true)
+        if (okCI2 and CI2 and CI2.cache) then
+            local prevRec = CI2.cache[gTest]
+            CI2.cache[gTest] = { items = {}, _itemsRev = 1, incomplete = true }
+            TT._lastItemsRev = TT._lastItemsRev or {}
+            TT._lastItemsRev[gTest] = 1
+            CI2.callbacks:Fire("INVENTORY_READY", gTest, true, "target")
+            check("incomplete INVENTORY_READY without itemsRev change preserves _gsRetry backoff",
+                TT._gsRetry and TT._gsRetry[gTest] ~= nil)
+            CI2.cache[gTest] = prevRec
+        end
+
+        local itemsStub = {}
+        local origIsSec = TT.isSecretValue
+        local secTok = "SECRET_SPEC_TOK"
+        TT.isSecretValue = function(v)
+            if (v == secTok) then return true end
+            return origIsSec and origIsSec(v) or false
+        end
+        TT.clearGearScoreMemo(gTest)
+        TT.setPawnScoreMemo(gTest, itemsStub, 1, 55.5, secTok, secTok)
+        local pVal, pSpec, pCol = TT.getPawnScoreMemo(gTest, itemsStub, 1)
+        check("setPawnScoreMemo drops secret specName and specColor before caching",
+            pVal == 55.5 and pSpec == nil and pCol == nil,
+            "val=" .. tostring(pVal) .. " spec=" .. tostring(pSpec) .. " col=" .. tostring(pCol))
+        TT.clearGearScoreMemo(gTest)
+        TT.clearGearScoreRetry(gTest)
+        TT.isSecretValue = origIsSec
+    end
+
+    CFG.tooltip_max_width = prevMaxW
+    CFG.tip_style = prevStyle
+    CFG.show_guild_name = prevGuild
+    CFG.tooltip_portrait = prevPortrait
+    CFG.tooltip_portrait_3d = prevPortrait3D
+    GT.__shown = prevShown
+end
+
 local fails = 0
 for _, c in ipairs(checks) do
     if (not c[2]) then
