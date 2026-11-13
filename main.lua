@@ -728,6 +728,7 @@ local function recordPortraitTrace(op, reason, tooltip, portrait, extra)
     local p2 = rawget(tooltip, "TacoTipPortrait")
     if (type(p2) ~= "table") then p2 = nil end
     local p3Shown = (p3 and p3.IsShown and p3:IsShown() == true) or false
+    local p3Vis = (p3 and p3.IsVisible and pcall(p3.IsVisible, p3) and p3:IsVisible() == true) or false
     local p2Shown = (p2 and p2.IsShown and p2:IsShown() == true) or false
     local state = rawget(tooltip, "_tacoTipState")
 
@@ -738,7 +739,9 @@ local function recordPortraitTrace(op, reason, tooltip, portrait, extra)
     entry.tooltip = (tooltip.GetName and tooltip:GetName()) or "tooltip"
     entry.ttShown = ttShown
     entry.p3Shown = p3Shown
+    entry.p3Vis = p3Vis
     entry.p2Shown = p2Shown
+    entry.uVis = (extra and extra.uVis ~= nil) and (extra.uVis == true) or nil
     entry.curGUID = safeDiagValue(state and state.currentUnitGUID)
     entry.prevKey = safeDiagValue(extra and extra.prevKey or (portrait and portrait.tacoTipModelKey))
     entry.newKey = safeDiagValue(extra and extra.newKey)
@@ -1941,6 +1944,136 @@ local function anchorTooltipPortrait(tooltip, portrait, fromShow)
     end
 end
 
+local function safePortraitUnitVisible(unit)
+    if (type(unit) == "nil" or isSecretValue(unit) or type(_G.UnitIsVisible) ~= "function") then
+        return nil
+    end
+    local okV, vis = pcall(_G.UnitIsVisible, unit)
+    if (okV and not isSecretValue(vis)) then
+        return vis == true
+    end
+    return nil
+end
+
+local function applyPortrait3DUnit(tooltip, portrait, unit, source)
+    local uGuid = (unit and safeUnitGUID(unit)) or nil
+    local modelKey = (uGuid and not isSecretValue(uGuid)) and uGuid or unit
+    portrait._tacoTipPendingSetUnit = nil
+    if (portrait.tacoTipModelKey == modelKey) then
+        TT.ev.portraitKeyHits = (TT.ev.portraitKeyHits or 0) + 1
+        return false
+    end
+    if (portrait._tacoTipFailedKey == modelKey) then
+        return true
+    end
+    if (portrait._tacoTipFailedKey ~= nil) then
+        portrait._tacoTipFailedKey = nil
+        portrait.tacoTipSetRetries = nil
+    end
+
+    local prevKey = portrait.tacoTipModelKey
+    local canSet = true
+    if (type(portrait.CanSetUnit) == "function") then
+        local okCan, allowed = pcall(portrait.CanSetUnit, portrait, unit)
+        if (okCan and allowed == false) then
+            canSet = false
+        end
+    end
+    if (not canSet) then
+        -- CanSetUnit returned false (unit not stream-ready/valid): clear any
+        -- previous character mesh instead of caching the incoming modelKey
+        -- over an unrelated or empty model.
+        if (type(portrait.ClearModel) == "function") then
+            pcall(portrait.ClearModel, portrait)
+            TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
+        end
+        portrait.tacoTipModelKey = nil
+        portrait.tacoTipSetRetries = nil
+        portrait._tacoTipFailedKey = nil
+        portrait._tacoTipZoom = nil
+        TT.ev.portraitCanSetFalse = (TT.ev.portraitCanSetFalse or 0) + 1
+        recordPortraitTrace("canset-false", source, tooltip, portrait, {
+            unit = unit, prevKey = prevKey, newKey = modelKey,
+            uVis = safePortraitUnitVisible(unit), outcome = "hidden",
+        })
+        return true
+    end
+
+    -- Ensure the 3D PlayerModel is shown BEFORE ClearModel/SetUnit so the
+    -- client attaches the unit camera/mesh cleanly instead of rejecting
+    -- SetUnit on a frame hidden by clear-retain (Blizzard InspectPaperDollFrame).
+    if (portrait.SetAlpha and (not portrait.GetAlpha or portrait:GetAlpha() ~= 1)) then
+        portrait:SetAlpha(1)
+    end
+    if ((not portrait.IsShown or not portrait:IsShown()) and portrait.Show) then
+        portrait:Show()
+    end
+
+    -- Clear first so the previous character's mesh cannot persist while the
+    -- new one streams in (pcall: ClearModel may be absent on some clients).
+    TT.ev.portraitSetAttempts = (TT.ev.portraitSetAttempts or 0) + 1
+    local okClear, errClear = pcall(portrait.ClearModel, portrait)
+    if (okClear) then
+        TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
+    elseif (errClear) then
+        TT:RecordError("Portrait", errClear, "ClearModel")
+    end
+    local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
+    -- SetUnit reports success with a boolean, so a non-throwing false is still
+    -- a failure. Caching it as tacoTipModelKey would leave the previous mesh
+    -- under the new tooltip and make the retry counter unreachable.
+    if (okCall and setResult ~= false) then
+        TT.ev.portraitSetSucceeded = (TT.ev.portraitSetSucceeded or 0) + 1
+        portrait.tacoTipModelKey = modelKey
+        portrait.tacoTipSetRetries = nil
+        portrait._tacoTipFailedKey = nil
+        -- SetUnit loads a fresh mesh and the camera returns to its default;
+        -- re-apply the configured zoom after it.
+        portrait._tacoTipZoom = nil
+        recordPortraitTrace("setunit-ok", source, tooltip, portrait, {
+            unit = unit, prevKey = prevKey, newKey = modelKey, outcome = "ok",
+        })
+        return false
+    end
+
+    local uVis = safePortraitUnitVisible(unit)
+    local ttNotShown = (tooltip.IsShown and not tooltip:IsShown()) and true or false
+    if (okCall and setResult == false and (isForever or isRetail) and ttNotShown) then
+        -- TooltipDataProcessor post-call runs before GameTooltip:Show(), so
+        -- the model frame is not yet visible in the hierarchy; complete
+        -- SetUnit inside onTooltipShow once the tooltip is laid out and shown.
+        portrait.tacoTipModelKey = nil
+        portrait._tacoTipPendingSetUnit = true
+        TT.ev.portraitSetDeferred = (TT.ev.portraitSetDeferred or 0) + 1
+        recordPortraitTrace("setunit-defer", source, tooltip, portrait, {
+            unit = unit, prevKey = prevKey, newKey = modelKey,
+            uVis = uVis, outcome = "pre-show",
+        })
+        return false
+    end
+
+    local retries = (portrait.tacoTipSetRetries or 0) + 1
+    portrait.tacoTipSetRetries = retries
+    TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
+    if (not okCall and setResult) then
+        TT:RecordError("Portrait", setResult, "SetUnit")
+    end
+    portrait.tacoTipModelKey = nil
+    if (retries >= 2) then
+        -- Mesh load failed or unavailable while shown; stop hammering SetUnit
+        -- on subsequent renders without polluting tacoTipModelKey.
+        portrait._tacoTipFailedKey = modelKey
+    end
+    recordPortraitTrace("setunit-fail", source, tooltip, portrait, {
+        unit = unit,
+        prevKey = prevKey,
+        newKey = nil,
+        uVis = uVis,
+        outcome = (okCall and "retry-" or "err-retry-") .. tostring(retries),
+    })
+    return true
+end
+
 function TT:ApplyTooltipAppearance(tooltip, unit)
     if (not tooltip) then
         return
@@ -2056,84 +2189,7 @@ function TT:ApplyTooltipAppearance(tooltip, unit)
             -- actually decides which mesh is correct.
             local hidePortrait = false
             if (is3D and portrait.SetUnit) then
-                local uGuid = (unit and safeUnitGUID(unit)) or nil
-                local modelKey = (uGuid and not isSecretValue(uGuid)) and uGuid or unit
-                if (portrait.tacoTipModelKey ~= modelKey) then
-                    local prevKey = portrait.tacoTipModelKey
-                    local canSet = true
-                    if (type(portrait.CanSetUnit) == "function") then
-                        local okCan, allowed = pcall(portrait.CanSetUnit, portrait, unit)
-                        if (okCan and allowed == false) then
-                            canSet = false
-                        end
-                    end
-                    if (not canSet) then
-                        -- CanSetUnit returned false (unit not stream-ready/valid):
-                        -- clear any previous character mesh instead of caching the
-                        -- incoming modelKey over an unrelated or empty model.
-                        if (type(portrait.ClearModel) == "function") then
-                            pcall(portrait.ClearModel, portrait)
-                            TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
-                        end
-                        portrait.tacoTipModelKey = nil
-                        portrait.tacoTipSetRetries = nil
-                        portrait._tacoTipZoom = nil
-                        TT.ev.portraitCanSetFalse = (TT.ev.portraitCanSetFalse or 0) + 1
-                        hidePortrait = true
-                        recordPortraitTrace("canset-false", "appearance", tooltip, portrait, {
-                            unit = unit, prevKey = prevKey, newKey = modelKey, outcome = "hidden",
-                        })
-                    else
-                        -- Clear first so the previous character's mesh cannot persist
-                        -- while the new one streams in (pcall: ClearModel may be absent
-                        -- on some clients).
-                        TT.ev.portraitSetAttempts = (TT.ev.portraitSetAttempts or 0) + 1
-                        local okClear, errClear = pcall(portrait.ClearModel, portrait)
-                        if (okClear) then
-                            TT.ev.portraitClearModelCalls = (TT.ev.portraitClearModelCalls or 0) + 1
-                        elseif (errClear) then
-                            TT:RecordError("Portrait", errClear, "ClearModel")
-                        end
-                        local okCall, setResult = pcall(portrait.SetUnit, portrait, unit)
-                        -- SetUnit reports success with a boolean, so a non-throwing
-                        -- false is still a failure. Caching it as the current unit
-                        -- would leave the previous character's mesh under the new
-                        -- tooltip and make the retry counter unreachable.
-                        if (okCall and setResult ~= false) then
-                            TT.ev.portraitSetSucceeded = (TT.ev.portraitSetSucceeded or 0) + 1
-                            portrait.tacoTipModelKey = modelKey
-                            portrait.tacoTipSetRetries = nil
-                            -- SetUnit loads a fresh mesh and the camera returns to
-                            -- its default; re-apply the configured zoom after it.
-                            portrait._tacoTipZoom = nil
-                            recordPortraitTrace("setunit-ok", "appearance", tooltip, portrait, {
-                                unit = unit, prevKey = prevKey, newKey = modelKey, outcome = "ok",
-                            })
-                        else
-                            local retries = (portrait.tacoTipSetRetries or 0) + 1
-                            portrait.tacoTipSetRetries = retries
-                            TT.ev.portraitSetFailed = (TT.ev.portraitSetFailed or 0) + 1
-                            if (not okCall and setResult) then
-                                TT:RecordError("Portrait", setResult, "SetUnit")
-                            end
-                            if (retries >= 2) then
-                                -- Mesh load failed or not available for this unit; stop hammering
-                                -- SetUnit on every single frame/render tick for this character.
-                                portrait.tacoTipModelKey = modelKey
-                            else
-                                portrait.tacoTipModelKey = nil
-                            end
-                            recordPortraitTrace("setunit-fail", "appearance", tooltip, portrait, {
-                                unit = unit,
-                                prevKey = prevKey,
-                                newKey = portrait.tacoTipModelKey,
-                                outcome = "retry-" .. tostring(retries),
-                            })
-                        end
-                    end
-                else
-                    TT.ev.portraitKeyHits = (TT.ev.portraitKeyHits or 0) + 1
-                end
+                hidePortrait = applyPortrait3DUnit(tooltip, portrait, unit, "appearance")
                 if (not hidePortrait) then
                     local zoom = TacoTipConfig.tooltip_portrait_zoom or 0.7
                     if (portrait._tacoTipZoom ~= zoom) then
@@ -2812,16 +2868,21 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
                 end
                 portrait3D.tacoTipModelKey = nil
                 portrait3D.tacoTipSetRetries = nil
+                portrait3D._tacoTipPendingSetUnit = nil
+                portrait3D._tacoTipFailedKey = nil
                 portrait3D._tacoTipZoom = nil
                 if (wasShown or prevKey ~= nil) then
                     recordPortraitTrace("clear-destroy", reason, tooltip, portrait3D, {
                         prevKey = prevKey, keepModel = false, retainModel = false, outcome = "cleared",
                     })
                 end
-            elseif (wasShown or prevKey ~= nil) then
-                recordPortraitTrace("clear-retain", reason, tooltip, portrait3D, {
-                    prevKey = prevKey, keepModel = false, retainModel = true, outcome = "hidden-retained",
-                })
+            else
+                portrait3D._tacoTipPendingSetUnit = nil
+                if (wasShown or prevKey ~= nil) then
+                    recordPortraitTrace("clear-retain", reason, tooltip, portrait3D, {
+                        prevKey = prevKey, keepModel = false, retainModel = true, outcome = "hidden-retained",
+                    })
+                end
             end
         end
     end
@@ -4783,6 +4844,27 @@ local function onTooltipShow(tooltip)
         end
         if (portrait) then
             anchorTooltipPortrait(tooltip, portrait, true)
+            if (TacoTipConfig.tooltip_portrait_3d and portrait == tooltip.TacoTipPortrait3D
+                and portrait._tacoTipPendingSetUnit and unit and portrait.SetUnit) then
+                local hidePortrait = applyPortrait3DUnit(tooltip, portrait, unit, "onshow")
+                if (hidePortrait) then
+                    if (portrait.Hide) then
+                        portrait:Hide()
+                    end
+                else
+                    local zoom = TacoTipConfig.tooltip_portrait_zoom or 0.7
+                    if (portrait._tacoTipZoom ~= zoom) then
+                        pcall(portrait.SetPortraitZoom, portrait, zoom)
+                        portrait._tacoTipZoom = zoom
+                    end
+                    if (portrait.SetAlpha and (not portrait.GetAlpha or portrait:GetAlpha() ~= 1)) then
+                        portrait:SetAlpha(1)
+                    end
+                    if ((not portrait.IsShown or not portrait:IsShown()) and portrait.Show) then
+                        portrait:Show()
+                    end
+                end
+            end
         end
     end
 
@@ -6105,15 +6187,16 @@ local function collectTooltipSection()
     local portraitAttempts = tonumber(ev.portraitSetAttempts) or 0
     local portraitOk = tonumber(ev.portraitSetSucceeded) or 0
     local portraitBlocked = tonumber(ev.portraitCanSetFalse) or 0
+    local portraitDeferred = tonumber(ev.portraitSetDeferred) or 0
     local portraitKeyHits = tonumber(ev.portraitKeyHits) or 0
     local portrait2D = tonumber(ev.portrait2DSets) or 0
     local failRate = (portraitAttempts > 0)
-        and ((diagRate(portraitFailed, portraitAttempts) or "0.0% (0 of ") .. tostring(portraitAttempts) .. ")")
+        and (diagRate(portraitFailed, portraitAttempts) or "n/a")
         or "n/a"
     diagRow(s, "portrait pipeline", string.format(
-            "attempts=%s, ok=%s, fail=%s (%s), canSet=false=%s, key-hits=%s, 2d=%s",
+            "attempts=%s, ok=%s, fail=%s (%s), defer=%s, canSet=false=%s, key-hits=%s, 2d=%s",
             tostring(portraitAttempts), tostring(portraitOk), tostring(portraitFailed), failRate,
-            tostring(portraitBlocked), tostring(portraitKeyHits), tostring(portrait2D)),
+            tostring(portraitDeferred), tostring(portraitBlocked), tostring(portraitKeyHits), tostring(portrait2D)),
         (portraitFailed > 0 or portraitBlocked > 0) and "warn" or "info")
     if (type(GameTooltip) == "table") then
         local okShown, ttShown = pcall(function() return GameTooltip.IsShown and GameTooltip:IsShown() == true end)
@@ -6145,10 +6228,12 @@ local function collectTooltipSection()
     local traceEntries = getPortraitTraceEntries()
     if (#traceEntries > 0) then
         local last = traceEntries[#traceEntries]
+        local uvisText = (last.uVis ~= nil) and tostring(last.uVis) or "-"
         diagRow(s, "portrait last event", string.format(
-            "#%s %s (%s) [tt=%s p3=%s] prev=%s -> new=%s (%s)",
+            "#%s %s (%s) [tt=%s p3=%s p3v=%s uvis=%s] prev=%s -> new=%s (%s)",
             tostring(last.seq or #traceEntries), tostring(last.op or "?"),
             tostring(last.reason or "-"), tostring(last.ttShown), tostring(last.p3Shown),
+            tostring(last.p3Vis), uvisText,
             tostring(last.prevKey or "nil"), tostring(last.newKey or "nil"),
             tostring(last.outcome or "-")), "info")
     end
@@ -6565,9 +6650,10 @@ function TT:FormatDiagnosticTraces()
         tostring(ev.portraitHide or 0), tostring(ev.portraitDestroy or 0), tostring(ev.portraitClearModelCalls or 0),
         tostring(ev.portraitModelHidden or 0), tostring(ev.portraitAnchor or 0))
     lines[#lines + 1] = string.format(
-        "  Portrait Pipeline: Attempts=%s, Succeeded=%s, SetFailed=%s, CanSetFalse=%s, KeyHits=%s, 2DSets=%s",
+        "  Portrait Pipeline: Attempts=%s, Succeeded=%s, SetFailed=%s, Deferred=%s, CanSetFalse=%s, KeyHits=%s, 2DSets=%s",
         tostring(ev.portraitSetAttempts or 0), tostring(ev.portraitSetSucceeded or 0),
-        tostring(ev.portraitSetFailed or 0), tostring(ev.portraitCanSetFalse or 0),
+        tostring(ev.portraitSetFailed or 0), tostring(ev.portraitSetDeferred or 0),
+        tostring(ev.portraitCanSetFalse or 0),
         tostring(ev.portraitKeyHits or 0), tostring(ev.portrait2DSets or 0))
     lines[#lines + 1] = string.format("  Portrait Hooks: OnHideRan=%s, OnHideSkipped=%s, OnClearSkipped=%s",
         tostring(ev.portraitOnHideRan or 0), tostring(ev.portraitOnHideSkipped or 0),
@@ -6587,10 +6673,12 @@ function TT:FormatDiagnosticTraces()
     else
         for i = 1, #portraitTrace do
             local p = portraitTrace[i]
+            local uvisText = (p.uVis ~= nil) and tostring(p.uVis) or "-"
             lines[#lines + 1] = string.format(
-                "  [#%s %.2fs] %-12s reason=%-18s tt=%s p3=%s p2=%s cur=%s prevKey=%s newKey=%s keep=%s retain=%s out=%s",
+                "  [#%s %.2fs] %-12s reason=%-18s tt=%s p3=%s p3v=%s uvis=%s p2=%s cur=%s prevKey=%s newKey=%s keep=%s retain=%s out=%s",
                 tostring(p.seq or i), tonumber(p.time) or 0, tostring(p.op or "?"),
-                tostring(p.reason or "-"), tostring(p.ttShown), tostring(p.p3Shown), tostring(p.p2Shown),
+                tostring(p.reason or "-"), tostring(p.ttShown), tostring(p.p3Shown),
+                tostring(p.p3Vis), uvisText, tostring(p.p2Shown),
                 tostring(p.curGUID or "nil"), tostring(p.prevKey or "nil"), tostring(p.newKey or "nil"),
                 tostring(p.keepModel), tostring(p.retainModel), tostring(p.outcome or "-"))
         end

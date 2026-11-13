@@ -1929,7 +1929,11 @@ do
         -- be cached as the new unit, or the previous mesh stays under the new
         -- tooltip and portraitSetFailed is unreachable.
         local savedSetUnit = model.SetUnit
-        model.SetUnit = function() return false end
+        local setUnitCalls = 0
+        model.SetUnit = function()
+            setUnitCalls = setUnitCalls + 1
+            return false
+        end
         local failuresBefore = (TT.ev.portraitSetFailed or 0)
         STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "mouseover")
         check("portrait: a non-throwing SetUnit(false) is not cached as success",
@@ -1937,6 +1941,66 @@ do
                 and (TT.ev.portraitSetFailed or 0) > failuresBefore,
             "key=" .. tostring(model.tacoTipModelKey)
                 .. " failed " .. tostring(failuresBefore) .. " -> " .. tostring(TT.ev.portraitSetFailed or 0))
+        check("portrait: a shown SetUnit(false) hides the empty 3D portrait frame",
+            not model:IsShown())
+        -- Second failure locks _tacoTipFailedKey without polluting tacoTipModelKey;
+        -- a third render on the same failed unit stops hammering SetUnit.
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "mouseover")
+        local callsAfterTwo = setUnitCalls
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "mouseover")
+        check("portrait: 2nd SetUnit(false) caps retries without setting tacoTipModelKey",
+            model.tacoTipModelKey == nil
+                and model._tacoTipFailedKey == UNITS.mouseover.guid
+                and setUnitCalls == callsAfterTwo
+                and not model:IsShown(),
+            "key=" .. tostring(model.tacoTipModelKey) .. " failedKey=" .. tostring(model._tacoTipFailedKey)
+                .. " calls=" .. tostring(setUnitCalls))
+
+        -- Clear state, then prove Show() is called BEFORE SetUnit() even after
+        -- OnTooltipCleared (clear-retain) hid the model frame.
+        model._tacoTipFailedKey = nil
+        model.tacoTipSetRetries = nil
+        if (GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+        local shownDuringSetUnit = nil
+        model.SetUnit = function(self)
+            shownDuringSetUnit = (self.IsShown and self:IsShown() == true) or false
+            return true
+        end
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "mouseover")
+        check("portrait: Show() runs BEFORE SetUnit() after clear-retain",
+            shownDuringSetUnit == true and model.tacoTipModelKey == UNITS.mouseover.guid,
+            "shownDuringSetUnit=" .. tostring(shownDuringSetUnit))
+
+        -- Pre-Show TooltipDataProcessor post-call: when GT.__shown is false and
+        -- SetUnit returns false, it defers cleanly to OnShow without counting a failure.
+        model.tacoTipModelKey = nil
+        model.tacoTipSetRetries = nil
+        model._tacoTipFailedKey = nil
+        local deferFailBefore = (TT.ev.portraitSetFailed or 0)
+        local deferCalls = 0
+        model.SetUnit = function()
+            deferCalls = deferCalls + 1
+            return GT:IsShown()
+        end
+        GT.__shown = false
+        GT.__unit = "player"
+        STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
+        check("portrait: pre-Show SetUnit(false) defers to OnShow without failure",
+            deferCalls == 1
+                and (TT.ev.portraitSetFailed or 0) == deferFailBefore
+                and model._tacoTipPendingSetUnit == true
+                and model:IsShown(),
+            "calls=" .. tostring(deferCalls) .. " failed=" .. tostring(TT.ev.portraitSetFailed or 0)
+                .. " pending=" .. tostring(model._tacoTipPendingSetUnit))
+        GT.__shown = true
+        if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+        check("portrait: OnShow completes deferred pre-Show SetUnit cleanly",
+            deferCalls == 2
+                and model.tacoTipModelKey == UNITS.player.guid
+                and model._tacoTipPendingSetUnit == nil
+                and model:IsShown(),
+            "calls=" .. tostring(deferCalls) .. " key=" .. tostring(model.tacoTipModelKey))
+
         model.SetUnit = savedSetUnit
         STD.pcall(TT.ApplyTooltipAppearance, TT, GT, "player")
 

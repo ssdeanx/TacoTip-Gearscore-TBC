@@ -1703,8 +1703,10 @@ do
         local d11 = TT:CollectDiagnostics()
         local ttSec11 = findSection(d11, "tooltip")
         local pipeRow11 = ttSec11 and findRow(ttSec11, "portrait pipeline")
-        check("portrait pipeline diagnostic row surfaces attempts/succeeded/canSet=false",
+        check("portrait pipeline diagnostic row surfaces attempts/succeeded/canSet=false without duplicate denominator",
             pipeRow11 ~= nil and pipeRow11.value:find("attempts=5", 1, true) ~= nil
+            and pipeRow11.value:find("fail=0 (0.0% (0 of 5))", 1, true) ~= nil
+            and pipeRow11.value:find("5)5)", 1, true) == nil
             and pipeRow11.value:find("canSet=false=2", 1, true) ~= nil
             and hasProblem(d11, "Portrait CanSetUnit refused 2 time(s)"),
             "row=" .. tostring(pipeRow11 and pipeRow11.value))
