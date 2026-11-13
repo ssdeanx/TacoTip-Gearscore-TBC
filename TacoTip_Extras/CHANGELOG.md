@@ -4,6 +4,7 @@ All notable changes to TacoTip Extras are documented in this file.
 
 | Version | Date | Summary |
 | :--- | :--- | :--- |
+| `1.2.8` | `2026-11-12` | **Inspect `_itemsRev` cache reuse, secret-safe DB & capture hardening, in-place unchanged DB refreshes, complete realm purge, P2P inspect dedup, and proper WoW Forever (`Camelot`) client-identity delegation.** `Scanner.HandleInventoryReady` now reuses fresh `Cache.GetFresh` snapshots when `LibForeverInspector`'s `_itemsRev` and player identity match without re-scanning items (`remoteCacheSkips`); `RankDB.StoreRecord` and `RankDB.StoreGear` refresh timestamps in place when display/sort state or serialized gear IDs are unchanged (preserving `BuildSortedIndices` caches), and `RankDB.PurgeDatabase` now clears both `ranks` and `gear` per realm; `RankSync.QueueInspectRecord` skips re-broadcasting `"up-to-date"` records and deduplicates identical peer broadcasts over 30 seconds; `Core.IsForeverClient()`/`Core.IsRetailClient()` delegate to `LibForeverInspector` (and interface-band fallback) without touching `WOW_PROJECT_ID == WOW_PROJECT_MAINLINE`, fixing Forever vs Retail detection across `Scoring.lua`, `Scanner.lua`, and `Tooltips.lua`; cleared the pre-existing `luacheck` warnings in `Scoring.lua` and `TacoTipAdapter.lua`. |
 
 ### 2026-11-10 — static secret-value analysis (folded into 1.2.6)
 
@@ -34,6 +35,16 @@ Recorded here rather than as a new version: the token stays `1.2.6`.
 | `1.0.2` | `2026-10-13` | Polish release: renamed the player-tooltip rank label to `Gearscore Rank:`, restyled it to match the add-on's brand palette, recolored Average iLvl values from class colors to GearScore quality colors across tooltips, equipment windows and the server browser, and fixed the leaderboard window not opening from the Options button / slash commands on all clients. |
 | `1.0.1` | `2026-10-12` | Server-wide GearScore Rank Browser & P2P Sync Engine (HonorSpy style) in background channel `ttgssync` + GUILD/PARTY/RAID fallbacks, interactive Leaderboard UI (`/tt ranks`, `/ttrank`, `/ttleaderboard`), player tooltip rank line (`Rank: #X (#Y Class)`), and remote inspect equipment scanning deadlock fix across Retail and WoW Forever. |
 | `1.0.0` | `2026-10-11` | Initial release of TacoTip Extras companion addon. Full equipment and enhancement auditing, modern retail engine compatibility (variable-length bonus ID item links, 16-slot average item level, CharacterModelScene support), Detailed display mode default, and 100% zero-warning static analysis. |
+
+## [1.2.8] — 2026-11-12
+
+### Scan cache reuse, DB write optimization, P2P broadcast dedup & WoW Forever client-identity alignment
+
+- **Incremental Inspect Cache Reuse (`Scanner.lua`).** `Scanner.HandleInventoryReady` checks `LibForeverInspector.GetUnitData(guid)._itemsRev` against `remoteItemRevs[guid]`. When the revision matches an active `complete` entry in `Cache.GetFresh(guid)` with unchanged class/level, the scan completes immediately (`remoteCacheSkips` exposed in `Scanner.GetDebugState()`) without allocating a new generation or re-scoring slots. Local gear persistence also deduplicates identical `StoreGear` writes in memory before touching `RankDB`.
+- **In-Place Unchanged DB Refreshes & Complete Purge (`RankDB.lua`).** `RankDB.StoreRecord` uses `recordsHaveSameRankingState` to update `existing.timestamp` in place when display and sort fields already match, keeping `BuildSortedIndices` / lookup caches hot. `RankDB.StoreGear` refreshes `existing.t` in place when sanitized `ids` are identical. `RankDB.PurgeDatabase(realm)` now wipes `TacoTipExtrasDB.gear[realmKey]` and resets gear bookkeeping alongside `ranks[realmKey]`.
+- **Inspect Broadcast Deduplication (`RankSync.lua`).** `RankSync.QueueInspectRecord` no longer enqueues a P2P wire broadcast when `RankDB.StoreRecord` reports `"up-to-date"`, and maintains a bounded 30-second (`500`-entry cap) signature cache to drop duplicate repeat-hover broadcasts.
+- **Secret-Safe Guards & Client Identity Delegation (`Core.lua`, `Scanner.lua`, `Scoring.lua`, `Tooltips.lua`, `RankDB.lua`).** Added `Core.IsForeverClient()` and `Core.IsRetailClient()` delegating to `LibForeverInspector` first and `GetBuildInfo()` interface bands second, removing direct `WOW_PROJECT_ID == WOW_PROJECT_MAINLINE` checks that misclassified WoW Forever (`WOW_PROJECT_CAMELOT = 18`). Added `Core.IsSecretValue` guards on `Scanner` guild/spec/faction/slot captures, `isRemotePlayerGUID`, and `RankDB` realm/ID/gear lookups. Resolved the pre-existing `luacheck` warnings in `Scoring.lua` and `TacoTipAdapter.lua`.
+- **Version & Tests (`TacoTip_Extras.toc`, `Tests/harness/load_test.lua`).** Bumped version to `1.2.8` and added unit pins for client-identity delegation, `_itemsRev` cache hits/invalidations, secret GUID handling, `RankDB` in-place refreshes + gear purge, and `QueueInspectRecord` deduplication.
 
 ## [1.2.7] — 2026-11-12
 

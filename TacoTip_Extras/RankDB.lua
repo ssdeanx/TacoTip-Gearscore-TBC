@@ -165,20 +165,20 @@ local function ensureOldestHeap(realmKey, db)
 end
 
 local function getRealmKey(customRealm)
-    if type(customRealm) == "string" and customRealm ~= "" then
+    if not Core.IsSecretValue(customRealm) and type(customRealm) == "string" and customRealm ~= "" then
         return customRealm
     end
     local getNorm = rawget(_G, "GetNormalizedRealmName")
     if type(getNorm) == "function" then
         local ok, r = pcall(getNorm)
-        if ok and type(r) == "string" and r ~= "" then
+        if ok and not Core.IsSecretValue(r) and type(r) == "string" and r ~= "" then
             return r
         end
     end
     local getRealm = rawget(_G, "GetRealmName")
     if type(getRealm) == "function" then
         local ok, r = pcall(getRealm)
-        if ok and type(r) == "string" and r ~= "" then
+        if ok and not Core.IsSecretValue(r) and type(r) == "string" and r ~= "" then
             return r
         end
     end
@@ -320,6 +320,9 @@ function RankDB.ValidateRecord(record)
     -- numbers, 0 when unknown; legacy rows without them read tolerant and
     -- fall back to the class/specName strings.
     local function sanitizeID(value, maxVal)
+        if Core.IsSecretValue(value) then
+            return 0
+        end
         local n = tonumber(value)
         if not n or n ~= n or n == math.huge or n == -math.huge or n < 0 then
             return 0
@@ -368,6 +371,23 @@ function RankDB.ValidateRecord(record)
     }
 end
 
+local function recordsHaveSameRankingState(a, b)
+    return a.name == b.name
+        and a.faction == b.faction
+        and a.class == b.class
+        and a.classID == b.classID
+        and a.specID == b.specID
+        and a.specName == b.specName
+        and a.guild == b.guild
+        and a.level == b.level
+        and a.pvpRank == b.pvpRank
+        and a.arena == b.arena
+        and a.gs == b.gs
+        and a.ilvl == b.ilvl
+        and a.specIcon == nil
+        and a.source == nil
+end
+
 function RankDB.StoreRecord(record, realm)
     local clean, err = RankDB.ValidateRecord(record)
     if not clean then
@@ -383,6 +403,14 @@ function RankDB.StoreRecord(record, realm)
 
     if existing and type(existing.timestamp) == "number" and existing.timestamp > clean.timestamp then
         return true, "up-to-date"
+    end
+
+    if existing and recordsHaveSameRankingState(existing, clean) then
+        existing.timestamp = clean.timestamp
+        if not cachedIndices[realmKey] then
+            dirtyFlags[realmKey] = true
+        end
+        return true, "stored"
     end
 
     -- Seed the per-realm row count BEFORE the write, so the adjustment below
@@ -588,7 +616,7 @@ function RankDB.BuildSortedIndices(realm)
 end
 
 function RankDB.GetPlayerRank(guid, realm)
-    if not guid or guid == "" then
+    if Core.IsSecretValue(guid) or type(guid) ~= "string" or guid == "" then
         return nil, nil, nil, 0
     end
 
@@ -609,7 +637,7 @@ end
 -- best few we hold. The rank indices cannot supply that -- they carry ranks,
 -- not records.
 function RankDB.GetRecord(guid, realm)
-    if type(guid) ~= "string" or guid == "" then
+    if Core.IsSecretValue(guid) or type(guid) ~= "string" or guid == "" then
         return nil
     end
     local db = getDB(realm)
@@ -880,7 +908,7 @@ end
 -- Read-only by design: unlike getDB/getGearDB, a read never creates a realm
 -- table, so probing for gear cannot orphan one.
 function RankDB.GetGear(guid, realm)
-    if type(guid) ~= "string" or guid == "" then
+    if Core.IsSecretValue(guid) or type(guid) ~= "string" or guid == "" then
         return nil
     end
     local g = _G
@@ -937,7 +965,7 @@ end
 -- missing t stamps 0, which never overwrites an existing row but still files
 -- when nothing is stored yet.
 function RankDB.StoreGear(guid, t, ids, realm)
-    if type(guid) ~= "string" then
+    if Core.IsSecretValue(guid) or type(guid) ~= "string" then
         return false, "bad-guid"
     end
     local clean = guid:gsub("[%c;]", ""):match("^%s*(.-)%s*$") or ""
@@ -1000,6 +1028,11 @@ function RankDB.StoreGear(guid, t, ids, realm)
             slotMap[slot] = itemID
         end
     end
+    local newIds = rebuildGearRun(slotMap)
+    if type(existing) == "table" and existing.ids == newIds then
+        existing.t = stamp
+        return true, "stored"
+    end
     -- Enforce the documented capacity AT INSERT, not only at the next prune.
     --
     -- The same amortized shape as the rank table: the exact row count is
@@ -1025,7 +1058,7 @@ function RankDB.StoreGear(guid, t, ids, realm)
         gearEntryCount[realmKey] = gearEntryCount[realmKey] + 1
     end
 
-    db[clean] = { t = stamp, ids = rebuildGearRun(slotMap) }
+    db[clean] = { t = stamp, ids = newIds }
 
     if gearEntryCount[realmKey] > RankDB.GEAR_MAX_ENTRIES then
         local heapExisted = gearOldestHeap[realmKey] ~= nil
@@ -1251,6 +1284,13 @@ function RankDB.PurgeDatabase(realm)
     for k in pairs(db) do
         db[k] = nil
         count = count + 1
+    end
+    local root = rawget(_G, "TacoTipExtrasDB")
+    if type(root) == "table" and type(root.gear) == "table" and type(root.gear[realmKey]) == "table" then
+        for k in pairs(root.gear[realmKey]) do
+            root.gear[realmKey][k] = nil
+        end
+        forgetGearBookkeeping(realmKey)
     end
     dirtyFlags[realmKey] = true
     cachedIndices[realmKey] = nil

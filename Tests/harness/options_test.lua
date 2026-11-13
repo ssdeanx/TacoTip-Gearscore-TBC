@@ -32,7 +32,7 @@ local REALG = _G
 -- key, and so the getters work on either one.
 local unpack = unpack or table.unpack
 
-local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
+local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, next=next, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
     error=error, math=math, table=table, loadfile=loadfile, print=print, io=io }
@@ -247,7 +247,19 @@ local function makeWidget(kind, name, parent, template, depth)
         if (n) then rawset(REALG, n, c) end
         return c
     end
-    w.CreateAnimation = function() return { SetDuration = function() end, SetFromAlpha = function() end, SetToAlpha = function() end } end
+    w.GetVertexColor = function() return 1, 1, 1, 1 end
+    w.SetFixedFrameStrata = function() end
+    w.SetFixedFrameLevel = function() end
+    w.LockHighlight = function() end
+    w.UnlockHighlight = function() end
+    w.CreateAnimationGroup = function()
+        local g = makeWidget("AnimationGroup", nil, w, nil, (depth or 0) + 1)
+        g.SetToFinalAlpha = function() end
+        g.Stop = function() end
+        g.Play = function() end
+        return g
+    end
+    w.CreateAnimation = function() return { SetOrder = function() end, SetDuration = function() end, SetFromAlpha = function() end, SetToAlpha = function() end, SetStartDelay = function() end } end
     w.Refresh        = function() end
     w.SetBackdropBorderSize = function() end
     w.GetObjectType_ = nil
@@ -365,6 +377,7 @@ REALG.FACTION_BAR_TEXTURE = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFil
 REALG.SAVED_VARIABLES = nil
 
 REALG.UIParent = makeWidget("Frame", "UIParent")
+REALG.Minimap = makeWidget("Minimap", "Minimap")
 REALG.WorldFrame = makeWidget("Frame", "WorldFrame")
 REALG.GameTooltip = makeWidget("GameTooltip", "GameTooltip")
 REALG.GameTooltipStatusBar = makeWidget("StatusBar", "GameTooltipStatusBar")
@@ -562,6 +575,8 @@ local orderPre = {
     "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
     "Libs/LibDetours-1.0/LibDetours-1.0.lua",
     "Libs/LibForeverInspector/LibForeverInspector.lua",
+    "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua",
+    "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
 }
 local orderPost = {
     "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",

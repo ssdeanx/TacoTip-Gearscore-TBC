@@ -1795,8 +1795,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.7",
-    "TOC ## Version is 1.2.7", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.8",
+    "TOC ## Version is 1.2.8", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -9957,6 +9957,229 @@ do
     end
 end
 
+end
+
+-- ---------------------------------------------------------------------------
+-- v1.2.8 upgrades: client-identity delegation, _itemsRev inspect reuse,
+-- secret-safe GUID/DB guards, in-place RankDB refresh & PurgeDatabase gear,
+-- and inspect broadcast dedup.
+-- ---------------------------------------------------------------------------
+do
+    local runV128Pins = (function()
+        out(("\n-- v1.2.8 scan, cache, DB & identity upgrades --\n"))
+        local CoreV128 = namespace.Core
+        local ScannerV128 = namespace.Scanner
+        local CacheV128 = namespace.Cache
+        local RankDBV128 = namespace.RankDB
+        local RankSyncV128 = namespace.RankSync
+
+        -- 1. Core.IsForeverClient / Core.IsRetailClient delegate to inspector
+        --    first and fall back to build interface bands, never WOW_PROJECT_ID.
+        local insp = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+        local savedIsForever = insp and insp.IsForever
+        local savedIsRetail = insp and insp.IsRetail
+        local savedProjectID = REALG.WOW_PROJECT_ID
+        local savedProjectMainline = REALG.WOW_PROJECT_MAINLINE
+
+        REALG.WOW_PROJECT_MAINLINE = 1
+        REALG.WOW_PROJECT_ID = 1 -- spoof Mainline project ID while checking fallback
+        check(CoreV128.IsForeverClient() == (CLIENT == "forever"),
+            "Core.IsForeverClient() follows interface band, not WOW_PROJECT_ID",
+            "got " .. tostring(CoreV128.IsForeverClient()))
+        check(CoreV128.IsRetailClient() == (CLIENT == "retail"),
+            "Core.IsRetailClient() follows interface band, not WOW_PROJECT_ID",
+            "got " .. tostring(CoreV128.IsRetailClient()))
+        if insp then
+            insp.IsForever = function() return true end
+            insp.IsRetail = function() return false end
+            check(CoreV128.IsForeverClient() == true and CoreV128.IsRetailClient() == false,
+                "Core.IsForeverClient/IsRetailClient delegate to inspector methods when present",
+                tostring(CoreV128.IsForeverClient()) .. "/" .. tostring(CoreV128.IsRetailClient()))
+            insp.IsForever = savedIsForever
+            insp.IsRetail = savedIsRetail
+        end
+        REALG.WOW_PROJECT_ID = savedProjectID
+        REALG.WOW_PROJECT_MAINLINE = savedProjectMainline
+
+        -- 2. Scanner._itemsRev unchanged remote cache reuse & secret GUID guard.
+        if insp then
+            local REV_UNIT = "target"
+            local REV_GUID = "Player-1280-00001280"
+            local revValue = 1
+            local savedGetUnitData = insp.GetUnitData
+            local savedUnitExists = REALG.UnitExists
+            local savedUnitIsPlayer = REALG.UnitIsPlayer
+            local savedUnitGUID = REALG.UnitGUID
+            local savedGUIDIsPlayer = REALG.GUIDIsPlayer
+            local savedUnitClass = REALG.UnitClass
+            local savedUnitLevel = REALG.UnitLevel
+            local savedGetInvID = REALG.GetInventoryItemID
+            local savedGetInvLink = REALG.GetInventoryItemLink
+            local savedIsSecret = REALG.issecretvalue
+
+            insp.GetUnitData = function(_, guid)
+                if guid == REV_GUID then
+                    return { _itemsRev = revValue }
+                end
+                return nil
+            end
+            REALG.UnitExists = function(u) return u == "player" or u == REV_UNIT end
+            REALG.UnitIsPlayer = function(u) return u == "player" or u == REV_UNIT end
+            REALG.UnitGUID = function(u)
+                if u == "player" then return HARNESS_PLAYER_GUID end
+                if u == REV_UNIT then return REV_GUID end
+                return nil
+            end
+            REALG.GUIDIsPlayer = function(g) return g == REV_GUID or g == HARNESS_PLAYER_GUID end
+            REALG.UnitClass = MOCKC.unitClassMock(function()
+                return "Mage", "MAGE"
+            end, function() return 8 end)
+            REALG.UnitLevel = function() return 70 end
+            REALG.GetInventoryItemID = function(u, slotID)
+                if u == REV_UNIT and slotID == 1 then return 50003 end
+                return nil
+            end
+            REALG.GetInventoryItemLink = function(u, slotID)
+                if u == REV_UNIT and slotID == 1 then return HARNESS_ITEM_LINK end
+                return nil
+            end
+
+            local dbgBefore = ScannerV128.GetDebugState()
+            local skips0 = (dbgBefore and dbgBefore.remoteCacheSkips) or 0
+            local h1 = ScannerV128.HandleInventoryReady("INVENTORY_READY", REV_GUID, true, REV_UNIT)
+            local c1 = CacheV128.GetFresh and CacheV128.GetFresh(REV_GUID) or CacheV128.Get(REV_GUID)
+            local h2 = ScannerV128.HandleInventoryReady("INVENTORY_READY", REV_GUID, true, REV_UNIT)
+            local dbgAfterSkip = ScannerV128.GetDebugState()
+            local skips1 = (dbgAfterSkip and dbgAfterSkip.remoteCacheSkips) or 0
+            check(h1 == true and h2 == true and type(c1) == "table" and c1.state == "complete"
+                    and skips1 == skips0 + 1,
+                "Scanner reuses complete cache entry when LibForeverInspector _itemsRev is unchanged",
+                ("h1=%s h2=%s skips0=%d skips1=%d"):format(tostring(h1), tostring(h2), skips0, skips1))
+
+            revValue = 2
+            local h3 = ScannerV128.HandleInventoryReady("INVENTORY_READY", REV_GUID, true, REV_UNIT)
+            local dbgAfterBump = ScannerV128.GetDebugState()
+            local skips2 = (dbgAfterBump and dbgAfterBump.remoteCacheSkips) or 0
+            check(h3 == true and skips2 == skips1,
+                "Scanner re-scans when _itemsRev advances",
+                ("h3=%s skips1=%d skips2=%d"):format(tostring(h3), skips1, skips2))
+
+            local POISON_GUID = "Player-9999-SECRET"
+            REALG.issecretvalue = function(v) return v == POISON_GUID end
+            local secOK, secRet = pcall(ScannerV128.HandleInventoryReady, "INVENTORY_READY", POISON_GUID, true, REV_UNIT)
+            check(secOK == true and secRet == false,
+                "Scanner.HandleInventoryReady safely ignores a secret GUID",
+                tostring(secOK) .. "/" .. tostring(secRet))
+
+            REALG.issecretvalue = savedIsSecret
+            insp.GetUnitData = savedGetUnitData
+            REALG.UnitExists = savedUnitExists
+            REALG.UnitIsPlayer = savedUnitIsPlayer
+            REALG.UnitGUID = savedUnitGUID
+            REALG.GUIDIsPlayer = savedGUIDIsPlayer
+            REALG.UnitClass = savedUnitClass
+            REALG.UnitLevel = savedUnitLevel
+            REALG.GetInventoryItemID = savedGetInvID
+            REALG.GetInventoryItemLink = savedGetInvLink
+        end
+
+        -- 3. RankDB in-place unchanged refresh + BuildSortedIndices cache preservation
+        --    + StoreGear in-place timestamp bump + PurgeDatabase gear wipe.
+        local r128 = "V128Realm"
+        local now128 = (REALG.GetServerTime and REALG.GetServerTime())
+            or (REALG.time and REALG.time())
+            or 2000000
+        local rOK1 = RankDBV128.StoreRecord({
+            guid = "Player-128-001",
+            name = "Alpha",
+            faction = "Alliance",
+            class = "MAGE",
+            classID = 8,
+            specID = 64,
+            specName = "Frost",
+            specIcon = 135846,
+            gs = 4200,
+            ilvl = 140,
+            source = "inspect",
+            timestamp = now128 - 20,
+        }, r128)
+        check(rOK1 == true, "RankDB.StoreRecord inserts v1.2.8 baseline row", tostring(rOK1))
+        local sortedBefore = RankDBV128.BuildSortedIndices(r128, "gs")
+        local rOK2, rSt2 = RankDBV128.StoreRecord({
+            guid = "Player-128-001",
+            name = "Alpha",
+            faction = "Alliance",
+            class = "MAGE",
+            classID = 8,
+            specID = 64,
+            specName = "Frost",
+            specIcon = 135846,
+            gs = 4200,
+            ilvl = 140,
+            source = "inspect",
+            timestamp = now128 - 5,
+        }, r128)
+        local sortedAfterSame = RankDBV128.BuildSortedIndices(r128, "gs")
+        local recAfterSame = RankDBV128.GetRecord("Player-128-001", r128)
+        check(rOK2 == true and rSt2 == "stored" and recAfterSame and recAfterSame.timestamp == now128 - 5
+                and sortedBefore == sortedAfterSame,
+            "RankDB.StoreRecord refreshes timestamp in place without invalidating sorted cache",
+            ("ok=%s st=%s sameTable=%s"):format(tostring(rOK2), tostring(rSt2), tostring(sortedBefore == sortedAfterSame)))
+
+        local gOK1 = RankDBV128.StoreGear("Player-128-001", now128 - 20, "1=1001,2=1002", r128)
+        local gOK2, gSt2 = RankDBV128.StoreGear("Player-128-001", now128 - 5, "1=1001,2=1002", r128)
+        local gRow2 = RankDBV128.GetGear("Player-128-001", r128)
+        check(gOK1 == true and gOK2 == true
+                and gRow2 ~= nil and gRow2.t == now128 - 5 and gRow2.ids == "1=1001,2=1002",
+            "RankDB.StoreGear refreshes identical gear row timestamp in place",
+            ("st=%s t=%s expected=%s"):format(tostring(gSt2), tostring(gRow2 and gRow2.t), tostring(now128 - 5)))
+
+        -- Unchanged "up-to-date" record does not enqueue a duplicate broadcast
+        RankSyncV128.QueueInspectRecord({
+            guid = "Player-128-001",
+            name = "Alpha",
+            faction = "Alliance",
+            class = "MAGE",
+            classID = 8,
+            specID = 64,
+            gs = 4200,
+            timestamp = now128 - 20,
+        })
+        RankDBV128.StoreRecord({
+            guid = "Player-128-001",
+            name = "Alpha",
+            faction = "Alliance",
+            class = "MAGE",
+            classID = 8,
+            specID = 64,
+            gs = 4200,
+            timestamp = now128 - 2,
+        })
+        local qDepthBefore = (RankSyncV128.GetDebugState() or {}).queueDepth or 0
+        RankSyncV128.QueueInspectRecord({
+            guid = "Player-128-001",
+            name = "Alpha",
+            faction = "Alliance",
+            class = "MAGE",
+            classID = 8,
+            specID = 64,
+            gs = 4200,
+            timestamp = now128 - 10,
+        })
+        local qDepthAfter = (RankSyncV128.GetDebugState() or {}).queueDepth or 0
+        check(qDepthAfter == qDepthBefore,
+            "RankSync.QueueInspectRecord skips queueing when DB record is already up-to-date",
+            ("before=%d after=%d"):format(qDepthBefore, qDepthAfter))
+
+        local purgeCount = RankDBV128.PurgeDatabase(r128)
+        check(purgeCount == 1
+                and RankDBV128.GetRecord("Player-128-001", r128) == nil
+                and RankDBV128.GetGear("Player-128-001", r128) == nil,
+            "RankDB.PurgeDatabase removes both rank records and gear snapshots for the realm",
+            "purge=" .. tostring(purgeCount))
+    end)
+    runV128Pins()
 end
 
 out(("\n-------------------------------------------------------------\n"))

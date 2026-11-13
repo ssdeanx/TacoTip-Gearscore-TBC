@@ -11,7 +11,10 @@
         "Libs/LibStub/",
         "Libs/CallbackHandler-1.0/",
         "Libs/LibDetours-1.0/",
-        "Libs/LibForeverInspector/"
+        "Libs/LibDBIcon-1.0/",
+        "Libs/LibForeverInspector/",
+        "Libs/LibDataBroker-1.1/",
+        "Libs/LibSharedMedia-3.0/"
     ],
     "ignore": [
         "docs/",
@@ -20,11 +23,20 @@
         "OLD/",
         "bench/",
         "desks/",
+        "TacoTip_Extras/Tests/",
+        "TacoTip_Extras/Tests/harness",
         "mnemon-mirror/",
-        "Libs/LibDataBroker-1.1/",
-        "Libs/LibDBIcon-1.0/",
-        "Libs/LibRangeCheck-2.0/",
-        "Libs/LibSharedMedia-3.0/"
+        ".agents/",
+        ".cortexkit/",
+        ".dsh-progress/",
+        ".github/",
+        ".vscode/",
+        ".graph-it/",
+        ".omg/",
+        ".agent-teams/",
+        ".omo/",
+        ".opencode/",
+        ".ruff-cache/"
     ],
     "globals": {
         "read": [
@@ -134,7 +146,14 @@
             "secret-condition": "error",
             "secret-table-key": "error",
             "secret-access": "error",
-            "secret-argument": "error"
+            "secret-argument": "error",
+            "access-private": "error",
+            "access-protected": "error",
+            "implicit-nil-return": "error",
+            "multi-return-projection": "error",
+            "nil-table-key": "error",
+            "nil-index": "error",
+            "need-check-nil": "error"
         }
     }
 }

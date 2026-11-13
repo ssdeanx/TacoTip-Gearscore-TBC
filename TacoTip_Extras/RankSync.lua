@@ -838,6 +838,11 @@ local function recordIsSameRealm(record)
     return true
 end
 
+local INSPECT_BROADCAST_DEDUP_SECONDS = 30
+local INSPECT_BROADCAST_DEDUP_MAX = 500
+local recentInspectBroadcasts = {}
+local recentInspectBroadcastCount = 0
+
 function RankSync.QueueInspectRecord(record)
     if type(record) ~= "table" then return end
     if not recordIsSameRealm(record) then
@@ -847,8 +852,33 @@ function RankSync.QueueInspectRecord(record)
         return
     end
     if namespace.RankDB and type(namespace.RankDB.StoreRecord) == "function" then
-        local ok = namespace.RankDB.StoreRecord(record)
-        if ok then
+        local ok, status = namespace.RankDB.StoreRecord(record)
+        if ok and status ~= "up-to-date" then
+            local guid = type(record.guid) == "string" and not Core.IsSecretValue(record.guid) and record.guid or nil
+            if guid then
+                local now = type(_G.GetTime) == "function" and _G.GetTime() or 0
+                local sig = string.format("%s|%s|%s|%s|%s|%s|%s|%s",
+                    tostring(math.floor((tonumber(record.gs) or 0) + 0.5)),
+                    tostring(math.floor(((tonumber(record.ilvl) or 0) * 10) + 0.5)),
+                    tostring(tonumber(record.classID) or 0),
+                    tostring(tonumber(record.specID) or 0),
+                    tostring(record.guild or ""),
+                    tostring(tonumber(record.level) or 0),
+                    tostring(tonumber(record.pvpRank) or 0),
+                    tostring(tonumber(record.arena) or 0))
+                local prev = recentInspectBroadcasts[guid]
+                if prev and prev.sig == sig and (now - prev.at) < INSPECT_BROADCAST_DEDUP_SECONDS then
+                    return
+                end
+                if not prev then
+                    if recentInspectBroadcastCount >= INSPECT_BROADCAST_DEDUP_MAX then
+                        recentInspectBroadcasts = {}
+                        recentInspectBroadcastCount = 0
+                    end
+                    recentInspectBroadcastCount = recentInspectBroadcastCount + 1
+                end
+                recentInspectBroadcasts[guid] = { sig = sig, at = now }
+            end
             RankSync.BroadcastRecord(record)
         end
     end

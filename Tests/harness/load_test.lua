@@ -18,7 +18,7 @@ local usePipeline = (arg[7] == "pipeline")
 MOCKC.setFamily(MOCKC.normaliseFamily(expectFamily))
 
 local REALG = _G
-local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
+local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, next=next, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
     error=error, math=math, table=table, loadfile=loadfile, print=print, io=io,
@@ -134,8 +134,10 @@ local function newFrame(kind, name, parent, template)
             t["__hook_" .. tostring(s)] = fn end end
         if k == "GetScript" then return function(_, s) return t["__hook_" .. tostring(s)] or t["__script_" .. tostring(s)] end end
         if k == "RegisterEvent" then return function(_, e) events[#events + 1] = tostring(e) end end
-        if k == "CreateFontString" then return function() return newFrame("FontString") end end
-        if k == "CreateTexture" then return function() return newFrame("Texture") end end
+        if k == "CreateFontString" then return function() local fs = newFrame("FontString"); fs.GetParent = function() return t end; return fs end end
+        if k == "CreateTexture" then return function() local tx = newFrame("Texture"); tx.GetParent = function() return t end; return tx end end
+        if k == "CreateAnimationGroup" then return function() return newFrame("AnimationGroup") end end
+        if k == "CreateAnimation" then return function() return newFrame("Animation") end end
         -- A real frame simply does not have some methods (no tooltip chain on
         -- any of the five clients defines SetBackdrop). Keys listed in __absent
         -- must read as nil, otherwise the mock invents a method the client does
@@ -143,6 +145,7 @@ local function newFrame(kind, name, parent, template)
         -- branch -- which is exactly how the backdrop Mixin shipped to Retail.
         -- rawget, and never for the internal fields themselves: reading t.__absent
         -- through __index would recurse forever.
+        if k == "minimapPos" or k == "showOnMouseover" or k == "compartmentData" then return nil end
         local absent = rawget(t, "__absent")
         if (absent and k ~= "__absent" and absent[k]) then return nil end
         -- generic no-op widget surface so load does not explode
@@ -278,6 +281,9 @@ local function baseEnv()
     REALG.NumberFontNormal = "NumberFontNormal"
     REALG.ChatFontNormal = "ChatFontNormal"
     REALG.UIParent = newFrame("Frame", "UIParent")
+    REALG.Minimap = newFrame("Minimap", "Minimap")
+    REALG.Minimap.GetWidth = function() return 140 end
+    REALG.Minimap.GetHeight = function() return 140 end
     REALG.WorldFrame = newFrame("Frame", "WorldFrame")
     REALG.PaperDollFrame = newFrame("Frame", "PaperDollFrame")
     REALG.InspectFrame = newFrame("Frame", "InspectFrame")
@@ -515,6 +521,8 @@ local order = {
     "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
     "Libs/LibDetours-1.0/LibDetours-1.0.lua",
     "Libs/LibForeverInspector/LibForeverInspector.lua",
+    "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua",
+    "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
     "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",
     "Locale/itIT.lua", "Locale/koKR.lua", "Locale/ptBR.lua", "Locale/ruRU.lua",
     "Locale/zhCN.lua", "Locale/zhTW.lua", "Locale/enUS.lua",
@@ -1160,6 +1168,25 @@ do
     end
     checks[#checks + 1] = { tocVer == "1.0.2",
         "1.0.2: TacoTip.toc declares version 1.0.2 (got " .. tostring(tocVer) .. ")" }
+
+    -- Pin 5: LibDataBroker-1.1 + LibDBIcon-1.0 minimap launcher wiring
+    local LDB = REALG.LibStub and REALG.LibStub("LibDataBroker-1.1", true) or nil
+    local DBIcon = REALG.LibStub and REALG.LibStub("LibDBIcon-1.0", true) or nil
+    checks[#checks + 1] = { LDB ~= nil and DBIcon ~= nil,
+        "1.0.2: LibDataBroker-1.1 and LibDBIcon-1.0 are loaded via LibStub" }
+    if (LDB and DBIcon and TT.InitMinimapIcon and TT.SetMinimapIconShown) then
+        TT:InitMinimapIcon()
+        local obj = LDB:GetDataObjectByName("TacoTip")
+        local btn = DBIcon:GetMinimapButton("TacoTip")
+        checks[#checks + 1] = { DBIcon:IsRegistered("TacoTip") == true and obj ~= nil and btn ~= nil,
+            "1.0.2: LibDBIcon registers TacoTip minimap launcher" }
+        TT:SetMinimapIconShown(false)
+        local hiddenFlag = REALG.TacoTipConfig and REALG.TacoTipConfig.minimap and REALG.TacoTipConfig.minimap.hide == true
+        TT:SetMinimapIconShown(true)
+        local shownFlag = REALG.TacoTipConfig and REALG.TacoTipConfig.minimap and REALG.TacoTipConfig.minimap.hide == false
+        checks[#checks + 1] = { hiddenFlag and shownFlag,
+            "1.0.2: TT:SetMinimapIconShown toggles TacoTipConfig.minimap.hide" }
+    end
     checks[#checks + 1] = { type(TT.GetClassIconMarkup) == "function",
         "0.9.0: TT.GetClassIconMarkup is exposed" }
     checks[#checks + 1] = { TT:GetClassIconMarkup(nil) == "",

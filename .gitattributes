@@ -65,11 +65,16 @@
 /.dsh-progress/** export-ignore
 /luacheck_report.txt export-ignore
 
-# Vendored-but-unloaded libraries. Not referenced by TacoTip.toc and not part of
-# the release until they are deliberately wired in (licence provenance is
-# verified for the files we do ship). Excluded here so a future `git add Libs`
-# cannot ship them silently. They stay in the repository for that future work.
-/Libs/LibDataBroker-1.1/** export-ignore
-/Libs/LibDBIcon-1.0/** export-ignore
+# Vendored-but-unloaded libraries and upstream nested packaging files. Excluded
+# here so a future `git add Libs` cannot ship them silently. Only the single-file
+# LibDataBroker-1.1.lua and LibDBIcon-1.0.lua declared in TacoTip.toc ship.
+/Libs/LibDBIcon-1.0/CHANGES.txt export-ignore
+/Libs/LibDBIcon-1.0/LibDBIcon-1.0.toc export-ignore
+/Libs/LibDBIcon-1.0/embeds.xml export-ignore
+/Libs/LibDBIcon-1.0/lib.xml export-ignore
+/Libs/LibDBIcon-1.0/CallbackHandler-1.0/** export-ignore
+/Libs/LibDBIcon-1.0/LibDBIcon-1.0/** export-ignore
+/Libs/LibDBIcon-1.0/LibDataBroker-1.1/** export-ignore
+/Libs/LibDBIcon-1.0/LibStub/** export-ignore
 /Libs/LibRangeCheck-2.0/** export-ignore
 /Libs/LibSharedMedia-3.0/** export-ignore

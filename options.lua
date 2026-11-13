@@ -143,6 +143,7 @@ local DEFAULTS = {
     custom_anchor = "TOPLEFT",
     progression_chat = true,
     progression_sound = true,
+    show_minimap = true,
 }
 
 function TT:GetDefaults()
@@ -195,7 +196,7 @@ function TT:SafeSanitizeConfig(config)
         "anchor_mouse_spells", "unlock_info_position", "show_achievement_points",
         "show_honor_rank", "show_ilvl_inline", "show_realm",
         "show_role_icon", "show_separators",
-        "progression_chat", "progression_sound"
+        "progression_chat", "progression_sound", "show_minimap"
     }
     for _, key in ipairs(booleanKeys) do
         local val = config[key]
@@ -335,6 +336,10 @@ local function resetCfg()
     if (TT.ApplyTooltipScale) then
         TT:ApplyTooltipScale()
     end
+    if (TT.SetMinimapIconShown) then
+        TacoTipConfig.minimap = { hide = false }
+        TT:SetMinimapIconShown(true)
+    end
 
     if (PersonalGearScore and PersonalGearScore.RefreshPosition) then
         PersonalGearScore:RefreshPosition()
@@ -439,9 +444,23 @@ local function registerSlashCommands()
             end
         elseif (cmd == "help") then
             print("|cff59f0dcTacoTip:|r /tacotip - open TacoTip options")
+            print("|cff59f0dcTacoTip:|r /tacotip minimap - toggle TacoTip minimap icon")
             print("|cff59f0dcTacoTip:|r /tacotip custom - show the tooltip mover")
             print("|cff59f0dcTacoTip:|r /tacotip reset - reset TacoTip settings")
             print("|cff59f0dcTacoTip:|r " .. L["TEXT_HELP_ANCHOR"])
+        elseif (cmd == "minimap" or cmd == "icon") then
+            local nextState = (TacoTipConfig.show_minimap == false)
+            TacoTipConfig.show_minimap = nextState
+            if (TT and TT.SetMinimapIconShown) then
+                TT:SetMinimapIconShown(nextState)
+            end
+            if (optionsFrame and optionsFrame:IsShown() and optionsFrame.Refresh) then
+                optionsFrame:Refresh()
+            end
+            if (dashboard and dashboard:IsShown() and dashboard.RefreshAll) then
+                dashboard:RefreshAll()
+            end
+            print("|cff59f0dcTacoTip:|r Minimap button " .. (nextState and "shown." or "hidden."))
         elseif (strfind(cmd, "anchor")) then
             if (strfind(cmd, "topleft")) then
                 TacoTipConfig.custom_anchor = "TOPLEFT"
@@ -2564,6 +2583,17 @@ local function buildTooltipsPage()
             TacoTipConfig.show_separators = value
         end)
     controls.showSeparators:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+
+    controls.showMinimap = createOptionsCheckbox(content, nil,
+        "Show minimap button",
+        "Display a TacoTip minimap button via LibDBIcon for quick access to settings and diagnostics.",
+        function(_, value)
+            TacoTipConfig.show_minimap = value
+            if (TT and TT.SetMinimapIconShown) then
+                TT:SetMinimapIconShown(value)
+            end
+        end)
+    controls.showMinimap:SetPoint("TOPLEFT", content, "TOPLEFT", 260, builder.y)
     builder.y = builder.y - 36
 
     -- ========================================================================
@@ -3014,6 +3044,7 @@ local function buildTooltipsPage()
         controls.showRealm:SetChecked(TacoTipConfig.show_realm)
         controls.showIlvlInline:SetChecked(TacoTipConfig.show_ilvl_inline)
         controls.showSeparators:SetChecked(TacoTipConfig.show_separators)
+        controls.showMinimap:SetChecked(TacoTipConfig.show_minimap ~= false)
         controls.tooltipMaxWidth:SetValueSilently(TacoTipConfig.tooltip_max_width or 0)
 
         updateControlDependencies()
@@ -4206,6 +4237,17 @@ local function createDashboard()
             onSettingChanged()
         end)
     gy = registerRow(generalChild, syncControls.instant_fade, "general", gy)
+
+    syncControls.show_minimap = createPillToggle(generalChild, "Show Minimap Button",
+        "Display the LibDBIcon TacoTip button on your minimap for one-click settings and diagnostics.",
+        TacoTipConfig.show_minimap ~= false, function(v)
+            TacoTipConfig.show_minimap = v
+            if (TT and TT.SetMinimapIconShown) then
+                TT:SetMinimapIconShown(v)
+            end
+            onSettingChanged()
+        end)
+    gy = registerRow(generalChild, syncControls.show_minimap, "general", gy)
 
     syncControls.tooltip_scale = createDashboardSlider(generalChild, "Tooltip Scale",
         "Adjust the overall scale of unit tooltips (50% to 150%).", 0.5, 1.5, 0.05,

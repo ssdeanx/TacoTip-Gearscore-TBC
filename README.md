@@ -21,11 +21,11 @@ project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
-requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
+requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, LibDataBroker-1.1, LibDBIcon-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
 status: pending in-game verification (2026-11-12)
-linter: wowlua_ls check — 0 errors, no secret-value findings; 136 warnings (70 `need-check-nil`, 56 `undefined-field`, 5 `redundant-parameter`, 3 `invalid-op`, 2 `type-mismatch`) (2026-11-12)
+linter: wowlua_ls check — 0 errors, no secret-value findings; 39 undefined-field warnings (2026-11-12)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
-gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42 (lua5.1/lua5.4/luajit), luacheck 2 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-12)
+gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42 (lua5.1/lua5.4/luajit), luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-12)
 updated: 2026-11-12
 ```
 
@@ -114,6 +114,7 @@ updated: 2026-11-12
 | `/tt diag` | Print the real-time **Diagnostic Report to chat** (yardage, cache status, inspect queue depth) |
 | `/tt diag ui` or `/tt diagui` | Open the dashboard's **Diagnostics tab** — the interactive panel (copy button, live refresh, trace toggle, log clear) |
 | `/tt custom` | Show the draggable green anchor button to set custom tooltip position |
+| `/tt minimap` or `/tt icon` | Toggle the **LibDBIcon minimap launcher button** |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
 
@@ -130,6 +131,8 @@ updated: 2026-11-12
 ⚡ **<span style="color:#b4e634">Inspect, Cache & Queue Optimization (`LibForeverInspector` + `main.lua` + `pawn.lua`):</span>** Replaced the 40-member upfront `CanInspect` scan and `table.sort` in `inspectQueueTick` with 4 role-priority buckets (`Tank > Healer > DPS > None`) evaluated lazily only until an inspect dispatches; eliminated redundant double `CanInspect`/`CheckInteractDistance` engine probes on synchronous dispatches; unified `evictCacheEntries` into a single pass and bounded inspect reject/out-of-range ledgers; verified WoW Forever maintains the 40-yard (`NEARBY_ASK_YARDS = 40`) either-signal inspect gate (`CanInspect` OR `CheckInteractDistance`).
 
 🔒 **<span style="color:#b4e634">Secret-Safe Caches & Decoupled Retry/Fallback Backoffs:</span>** Filtered inventory item links, achievement points, specialization info/icons, and Pawn spec metadata/memo entries against restricted secret values before caching; decoupled Pawn's retry ledger (`_pawnRetry`) from GearScore's exponential backoff (`_gsRetry`) so neither system clears or re-arms the other; gated `INVENTORY_READY` retry resets on `_itemsRev` completion so intermediate partial-gear retries preserve backoff; replaced wholesale 512-entry cooldown/memo wipes with expired-entry pruning and half-table trimming.
+
+🧭 **<span style="color:#b4e634">LibDBIcon Minimap Launcher:</span>** Added a draggable `LibDataBroker-1.1` / `LibDBIcon-1.0` minimap icon (`show_minimap`, `/tt minimap`, toggleable in Settings & Dashboard `General`) with live GearScore/iLvl tooltip readout, Left-Click Dashboard, Right-Click Diagnostics, and Shift-Left-Click Mover Anchor.
 
 ---
 

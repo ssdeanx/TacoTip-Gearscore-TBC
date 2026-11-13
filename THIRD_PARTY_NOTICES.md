@@ -15,6 +15,8 @@ terms allow. TacoTip bundles them unmodified.
 | `LibStub` | Public Domain | Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel, joshborke |
 | `CallbackHandler-1.0` | MIT | Icedragon and contributors |
 | `LibDetours-1.0` | MIT | kebabstorm |
+| `LibDataBroker-1.1` | Public Domain | Tekkub and contributors |
+| `LibDBIcon-1.0` | Public Domain (CurseForge `libdbicon-1-0`) | Rabbit, funkehdude and contributors |
 | `LibForeverInspector` | MIT | AcidBomb (part of this project) |
 
 The three fonts under `Media/Fonts/` are third-party too, each under its own
@@ -68,6 +70,23 @@ as it is not bundled in this repository.
 Declared in the library header as *LibDetours-1.0 by kebabstorm*. The full MIT
 permission notice and warranty disclaimer apply as published upstream; the text
 is not bundled in this repository.
+
+## LibDataBroker-1.1
+
+- **File:** `Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua`
+- **License:** Public Domain
+- **Authors:** Tekkub and contributors
+
+Public Domain dedication; bundled unmodified for `LibDBIcon-1.0` minimap
+launcher registration.
+
+## LibDBIcon-1.0
+
+- **File:** `Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua`
+- **License:** Public Domain (CurseForge `libdbicon-1-0`, r167)
+- **Authors:** Rabbit, funkehdude and contributors
+
+Bundled unmodified single-file library (`LibDBIcon-1.0.lua`).
 
 ## LibForeverInspector
 

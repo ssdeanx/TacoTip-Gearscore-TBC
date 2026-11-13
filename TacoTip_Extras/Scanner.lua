@@ -140,6 +140,9 @@ local currentState = { status = "idle", generation = 0 }
 local inspector
 local remoteGeneration = 0
 local remoteContexts = {}
+local remoteItemRevs = {}
+local remoteCacheSkips = 0
+local lastLocalGearWrite = nil
 
 local function complete(value)
     return { status = "complete", value = value }
@@ -283,7 +286,7 @@ local function captureGuildName(unit)
         return ""
     end
     local ok, guildName = pcall(getGuild, unit)
-    if not ok or type(guildName) ~= "string" then
+    if not ok or Core.IsSecretValue(guildName) or type(guildName) ~= "string" then
         return ""
     end
     -- Sanitize exactly like the store (strip ";" -- a ";" would shift the
@@ -321,7 +324,7 @@ local function captureSpecID(unit)
     if type(CSI) == "table" and type(CSI.GetSpecialization) == "function" then
         local isSelf = (unit == "player")
         local ok, id = pcall(CSI.GetSpecialization, not isSelf, false, 1, 1)
-        if ok and type(id) == "number" and id > 0 then
+        if ok and not Core.IsSecretValue(id) and type(id) == "number" and id > 0 then
             return math.floor(id)
         end
     end
@@ -483,7 +486,7 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     local uFaction = rawget(g, "UnitFactionGroup")
     if type(uFaction) == "function" and unit then
         local ok, f = pcall(uFaction, unit)
-        if ok and (f == "Alliance" or f == "Horde") then
+        if ok and not Core.IsSecretValue(f) and (f == "Alliance" or f == "Horde") then
             pFaction = f
         end
     end
@@ -495,13 +498,13 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
     if inspector and unit then
         if type(inspector.GetLocalizedSpecName) == "function" then
             local ok, sName = pcall(inspector.GetLocalizedSpecName, inspector, unit)
-            if ok and type(sName) == "string" then
+            if ok and not Core.IsSecretValue(sName) and type(sName) == "string" then
                 specName = sName
             end
         end
         if type(inspector.GetLocalizedSpecIcon) == "function" then
             local ok, sIcon = pcall(inspector.GetLocalizedSpecIcon, inspector, unit)
-            if ok and sIcon then
+            if ok and not Core.IsSecretValue(sIcon) and sIcon then
                 specIcon = sIcon
             end
         end
@@ -649,15 +652,22 @@ local function clientHasSockets()
             return val
         end
     end
-    local wowProject = rawget(_G, "WOW_PROJECT_ID")
-    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
-    if wowProject and wowClassic and wowProject == wowClassic then
-        return false
-    end
-    local wowBC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC") or rawget(_G, "WOW_PROJECT_BC_CLASSIC")
-    local wowWrath = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
-    if (wowProject and wowBC and wowProject == wowBC) or (wowProject and wowWrath and wowProject == wowWrath) then
-        return true
+    local libStub = rawget(_G, "LibStub")
+    if libStub then
+        for _, libName in ipairs({ "LibForeverInspector", "LibClassicInspector" }) do
+            local okLib, ci = pcall(libStub, libName, true)
+            if okLib and type(ci) == "table" then
+                if (type(ci.IsForever) == "function" and ci:IsForever() == true)
+                    or (type(ci.IsClassic) == "function" and ci:IsClassic() == true) then
+                    return false
+                end
+                if (type(ci.IsTBC) == "function" and ci:IsTBC() == true)
+                    or (type(ci.IsWotlk) == "function" and ci:IsWotlk() == true)
+                    or (type(ci.IsRetail) == "function" and ci:IsRetail() == true) then
+                    return true
+                end
+            end
+        end
     end
     if type(_G.GetBuildInfo) == "function" then
         local _, _, _, ret4 = _G.GetBuildInfo()
@@ -676,6 +686,13 @@ local function clientHasSockets()
 end
 
 local function isRetailClient()
+    local core = namespace.Core
+    if type(core) == "table" and type(core.IsRetailClient) == "function" then
+        local ok, val = pcall(core.IsRetailClient)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
     local adapter = namespace.TacoTipAdapter
     if type(adapter) == "table" and type(adapter.GetInspector) == "function" then
         local ok, insp = pcall(adapter.GetInspector)
@@ -976,14 +993,14 @@ local function captureSlot(
     local rawItemID
     if type(GetInventoryItemID) == "function" then
         local ok, value = pcall(GetInventoryItemID, unit, slotID)
-        if ok then
+        if ok and not Core.IsSecretValue(value) then
             rawItemID = value
         end
     end
     local nativeLink
     if type(GetInventoryItemLink) == "function" then
         local ok, value = pcall(GetInventoryItemLink, unit, slotID)
-        if ok and value then
+        if ok and not Core.IsSecretValue(value) and value then
             nativeLink = value
         end
     end
@@ -991,7 +1008,7 @@ local function captureSlot(
         local okMixin, mixin = pcall(inspector.GetInventoryItemMixin, inspector, unit, slotID)
         if okMixin and type(mixin) == "table" and type(mixin.GetItemLink) == "function" then
             local okLink, link = pcall(mixin.GetItemLink, mixin)
-            if okLink and type(link) == "string" and link ~= "" then
+            if okLink and not Core.IsSecretValue(link) and type(link) == "string" and link ~= "" then
                 nativeLink = link
             end
         end
@@ -1000,7 +1017,7 @@ local function captureSlot(
         local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
         if okData and type(cached) == "table" and type(cached.items) == "table" then
             local link = cached.items[slotID]
-            if type(link) == "string" and link ~= "" then
+            if not Core.IsSecretValue(link) and type(link) == "string" and link ~= "" then
                 nativeLink = link
             end
         end
@@ -1176,14 +1193,23 @@ local function capture(targetGeneration)
                         gearT = nowValue
                     end
                 end
-                pcall(namespace.RankDB.StoreGear, playerGUID, gearT, blob)
+                if not (lastLocalGearWrite
+                    and lastLocalGearWrite.guid == playerGUID
+                    and lastLocalGearWrite.blob == blob
+                    and lastLocalGearWrite.t == gearT) then
+                    local okGear = pcall(namespace.RankDB.StoreGear, playerGUID, gearT, blob)
+                    if okGear then
+                        lastLocalGearWrite = { guid = playerGUID, blob = blob, t = gearT }
+                    end
+                end
             end
         end
     end
 end
 
 local function isRemotePlayerGUID(guid)
-    if type(guid) ~= "string"
+    if Core.IsSecretValue(guid)
+        or type(guid) ~= "string"
         or not string.match(guid, "^Player%-%d+%-%x+$") then
         return false
     end
@@ -1270,6 +1296,7 @@ local function failRemote(context, reason)
     if not remoteContextIsCurrent(context) then
         return false
     end
+    remoteItemRevs[context.guid] = nil
     Cache.PublishUnavailable(context.guid, context.generation, reason)
     remoteContexts[context.guid] = nil
     return true
@@ -1389,6 +1416,9 @@ captureRemoteBody = function(context)
     )
     if published then
         remoteContexts[context.guid] = nil
+        if type(context.itemsRev) == "number" and context.itemsRev > 0 then
+            remoteItemRevs[context.guid] = context.itemsRev
+        end
         queueRankSync(context.guid, unit, classToken, result, "inspect", level)
     end
     return published
@@ -1442,14 +1472,42 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
         return false
     end
 
+    local curItemsRev
+    if inspector and type(inspector.GetUnitData) == "function" then
+        local okData, cachedData = pcall(inspector.GetUnitData, inspector, guid)
+        if okData and type(cachedData) == "table" and type(cachedData._itemsRev) == "number" and cachedData._itemsRev > 0 then
+            curItemsRev = cachedData._itemsRev
+        end
+    end
+
+    if curItemsRev and remoteItemRevs[guid] == curItemsRev then
+        local freshEntry = Cache.GetFresh(guid)
+        if type(freshEntry) == "table"
+            and freshEntry.state == "complete"
+            and type(freshEntry.revision) == "table" then
+            local classCell, levelCell = capturePlayerCells(resolved)
+            local existingClass = type(freshEntry.revision.classToken) == "table" and freshEntry.revision.classToken.value or nil
+            local curClass = type(classCell) == "table" and classCell.value or nil
+            local existingLevel = type(freshEntry.revision.level) == "table" and freshEntry.revision.level.value or nil
+            local curLevel = type(levelCell) == "table" and levelCell.value or nil
+            if (curClass == nil or existingClass == curClass)
+                and (curLevel == nil or existingLevel == curLevel) then
+                remoteCacheSkips = remoteCacheSkips + 1
+                return true
+            end
+        end
+    end
+
     remoteGeneration = remoteGeneration + 1
     local context = {
         guid = guid,
         generation = remoteGeneration,
         unit = resolved,
         pendingItems = {},
+        itemsRev = curItemsRev,
     }
     remoteContexts[guid] = context
+    remoteItemRevs[guid] = nil
 
     local began, evictedGUID = Cache.Begin(
         guid,
@@ -1458,6 +1516,7 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
     )
     if evictedGUID then
         remoteContexts[evictedGUID] = nil
+        remoteItemRevs[evictedGUID] = nil
     end
     if not began then
         remoteContexts[guid] = nil
@@ -1691,6 +1750,7 @@ function Scanner.GetDebugState()
         lastReevaluateError = lastReevaluateError,
         captureErrors = captureErrors,
         lastCaptureError = lastCaptureError,
+        remoteCacheSkips = remoteCacheSkips,
     }
 end
 

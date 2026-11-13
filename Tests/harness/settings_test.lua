@@ -33,7 +33,7 @@ local REALG = _G
 -- failing with a nil-global message rather than anything about settings.
 local unpack = unpack or table.unpack
 
-local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, type=type, pcall=pcall,
+local STD = { os=os, string=string, pairs=pairs, ipairs=ipairs, next=next, type=type, pcall=pcall,
     tonumber=tonumber, tostring=tostring, select=select, rawget=rawget, rawset=rawset,
     setmetatable=setmetatable, getmetatable=getmetatable, unpack=unpack, assert=assert,
     error=error, math=math, table=table, loadfile=loadfile, print=print, io=io,
@@ -268,6 +268,22 @@ makeWidget = function(kind, name, parent, template, depth)
         if (n) then rawset(REALG, n, c) end
         return c
     end
+    w.GetVertexColor = function() return 1, 1, 1, 1 end
+    w.SetFixedFrameStrata = function() end
+    w.SetFixedFrameLevel = function() end
+    w.SetHighlightTexture = function() end
+    w.LockHighlight = function() end
+    w.UnlockHighlight = function() end
+    w.CreateAnimationGroup = function()
+        local g = makeWidget("AnimationGroup", nil, w, nil, depth + 1)
+        g.SetToFinalAlpha = function() end
+        g.Stop = function() end
+        g.Play = function() end
+        return g
+    end
+    w.CreateAnimation = function()
+        return { SetOrder = function() end, SetDuration = function() end, SetFromAlpha = function() end, SetToAlpha = function() end, SetStartDelay = function() end }
+    end
 
     if (name and depth < 1) then
         for _, sfx in ipairs({ "Text", "Low", "High" }) do
@@ -391,6 +407,7 @@ REALG.HORDE_ICON = "Interface\\Icons\\inv_misc_note_01"
 REALG.ALLIANCE_ICON = "Interface\\Icons\\inv_misc_note_02"
 REALG.FACTION_BAR_TEXTURE = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
 REALG.UIParent = makeWidget("Frame", "UIParent")
+REALG.Minimap = makeWidget("Minimap", "Minimap")
 REALG.WorldFrame = makeWidget("Frame", "WorldFrame")
 REALG.PaperDollFrame = makeWidget("Frame", "PaperDollFrame")
 REALG.InspectFrame = makeWidget("Frame", "InspectFrame")
@@ -594,6 +611,7 @@ end
 local order = {
     "Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
     "Libs/LibDetours-1.0/LibDetours-1.0.lua", "Libs/LibForeverInspector/LibForeverInspector.lua",
+    "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
     "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",
     "Locale/itIT.lua", "Locale/koKR.lua", "Locale/ptBR.lua", "Locale/ruRU.lua",
     "Locale/zhCN.lua", "Locale/zhTW.lua", "Locale/enUS.lua",
@@ -674,8 +692,10 @@ end
 -- Auxiliary keys the addon uses that are deliberately not in GetDefaults:
 --   custom_pos  saved tooltip anchor position, created on demand by dragging and
 --               cleared by reset; absence means "use the default position"
+--   minimap     LibDBIcon-1.0 state sub-table ({ hide, minimapPos }), synced
+--               from the declared `show_minimap` toggle on change
 --   conf_version config schema marker
-local AUXILIARY = { custom_pos = true }
+local AUXILIARY = { custom_pos = true, minimap = true }
 
 --------------------------------------------------------------------------
 -- Drive every named control and record which settings it can reach

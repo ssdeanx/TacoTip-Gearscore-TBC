@@ -380,6 +380,73 @@ function Core.IsClassicEraClient()
     return false
 end
 
+local function queryInspectorFlag(methodName)
+    if type(methodName) ~= "string" then
+        return nil
+    end
+    local adapter = namespace.TacoTipAdapter
+    if type(adapter) == "table" and type(adapter.GetInspector) == "function" then
+        local ok, inspector = pcall(adapter.GetInspector)
+        if ok and inspector and type(inspector) == "table" then
+            local fn = inspector[methodName]
+            if type(fn) == "function" then
+                local ans, res = pcall(fn, inspector)
+                if ans and not Core.IsSecretValue(res) and type(res) == "boolean" then
+                    return res
+                end
+            end
+        end
+    end
+    local libStub = rawget(_G, "LibStub")
+    if libStub then
+        for _, libName in ipairs({ "LibForeverInspector", "LibClassicInspector" }) do
+            local okLib, ci = pcall(libStub, libName, true)
+            if okLib and ci and type(ci) == "table" then
+                local fn = ci[methodName]
+                if type(fn) == "function" then
+                    local ans, res = pcall(fn, ci)
+                    if ans and not Core.IsSecretValue(res) and type(res) == "boolean" then
+                        return res
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function Core.IsForeverClient()
+    local delegated = queryInspectorFlag("IsForever")
+    if type(delegated) == "boolean" then
+        return delegated
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, ret6 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret6) == "number" and ret6) or 0
+        if iface >= 16000 and iface < 20000 then
+            return true
+        end
+    end
+    return false
+end
+
+function Core.IsRetailClient()
+    local delegated = queryInspectorFlag("IsRetail")
+    if type(delegated) == "boolean" then
+        return delegated
+    end
+    if type(_G.GetBuildInfo) == "function" then
+        local _, _, _, ret4, _, ret6 = _G.GetBuildInfo()
+        local iface = (type(ret4) == "number" and ret4) or (type(ret6) == "number" and ret6) or 0
+        if iface >= 100000 then
+            return true
+        elseif iface > 0 then
+            return false
+        end
+    end
+    return _G.CharacterRangedSlot == nil and _G.CharacterModelScene ~= nil
+end
+
 function Core.ClientHasSockets()
     -- Sockets exist only in TBC (Classic Anniversary), WotLK (Titanforge), and Retail.
     -- WoW Forever (Camelot 16001) and Classic Era (11509) have NO sockets in the game.

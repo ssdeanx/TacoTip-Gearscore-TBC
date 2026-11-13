@@ -7304,6 +7304,9 @@ local function onEvent(self, event, ...)
             if (TT.ApplyConfigDefaults) then
                 TT:ApplyConfigDefaults(TacoTipConfig)
             end
+            if (TT.InitMinimapIcon) then
+                TT:InitMinimapIcon()
+            end
             if (TT.ApplyTooltipScale) then
                 TT:ApplyTooltipScale()
             end
@@ -7471,6 +7474,124 @@ do
     TT.frame = f
 end
 
+do
+    local LDB_ICON_PATH = "Interface\\AddOns\\" .. tostring(addOnName or "TacoTip") .. "\\logo.tga"
+
+    local function ensureMinimapTable()
+        if (type(TacoTipConfig) ~= "table") then
+            TacoTipConfig = {}
+        end
+        if (type(TacoTipConfig.minimap) ~= "table") then
+            TacoTipConfig.minimap = {}
+        end
+        local hideFlag = (TacoTipConfig.show_minimap == false)
+        TacoTipConfig.minimap.hide = hideFlag
+        return TacoTipConfig.minimap
+    end
+
+    local function getLibs()
+        if (type(LibStub) ~= "function" and type(LibStub) ~= "table") then
+            return nil, nil
+        end
+        local okLdb, ldb = pcall(LibStub, "LibDataBroker-1.1", true)
+        local okIcon, icon = pcall(LibStub, "LibDBIcon-1.0", true)
+        if (not okLdb or type(ldb) ~= "table") then ldb = nil end
+        if (not okIcon or type(icon) ~= "table") then icon = nil end
+        return ldb, icon
+    end
+
+    function TT:InitMinimapIcon()
+        local ldb, icon = getLibs()
+        if (not ldb or not icon) then
+            return false
+        end
+        local db = ensureMinimapTable()
+        local obj = ldb:GetDataObjectByName("TacoTip")
+        if (not obj) then
+            obj = ldb:NewDataObject("TacoTip", {
+                type = "launcher",
+                text = "TacoTip",
+                icon = LDB_ICON_PATH,
+                OnClick = function(_, button)
+                    if (button == "RightButton") then
+                        if (TT.ShowStandaloneDashboard) then
+                            pcall(TT.ShowStandaloneDashboard, TT, "diagnostics")
+                        end
+                    elseif (IsShiftKeyDown and IsShiftKeyDown()) then
+                        if (SlashCmdList and type(SlashCmdList.TACOTIP) == "function") then
+                            pcall(SlashCmdList.TACOTIP, "custom")
+                        end
+                    else
+                        if (TT.ToggleStandaloneDashboard) then
+                            pcall(TT.ToggleStandaloneDashboard, TT)
+                        end
+                    end
+                end,
+                OnTooltipShow = function(tooltip)
+                    if (not tooltip or type(tooltip.AddLine) ~= "function") then
+                        return
+                    end
+                    local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.2")))
+                    tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
+                    if (TT.GetPlayerProgression) then
+                        local okProg, rec = pcall(TT.GetPlayerProgression, TT)
+                        if (okProg and type(rec) == "table" and (tonumber(rec.currentScore) or 0) > 0) then
+                            local gs = math.floor((tonumber(rec.currentScore) or 0) + 0.5)
+                            local ilvl = tonumber(rec.avgItemLevel) or 0
+                            local tierInfo = (TT.GetGearLevelInfo and TT:GetGearLevelInfo(gs)) or nil
+                            local tierStr = (tierInfo and tierInfo.title) and (" |cff" .. (tierInfo.tierColorHex or "b4e634") .. "[" .. tierInfo.title .. "]|r") or ""
+                            tooltip:AddLine(" ")
+                            if (tooltip.AddDoubleLine) then
+                                tooltip:AddDoubleLine("GearScore", string.format("|cffffb81c%d|r%s", gs, tierStr), 0.78, 0.80, 0.84, 1, 1, 1)
+                                if (ilvl > 0) then
+                                    tooltip:AddDoubleLine("Avg Item Level", string.format("%.1f", ilvl), 0.78, 0.80, 0.84, 0.85, 0.92, 0.98)
+                                end
+                            else
+                                tooltip:AddLine(string.format("GearScore: %d (iLvl %.1f)", gs, ilvl))
+                            end
+                        end
+                    end
+                    tooltip:AddLine(" ")
+                    tooltip:AddLine("|cffffb81cLeft-Click:|r Open Settings Dashboard", 0.9, 0.9, 0.9)
+                    tooltip:AddLine("|cffffb81cRight-Click:|r Open Diagnostics", 0.9, 0.9, 0.9)
+                    tooltip:AddLine("|cffffb81cShift-Left-Click:|r Toggle Tooltip Mover", 0.9, 0.9, 0.9)
+                    tooltip:AddLine("|cffffb81cDrag:|r Move Minimap Button", 0.75, 0.75, 0.75)
+                end,
+            })
+        end
+        if (not icon:IsRegistered("TacoTip")) then
+            icon:Register("TacoTip", obj, db)
+        else
+            icon:Refresh("TacoTip", db)
+        end
+        return true
+    end
+
+    function TT:SetMinimapIconShown(shown)
+        local isShown = (shown ~= false)
+        if (type(TacoTipConfig) == "table") then
+            TacoTipConfig.show_minimap = isShown
+        end
+        local db = ensureMinimapTable()
+        local _, icon = getLibs()
+        if (not icon) then
+            return false
+        end
+        if (not icon:IsRegistered("TacoTip")) then
+            TT:InitMinimapIcon()
+        end
+        if (icon:IsRegistered("TacoTip")) then
+            icon:Refresh("TacoTip", db)
+            if (isShown) then
+                icon:Show("TacoTip")
+            else
+                icon:Hide("TacoTip")
+            end
+        end
+        return true
+    end
+end
 
 stage("mover-defined")
 

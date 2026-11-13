@@ -1660,28 +1660,24 @@ processEquipmentDeferred = function()
     for index = 1, #contexts do
         local contextKey = contexts[index]
         local state = equipmentStates[contextKey]
-        if not state then
-            -- no state for this context; skip
-        else
+        if state and state.deferred then
             local action = state.deferred
-            if action then
-                state.deferred = nil
-                local ok = pcall(function()
-                    if action == "release" or not state.requested then
-                        releaseEquipmentLease(contextKey, true, false)
-                    elseif action == "rehide" and state.lease then
-                        handleEquipmentLifecycle(contextKey)
-                    else
-                        acquireEquipmentLease(contextKey, true)
-                    end
-                end)
-                if not ok then
-                    invalidateEquipmentContext(
-                        contextKey,
-                        contextKey .. "-deferred-action-failed",
-                        false
-                    )
+            state.deferred = nil
+            local ok = pcall(function()
+                if action == "release" or not state.requested then
+                    releaseEquipmentLease(contextKey, true, false)
+                elseif action == "rehide" and state.lease then
+                    handleEquipmentLifecycle(contextKey)
+                else
+                    acquireEquipmentLease(contextKey, true)
                 end
+            end)
+            if not ok then
+                invalidateEquipmentContext(
+                    contextKey,
+                    contextKey .. "-deferred-action-failed",
+                    false
+                )
             end
         end
     end

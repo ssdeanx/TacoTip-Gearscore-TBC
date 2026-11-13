@@ -535,16 +535,28 @@ local function readLevel(revision)
 end
 
 local function isForeverClient()
+    local core = namespace.Core
+    if type(core) == "table" and type(core.IsForeverClient) == "function" then
+        local ok, val = pcall(core.IsForeverClient)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
+    local libStub = rawget(_G, "LibStub")
+    if libStub then
+        for _, libName in ipairs({ "LibForeverInspector", "LibClassicInspector" }) do
+            local okLib, ci = pcall(libStub, libName, true)
+            if okLib and type(ci) == "table" and type(ci.IsForever) == "function" then
+                return ci:IsForever() and true or false
+            end
+        end
+    end
     if type(_G.GetBuildInfo) == "function" then
         local _, _, _, ret4, _, ret6 = _G.GetBuildInfo()
         local iface = (type(ret4) == "number" and ret4) or (type(ret6) == "number" and ret6) or 0
         if iface >= 16000 and iface < 20000 then
             return true
         end
-    end
-    local ci = rawget(_G, "LibStub") and _G.LibStub("LibClassicInspector", true)
-    if ci and type(ci.IsForever) == "function" then
-        return ci:IsForever() and true or false
     end
     return false
 end

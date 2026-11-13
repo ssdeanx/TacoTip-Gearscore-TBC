@@ -122,8 +122,27 @@ local function isPositiveInteger(value)
 end
 
 local function isRetailClient()
+    local core = type(namespace) == "table" and namespace.Core
+    if type(core) == "table" and type(core.IsRetailClient) == "function" then
+        local ok, val = pcall(core.IsRetailClient)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
+    local libStub = rawget(_G, "LibStub")
+    if libStub then
+        for _, libName in ipairs({ "LibForeverInspector", "LibClassicInspector" }) do
+            local okLib, ci = pcall(libStub, libName, true)
+            if okLib and type(ci) == "table" and type(ci.IsRetail) == "function" then
+                local okAns, res = pcall(ci.IsRetail, ci)
+                if okAns and type(res) == "boolean" then
+                    return res
+                end
+            end
+        end
+    end
     if type(_G.GetBuildInfo) == "function" then
-        local _, _, _, ret4, _, _ = _G.GetBuildInfo()
+        local _, _, _, ret4 = _G.GetBuildInfo()
         local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 100000 then
             return true
@@ -136,16 +155,31 @@ local function isRetailClient()
 end
 
 local function isForeverClient()
+    local core = type(namespace) == "table" and namespace.Core
+    if type(core) == "table" and type(core.IsForeverClient) == "function" then
+        local ok, val = pcall(core.IsForeverClient)
+        if ok and type(val) == "boolean" then
+            return val
+        end
+    end
+    local libStub = rawget(_G, "LibStub")
+    if libStub then
+        for _, libName in ipairs({ "LibForeverInspector", "LibClassicInspector" }) do
+            local okLib, ci = pcall(libStub, libName, true)
+            if okLib and type(ci) == "table" and type(ci.IsForever) == "function" then
+                local okAns, res = pcall(ci.IsForever, ci)
+                if okAns and res == true then
+                    return true
+                end
+            end
+        end
+    end
     if type(_G.GetBuildInfo) == "function" then
         local _, _, _, ret4 = _G.GetBuildInfo()
         local iface = (type(ret4) == "number" and ret4) or 0
         if iface >= 16000 and iface < 20000 then
             return true
         end
-    end
-    local ci = rawget(_G, "LibStub") and _G.LibStub("LibClassicInspector", true)
-    if ci and type(ci.IsForever) == "function" then
-        return ci:IsForever() and true or false
     end
     return false
 end
@@ -161,27 +195,14 @@ local function clientHasSockets()
     if isForeverClient() then
         return false
     end
-    local wowProject = rawget(_G, "WOW_PROJECT_ID")
-    local wowClassic = rawget(_G, "WOW_PROJECT_CLASSIC")
-    if wowProject and wowClassic and wowProject == wowClassic then
-        return false
-    end
-    local wowBC = rawget(_G, "WOW_PROJECT_BURNING_CRUSADE_CLASSIC") or rawget(_G, "WOW_PROJECT_BC_CLASSIC")
-    local wowWrath = rawget(_G, "WOW_PROJECT_WRATH_CLASSIC")
-    if (wowProject and wowBC and wowProject == wowBC) or (wowProject and wowWrath and wowProject == wowWrath) then
+    if isRetailClient() then
         return true
     end
     if type(_G.GetBuildInfo) == "function" then
         local _, _, _, ret4 = _G.GetBuildInfo()
         local iface = (type(ret4) == "number" and ret4) or 0
-        if iface >= 16000 and iface < 20000 then
-            return false
-        elseif iface >= 20000 and iface < 40000 then
+        if iface >= 20000 and iface < 40000 then
             return true
-        elseif iface >= 100000 then
-            return true
-        elseif iface >= 10000 and iface < 16000 then
-            return false
         end
     end
     return false
@@ -962,10 +983,10 @@ function Scoring.Evaluate(revision, policy)
             end
 
             if itemResult.completion.status == "complete" then
-                local completionValue = itemResult.completion.value
-                if type(completionValue) == "table" then
-                    filledOpportunities = filledOpportunities + (completionValue.filled or 0)
-                    totalOpportunities = totalOpportunities + (completionValue.opportunities or 0)
+                local itemCompletionValue = itemResult.completion.value
+                if type(itemCompletionValue) == "table" then
+                    filledOpportunities = filledOpportunities + (itemCompletionValue.filled or 0)
+                    totalOpportunities = totalOpportunities + (itemCompletionValue.opportunities or 0)
                 end
             else
                 completionBlocker = mergeBlocker(completionBlocker, itemResult.completion)
