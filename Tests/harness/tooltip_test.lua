@@ -6625,6 +6625,71 @@ do
         TT.isSecretValue = origIsSec
     end
 
+    -- v1.0.3: item quality border color + combat hiding modifier override
+    do
+        local savedNineSlice = GT.NineSlice
+        local savedGetItem = GT.GetItem
+        local savedGetInfo = REALG.C_Item and REALG.C_Item.GetItemInfo
+        local savedGetQCol = REALG.C_Item and REALG.C_Item.GetItemQualityColor
+        local savedBorderOpt = CFG.tooltip_border_item_quality
+        local lastBorder
+
+        GT.NineSlice = {
+            SetBorderColor = function(_, r, g, b, a)
+                lastBorder = { r = r, g = g, b = b, a = a }
+            end,
+        }
+        if (REALG.C_Item) then
+            REALG.C_Item.GetItemQualityColor = function(q)
+                if (q == 2) then return 0.12, 1.0, 0.0 end
+                if (q == 3) then return 0.0, 0.44, 0.87 end
+                return 1, 1, 1
+            end
+            REALG.C_Item.GetItemInfo = function(key)
+                if (key == ITEM[1].link) then
+                    return "Bronze Axe", ITEM[1].link, 2, 18, 10, "Weapon", "Axe", 1, "INVTYPE_2HWEAPON"
+                end
+                return nil
+            end
+        end
+        CFG.tooltip_border_item_quality = true
+        GT.GetItem = function() return "Bronze Axe", ITEM[1].link end
+        if (POSTCALLS and POSTCALLS[2]) then
+            POSTCALLS[2].fn(GT, { hyperlink = ITEM[1].link })
+        elseif (GT.__hooks and GT.__hooks.OnTooltipSetItem) then
+            GT.__hooks.OnTooltipSetItem(GT, ITEM[1].link)
+        end
+        check("v1.0.3 item border: green quality colors border",
+            lastBorder ~= nil and lastBorder.g > 0.9 and lastBorder.r < 0.2,
+            lastBorder and string.format("%.2f,%.2f,%.2f", lastBorder.r, lastBorder.g, lastBorder.b))
+
+        local savedInCombat = REALG.InCombatLockdown
+        local savedCtrl = REALG.IsControlKeyDown
+        local savedHide = CFG.hide_in_combat
+        local savedMod = CFG.combat_modifier
+        CFG.hide_in_combat = true
+        CFG.combat_modifier = "CTRL"
+        REALG.InCombatLockdown = function() return true end
+        REALG.IsControlKeyDown = function() return false end
+        check("v1.0.3 combat hide: ShouldHideInCombat active in combat",
+            TT:ShouldHideInCombat() == true)
+        REALG.IsControlKeyDown = function() return true end
+        check("v1.0.3 combat hide: CTRL modifier reveals tooltip in combat",
+            TT:IsCombatModifierDown() == true and TT:ShouldHideInCombat() == false)
+
+        REALG.InCombatLockdown = savedInCombat
+        REALG.IsControlKeyDown = savedCtrl
+        CFG.hide_in_combat = savedHide
+        CFG.combat_modifier = savedMod
+        GT.NineSlice = savedNineSlice
+        GT.GetItem = savedGetItem
+        if (REALG.C_Item) then
+            REALG.C_Item.GetItemInfo = savedGetInfo
+            REALG.C_Item.GetItemQualityColor = savedGetQCol
+        end
+        CFG.tooltip_border_item_quality = savedBorderOpt
+    end
+
     CFG.tooltip_max_width = prevMaxW
     CFG.tip_style = prevStyle
     CFG.show_guild_name = prevGuild

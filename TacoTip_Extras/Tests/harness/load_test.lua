@@ -1795,8 +1795,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.8",
-    "TOC ## Version is 1.2.8", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.2.9",
+    "TOC ## Version is 1.2.9", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -10180,6 +10180,354 @@ do
             "purge=" .. tostring(purgeCount))
     end)
     runV128Pins()
+end
+
+-- ---------------------------------------------------------------------------
+-- v1.2.9 upgrades: async remote snapshot survival, low-level GearScore
+-- floor, RankDB metadata preservation on sync, _itemsRev RankDB repair, and
+-- RankSync / RankBrowser progress bar Complete & Failed states.
+-- ---------------------------------------------------------------------------
+do
+    local runV129Pins = (function()
+        out(("\n-- v1.2.9 leaderboard save pipeline & sync progress UI --\n"))
+        local ScannerV129 = namespace.Scanner
+        local CacheV129 = namespace.Cache
+        local RankDBV129 = namespace.RankDB
+        local RankSyncV129 = namespace.RankSync
+        local RankBrowserV129 = namespace.RankBrowser
+        local insp = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+
+        local savedUnitExists = REALG.UnitExists
+        local savedUnitIsPlayer = REALG.UnitIsPlayer
+        local savedUnitGUID = REALG.UnitGUID
+        local savedGUIDIsPlayer = REALG.GUIDIsPlayer
+        local savedUnitName = REALG.UnitName
+        local savedUnitClass = REALG.UnitClass
+        local savedUnitLevel = REALG.UnitLevel
+        local savedUnitFactionGroup = REALG.UnitFactionGroup
+        local savedGetGuildInfo = REALG.GetGuildInfo
+        local savedGetInvID = REALG.GetInventoryItemID
+        local savedGetInvLink = REALG.GetInventoryItemLink
+        local savedGetItemInfo = REALG.C_Item and REALG.C_Item.GetItemInfo
+        local savedGetDetailedIlvl = REALG.C_Item and REALG.C_Item.GetDetailedItemLevelInfo
+        local savedTTGS = REALG.TT_GS
+        local savedGetUnitData = insp and insp.GetUnitData
+
+        -- 1. Remote mouseover snapshot survives unit clearing before async ITEM_DATA_LOAD_RESULT
+        local MO_UNIT = "mouseover"
+        local MO_GUID = "Player-1290-00001290"
+        local MO_ITEM_ID = 50129
+        local MO_LINK = "|cff1eff00|Hitem:50129::::::::24:::::::|h[Hovered Test Helm]|h|r"
+        local mouseoverLive = true
+        local itemCached = false
+
+        REALG.UnitExists = function(u)
+            if u == MO_UNIT then return mouseoverLive end
+            return u == "player"
+        end
+        REALG.UnitIsPlayer = function(u)
+            if u == MO_UNIT then return mouseoverLive end
+            return u == "player"
+        end
+        REALG.UnitGUID = function(u)
+            if u == "player" then return HARNESS_PLAYER_GUID end
+            if u == MO_UNIT and mouseoverLive then return MO_GUID end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g)
+            return g == MO_GUID or g == HARNESS_PLAYER_GUID
+        end
+        REALG.UnitName = function(u)
+            if u == "player" then return "TestPlayer", "TestRealm" end
+            if u == MO_UNIT and mouseoverLive then return "HoveredHero", "TestRealm" end
+            return nil
+        end
+        REALG.UnitClass = MOCKC.unitClassMock(function(u)
+            if u == MO_UNIT and mouseoverLive then return "Warrior", "WARRIOR" end
+            if u == "player" then return "Warrior", "WARRIOR" end
+            return nil, nil
+        end, function(u)
+            if u == MO_UNIT and mouseoverLive then return 1 end
+            if u == "player" then return 1 end
+            return nil
+        end)
+        REALG.UnitLevel = function(u)
+            if u == "player" then return 70 end
+            if u == MO_UNIT and mouseoverLive then return 24 end
+            return -1
+        end
+        REALG.UnitFactionGroup = function(u)
+            if u == "player" then return "Alliance" end
+            if u == MO_UNIT and mouseoverLive then return "Alliance" end
+            return nil
+        end
+        REALG.GetGuildInfo = function(u)
+            if u == MO_UNIT and mouseoverLive then return "SilverHand" end
+            return nil
+        end
+        REALG.GetInventoryItemID = function(u, slotID)
+            if u == MO_UNIT and mouseoverLive and slotID == 1 then return MO_ITEM_ID end
+            return nil
+        end
+        REALG.GetInventoryItemLink = function(u, slotID)
+            if u == MO_UNIT and mouseoverLive and slotID == 1 then return MO_LINK end
+            return nil
+        end
+        if REALG.C_Item then
+            REALG.C_Item.GetItemInfo = function(arg)
+                if (arg == MO_ITEM_ID or arg == MO_LINK or tostring(arg):find("50129", 1, true)) then
+                    if not itemCached then
+                        return nil
+                    end
+                    return "Hovered Test Helm", MO_LINK, 2, 24, 20, "Armor", "Mail", 1, "INVTYPE_HEAD", 133100, 100, 4, 3
+                end
+                if type(savedGetItemInfo) == "function" then
+                    return savedGetItemInfo(arg)
+                end
+                return nil
+            end
+            REALG.C_Item.GetDetailedItemLevelInfo = function(arg)
+                if (arg == MO_ITEM_ID or arg == MO_LINK or tostring(arg):find("50129", 1, true)) then
+                    return 24
+                end
+                if type(savedGetDetailedIlvl) == "function" then
+                    return savedGetDetailedIlvl(arg)
+                end
+                return nil
+            end
+        end
+        if insp then
+            insp.GetUnitData = function(_, guid)
+                if guid == MO_GUID then return { _itemsRev = 1 } end
+                if type(savedGetUnitData) == "function" then
+                    return savedGetUnitData(insp, guid)
+                end
+                return nil
+            end
+        end
+
+        local startedMO = ScannerV129.HandleInventoryReady("INVENTORY_READY", MO_GUID, true, MO_UNIT)
+        -- Simulate player moving mouse away before item data finishes loading asynchronously
+        mouseoverLive = false
+        itemCached = true
+        local finishedMO = ScannerV129.HandleItemDataLoad(MO_ITEM_ID, true)
+        local moCache = CacheV129.GetFresh and CacheV129.GetFresh(MO_GUID) or CacheV129.Get(MO_GUID)
+        local moRec = RankDBV129.GetRecord(MO_GUID)
+        check(startedMO == true and finishedMO == true
+                and type(moCache) == "table" and moCache.state == "complete"
+                and type(moRec) == "table"
+                and moRec.name == "HoveredHero"
+                and moRec.guild == "SilverHand"
+                and moRec.faction == "Alliance"
+                and moRec.level == 24
+                and (tonumber(moRec.gs) or 0) > 0,
+            "Scanner saves remote mouseover snapshot to RankDB even after unit unhovered before item load",
+            ("started=%s finished=%s state=%s name=%s guild=%s faction=%s lvl=%s gs=%s"):format(
+                tostring(startedMO), tostring(finishedMO), tostring(moCache and moCache.state),
+                tostring(moRec and moRec.name), tostring(moRec and moRec.guild),
+                tostring(moRec and moRec.faction), tostring(moRec and moRec.level),
+                tostring(moRec and moRec.gs)))
+
+        -- 2. Low-level character with gs == 0 but positive equipped iLvl still saves with floor GS >= 1
+        local LOW_UNIT = "target"
+        local LOW_GUID = "Player-1290-00001291"
+        local LOW_ITEM_ID = 50130
+        local LOW_LINK = "|cffffffff|Hitem:50130::::::::5:::::::|h[Starter Vest]|h|r"
+        REALG.UnitExists = function(u) return u == "player" or u == LOW_UNIT end
+        REALG.UnitIsPlayer = function(u) return u == "player" or u == LOW_UNIT end
+        REALG.UnitGUID = function(u)
+            if u == "player" then return HARNESS_PLAYER_GUID end
+            if u == LOW_UNIT then return LOW_GUID end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g) return g == LOW_GUID or g == HARNESS_PLAYER_GUID end
+        REALG.UnitName = function(u)
+            if u == LOW_UNIT then return "StarterAlt", "TestRealm" end
+            return "TestPlayer", "TestRealm"
+        end
+        REALG.UnitClass = MOCKC.unitClassMock(function() return "Hunter", "HUNTER" end, function() return 3 end)
+        REALG.UnitLevel = function(u) return u == LOW_UNIT and 5 or 70 end
+        REALG.UnitFactionGroup = function() return "Alliance" end
+        REALG.GetGuildInfo = function() return nil end
+        REALG.GetInventoryItemID = function(u, slotID)
+            if u == LOW_UNIT and slotID == 5 then return LOW_ITEM_ID end
+            return nil
+        end
+        REALG.GetInventoryItemLink = function(u, slotID)
+            if u == LOW_UNIT and slotID == 5 then return LOW_LINK end
+            return nil
+        end
+        if REALG.C_Item then
+            REALG.C_Item.GetItemInfo = function(arg)
+                if (arg == LOW_ITEM_ID or arg == LOW_LINK or tostring(arg):find("50130", 1, true)) then
+                    return "Starter Vest", LOW_LINK, 1, 8, 1, "Armor", "Leather", 1, "INVTYPE_CHEST", 132642, 1, 4, 2
+                end
+                if type(savedGetItemInfo) == "function" then
+                    return savedGetItemInfo(arg)
+                end
+                return nil
+            end
+            REALG.C_Item.GetDetailedItemLevelInfo = function(arg)
+                if (arg == LOW_ITEM_ID or arg == LOW_LINK or tostring(arg):find("50130", 1, true)) then
+                    return 8
+                end
+                if type(savedGetDetailedIlvl) == "function" then
+                    return savedGetDetailedIlvl(arg)
+                end
+                return nil
+            end
+        end
+        REALG.TT_GS = {
+            GetScore = function() return 0, 8 end,
+            GetItemScore = function() return 0 end,
+            GetItemHunterScore = function() return 0 end,
+            GetItemScoreFromInfo = function() return 0 end,
+        }
+        if insp then
+            insp.GetUnitData = function(_, guid)
+                if guid == LOW_GUID then return { _itemsRev = 1 } end
+                if type(savedGetUnitData) == "function" then
+                    return savedGetUnitData(insp, guid)
+                end
+                return nil
+            end
+        end
+
+        local okLow = ScannerV129.HandleInventoryReady("INVENTORY_READY", LOW_GUID, true, LOW_UNIT)
+        local lowRec = RankDBV129.GetRecord(LOW_GUID)
+        check(okLow == true and type(lowRec) == "table" and (tonumber(lowRec.gs) or 0) >= 1,
+            "Low-level inspect with gs==0 and positive ilvl stores floor GearScore >= 1 to RankDB",
+            ("ok=%s gs=%s ilvl=%s"):format(tostring(okLow), tostring(lowRec and lowRec.gs), tostring(lowRec and lowRec.ilvl)))
+
+        -- Restore Scanner globals before DB & Sync checks
+        REALG.TT_GS = savedTTGS
+        REALG.UnitExists = savedUnitExists
+        REALG.UnitIsPlayer = savedUnitIsPlayer
+        REALG.UnitGUID = savedUnitGUID
+        REALG.GUIDIsPlayer = savedGUIDIsPlayer
+        REALG.UnitName = savedUnitName
+        REALG.UnitClass = savedUnitClass
+        REALG.UnitLevel = savedUnitLevel
+        REALG.UnitFactionGroup = savedUnitFactionGroup
+        REALG.GetGuildInfo = savedGetGuildInfo
+        REALG.GetInventoryItemID = savedGetInvID
+        REALG.GetInventoryItemLink = savedGetInvLink
+        if REALG.C_Item then
+            REALG.C_Item.GetItemInfo = savedGetItemInfo
+            REALG.C_Item.GetDetailedItemLevelInfo = savedGetDetailedIlvl
+        end
+        if insp then
+            insp.GetUnitData = savedGetUnitData
+        end
+
+        -- 3. RankDB.StoreRecord preserves local faction/spec/guild/level across sparse v2 sync updates
+        local r129 = "V129Realm"
+        local now129 = (REALG.GetServerTime and REALG.GetServerTime())
+            or (REALG.time and REALG.time())
+            or 2000100
+        RankDBV129.StoreRecord({
+            guid = "Player-1290-00001292",
+            name = "Veteran",
+            faction = "Horde",
+            class = "WARRIOR",
+            classID = 1,
+            specID = 72,
+            specName = "Fury",
+            guild = "Warband",
+            level = 60,
+            gs = 900,
+            ilvl = 68,
+            source = "inspect",
+            timestamp = now129 - 20,
+        }, r129)
+        local upOK = RankDBV129.StoreRecord({
+            guid = "Player-1290-00001292",
+            name = "Unknown",
+            faction = "",
+            class = "WARRIOR",
+            classID = 1,
+            specID = 0,
+            specName = "",
+            guild = "",
+            level = 0,
+            gs = 950,
+            ilvl = 70,
+            source = "sync",
+            timestamp = now129 - 5,
+        }, r129)
+        local merged = RankDBV129.GetRecord("Player-1290-00001292", r129)
+        check(upOK == true and type(merged) == "table"
+                and merged.gs == 950
+                and merged.name == "Veteran"
+                and merged.faction == "Horde"
+                and merged.specName == "Fury"
+                and merged.guild == "Warband"
+                and merged.level == 60,
+            "RankDB.StoreRecord preserves existing metadata when sparse sync record updates row",
+            ("name=%s faction=%s spec=%s guild=%s lvl=%s"):format(
+                tostring(merged and merged.name), tostring(merged and merged.faction),
+                tostring(merged and merged.specName), tostring(merged and merged.guild),
+                tostring(merged and merged.level)))
+        RankDBV129.PurgeDatabase(r129)
+
+        -- 4. RankSync.SyncNow / GetSyncProgress + RankBrowser.RefreshProgress visual Complete & Failed states
+        local savedIsInGuild = REALG.IsInGuild
+        local savedIsInGroup = REALG.IsInGroup
+        local savedIsInRaid = REALG.IsInRaid
+        local savedGetChan = REALG.GetChannelName
+        local savedJoinTemp = REALG.JoinTemporaryChannel
+        local savedJoinChan = REALG.JoinChannelByName
+        local savedCTimer = REALG.C_Timer
+
+        REALG.C_Timer = nil
+        local rf = (RankBrowserV129.CreateUI and RankBrowserV129.CreateUI()) or RAWL.TacoTipRankFrame
+
+        REALG.IsInGuild = function() return true end
+        local startedOk = RankSyncV129.SyncNow(true)
+        local progOk = type(REALG.TacoTipExtrasGetSyncProgress) == "function"
+            and REALG.TacoTipExtrasGetSyncProgress() or RankSyncV129.GetSyncProgress()
+        RankBrowserV129.RefreshProgress()
+        local barTextOk = rf and rf.progressBar and rf.progressBar.text and rf.progressBar.text:GetText() or ""
+        local statusTextOk = rf and rf.scanStatus and rf.scanStatus:GetText() or ""
+        check(startedOk == true
+                and type(progOk) == "table" and progOk.status == "complete" and progOk.percent == 1
+                and rf and rf.progressBar and rf.progressBar:IsShown() == true
+                and barTextOk:find("Complete", 1, true) ~= nil
+                and statusTextOk:find("Sync", 1, true) ~= nil,
+            "RankSync.SyncNow(true) + RankBrowser.RefreshProgress renders Complete progress bar state",
+            ("status=%s bar=%s scan=%s"):format(tostring(progOk and progOk.status), barTextOk, statusTextOk))
+
+        REALG.IsInGuild = function() return false end
+        REALG.IsInGroup = function() return false end
+        REALG.IsInRaid = function() return false end
+        REALG.GetChannelName = function() return 0 end
+        REALG.JoinTemporaryChannel = nil
+        REALG.JoinChannelByName = nil
+        local startedFail = RankSyncV129.SyncNow(true)
+        local progFail = RankSyncV129.GetSyncProgress()
+        RankBrowserV129.RefreshProgress()
+        local barTextFail = rf and rf.progressBar and rf.progressBar.text and rf.progressBar.text:GetText() or ""
+        local statusTextFail = rf and rf.scanStatus and rf.scanStatus:GetText() or ""
+        check(startedFail == true
+                and type(progFail) == "table" and progFail.status == "failed" and progFail.reason == "no_transport"
+                and rf and rf.progressBar and rf.progressBar:IsShown() == true
+                and barTextFail:find("Failed", 1, true) ~= nil
+                and statusTextFail:find("Sync failed", 1, true) ~= nil,
+            "RankSync.SyncNow(true) + RankBrowser.RefreshProgress renders Failed state when no transport exists",
+            ("status=%s reason=%s bar=%s scan=%s"):format(
+                tostring(progFail and progFail.status), tostring(progFail and progFail.reason),
+                barTextFail, statusTextFail))
+
+        REALG.IsInGuild = savedIsInGuild
+        REALG.IsInGroup = savedIsInGroup
+        REALG.IsInRaid = savedIsInRaid
+        REALG.GetChannelName = savedGetChan
+        REALG.JoinTemporaryChannel = savedJoinTemp
+        REALG.JoinChannelByName = savedJoinChan
+        REALG.C_Timer = savedCTimer
+    end)
+    runV129Pins()
 end
 
 out(("\n-------------------------------------------------------------\n"))

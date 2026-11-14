@@ -405,6 +405,27 @@ function RankDB.StoreRecord(record, realm)
         return true, "up-to-date"
     end
 
+    if existing then
+        if clean.name == "Unknown" and type(existing.name) == "string" and existing.name ~= "" and existing.name ~= "Unknown" then
+            clean.name = existing.name
+        end
+        if clean.faction == nil and (existing.faction == "Alliance" or existing.faction == "Horde") then
+            clean.faction = existing.faction
+        end
+        if clean.specName == "" and type(existing.specName) == "string" and existing.specName ~= "" then
+            clean.specName = existing.specName
+        end
+        if clean.specID == 0 and type(existing.specID) == "number" and existing.specID > 0 then
+            clean.specID = existing.specID
+        end
+        if clean.guild == "" and type(existing.guild) == "string" and existing.guild ~= "" then
+            clean.guild = existing.guild
+        end
+        if clean.level == 0 and type(existing.level) == "number" and existing.level > 0 then
+            clean.level = existing.level
+        end
+    end
+
     if existing and recordsHaveSameRankingState(existing, clean) then
         existing.timestamp = clean.timestamp
         if not cachedIndices[realmKey] then

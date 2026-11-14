@@ -1166,8 +1166,8 @@ do
         tocFile:close()
         tocVer = content:match("## Version: ([^\r\n]+)")
     end
-    checks[#checks + 1] = { tocVer == "1.0.2",
-        "1.0.2: TacoTip.toc declares version 1.0.2 (got " .. tostring(tocVer) .. ")" }
+    checks[#checks + 1] = { tocVer == "1.0.3",
+        "1.0.3: TacoTip.toc declares version 1.0.3 (got " .. tostring(tocVer) .. ")" }
 
     -- Pin 5: LibDataBroker-1.1 + LibDBIcon-1.0 minimap launcher wiring
     local LDB = REALG.LibStub and REALG.LibStub("LibDataBroker-1.1", true) or nil
@@ -1626,7 +1626,7 @@ do
         local text7 = table.concat(lines7, "\n")
         check("0.8.8: collection failure still prints the minimal facts",
             okPrint7 and text7:find("diagnostics collection failed", 1, true) ~= nil
-            and text7:find("version: 1.0.2", 1, true) ~= nil
+            and text7:find("version: 1.0.3", 1, true) ~= nil
             and text7:find("load OK:", 1, true) ~= nil
             and text7:find("client family:", 1, true) ~= nil
             and text7:find("interface:", 1, true) ~= nil,

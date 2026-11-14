@@ -972,6 +972,12 @@ local function captureEquipmentSnapshot(contextKey)
 
     local records = {}
     local fonts = {}
+    local tacoTip = resolveTacoTipTable()
+    local foreverBadge = nil
+    if contextKey == "character" and type(tacoTip) == "table" then
+        ---@cast tacoTip table
+        foreverBadge = tacoTip.foreverCharStatsBadge
+    end
     local fontParent = parents[spec.fontParentName]
     if contextKey == "character" and not _G.CharacterModelFrame and parents["PaperDollFrame"] then
         fontParent = parents["PaperDollFrame"]
@@ -983,6 +989,9 @@ local function captureEquipmentSnapshot(contextKey)
         if not validateVisibilityObject(object, "FontString", expectedParent) then
             if contextKey == "character" and parents["PaperDollFrame"] and validateVisibilityObject(object, "FontString", parents["PaperDollFrame"]) then
                 expectedParent = parents["PaperDollFrame"]
+                fontParent = expectedParent
+            elseif contextKey == "character" and foreverBadge ~= nil and validateVisibilityObject(object, "FontString", foreverBadge) then
+                expectedParent = foreverBadge
                 fontParent = expectedParent
             else
                 return nil, contextKey .. "-fontstring-ownership-invalid", false
@@ -999,6 +1008,33 @@ local function captureEquipmentSnapshot(contextKey)
             object = object,
             restoreShown = shown,
         }
+    end
+
+    local leasedBadge = nil
+    local badgeParent = nil
+    if foreverBadge ~= nil then
+        local candidateParent = parents["CharacterModelFrame"] or parents["PaperDollFrame"]
+        if fontParent == foreverBadge or (candidateParent and validateVisibilityObject(foreverBadge, "Frame", candidateParent)) then
+            local badgeRead, badgeShown = objectIsShown(foreverBadge)
+            if badgeRead then
+                local getParentFn = objectMethod(foreverBadge, "GetParent")
+                local resolvedBadgeParent = candidateParent
+                if getParentFn then
+                    local bParentOk, bParentVal = pcall(getParentFn, foreverBadge)
+                    if bParentOk and bParentVal ~= nil then
+                        resolvedBadgeParent = bParentVal
+                    end
+                end
+                leasedBadge = foreverBadge
+                badgeParent = resolvedBadgeParent
+                records[#records + 1] = {
+                    kind = "badge",
+                    name = "foreverCharStatsBadge",
+                    object = foreverBadge,
+                    restoreShown = badgeShown,
+                }
+            end
+        end
     end
 
     local movers = {}
@@ -1038,6 +1074,8 @@ local function captureEquipmentSnapshot(contextKey)
     return {
         parents = parents,
         fontParent = fontParent,
+        badge = leasedBadge,
+        badgeParent = badgeParent,
         fonts = fonts,
         movers = movers,
         records = records,
@@ -1126,6 +1164,19 @@ local function validateLeasedObjects(contextKey, allowNewMovers)
         if _G[name] ~= object
             or not validateVisibilityObject(object, "FontString", fontParent) then
             return false, contextKey .. "-fontstring-identity-changed", nil
+        end
+    end
+
+    if currentLease.badge ~= nil then
+        local liveTacoTip = resolveTacoTipTable()
+        local liveBadge = nil
+        if type(liveTacoTip) == "table" then
+            ---@cast liveTacoTip table
+            liveBadge = liveTacoTip.foreverCharStatsBadge
+        end
+        if liveBadge ~= currentLease.badge
+            or not validateVisibilityObject(currentLease.badge, "Frame", currentLease.badgeParent) then
+            return false, contextKey .. "-badge-identity-changed", nil
         end
     end
 

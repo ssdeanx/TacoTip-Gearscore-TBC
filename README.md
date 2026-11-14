@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.2
+version: 1.0.3
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,11 +22,11 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, LibDataBroker-1.1, LibDBIcon-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-12)
-linter: wowlua_ls check — 0 errors, no secret-value findings; 39 undefined-field warnings (2026-11-12)
+status: pending in-game verification (2026-11-14)
+linter: wowlua_ls check — 0 errors, no secret-value findings; 39 undefined-field warnings (2026-11-14)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
-gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42 (lua5.1/lua5.4/luajit), luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-12)
-updated: 2026-11-12
+gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42, luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-14)
+updated: 2026-11-14
 ```
 
 # ⚡ TacoTip ⚡
@@ -35,7 +35,7 @@ updated: 2026-11-12
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.2-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.3-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -117,6 +117,18 @@ updated: 2026-11-12
 | `/tt minimap` or `/tt icon` | Toggle the **LibDBIcon minimap launcher button** |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.3</span>
+
+🛡️ **<span style="color:#b4e634">WoW Forever Character Frame Item Level & GearScore (`Camelot`):</span>** Added WoW Forever character-frame integration (`TT.foreverStatsFooter` / `TT:RefreshForeverCharacterStatsFooter`) inside the bottom footer strip of `CharacterStatsPaneScrollBox` below Blizzard's scroll divider, displaying Item Level and GearScore without drawing a second floating badge or mutating `ScrollBox`, `DataProvider`, `PAPERDOLL_STATINFO`, or `PAPERDOLL_STATCATEGORIES` (keeping `ScrollBoxListView:InvokeInitializers` and `ShowStatusBarText` untainted in combat/encounters), and leaving Classic Era, TBC Anniversary, Titanforge, and Retail layouts unchanged.
+
+💎 **<span style="color:#b4e634">Secret-Safe Item Quality Tooltip Borders:</span>** Item tooltips (`GameTooltip`, `ItemRefTooltip`, `ShoppingTooltip1`, `ShoppingTooltip2`) now color their border by item rarity (Poor grey, Common white, Uncommon green, Rare blue, Epic purple, Legendary orange, Heirloom gold/teal) via `TT:GetItemQualityBorderColor` (`tooltip_border_item_quality`, enabled by default). Reads and returns are strictly secret-checked before storage or comparison, preserved across `OnShow`, and skipped cleanly on Forever loot-window tooltips.
+
+⚔️ **<span style="color:#b4e634">Combat Tooltip Hiding with Modifier Key Override:</span>** Added a dedicated **`Combat Hiding`** section in the `/tt` dashboard (`General`) and Blizzard Settings root panel. Off by default (`hide_in_combat = false`); turning combat hiding on unlocks the **`Still Show Hidden Tips when Holding Modifier Key`** selector (`None`, `Shift`, `Ctrl`, `Alt`) to dynamically show or hide mouseover unit tooltips during combat when pressing or releasing the selected modifier key (`MODIFIER_STATE_CHANGED`, `PLAYER_REGEN_DISABLED`).
+
+📈 **<span style="color:#b4e634">WoW Forever Dashboard Progression Milestones:</span>** Strictly when running on WoW Forever (`CI:IsForever()`), the `/tt` header GearScore progress bar renders five labeled progression stages — **Pre-Raid**, **Tier 1**, **Tier 2**, **Tier 3**, and **`???`** — with vertical tier dividers and stage breakdown hover tooltips, leaving Classic Era, TBC Anniversary, Titanforge, and Retail progression caps untouched.
 
 ---
 

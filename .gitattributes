@@ -78,3 +78,7 @@
 /Libs/LibDBIcon-1.0/LibStub/** export-ignore
 /Libs/LibRangeCheck-2.0/** export-ignore
 /Libs/LibSharedMedia-3.0/** export-ignore
+
+# Unreferenced media source assets (only Media/Fonts/*.ttf ships)
+/Media/Background/** export-ignore
+/Media/Borders/** export-ignore

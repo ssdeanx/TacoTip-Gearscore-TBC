@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.2"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.3"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn
@@ -84,6 +84,7 @@ local DEFAULTS = {
     show_gs_items_hs = false,
     show_avg_ilvl = true,
     hide_in_combat = false,
+    combat_modifier = "NONE",
     show_item_level = true,
     tip_style = 2,
     show_target = true,
@@ -97,6 +98,7 @@ local DEFAULTS = {
     show_power_bar = true,
     shaman_blue = true,
     tooltip_border_use_class = true,
+    tooltip_border_item_quality = true,
     tooltip_background_use_class = false,
     tooltip_border_color_r = 1,
     tooltip_border_color_g = 1,
@@ -190,6 +192,7 @@ function TT:SafeSanitizeConfig(config)
         "show_target", "show_pawn_player", "show_team",
         "show_class_icon", "show_pvp_icon", "guild_rank_alt_style",
         "show_hp_bar", "show_power_bar", "shaman_blue", "tooltip_border_use_class",
+        "tooltip_border_item_quality",
         "tooltip_background_use_class", "tooltip_portrait", "tooltip_portrait_3d",
         "tooltip_portrait_invert_side",
         "instant_fade", "anchor_mouse", "anchor_mouse_world",
@@ -203,6 +206,11 @@ function TT:SafeSanitizeConfig(config)
         if (val ~= nil and type(val) ~= "boolean") then
             config[key] = defaults[key]
         end
+    end
+
+    if (config.combat_modifier ~= "NONE" and config.combat_modifier ~= "SHIFT"
+            and config.combat_modifier ~= "CTRL" and config.combat_modifier ~= "ALT") then
+        config.combat_modifier = defaults.combat_modifier
     end
 
     -- Sanitise numeric slider/range keys so out-of-bounds values from
@@ -2362,10 +2370,13 @@ local function buildRootPage()
     behaviorHeader:SetText(L["OPTIONS_ROOT_BEHAVIOR_HEADER"] or "Behavior & client settings")
 
     controls.rootHideInCombat = createOptionsCheckbox(panel, nil,
-        L["OPTIONS_HIDE_IN_COMBAT_LABEL"] or "Suppress inspection details in combat",
+        L["OPTIONS_HIDE_IN_COMBAT_LABEL"] or "Hide tooltips in combat",
         L["OPTIONS_HIDE_IN_COMBAT_DESC"] or
-        "Skips TacoTip's talents and GearScore-style player additions while you are in combat.", function(_, value)
+        "Hide unit tooltips while you are engaged in combat. Optionally hold a modifier key below to still show them.", function(_, value)
             TacoTipConfig.hide_in_combat = value
+            if (controls.rootCombatModifier and controls.rootCombatModifier.SetDisabled) then
+                controls.rootCombatModifier:SetDisabled(not value)
+            end
             modernGetConfig()
         end)
     controls.rootHideInCombat:SetPoint("TOPLEFT", behaviorHeader, "BOTTOMLEFT", -2, -6)
@@ -2392,8 +2403,29 @@ local function buildRootPage()
         end)
     controls.rootShowAchievementPoints:SetPoint("TOPLEFT", controls.rootUberTips, "BOTTOMLEFT", 0, -6)
 
+    controls.rootCombatModifier = createOptionsDropdown(panel, nil,
+        "Still Show Hidden Tips with Modifier",
+        "Choose a modifier key (Shift, Ctrl, or Alt) to temporarily show unit tooltips while in combat.",
+        {
+            { value = "NONE", text = "None" },
+            { value = "SHIFT", text = "Shift" },
+            { value = "CTRL", text = "Ctrl" },
+            { value = "ALT", text = "Alt" },
+        },
+        function(value)
+            TacoTipConfig.combat_modifier = value
+            modernGetConfig()
+        end)
+    controls.rootCombatModifier.label:SetPoint("TOPLEFT", controls.rootChatClassColors, "BOTTOMLEFT", 2, -10)
+    controls.rootCombatModifier:SetPoint("TOPLEFT", controls.rootCombatModifier.label, "BOTTOMLEFT", -16, -2)
+    if (controls.rootCombatModifier.description) then
+        controls.rootCombatModifier.description:ClearAllPoints()
+        controls.rootCombatModifier.description:SetPoint("TOPLEFT", controls.rootCombatModifier, "BOTTOMLEFT", 20, -2)
+    end
+
     modernOptionsState.rootSummary = createWrappedText(panel, "GameFontHighlightSmall", 620, getRootSummaryText())
-    modernOptionsState.rootSummary:SetPoint("TOPLEFT", controls.rootChatClassColors, "BOTTOMLEFT", 0, -10)
+    modernOptionsState.rootSummary:SetPoint("TOPLEFT",
+        controls.rootCombatModifier.description or controls.rootCombatModifier, "BOTTOMLEFT", -2, -10)
 
     panel.Refresh = function()
         modernOptionsState.rootSummary:SetText(getRootSummaryText())
@@ -2408,6 +2440,12 @@ local function buildRootPage()
         if (controls.rootShowHpBar) then controls.rootShowHpBar:SetChecked(TacoTipConfig.show_hp_bar) end
         if (controls.rootShowPowerBar) then controls.rootShowPowerBar:SetChecked(TacoTipConfig.show_power_bar) end
         controls.rootHideInCombat:SetChecked(TacoTipConfig.hide_in_combat)
+        if (controls.rootCombatModifier) then
+            controls.rootCombatModifier:SetValue(TacoTipConfig.combat_modifier or "NONE")
+            if (controls.rootCombatModifier.SetDisabled) then
+                controls.rootCombatModifier:SetDisabled(not TacoTipConfig.hide_in_combat)
+            end
+        end
         controls.rootUberTips:SetChecked(GetCVar("UberTooltips") == "1")
         controls.rootChatClassColors:SetChecked(GetCVar("chatClassColorOverride") == "0")
         -- Achievements are Retail-only for now. WotLK Titanforge and WoW
@@ -2896,6 +2934,15 @@ local function buildTooltipsPage()
     controls.tooltipBackgroundUseClass:SetPoint("TOPLEFT", content, "TOPLEFT", 260, builder.y)
     builder.y = builder.y - 34
 
+    controls.itemQualityBorderToggle = createOptionsCheckbox(content, nil,
+        "Item Quality Border Color",
+        "Color item tooltip borders by item rarity (green, blue, purple, etc.).",
+        function(_, value)
+            TacoTipConfig.tooltip_border_item_quality = value
+        end)
+    controls.itemQualityBorderToggle:SetPoint("TOPLEFT", content, "TOPLEFT", 16, builder.y)
+    builder.y = builder.y - 34
+
     controls.tooltipBorderColor = createColorSwatchControl(content, nil,
         L["OPTIONS_TOOLTIP_BORDER_COLOR"] or "Border color",
         L["OPTIONS_TOOLTIP_BORDER_COLOR_DESC"] or
@@ -3004,6 +3051,9 @@ local function buildTooltipsPage()
         controls.showTeam:SetChecked(TacoTipConfig.show_team)
         controls.showClassIcon:SetChecked(TacoTipConfig.show_class_icon)
         controls.classColoredBorderToggle:SetChecked(TacoTipConfig.tooltip_border_use_class)
+        if (controls.itemQualityBorderToggle) then
+            controls.itemQualityBorderToggle:SetChecked(TacoTipConfig.tooltip_border_item_quality ~= false)
+        end
         controls.showPVPIcon:SetChecked(TacoTipConfig.show_pvp_icon)
         controls.showHealthBar:SetChecked(TacoTipConfig.show_hp_bar)
         controls.showPowerBar:SetChecked(TacoTipConfig.show_power_bar)
@@ -3470,6 +3520,29 @@ local function buildDiagnosticsReport()
     return table.concat(lines, "\n"), verdict
 end
 
+TT.FOREVER_GS_SECTIONS = {
+    { label = "Pre-Raid", minPct = 0.00, maxPct = 0.25, minGS = 0,    maxGS = 600,  r = 0.12, g = 1.00, b = 0.00, hex = "FF1EFF00" },
+    { label = "Tier 1",   minPct = 0.25, maxPct = 0.45, minGS = 600,  maxGS = 800,  r = 0.00, g = 0.44, b = 0.87, hex = "FF0070DD" },
+    { label = "Tier 2",   minPct = 0.45, maxPct = 0.65, minGS = 800,  maxGS = 1000, r = 0.64, g = 0.21, b = 0.93, hex = "FFA335EE" },
+    { label = "Tier 3",   minPct = 0.65, maxPct = 0.85, minGS = 1000, maxGS = 1200, r = 1.00, g = 0.50, b = 0.00, hex = "FFFF8000" },
+    { label = "???",      minPct = 0.85, maxPct = 1.00, minGS = 1200, maxGS = 1400, r = 0.90, g = 0.80, b = 0.50, hex = "FFE6CC80" },
+}
+
+function TT:GetForeverProgressSection(score)
+    local s = tonumber(score) or 0
+    local list = self.FOREVER_GS_SECTIONS
+    for i = 1, #list do
+        local sec = list[i]
+        if (s < sec.maxGS or i == #list) then
+            local spanGS = math.max(1, sec.maxGS - sec.minGS)
+            local frac = math.min(1, math.max(0, (s - sec.minGS) / spanGS))
+            local ratio = sec.minPct + frac * (sec.maxPct - sec.minPct)
+            return sec, ratio, i
+        end
+    end
+    return list[1], 0, 1
+end
+
 local function createDashboard()
     local frame = CreateFrame("Frame", "TacoTipDashboard", UIParent)
     frame:SetSize(1000, 600)
@@ -3559,6 +3632,15 @@ local function createDashboard()
         div:SetTexture(WHITE8X8)
         div:SetVertexColor(1, 1, 1, 0.14)
         hProgBracketTicks[b] = div
+    end
+
+    hProgTrack._foreverLabels = {}
+    for b = 1, 5 do
+        local fl = hProgTrack:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fl:SetJustifyH("CENTER")
+        fl:SetText(TT.FOREVER_GS_SECTIONS[b].label)
+        fl:Hide()
+        hProgTrack._foreverLabels[b] = fl
     end
 
     local hProgMinLabel = headerProg:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
@@ -3693,6 +3775,14 @@ local function createDashboard()
             GameTooltip:AddDoubleLine("Gear Level / Avg iLvl:",
                 string.format("Lv.%d %s · iLvl %d", lvl.level or 1, lvl.title or "Novice",
                     math.floor(rec.avgItemLevel or 0)), 0.7, 0.75, 0.82, 1, 1, 1)
+            if (CI and CI.IsForever and CI:IsForever() and TT and TT.GetForeverProgressSection) then
+                local fSec = TT:GetForeverProgressSection(curGS)
+                GameTooltip:AddDoubleLine("Forever Progression Stage:",
+                    string.format("|c%s%s|r (%d–%d GS)", fSec.hex, fSec.label, fSec.minGS, fSec.maxGS),
+                    0.7, 0.75, 0.82, 1, 1, 1)
+                GameTooltip:AddLine("Forever Stages: Pre-Raid (0–600) · Tier 1 (600–800) · Tier 2 (800–1000) · Tier 3 (1000–1200) · ??? (1200+)",
+                    0.68, 0.76, 0.88, true)
+            end
             GameTooltip:AddDoubleLine("All-Time Peak / Snapshots:",
                 string.format("%d GS · %d pin(s)", peakGS, snaps), 0.7, 0.75, 0.82, 0.35, 0.94, 0.86)
             GameTooltip:AddLine("Hover any vertical cyan/gold line on the bar to inspect past snapshot stats. Click bar to open Progression.", 0.65, 0.7, 0.78, true)
@@ -3725,22 +3815,34 @@ local function createDashboard()
             cap, bracketSize = TT:GetGearScoreProgressCap(curGS, peakGS)
         end
         local lvl = TT:GetGearLevelInfo(curGS)
+        local isForeverBar = (CI and CI.IsForever and CI:IsForever() and TT.GetForeverProgressSection ~= nil) or false
+        local fSec, fRatio, fIdx
+        if (isForeverBar) then
+            fSec, fRatio, fIdx = TT:GetForeverProgressSection(curGS)
+            cap = 1400
+        end
         local tierHex = lvl.tierColorHex or "FFFFD100"
         local pct = (cap > 0) and math.min(100, math.max(0, math.floor((curGS / cap) * 100 + 0.5))) or 0
 
-        hProgLeft:SetText(string.format("|cffffd100Overall Gear|r · |c%sLv.%d %s|r",
-            tierHex, lvl.level or 1, lvl.title or "Novice"))
+        if (isForeverBar and fSec) then
+            hProgLeft:SetText(string.format("|cffffd100Overall Gear|r · |c%s%s|r · |c%sLv.%d %s|r",
+                fSec.hex, fSec.label, tierHex, lvl.level or 1, lvl.title or "Novice"))
+            hProgMaxLabel:SetText("Pre-Raid · T1 · T2 · T3 · ???")
+        else
+            hProgLeft:SetText(string.format("|cffffd100Overall Gear|r · |c%sLv.%d %s|r",
+                tierHex, lvl.level or 1, lvl.title or "Novice"))
+            hProgMaxLabel:SetText(string.format("%d GS BiS Cap", cap))
+        end
         hProgRight:SetText(string.format("|c%s%d|r / %d GS (|cffffd100%d%%|r)",
             tierHex, curGS, cap, pct))
         hProgMinLabel:SetText("0 GS")
-        hProgMaxLabel:SetText(string.format("%d GS BiS Cap", cap))
 
         local trackW = (hProgTrack.GetWidth and hProgTrack:GetWidth()) or 0
         if (trackW < 100) then
             trackW = 470
         end
         local innerW = math.max(10, trackW - 2)
-        local ratio = (cap > 0) and math.min(1, math.max(0, curGS / cap)) or 0
+        local ratio = isForeverBar and fRatio or ((cap > 0) and math.min(1, math.max(0, curGS / cap)) or 0)
         local fillW = math.max(1, math.floor(innerW * ratio + 0.5))
         hProgFill:SetWidth(fillW)
 
@@ -3762,7 +3864,8 @@ local function createDashboard()
         end
 
         if (peakGS > curGS and cap > 0) then
-            local peakX = math.min(innerW - 1, math.max(1, math.floor(innerW * math.min(1, peakGS / cap) + 0.5)))
+            local peakRatio = isForeverBar and select(2, TT:GetForeverProgressSection(peakGS)) or math.min(1, peakGS / cap)
+            local peakX = math.min(innerW - 1, math.max(1, math.floor(innerW * peakRatio + 0.5)))
             hProgPeak:ClearAllPoints()
             hProgPeak:SetPoint("LEFT", hProgTrack, "LEFT", peakX, 0)
             hProgPeak:Show()
@@ -3770,16 +3873,58 @@ local function createDashboard()
             hProgPeak:Hide()
         end
 
-        for bracketIdx = 1, 6 do
-            local threshold = bracketIdx * bracketSize
-            local tick = hProgBracketTicks[bracketIdx]
-            if (tick and cap > 0 and threshold < cap) then
-                local divX = math.floor(innerW * (threshold / cap) + 0.5)
-                tick:ClearAllPoints()
-                tick:SetPoint("LEFT", hProgTrack, "LEFT", divX, 0)
-                tick:Show()
-            elseif (tick) then
-                tick:Hide()
+        if (isForeverBar and TT.FOREVER_GS_SECTIONS) then
+            for idx = 1, 4 do
+                local tick = hProgBracketTicks[idx]
+                local sec = TT.FOREVER_GS_SECTIONS[idx]
+                if (tick and sec) then
+                    local divX = math.floor(innerW * sec.maxPct + 0.5)
+                    tick:ClearAllPoints()
+                    tick:SetPoint("LEFT", hProgTrack, "LEFT", divX, 0)
+                    tick:SetVertexColor(0.95, 0.82, 0.32, 0.42)
+                    tick:Show()
+                elseif (tick) then
+                    tick:Hide()
+                end
+            end
+            for idx = 5, 6 do
+                if (hProgBracketTicks[idx]) then
+                    hProgBracketTicks[idx]:Hide()
+                end
+            end
+            for idx = 1, 5 do
+                local fl = hProgTrack._foreverLabels and hProgTrack._foreverLabels[idx]
+                local sec = TT.FOREVER_GS_SECTIONS[idx]
+                if (fl and sec) then
+                    local midX = math.floor(innerW * ((sec.minPct + sec.maxPct) * 0.5) + 0.5)
+                    fl:ClearAllPoints()
+                    fl:SetPoint("CENTER", hProgTrack, "LEFT", midX, 0)
+                    if (idx == fIdx) then
+                        fl:SetText("|c" .. sec.hex .. sec.label .. "|r")
+                    else
+                        fl:SetText("|cff9aa3b2" .. sec.label .. "|r")
+                    end
+                    fl:Show()
+                end
+            end
+        else
+            for idx = 1, 5 do
+                if (hProgTrack._foreverLabels and hProgTrack._foreverLabels[idx]) then
+                    hProgTrack._foreverLabels[idx]:Hide()
+                end
+            end
+            for bracketIdx = 1, 6 do
+                local threshold = bracketIdx * bracketSize
+                local tick = hProgBracketTicks[bracketIdx]
+                if (tick and cap > 0 and threshold < cap) then
+                    local divX = math.floor(innerW * (threshold / cap) + 0.5)
+                    tick:ClearAllPoints()
+                    tick:SetPoint("LEFT", hProgTrack, "LEFT", divX, 0)
+                    tick:SetVertexColor(1, 1, 1, 0.14)
+                    tick:Show()
+                elseif (tick) then
+                    tick:Hide()
+                end
             end
         end
 
@@ -3793,7 +3938,7 @@ local function createDashboard()
             local snap = snaps[idx]
             if (pin and snap and cap > 0) then
                 local sGS = tonumber(snap.totalGS) or 0
-                local sRatio = math.min(1, math.max(0, sGS / cap))
+                local sRatio = isForeverBar and select(2, TT:GetForeverProgressSection(sGS)) or math.min(1, math.max(0, sGS / cap))
                 local pinX = math.min(innerW, math.max(1, math.floor(innerW * sRatio + 0.5)))
                 pin._snapData = snap
                 pin._snapIndex = idx
@@ -4215,14 +4360,109 @@ local function createDashboard()
     noticeShift:SetPoint("TOPLEFT", generalChild, "TOPLEFT", 0, gy)
     gy = gy - 42
 
-    gy = addSectionHeader(generalChild, "Core Behavior", gy)
+    gy = addSectionHeader(generalChild, "Combat Hiding", gy)
 
-    syncControls.hide_in_combat = createPillToggle(generalChild, "Hide in Combat",
-        "Hide unit tooltips while you are engaged in combat.", TacoTipConfig.hide_in_combat, function(v)
+    syncControls.hide_in_combat = createPillToggle(generalChild, "Hide Tooltips in Combat",
+        "Hide unit tooltips while you are engaged in combat. Enable to unlock the combat modifier key below.",
+        TacoTipConfig.hide_in_combat, function(v)
             TacoTipConfig.hide_in_combat = v
+            if (syncControls.combat_modifier and syncControls.combat_modifier.SetDisabled) then
+                syncControls.combat_modifier:SetDisabled(not v)
+            end
             onSettingChanged()
         end)
     gy = registerRow(generalChild, syncControls.hide_in_combat, "general", gy)
+
+    do
+        local card = CreateFrame("Frame", nil, generalChild)
+        card:SetSize(760, 48)
+        card:EnableMouse(true)
+        paintFlatBox(card, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+
+        local t = card:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        t:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -7)
+        t:SetText("Still Show Hidden Tips when Holding Modifier Key")
+
+        local d = card:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+        d:SetPoint("TOPLEFT", t, "BOTTOMLEFT", 0, -2)
+        d:SetPoint("RIGHT", card, "RIGHT", -255, 0)
+        d:SetJustifyH("LEFT")
+        d:SetText("Hold this key in combat to temporarily reveal unit tooltips.")
+
+        local choices = {
+            { value = "NONE", label = "None" },
+            { value = "SHIFT", label = "Shift" },
+            { value = "CTRL", label = "Ctrl" },
+            { value = "ALT", label = "Alt" },
+        }
+        ---@type any[]
+        local modBtns = {}
+        local isDisabled = not TacoTipConfig.hide_in_combat
+        local currentVal = TacoTipConfig.combat_modifier or "NONE"
+
+        local function refreshModButtons()
+            card:SetAlpha(isDisabled and 0.45 or 1.0)
+            for _, btn in ipairs(modBtns) do
+                local active = (currentVal == btn._val)
+                if (active) then
+                    btn:SetFlatColors(DASH_THEME.cardActiveBg, DASH_THEME.borderGold)
+                    btn.txt:SetText("|cffffd100" .. btn._label .. "|r")
+                else
+                    btn:SetFlatColors(DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+                    btn.txt:SetText("|cffb0b8c4" .. btn._label .. "|r")
+                end
+            end
+        end
+
+        for idx = #choices, 1, -1 do
+            local ch = choices[idx]
+            ---@type any
+            local btn = CreateFrame("Frame", nil, card)
+            btn:SetSize(52, 24)
+            btn:EnableMouse(true)
+            paintFlatBox(btn, DASH_THEME.cardBg, DASH_THEME.borderSubtle)
+            if (idx == #choices) then
+                btn:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+            else
+                btn:SetPoint("RIGHT", modBtns[1], "LEFT", -6, 0)
+            end
+            local txt = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            txt:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.txt = txt
+            btn._val = ch.value
+            btn._label = ch.label
+            btn:SetScript("OnEnter", ---@param self any
+                function(self)
+                    if (isDisabled) then return end
+                    self:SetFlatColors(DASH_THEME.cardHoverBg, DASH_THEME.borderGold)
+                end)
+            btn:SetScript("OnLeave", function()
+                refreshModButtons()
+            end)
+            btn:SetScript("OnMouseDown", function()
+                if (isDisabled) then return end
+                currentVal = ch.value
+                TacoTipConfig.combat_modifier = ch.value
+                refreshModButtons()
+                onSettingChanged()
+            end)
+            table.insert(modBtns, 1, btn)
+        end
+
+        card.SetValue = function(_, val)
+            currentVal = val or "NONE"
+            refreshModButtons()
+        end
+        card.SetDisabled = function(_, disabled)
+            isDisabled = disabled and true or false
+            refreshModButtons()
+        end
+        refreshModButtons()
+        syncControls.combat_modifier = card
+        gy = registerRow(generalChild, card, "general", gy, 48)
+    end
+
+    gy = addSectionHeader(generalChild, "Core Behavior", gy)
 
     syncControls.show_separators = createPillToggle(generalChild, "Section Separators",
         "Draw thin divider lines between logical sections of the tooltip.", TacoTipConfig.show_separators, function(v)
@@ -4394,6 +4634,14 @@ local function createDashboard()
             onSettingChanged()
         end)
     ay = registerRow(appChild, syncControls.tooltip_border_use_class, "appearance", ay)
+
+    syncControls.tooltip_border_item_quality = createPillToggle(appChild, "Item Quality Border Color",
+        "Color item tooltip borders by rarity (Uncommon green, Rare blue, Epic purple, etc.).",
+        TacoTipConfig.tooltip_border_item_quality ~= false, function(v)
+            TacoTipConfig.tooltip_border_item_quality = v
+            onSettingChanged()
+        end)
+    ay = registerRow(appChild, syncControls.tooltip_border_item_quality, "appearance", ay)
 
     syncControls.tooltip_background_use_class = createPillToggle(appChild, "Class-Colored Background",
         "Tint the tooltip background according to the unit's class or NPC reaction.", TacoTipConfig.tooltip_background_use_class, function(v)
@@ -5183,7 +5431,7 @@ local function createDashboard()
         -- Embedded Leaderboard Surface
         -- ====================================================================
         local lbContainer = CreateFrame("Frame", nil, extrasChild)
-        lbContainer:SetSize(760, 365)
+        lbContainer:SetSize(760, 372)
         paintFlatBox(lbContainer, DASH_THEME.cardBg, DASH_THEME.borderGold)
         lbContainer.searchText = "server leaderboard rankings gearscore ranks ex"
 
@@ -5192,6 +5440,8 @@ local function createDashboard()
         local currentOffset = 0
         local visibleRowsCount = 10
         local cachedLeaderboardList = {}
+        local syncStatusText
+        local updateDashboardSyncProgress
 
         -- Toolbar (y = -8)
         local allBtn = createFlatActionCard(lbContainer, 80, 24, "All Realm", "gold")
@@ -5337,29 +5587,43 @@ local function createDashboard()
             rows[r] = row
         end
 
-        -- Scroll slider on right
-        local scrollBar = CreateFrame("Slider", nil, lbContainer, "OptionsSliderTemplate")
+        -- Scroll slider on right (vertical flat slider matching chronicle scrollbar)
+        local scrollBar = CreateFrame("Slider", nil, lbContainer)
         scrollBar:SetPoint("TOPRIGHT", lbContainer, "TOPRIGHT", -10, -62)
-        scrollBar:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -10, 38)
-        scrollBar:SetWidth(14)
+        scrollBar:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -10, 61)
+        scrollBar:SetWidth(12)
+        scrollBar:SetOrientation("VERTICAL")
         scrollBar:SetMinMaxValues(0, 0)
         scrollBar:SetValue(0)
         scrollBar:SetValueStep(1)
         if (scrollBar.SetObeyStepOnDrag) then scrollBar:SetObeyStepOnDrag(true) end
-        -- The template's thumb is the Blizzard options texture, which reads as a
-        -- foreign object on this flat table. Replace it with a plain tinted bar
-        -- in the dashboard gold; guarded because GetThumbTexture is not on every
-        -- client we ship to.
-        if (scrollBar.SetThumbTexture) then
-            scrollBar:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+        paintFlatBox(scrollBar, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+
+        local sbThumb = scrollBar:CreateTexture(nil, "OVERLAY")
+        sbThumb:SetTexture(WHITE8X8)
+        sbThumb:SetSize(10, 28)
+        sbThumb:SetVertexColor(0.87, 0.72, 0.20, 0.90)
+        scrollBar:SetThumbTexture(sbThumb)
+
+        -- Sync Progress Bar above status strip
+        local lbSyncBar = CreateFrame("StatusBar", nil, lbContainer)
+        lbSyncBar:SetPoint("BOTTOMLEFT", lbContainer, "BOTTOMLEFT", 12, 33)
+        lbSyncBar:SetPoint("BOTTOMRIGHT", lbContainer, "BOTTOMRIGHT", -12, 33)
+        lbSyncBar:SetHeight(16)
+        paintFlatBox(lbSyncBar, DASH_THEME.headerBg, DASH_THEME.borderSubtle)
+        if (lbSyncBar.SetStatusBarTexture) then
+            lbSyncBar:SetStatusBarTexture(WHITE8X8)
         end
-        if (scrollBar.GetThumbTexture) then
-            local thumb = scrollBar:GetThumbTexture()
-            if (thumb and thumb.SetVertexColor) then
-                thumb:SetSize(6, 48)
-                thumb:SetVertexColor(0.87, 0.72, 0.20, 0.90)
-            end
+        if (lbSyncBar.SetStatusBarColor) then
+            lbSyncBar:SetStatusBarColor(0.66, 0.48, 0.86, 0.85)
         end
+        lbSyncBar:SetMinMaxValues(0, 1)
+        lbSyncBar:SetValue(0)
+        lbSyncBar:Hide()
+
+        local lbSyncText = lbSyncBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        lbSyncText:SetPoint("LEFT", lbSyncBar, "LEFT", 6, 0)
+        lbSyncText:SetText("")
 
         -- Bottom Status Strip
         local statusStrip = lbContainer:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -5454,7 +5718,20 @@ local function createDashboard()
         local function updateRows()
             local total = #cachedLeaderboardList
             local maxScroll = math.max(0, total - visibleRowsCount)
+            if (currentOffset > maxScroll) then currentOffset = maxScroll end
+            if (currentOffset < 0) then currentOffset = 0 end
             scrollBar:SetMinMaxValues(0, maxScroll)
+            if (sbThumb) then
+                if (sbThumb.SetSize) then
+                    local thumbH = total > visibleRowsCount
+                        and math.max(22, math.min(120, math.floor(249 * (visibleRowsCount / total))))
+                        or 28
+                    sbThumb:SetSize(10, thumbH)
+                end
+                if (sbThumb.SetAlpha) then
+                    sbThumb:SetAlpha(maxScroll > 0 and 0.95 or 0.25)
+                end
+            end
 
             local myGUID = playerGUID()
             for r = 1, visibleRowsCount do
@@ -5535,16 +5812,71 @@ local function createDashboard()
             scrollBar:SetValue(nextV)
         end)
 
+        updateDashboardSyncProgress = function()
+            local getProg = rawget(_G, "TacoTipExtrasGetSyncProgress")
+            local prog = type(getProg) == "function" and getProg() or nil
+            if (type(prog) ~= "table" or not prog.status or prog.status == "idle") then
+                lbSyncBar:Hide()
+                return
+            end
+            local pct = tonumber(prog.percent) or 0
+            if (pct < 0) then
+                pct = 0
+            elseif (pct > 1) then
+                pct = 1
+            end
+            if (prog.status == "syncing" and pct <= 0) then
+                pct = 0.08
+            elseif (prog.status == "complete" or prog.status == "failed") then
+                pct = 1
+            end
+
+            local msg = tostring(prog.message or "")
+            local label
+            if (prog.status == "complete") then
+                if (lbSyncBar.SetStatusBarColor) then
+                    lbSyncBar:SetStatusBarColor(0.24, 0.78, 0.34, 0.85)
+                end
+                label = "Complete (100%)" .. (msg ~= "" and (" - " .. msg) or "")
+                if (syncStatusText) then
+                    syncStatusText:SetText("|cff40e060✓ " .. label .. "|r")
+                end
+            elseif (prog.status == "failed") then
+                if (lbSyncBar.SetStatusBarColor) then
+                    lbSyncBar:SetStatusBarColor(0.86, 0.24, 0.24, 0.85)
+                end
+                label = "Failed" .. (msg ~= "" and (" - " .. msg) or "")
+                if (syncStatusText) then
+                    syncStatusText:SetText("|cfff55555✗ " .. label .. "|r")
+                end
+            else
+                if (lbSyncBar.SetStatusBarColor) then
+                    lbSyncBar:SetStatusBarColor(0.66, 0.48, 0.86, 0.85)
+                end
+                label = string.format("Syncing (%d%%)%s", math.floor(pct * 100 + 0.5),
+                    msg ~= "" and (" - " .. msg) or "")
+                if (syncStatusText) then
+                    syncStatusText:SetText("|cffcfa8ff" .. label .. "|r")
+                end
+            end
+
+            lbSyncBar:SetValue(pct)
+            lbSyncText:SetText(label)
+            lbSyncBar:Show()
+        end
+
         local function refreshLeaderboardData()
             local rankDB = rawget(_G, "TacoTipExtrasRankDB")
             if (not rankDB or type(rankDB.GetLeaderboard) ~= "function") then
                 cachedLeaderboardList = {}
                 updateRows()
+                updateDashboardSyncProgress()
                 return
             end
             local rawList = rankDB.GetLeaderboard(nil, currentTab, "ALL", searchQuery, nil)
             cachedLeaderboardList = rawList or {}
             updateRows()
+            updateDashboardSyncProgress()
         end
 
         local function setTab(tabName)
@@ -5597,8 +5929,9 @@ local function createDashboard()
         end)
 
         frame.RefreshEmbeddedLeaderboard = refreshLeaderboardData
+        rawset(_G, "TacoTip_RefreshExtrasLeaderboardUI", refreshLeaderboardData)
 
-        ey = registerRow(extrasChild, lbContainer, "extras", ey, 365)
+        ey = registerRow(extrasChild, lbContainer, "extras", ey, 372)
 
         ey = addSectionHeader(extrasChild, "Peer-to-Peer Database Synchronization", ey)
 
@@ -5622,7 +5955,7 @@ local function createDashboard()
         syncDesc:SetJustifyH("LEFT")
         syncDesc:SetText("Broadcast sync queries to guild, party, and background sync channel.")
 
-        local syncStatusText = extrasChild:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        syncStatusText = extrasChild:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 
         local syncBtn = createFlatActionCard(syncCard, 100, 26, "Sync Now", "emerald", function()
             local syncNow = rawget(_G, "TacoTipExtrasSyncNow")
@@ -5631,7 +5964,11 @@ local function createDashboard()
             elseif (type(_G.SlashCmdList) == "table" and type(_G.SlashCmdList.TTGSSYNC) == "function") then
                 pcall(_G.SlashCmdList.TTGSSYNC, "")
             end
-            syncStatusText:SetText("|cffb4e634✓ Sync request broadcast to peers!|r")
+            if (type(rawget(_G, "TacoTipExtrasGetSyncProgress")) == "function") then
+                updateDashboardSyncProgress()
+            else
+                syncStatusText:SetText("|cffb4e634✓ Sync request broadcast to peers!|r")
+            end
             if (frame.RefreshEmbeddedLeaderboard) then frame:RefreshEmbeddedLeaderboard() end
         end, "Sync Now", "Trigger an immediate peer-to-peer sync with guild, party, and sync channel.")
         syncBtn:SetPoint("RIGHT", syncCard, "RIGHT", -12, 0)
@@ -5872,6 +6209,10 @@ local function createDashboard()
         end
         if (syncControls.custom_position) then
             syncControls.custom_position:SetChecked(TacoTipConfig.custom_pos ~= nil)
+        end
+        if (syncControls.combat_modifier) then
+            syncControls.combat_modifier:SetValue(TacoTipConfig.combat_modifier or "NONE")
+            syncControls.combat_modifier:SetDisabled(not TacoTipConfig.hide_in_combat)
         end
         if (syncControls.tooltip_scale) then
             syncControls.tooltip_scale:SetValue(TacoTipConfig.tooltip_scale or 1.0)

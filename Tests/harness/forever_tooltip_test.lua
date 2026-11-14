@@ -2950,6 +2950,238 @@ do
 end
 
 --------------------------------------------------------------------------
+-- v1.0.3 PINS: Forever character frame GearScore under Item Level,
+-- secret-safe item rarity border color, combat hiding + modifier override,
+-- and Forever dashboard GearScore progress bar sections.
+--------------------------------------------------------------------------
+do
+    -- 1) Forever Character Frame: untainted footer inside CharacterStatsPaneScrollBox
+    --    (no 2nd floating badge, no DataProvider/ScrollBox/PAPERDOLL_STATINFO mutation)
+    local savedStatInfo = REALG.PAPERDOLL_STATINFO
+    local savedStatCats = REALG.PAPERDOLL_STATCATEGORIES
+    local savedStatsBox = REALG.CharacterStatsPaneScrollBox
+    local savedShowGS = C.show_gs_character
+    local savedShowIlvl = C.show_avg_ilvl
+    local savedFooter = TT.foreverStatsFooter
+
+    C.show_gs_character = true
+    C.show_avg_ilvl = true
+    TT.foreverStatsFooter = nil
+    local updateStatsCalls = 0
+    local dpCalls = 0
+    REALG.PAPERDOLL_STATINFO = {
+        HEALTH = { updateFunc = function() return 652 end },
+    }
+    REALG.PAPERDOLL_STATCATEGORIES = {
+        {
+            categoryName = "General",
+            unit = "player",
+            stats = {
+                { stat = "HEALTH" },
+                { stat = "POWER" },
+            },
+        },
+    }
+    REALG.CharacterStatsPaneScrollBox = makeWidget("Frame", "CharacterStatsPaneScrollBox")
+    REALG.CharacterStatsPaneScrollBox.UpdateStats = function()
+        updateStatsCalls = updateStatsCalls + 1
+    end
+    REALG.CharacterStatsPaneScrollBox.ScrollBox = {
+        GetDataProvider = function()
+            dpCalls = dpCalls + 1
+            return nil
+        end,
+    }
+
+    TT:RefreshCharacterFrame()
+
+    local genStats = REALG.PAPERDOLL_STATCATEGORIES[1].stats
+    check("forever char frame: PAPERDOLL_STATCATEGORIES left untainted",
+        #genStats == 2 and genStats[1].stat == "HEALTH" and genStats[2].stat == "POWER",
+        "len=" .. tostring(#genStats))
+    check("forever char frame: PAPERDOLL_STATINFO.TACOTIP_GEARSCORE not injected",
+        REALG.PAPERDOLL_STATINFO["TACOTIP_GEARSCORE"] == nil,
+        "type=" .. type(REALG.PAPERDOLL_STATINFO["TACOTIP_GEARSCORE"]))
+    check("forever char frame: CharacterStatsPaneScrollBox:UpdateStats and GetDataProvider not called",
+        updateStatsCalls == 0 and dpCalls == 0,
+        "update=" .. tostring(updateStatsCalls) .. " dp=" .. tostring(dpCalls))
+    check("forever char frame: no second floating badge created on Forever",
+        TT.foreverCharStatsBadge == nil)
+    check("forever char frame: legacy overlay fontstrings hidden on Forever",
+        REALG.PersonalGearScore and REALG.PersonalGearScore:IsShown() == false
+            and REALG.PersonalAvgItemLvl and REALG.PersonalAvgItemLvl:IsShown() == false)
+    check("forever char frame: stats pane footer created and shown with Item Level and GearScore",
+        type(TT.foreverStatsFooter) == "table" and TT.foreverStatsFooter:IsShown() == true
+            and TT.foreverStatsFooter.ilvlLabel and TT.foreverStatsFooter.ilvlLabel:GetText() == "Item Level"
+            and TT.foreverStatsFooter.gsLabel and TT.foreverStatsFooter.gsLabel:GetText() == "GearScore")
+
+    REALG.PAPERDOLL_STATINFO = savedStatInfo
+    REALG.PAPERDOLL_STATCATEGORIES = savedStatCats
+    REALG.CharacterStatsPaneScrollBox = savedStatsBox
+    C.show_gs_character = savedShowGS
+    C.show_avg_ilvl = savedShowIlvl
+    TT.foreverStatsFooter = savedFooter
+end
+
+do
+    -- 2) Secret-safe Item Tooltip Rarity Color Border
+    local itemPostCall
+    for _, pc in STD.ipairs(POSTCALLS) do
+        if (pc.typ == REALG.Enum.TooltipDataType.Item) then
+            itemPostCall = pc.fn
+            break
+        end
+    end
+    check("item border: item post-call registered", type(itemPostCall) == "function")
+
+    local savedNineSlice = GT.NineSlice
+    local savedGetOwner = GT.GetOwner
+    local savedIsTT = GT.IsTooltipType
+    local savedGetItem = GT.GetItem
+    local savedGetInfo = REALG.C_Item and REALG.C_Item.GetItemInfo
+    local savedGetQCol = REALG.C_Item and REALG.C_Item.GetItemQualityColor
+    local savedBorderOpt = C.tooltip_border_item_quality
+    local savedIsSec = REALG.issecretvalue
+
+    local lastBorder
+    GT.NineSlice = {
+        SetBorderColor = function(_, r, g, b, a)
+            lastBorder = { r = r, g = g, b = b, a = a }
+        end,
+    }
+    GT.GetOwner = function() return nil end
+    GT.IsTooltipType = function(_, typ) return typ == REALG.Enum.TooltipDataType.Item and false or false end
+    local GREEN_LINK = "|cff1eff00|Hitem:2001::::::::60:::::|h[Green Herb]|h|r"
+    local BLUE_LINK = "|cff0070dd|Hitem:2002::::::::60:::::|h[Razor's Edge]|h|r"
+    REALG.C_Item.GetItemQualityColor = function(q)
+        if (q == 2) then return 0.12, 1.0, 0.0 end
+        if (q == 3) then return 0.0, 0.44, 0.87 end
+        return 1, 1, 1
+    end
+    REALG.C_Item.GetItemInfo = function(key)
+        if (key == GREEN_LINK) then return "Green Herb", GREEN_LINK, 2, 20, 1, "Consumable", "Consumable", 20, "" end
+        if (key == BLUE_LINK) then return "Razor's Edge", BLUE_LINK, 3, 45, 25, "Weapon", "One-Handed Axes", 1, "INVTYPE_WEAPON" end
+        return nil
+    end
+
+    C.tooltip_border_item_quality = true
+    lastBorder = nil
+    GT.GetItem = function() return "Green Herb", GREEN_LINK end
+    itemPostCall(GT, { hyperlink = GREEN_LINK })
+    check("item border: green consumable item sets green border",
+        lastBorder ~= nil and STD.math.abs(lastBorder.g - 1.0) < 0.01 and lastBorder.r < 0.2,
+        lastBorder and string.format("%.2f,%.2f,%.2f", lastBorder.r, lastBorder.g, lastBorder.b))
+    lastBorder = nil
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    check("item border: rarity border preserved across OnShow",
+        lastBorder ~= nil and STD.math.abs(lastBorder.g - 1.0) < 0.01 and lastBorder.r < 0.2,
+        lastBorder and string.format("%.2f,%.2f,%.2f", lastBorder.r, lastBorder.g, lastBorder.b))
+
+    GT.GetItem = function() return "Razor's Edge", BLUE_LINK end
+    itemPostCall(GT, { hyperlink = BLUE_LINK })
+    check("item border: blue rare item sets blue border",
+        lastBorder ~= nil and lastBorder.b > 0.8 and lastBorder.r < 0.1,
+        lastBorder and string.format("%.2f,%.2f,%.2f", lastBorder.r, lastBorder.g, lastBorder.b))
+
+    -- Secret value safety: secret quality color must not taint or throw
+    REALG.issecretvalue = function(v) return v == "SECRET_COL" end
+    REALG.C_Item.GetItemQualityColor = function() return "SECRET_COL", "SECRET_COL", "SECRET_COL" end
+    lastBorder = nil
+    local okSecBorder = STD.pcall(itemPostCall, GT, { hyperlink = GREEN_LINK })
+    check("item border: secret GetItemQualityColor return safely falls back without error",
+        okSecBorder == true and lastBorder ~= nil and type(lastBorder.r) == "number",
+        tostring(okSecBorder))
+
+    -- Forever loot tooltip must never be modified or border-recolored
+    lastBorder = nil
+    local lootBtn = {
+        GetSlotIndex = function() return 1 end,
+        GetItemSlotType = function() return 1 end,
+    }
+    GT.GetOwner = function() return lootBtn end
+    itemPostCall(GT, { hyperlink = BLUE_LINK })
+    check("item border: Forever loot tooltip border remains untouched",
+        lastBorder == nil, tostring(lastBorder ~= nil))
+
+    GT.NineSlice = savedNineSlice
+    GT.GetOwner = savedGetOwner
+    GT.IsTooltipType = savedIsTT
+    GT.GetItem = savedGetItem
+    REALG.C_Item.GetItemInfo = savedGetInfo
+    REALG.C_Item.GetItemQualityColor = savedGetQCol
+    C.tooltip_border_item_quality = savedBorderOpt
+    REALG.issecretvalue = savedIsSec
+end
+
+do
+    -- 3) Combat Hiding & Modifier Key Override
+    local savedInCombat = REALG.InCombatLockdown
+    local savedShift = REALG.IsShiftKeyDown
+    local savedCtrl = REALG.IsControlKeyDown
+    local savedAlt = REALG.IsAltKeyDown
+    local savedHide = C.hide_in_combat
+    local savedMod = C.combat_modifier
+    local savedAnchorFn = REALG.GameTooltip_SetDefaultAnchor
+
+    C.hide_in_combat = true
+    C.combat_modifier = "SHIFT"
+    REALG.InCombatLockdown = function() return true end
+    REALG.IsShiftKeyDown = function() return false end
+    REALG.IsControlKeyDown = function() return false end
+    REALG.IsAltKeyDown = function() return false end
+    REALG.GameTooltip_SetDefaultAnchor = function() end
+
+    check("combat hide: hides in combat when modifier is not held",
+        TT:ShouldHideInCombat() == true)
+
+    GT:Show()
+    GT:SetUnit("mouseover")
+    if (GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    check("combat hide: GameTooltip is hidden on hover without modifier in combat",
+        GT:IsShown() == false)
+
+    REALG.IsShiftKeyDown = function() return true end
+    check("combat hide: modifier key reveals tooltip in combat",
+        TT:IsCombatModifierDown() == true and TT:ShouldHideInCombat() == false)
+
+    local onEv = TT.frame and TT.frame.GetScript and TT.frame:GetScript("OnEvent")
+    if (onEv) then
+        onEv(TT.frame, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+    end
+    check("combat hide: MODIFIER_STATE_CHANGED reveals mouseover tooltip when modifier pressed",
+        GT:IsShown() == true and #GT.__lines > 0, "shown=" .. tostring(GT:IsShown()) .. " lines=" .. tostring(#GT.__lines))
+
+    REALG.IsShiftKeyDown = function() return false end
+    if (onEv) then
+        onEv(TT.frame, "MODIFIER_STATE_CHANGED", "LSHIFT", 0)
+    end
+    check("combat hide: releasing modifier hides tooltip again in combat",
+        GT:IsShown() == false, "shown=" .. tostring(GT:IsShown()))
+
+    -- 4) Forever Dashboard Progress Bar Sections
+    local fSecPre, fRatioPre = TT:GetForeverProgressSection(300)
+    local fSecT1 = TT:GetForeverProgressSection(700)
+    local fSecT2 = TT:GetForeverProgressSection(900)
+    local fSecT3 = TT:GetForeverProgressSection(1100)
+    local fSecUnk = TT:GetForeverProgressSection(1350)
+    check("forever dashboard bar: maps 0..1400 across Pre-Raid / Tier 1 / Tier 2 / Tier 3 / ???",
+        fSecPre.label == "Pre-Raid" and STD.math.abs(fRatioPre - 0.125) < 0.01
+            and fSecT1.label == "Tier 1"
+            and fSecT2.label == "Tier 2"
+            and fSecT3.label == "Tier 3"
+            and fSecUnk.label == "???",
+        string.format("%s/%s/%s/%s/%s", fSecPre.label, fSecT1.label, fSecT2.label, fSecT3.label, fSecUnk.label))
+
+    REALG.InCombatLockdown = savedInCombat
+    REALG.IsShiftKeyDown = savedShift
+    REALG.IsControlKeyDown = savedCtrl
+    REALG.IsAltKeyDown = savedAlt
+    C.hide_in_combat = savedHide
+    C.combat_modifier = savedMod
+    REALG.GameTooltip_SetDefaultAnchor = savedAnchorFn
+end
+
+--------------------------------------------------------------------------
 -- Report.
 --------------------------------------------------------------------------
 local fails = 0

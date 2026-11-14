@@ -4387,6 +4387,49 @@ local function cacheUnitData(unit, guid, isRetry)
     -- Age stamp for eviction, independent of .time: a record that never
     -- completed has no .time, and without this it could never be reclaimed.
     data.lastAttempt = now
+    if (type(unit) == "string" and not isSecretValue(unit) and safeUnitExists(unit)) then
+        local apiUnitName = _G.UnitName
+        if (type(apiUnitName) == "function") then
+            local okName, uName, uRealm = pcall(apiUnitName, unit)
+            local unk = _G.UNKNOWNOBJECT or "Unknown"
+            if (okName and type(uName) == "string" and not isSecretValue(uName)
+                    and uName ~= "" and uName ~= unk and uName ~= "Unknown") then
+                data.name = uName
+            end
+            if (okName and type(uRealm) == "string" and not isSecretValue(uRealm) and uRealm ~= "") then
+                data.realm = uRealm
+            end
+        end
+        local apiUnitClass = _G.UnitClass
+        if (type(apiUnitClass) == "function") then
+            local okCls, _, classFile = pcall(apiUnitClass, unit)
+            if (okCls and type(classFile) == "string" and not isSecretValue(classFile) and classFile ~= "") then
+                data.class = classFile
+            end
+        end
+        local apiUnitLevel = _G.UnitLevel
+        if (type(apiUnitLevel) == "function") then
+            local okLvl, uLevel = pcall(apiUnitLevel, unit)
+            if (okLvl and type(uLevel) == "number" and not isSecretValue(uLevel) and uLevel > 0) then
+                data.level = uLevel
+            end
+        end
+        local apiUnitFaction = _G.UnitFactionGroup
+        if (type(apiUnitFaction) == "function") then
+            local okFac, uFac = pcall(apiUnitFaction, unit)
+            if (okFac and type(uFac) == "string" and not isSecretValue(uFac)
+                    and (uFac == "Alliance" or uFac == "Horde")) then
+                data.faction = uFac
+            end
+        end
+        local apiGetGuildInfo = _G.GetGuildInfo
+        if (type(apiGetGuildInfo) == "function") then
+            local okGuild, gName = pcall(apiGetGuildInfo, unit)
+            if (okGuild and type(gName) == "string" and not isSecretValue(gName)) then
+                data.guild = gName
+            end
+        end
+    end
     -- The GUID the client's single inspect trait config belongs to right now.
     -- GetForeverTalentData uses it to retry the talent read when the trait
     -- data was not yet loaded at INSPECT_READY, without ever reading a

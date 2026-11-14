@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.2"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.3"
 
 
 
@@ -2743,6 +2743,7 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
         state.generation = state.generation + 1
         cancelItemLoadRefresh(tooltip)
         state.currentItemLink = nil
+        state.itemBorderColor = nil
     end
 
     cancelDelayedTooltip(tooltip)
@@ -3190,8 +3191,40 @@ local function isForeverLootTooltip(tooltip)
     return false
 end
 
+function TT:IsCombatModifierDown()
+    local mod = TacoTipConfig and TacoTipConfig.combat_modifier or "NONE"
+    if (mod == "SHIFT") then
+        return type(_G.IsShiftKeyDown) == "function" and _G.IsShiftKeyDown() == true
+    elseif (mod == "CTRL") then
+        return type(_G.IsControlKeyDown) == "function" and _G.IsControlKeyDown() == true
+    elseif (mod == "ALT") then
+        return type(_G.IsAltKeyDown) == "function" and _G.IsAltKeyDown() == true
+    end
+    return false
+end
+
+function TT:ShouldHideInCombat()
+    if (not (TacoTipConfig and TacoTipConfig.hide_in_combat)) then
+        return false
+    end
+    if (not InCombatLockdown()) then
+        return false
+    end
+    return not self:IsCombatModifierDown()
+end
+
 local function onTooltipSetUnit(tooltip, data)
     TT.ev.unitRender = (TT.ev.unitRender or 0) + 1
+    if (not tooltip) then
+        return
+    end
+    if (TT:ShouldHideInCombat()) then
+        clearTooltipVisuals(tooltip)
+        if (type(tooltip.Hide) == "function") then
+            tooltip:Hide()
+        end
+        return
+    end
     noteOwnerUnitGUID(tooltip)
     -- Guarded: on some clients this method is a Lua shim that dereferences a
     -- namespace which may not be loaded, and an unguarded call here throws
@@ -3731,7 +3764,7 @@ local function onTooltipSetUnit(tooltip, data)
             -- build may have left behind so no icon survives either.
             applySpecializationIcon(tooltip, nil)
         end
-        if (not TacoTipConfig.hide_in_combat or not InCombatLockdown()) then
+        if (not TT:ShouldHideInCombat()) then
             if (TacoTipConfig.show_separators) then
                 if (wide_style) then
                     addLineDouble(" ", " ", GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b, GRAY_FONT_COLOR.r,
@@ -4343,6 +4376,16 @@ end
 
 local function handleTooltipSetUnit(tooltip, data)
     cancelDelayedTooltip(tooltip)
+    if (not tooltip) then
+        return
+    end
+    if (TT:ShouldHideInCombat()) then
+        clearTooltipVisuals(tooltip)
+        if (type(tooltip.Hide) == "function") then
+            tooltip:Hide()
+        end
+        return
+    end
     local delay = TacoTipConfig.tooltip_delay or 0
     if (delay > 0 and tooltip == GameTooltip and not InCombatLockdown() and type(NewTimer) == "function") then
         local state = getTooltipState(tooltip)
@@ -4459,6 +4502,46 @@ local function resolveTooltipItem(tooltip, data, payloadOnly)
     return nil
 end
 
+TT.ITEM_QUALITY_BORDER_FALLBACK = {
+    [0] = { 0.62, 0.62, 0.62 },
+    [1] = { 1.00, 1.00, 1.00 },
+    [2] = { 0.12, 1.00, 0.00 },
+    [3] = { 0.00, 0.44, 0.87 },
+    [4] = { 0.64, 0.21, 0.93 },
+    [5] = { 1.00, 0.50, 0.00 },
+    [6] = { 0.90, 0.80, 0.50 },
+    [7] = { 0.00, 0.80, 1.00 },
+}
+
+function TT:GetItemQualityBorderColor(quality)
+    if (type(quality) ~= "number" or isSecretValue(quality) or quality < 0) then
+        return nil
+    end
+    local getQualityColor = (_G.C_Item and _G.C_Item.GetItemQualityColor) or _G.GetItemQualityColor
+    if (type(getQualityColor) == "function") then
+        local ok, r, g, b = pcall(getQualityColor, quality)
+        if (ok and type(r) == "number" and type(g) == "number" and type(b) == "number"
+                and not isSecretValue(r) and not isSecretValue(g) and not isSecretValue(b)) then
+            return r, g, b
+        elseif (not ok) then
+            TT:NoteSecretRefusal("GetItemQualityColor")
+        end
+    end
+    local colors = _G.ITEM_QUALITY_COLORS
+    if (type(colors) == "table") then
+        local entry = colors[quality]
+        if (type(entry) == "table" and type(entry.r) == "number" and type(entry.g) == "number" and type(entry.b) == "number"
+                and not isSecretValue(entry.r) and not isSecretValue(entry.g) and not isSecretValue(entry.b)) then
+            return entry.r, entry.g, entry.b
+        end
+    end
+    local fb = TT.ITEM_QUALITY_BORDER_FALLBACK[quality]
+    if (fb) then
+        return fb[1], fb[2], fb[3]
+    end
+    return nil
+end
+
 local function itemToolTipHook(self, data)
     -- Forever / Camelot: the loot-window tooltip is secret tooltip data that
     -- the client rebuilds every frame (see isForeverLootTooltip). Any addon
@@ -4528,6 +4611,7 @@ local function itemToolTipHook(self, data)
             TT:NoteSecretRefusal("IsEquippableItem")
         end
     end
+    local itemQuality = nil
     if (isEquippable) then
         -- Single GetItemInfo fetch per hover, shared by the ilvl line,
         -- GearScore and HunterScore below (F3 hot-path fix). If Blizzard
@@ -4549,6 +4633,9 @@ local function itemToolTipHook(self, data)
             elseif (not okInfo) then
                 TT:NoteSecretRefusal("GetItemInfo")
             end
+        end
+        if (type(itemInfo[3]) == "number" and not isSecretValue(itemInfo[3])) then
+            itemQuality = itemInfo[3]
         end
         if (not itemInfo[2] or not itemInfo[4]) then
             scheduleItemTooltipRefresh(self, itemLink)
@@ -4580,6 +4667,35 @@ local function itemToolTipHook(self, data)
                         self:AddLine((L["HunterScore"] or "HunterScore") .. ": " .. hs, hsR, hsG, hsB)
                     end
                 end
+            end
+        end
+    end
+
+    if (TacoTipConfig.tooltip_border_item_quality ~= false and type(itemQuality) ~= "number") then
+        local qualityLookupKey = (type(itemLink) ~= "nil" and not isSecretValue(itemLink)) and itemLink or nil
+        if (not qualityLookupKey and payloadReadable and type(data.id) == "number" and not isSecretValue(data.id)) then
+            qualityLookupKey = data.id
+        end
+        if (qualityLookupKey ~= nil) then
+            local getItemInfoFn = (_G.C_Item and _G.C_Item.GetItemInfo) or _G.GetItemInfo
+            if (type(getItemInfoFn) == "function") then
+                local okQ, _, _, q = pcall(getItemInfoFn, qualityLookupKey)
+                if (okQ and type(q) == "number" and not isSecretValue(q)) then
+                    itemQuality = q
+                elseif (not okQ) then
+                    TT:NoteSecretRefusal("GetItemInfo")
+                end
+            end
+            if (type(itemQuality) ~= "number" and _G.C_Item and type(_G.C_Item.GetItemQualityByID) == "function") then
+                local okQID, qid = pcall(_G.C_Item.GetItemQualityByID, qualityLookupKey)
+                if (okQID and type(qid) == "number" and not isSecretValue(qid)) then
+                    itemQuality = qid
+                elseif (not okQID) then
+                    TT:NoteSecretRefusal("GetItemQualityByID")
+                end
+            end
+            if (type(itemQuality) ~= "number" and type(itemLink) == "string" and not isSecretValue(itemLink)) then
+                scheduleItemTooltipRefresh(self, itemLink)
             end
         end
     end
@@ -4633,11 +4749,21 @@ local function itemToolTipHook(self, data)
             TacoTipConfig.tooltip_background_alpha or 0.85
         )
     end
-    applyTooltipBorderOverlay(self, nil,
-        TacoTipConfig.tooltip_border_color_r or 1,
-        TacoTipConfig.tooltip_border_color_g or 1,
-        TacoTipConfig.tooltip_border_color_b or 1
-    )
+    local borderR = TacoTipConfig.tooltip_border_color_r or 1
+    local borderG = TacoTipConfig.tooltip_border_color_g or 1
+    local borderB = TacoTipConfig.tooltip_border_color_b or 1
+    if (TacoTipConfig.tooltip_border_item_quality ~= false and itemQuality ~= nil) then
+        local qr, qg, qb = TT:GetItemQualityBorderColor(itemQuality)
+        if (qr) then
+            borderR, borderG, borderB = qr, qg, qb
+            state.itemBorderColor = { r = qr, g = qg, b = qb }
+        else
+            state.itemBorderColor = nil
+        end
+    else
+        state.itemBorderColor = nil
+    end
+    applyTooltipBorderOverlay(self, nil, borderR, borderG, borderB)
 end
 
 local function safeItemToolTipHook(self, ...)
@@ -4796,7 +4922,9 @@ local function onTooltipShow(tooltip)
     end
     -- If the same item re-shows (shopping tooltip compare), keep its pending
     -- item-load registration alive instead of tearing it down and re-requesting.
-    local preservePendingItem = shownItemLink ~= nil and state.currentItemLink == shownItemLink
+    local safeShownItemLink = (type(shownItemLink) ~= "nil" and not isSecretValue(shownItemLink)) and shownItemLink or nil
+    local preservePendingItem = safeShownItemLink ~= nil and state.currentItemLink == safeShownItemLink
+    local savedItemBorderColor = state.itemBorderColor
     -- Forever loot-window tooltip: do not read its tooltip data at all. Both
     -- resolveTooltipUnit (GetDisplayedUnit -> GetPrimaryTooltipData) and
     -- GetItem are tooltip-info reads from this tainted hook, which is exactly
@@ -4824,6 +4952,22 @@ local function onTooltipShow(tooltip)
         -- display must be cleared. OnTooltipCleared may not have fired on
         -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
         clearTooltipVisuals(tooltip, preservePendingItem, nil, "show-no-class-cache", true)
+        if (not lootTooltip and (itemTooltip or preservePendingItem or safeShownItemLink ~= nil)
+                and savedItemBorderColor and TacoTipConfig.tooltip_border_item_quality ~= false) then
+            state.itemBorderColor = savedItemBorderColor
+            applyTooltipBorderOverlay(tooltip, nil, savedItemBorderColor.r, savedItemBorderColor.g, savedItemBorderColor.b)
+        end
+        return
+    end
+
+    if (not tooltip) then
+        return
+    end
+    if (TT:ShouldHideInCombat()) then
+        clearTooltipVisuals(tooltip)
+        if (type(tooltip.Hide) == "function") then
+            tooltip:Hide()
+        end
         return
     end
 
@@ -5239,7 +5383,158 @@ end
 -- there, so the font strings keep the same parent and the same positions. On
 -- Retail the strings are parented to PaperDollFrame instead, so the feature
 -- works rather than silently disappearing.
-local characterFrameHost = _G.CharacterModelFrame or _G.PaperDollFrame
+local characterFrameHost = (isForever and (_G.PaperDollItemsFrame or _G.PaperDollFrame)) or _G.CharacterModelFrame or _G.PaperDollFrame
+
+function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g, b)
+    if (not isForever) then
+        return
+    end
+    local statsBox = _G.CharacterStatsPaneScrollBox
+    if (not statsBox) then
+        return
+    end
+    local showIlvl = TacoTipConfig and TacoTipConfig.show_avg_ilvl
+    local showGS = TacoTipConfig and TacoTipConfig.show_gs_character
+    if (not showIlvl and not showGS) then
+        if (TT.foreverStatsFooter and TT.foreverStatsFooter.Hide) then
+            TT.foreverStatsFooter:Hide()
+        end
+        local sb = statsBox.ScrollBox
+        if (sb and sb.ClearAllPoints and sb.SetPoint) then
+            sb:ClearAllPoints()
+            sb:SetPoint("TOPLEFT", statsBox, "TOPLEFT", 10, -8)
+            sb:SetPoint("BOTTOMRIGHT", statsBox, "BOTTOMRIGHT", -30, 30)
+        end
+        return
+    end
+
+    if (not TT.foreverStatsFooter and type(_G.CreateFrame) == "function") then
+        local okF, header = pcall(_G.CreateFrame, "Frame", nil, statsBox)
+        if (okF and header) then
+            TT.foreverStatsFooter = header
+            TT.foreverStatsHeader = header
+            if (header.SetHeight) then header:SetHeight(44) end
+            if (header.ClearAllPoints) then header:ClearAllPoints() end
+            if (header.SetPoint) then
+                header:SetPoint("TOPLEFT", statsBox, "TOPLEFT", 10, -6)
+                header:SetPoint("TOPRIGHT", statsBox, "TOPRIGHT", -14, -6)
+            end
+            if (header.CreateTexture) then
+                local div = header:CreateTexture(nil, "BORDER")
+                if (div) then
+                    if (div.SetColorTexture) then
+                        div:SetColorTexture(0.75, 0.62, 0.28, 0.35)
+                    end
+                    if (div.SetHeight) then div:SetHeight(1) end
+                    if (div.SetPoint) then
+                        div:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 2, 0)
+                        div:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -2, 0)
+                    end
+                    header.divider = div
+                end
+            end
+            header.ilvlLabel = header:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+            header.ilvlValue = header:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+            header.gsLabel = header:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+            header.gsValue = header:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+            if (header.ilvlLabel and header.ilvlLabel.SetFont) then
+                pcall(header.ilvlLabel.SetFont, header.ilvlLabel, L["CHARACTER_FRAME_ILVL_TITLE_FONT"], 13, "OUTLINE")
+            end
+            if (header.ilvlValue and header.ilvlValue.SetFont) then
+                pcall(header.ilvlValue.SetFont, header.ilvlValue, L["CHARACTER_FRAME_ILVL_VALUE_FONT"], 15, "OUTLINE")
+            end
+            if (header.gsLabel and header.gsLabel.SetFont) then
+                pcall(header.gsLabel.SetFont, header.gsLabel, L["CHARACTER_FRAME_GS_TITLE_FONT"], 13, "OUTLINE")
+            end
+            if (header.gsValue and header.gsValue.SetFont) then
+                pcall(header.gsValue.SetFont, header.gsValue, L["CHARACTER_FRAME_GS_VALUE_FONT"], 15, "OUTLINE")
+            end
+            if (header.ilvlLabel and header.ilvlLabel.SetText) then
+                header.ilvlLabel:SetText(_G.STAT_AVERAGE_ITEM_LEVEL or "Item Level")
+            end
+            if (header.gsLabel and header.gsLabel.SetText) then
+                header.gsLabel:SetText("GearScore")
+            end
+        end
+    end
+
+    local header = TT.foreverStatsFooter
+    if (not header) then
+        return
+    end
+
+    local headerHeight = (showIlvl and showGS) and 44 or 24
+    if (header.SetHeight) then
+        header:SetHeight(headerHeight)
+    end
+    local sb = statsBox.ScrollBox
+    if (sb and sb.ClearAllPoints and sb.SetPoint) then
+        sb:ClearAllPoints()
+        sb:SetPoint("TOPLEFT", statsBox, "TOPLEFT", 10, -(headerHeight + 10))
+        sb:SetPoint("BOTTOMRIGHT", statsBox, "BOTTOMRIGHT", -30, 30)
+    end
+
+    if (myGearScore == nil or myAverageScore == nil) then
+        local okScore, gs, ilvl = pcall(GearScore.GetScore, GearScore, "player")
+        if (okScore and type(gs) == "number" and not isSecretValue(gs)) then
+            myGearScore = gs
+        else
+            myGearScore = 0
+        end
+        if (okScore and type(ilvl) == "number" and not isSecretValue(ilvl)) then
+            myAverageScore = ilvl
+        else
+            myAverageScore = 0
+        end
+        local okQual, qr, qg, qb = pcall(GearScore.GetQuality, GearScore, myGearScore)
+        if (okQual and type(qr) == "number" and not isSecretValue(qr)) then
+            r, g, b = qr, qg, qb
+        else
+            r, g, b = 1, 1, 1
+        end
+    end
+
+    if (showIlvl) then
+        if (header.ilvlLabel) then
+            if (header.ilvlLabel.ClearAllPoints) then header.ilvlLabel:ClearAllPoints() end
+            if (header.ilvlLabel.SetPoint) then header.ilvlLabel:SetPoint("TOPLEFT", header, "TOPLEFT", 4, -2) end
+            if (header.ilvlLabel.Show) then header.ilvlLabel:Show() end
+        end
+        if (header.ilvlValue) then
+            if (header.ilvlValue.ClearAllPoints) then header.ilvlValue:ClearAllPoints() end
+            if (header.ilvlValue.SetPoint) then header.ilvlValue:SetPoint("TOPRIGHT", header, "TOPRIGHT", -4, -1) end
+            if (header.ilvlValue.SetText) then header.ilvlValue:SetText(tostring(myAverageScore or 0)) end
+            if (header.ilvlValue.SetTextColor) then header.ilvlValue:SetTextColor(r or 1, g or 1, b or 1, 1) end
+            if (header.ilvlValue.Show) then header.ilvlValue:Show() end
+        end
+    else
+        if (header.ilvlLabel and header.ilvlLabel.Hide) then header.ilvlLabel:Hide() end
+        if (header.ilvlValue and header.ilvlValue.Hide) then header.ilvlValue:Hide() end
+    end
+
+    if (showGS) then
+        local gsY = showIlvl and -22 or -2
+        if (header.gsLabel) then
+            if (header.gsLabel.ClearAllPoints) then header.gsLabel:ClearAllPoints() end
+            if (header.gsLabel.SetPoint) then header.gsLabel:SetPoint("TOPLEFT", header, "TOPLEFT", 4, gsY) end
+            if (header.gsLabel.Show) then header.gsLabel:Show() end
+        end
+        if (header.gsValue) then
+            if (header.gsValue.ClearAllPoints) then header.gsValue:ClearAllPoints() end
+            if (header.gsValue.SetPoint) then header.gsValue:SetPoint("TOPRIGHT", header, "TOPRIGHT", -4, gsY + 1) end
+            if (header.gsValue.SetText) then header.gsValue:SetText(tostring(myGearScore or 0)) end
+            if (header.gsValue.SetTextColor) then header.gsValue:SetTextColor(r or 1, g or 1, b or 1, 1) end
+            if (header.gsValue.Show) then header.gsValue:Show() end
+        end
+    else
+        if (header.gsLabel and header.gsLabel.Hide) then header.gsLabel:Hide() end
+        if (header.gsValue and header.gsValue.Hide) then header.gsValue:Hide() end
+    end
+
+    if (header.Show) then
+        header:Show()
+    end
+end
 
 -- Returns true when the font strings exist. Marks itself done either way, so a
 -- client with no character paper doll is not retried on every refresh.
@@ -5248,45 +5543,72 @@ function TT:InitCharacterFrame()
     if (not characterFrameHost) then
         return false
     end
-    characterFrameHost:CreateFontString("PersonalGearScore")
+
+    local textParent = characterFrameHost
+    textParent:CreateFontString("PersonalGearScore")
     PersonalGearScore:SetFont(L["CHARACTER_FRAME_GS_VALUE_FONT"], L["CHARACTER_FRAME_GS_VALUE_FONT_SIZE"])
     PersonalGearScore:SetText("0")
     rawset(PersonalGearScore, "RefreshPosition", function()
+        if (isForever) then
+            TT:RefreshForeverCharacterStatsFooter()
+            return
+        end
         PersonalGearScore:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT",
             L["CHARACTER_FRAME_GS_VALUE_XPOS"] + (TacoTipConfig.character_gs_offset_x or 0),
             L["CHARACTER_FRAME_GS_VALUE_YPOS"] + (TacoTipConfig.character_gs_offset_y or 0))
     end)
-    PersonalGearScore:RefreshPosition()
 
-    characterFrameHost:CreateFontString("PersonalGearScoreText")
+    textParent:CreateFontString("PersonalGearScoreText")
     PersonalGearScoreText:SetFont(L["CHARACTER_FRAME_GS_TITLE_FONT"], L["CHARACTER_FRAME_GS_TITLE_FONT_SIZE"])
     PersonalGearScoreText:SetText("GearScore")
     rawset(PersonalGearScoreText, "RefreshPosition", function()
+        if (isForever) then
+            TT:RefreshForeverCharacterStatsFooter()
+            return
+        end
         PersonalGearScoreText:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT",
             L["CHARACTER_FRAME_GS_TITLE_XPOS"] + (TacoTipConfig.character_gs_offset_x or 0),
             L["CHARACTER_FRAME_GS_TITLE_YPOS"] + (TacoTipConfig.character_gs_offset_y or 0))
     end)
-    PersonalGearScoreText:RefreshPosition()
 
-    characterFrameHost:CreateFontString("PersonalAvgItemLvl")
+    textParent:CreateFontString("PersonalAvgItemLvl")
     PersonalAvgItemLvl:SetFont(L["CHARACTER_FRAME_ILVL_VALUE_FONT"], L["CHARACTER_FRAME_ILVL_VALUE_FONT_SIZE"])
     PersonalAvgItemLvl:SetText("0")
     rawset(PersonalAvgItemLvl, "RefreshPosition", function()
+        if (isForever) then
+            TT:RefreshForeverCharacterStatsFooter()
+            return
+        end
         PersonalAvgItemLvl:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT",
             L["CHARACTER_FRAME_ILVL_VALUE_XPOS"] + (TacoTipConfig.character_ilvl_offset_x or 0),
             L["CHARACTER_FRAME_ILVL_VALUE_YPOS"] + (TacoTipConfig.character_ilvl_offset_y or 0))
     end)
-    PersonalAvgItemLvl:RefreshPosition()
 
-    characterFrameHost:CreateFontString("PersonalAvgItemLvlText")
+    textParent:CreateFontString("PersonalAvgItemLvlText")
     PersonalAvgItemLvlText:SetFont(L["CHARACTER_FRAME_ILVL_TITLE_FONT"], L["CHARACTER_FRAME_ILVL_TITLE_FONT_SIZE"])
     PersonalAvgItemLvlText:SetText("iLvl")
     rawset(PersonalAvgItemLvlText, "RefreshPosition", function()
+        if (isForever) then
+            TT:RefreshForeverCharacterStatsFooter()
+            return
+        end
         PersonalAvgItemLvlText:SetPoint("BOTTOMLEFT", PaperDollFrame, "BOTTOMLEFT",
             L["CHARACTER_FRAME_ILVL_TITLE_XPOS"] + (TacoTipConfig.character_ilvl_offset_x or 0),
             L["CHARACTER_FRAME_ILVL_TITLE_YPOS"] + (TacoTipConfig.character_ilvl_offset_y or 0))
     end)
-    PersonalAvgItemLvlText:RefreshPosition()
+
+    if (isForever) then
+        PersonalGearScore:Hide()
+        PersonalGearScoreText:Hide()
+        PersonalAvgItemLvl:Hide()
+        PersonalAvgItemLvlText:Hide()
+        TT:RefreshForeverCharacterStatsFooter()
+    else
+        PersonalGearScore:RefreshPosition()
+        PersonalGearScoreText:RefreshPosition()
+        PersonalAvgItemLvl:RefreshPosition()
+        PersonalAvgItemLvlText:RefreshPosition()
+    end
 
     PaperDollFrame:HookScript("OnShow", TT.RefreshCharacterFrame)
     return true
@@ -5310,6 +5632,18 @@ function TT:RefreshCharacterFrame()
     if (TacoTipConfig.show_gs_character or TacoTipConfig.show_avg_ilvl) then
         MyGearScore, MyAverageScore = GearScore:GetScore("player")
         r, g, b = GearScore:GetQuality(MyGearScore)
+    end
+    if (isForever) then
+        PersonalGearScore:SetText(MyGearScore)
+        PersonalGearScore:SetTextColor(r, g, b, 1)
+        PersonalAvgItemLvl:SetText(MyAverageScore)
+        PersonalAvgItemLvl:SetTextColor(r, g, b, 1)
+        PersonalGearScore:Hide()
+        PersonalGearScoreText:Hide()
+        PersonalAvgItemLvl:Hide()
+        PersonalAvgItemLvlText:Hide()
+        TT:RefreshForeverCharacterStatsFooter(MyGearScore, MyAverageScore, r, g, b)
+        return
     end
     if (TacoTipConfig.show_gs_character) then
         PersonalGearScore:SetText(MyGearScore);
@@ -7361,12 +7695,32 @@ local function onEvent(self, event, ...)
         if (TT.EvaluatePlayerEquipment) then
             TT:EvaluatePlayerEquipment(false)
         end
+    elseif (event == "PLAYER_REGEN_DISABLED") then
+        if (TacoTipConfig and TacoTipConfig.hide_in_combat and not TT:IsCombatModifierDown()
+                and GameTooltip and GameTooltip:IsShown() and resolveTooltipUnit(GameTooltip)) then
+            GameTooltip:Hide()
+        end
     elseif (event == "MODIFIER_STATE_CHANGED") then
-        -- The wide/mini style only reads the shift key (IsShiftKeyDown in
-        -- onTooltipSetUnit), so ctrl/alt press and release used to rebuild the
-        -- whole unit tooltip for no visual change. The event payload is
-        -- (key, down); only the two shift keys matter.
         local key = ...
+        local mod = TacoTipConfig and TacoTipConfig.combat_modifier or "NONE"
+        local matchesCombatMod = (mod == "SHIFT" and (key == "LSHIFT" or key == "RSHIFT"))
+            or (mod == "CTRL" and (key == "LCTRL" or key == "RCTRL"))
+            or (mod == "ALT" and (key == "LALT" or key == "RALT"))
+        if (matchesCombatMod and TacoTipConfig and TacoTipConfig.hide_in_combat and InCombatLockdown()) then
+            if (TT:IsCombatModifierDown()) then
+                if (GameTooltip and type(GameTooltip.SetUnit) == "function" and safeUnitExists("mouseover")) then
+                    if (type(_G.GameTooltip_SetDefaultAnchor) == "function" and _G.UIParent) then
+                        pcall(_G.GameTooltip_SetDefaultAnchor, GameTooltip, _G.UIParent)
+                    end
+                    pcall(GameTooltip.SetUnit, GameTooltip, "mouseover")
+                    if (not GameTooltip:IsShown() and type(GameTooltip.Show) == "function") then
+                        pcall(GameTooltip.Show, GameTooltip)
+                    end
+                end
+            elseif (GameTooltip and GameTooltip:IsShown() and resolveTooltipUnit(GameTooltip)) then
+                GameTooltip:Hide()
+            end
+        end
         if ((key == "LSHIFT" or key == "RSHIFT")
                 and GameTooltip and GameTooltip:IsShown()
                 and (TacoTipConfig.tip_style == 2 or TacoTipConfig.tip_style == 4)) then
@@ -7553,6 +7907,7 @@ do
         return safeCall(onEvent, self, event, ...)
     end)
     f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
     f:RegisterEvent("MODIFIER_STATE_CHANGED")
     f:RegisterEvent("UNIT_TARGET")
     f:RegisterEvent("ADDON_LOADED")
@@ -7620,7 +7975,7 @@ do
                         return
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
-                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.2")))
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.3")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)

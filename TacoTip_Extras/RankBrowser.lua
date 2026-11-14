@@ -1247,8 +1247,12 @@ function RankBrowser.StyleScanButton(button, explain)
     if type(button) ~= "table" then
         return false
     end
+    local syncRef = namespace.RankSync
+    local curProg = type(syncRef) == "table" and type(syncRef.GetSyncProgress) == "function"
+        and syncRef.GetSyncProgress() or nil
+    local currentlySyncing = type(curProg) == "table" and curProg.status == "syncing" and curProg.active == true
     if type(button.SetText) == "function" then
-        pcall(button.SetText, button, SYNC_BUTTON_TEXT)
+        pcall(button.SetText, button, currentlySyncing and "Syncing..." or SYNC_BUTTON_TEXT)
     end
     if type(button.Enable) == "function" then
         pcall(button.Enable, button)
@@ -1264,6 +1268,9 @@ function RankBrowser.StyleScanButton(button, explain)
         if type(sync) ~= "table" or type(sync.SyncNow) ~= "function" then
             local f = rankFrame
             if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                if type(f.scanStatus.SetTextColor) == "function" then
+                    pcall(f.scanStatus.SetTextColor, f.scanStatus, 0.96, 0.36, 0.36)
+                end
                 pcall(f.scanStatus.SetText, f.scanStatus, "Sync unavailable.")
                 if type(f.scanStatus.Show) == "function" then
                     pcall(f.scanStatus.Show, f.scanStatus)
@@ -1278,33 +1285,45 @@ function RankBrowser.StyleScanButton(button, explain)
                 local cTimer = rawget(_G, "C_Timer")
                 if type(cTimer) == "table" and type(cTimer.After) == "function" then
                     pcall(cTimer.After, 2.5, function()
-                        if type(self.SetText) == "function" then
+                        local prog = type(sync.GetSyncProgress) == "function" and sync.GetSyncProgress() or nil
+                        if (not prog or prog.status ~= "syncing") and type(self.SetText) == "function" then
                             pcall(self.SetText, self, SYNC_BUTTON_TEXT)
                         end
                     end)
                 end
             end
-            local f = rankFrame
-            if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
-                pcall(f.scanStatus.SetText, f.scanStatus, "Sync requested. Exchanging records...")
-                if type(f.scanStatus.Show) == "function" then
-                    pcall(f.scanStatus.Show, f.scanStatus)
-                end
-                local cTimer = rawget(_G, "C_Timer")
-                if type(cTimer) == "table" and type(cTimer.After) == "function" then
-                    pcall(cTimer.After, 4.0, function()
-                        if f and type(f.scanStatus) == "table" and type(f.scanStatus.GetText) == "function"
-                            and f.scanStatus:GetText() == "Sync requested. Exchanging records..."
-                            and type(f.scanStatus.Hide) == "function" then
-                            pcall(f.scanStatus.Hide, f.scanStatus)
-                        end
-                    end)
+            local prog = type(sync.GetSyncProgress) == "function" and sync.GetSyncProgress() or nil
+            if type(prog) == "table" and prog.status and prog.status ~= "idle" then
+                RankBrowser.RefreshProgress()
+            else
+                local f = rankFrame
+                if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                    if type(f.scanStatus.SetTextColor) == "function" then
+                        pcall(f.scanStatus.SetTextColor, f.scanStatus, 1, 1, 1)
+                    end
+                    pcall(f.scanStatus.SetText, f.scanStatus, "Sync requested. Exchanging records...")
+                    if type(f.scanStatus.Show) == "function" then
+                        pcall(f.scanStatus.Show, f.scanStatus)
+                    end
+                    local cTimer = rawget(_G, "C_Timer")
+                    if type(cTimer) == "table" and type(cTimer.After) == "function" then
+                        pcall(cTimer.After, 4.0, function()
+                            if f and type(f.scanStatus) == "table" and type(f.scanStatus.GetText) == "function"
+                                and f.scanStatus:GetText() == "Sync requested. Exchanging records..."
+                                and type(f.scanStatus.Hide) == "function" then
+                                pcall(f.scanStatus.Hide, f.scanStatus)
+                            end
+                        end)
+                    end
                 end
             end
             return true
         else
             local f = rankFrame
             if f and type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+                if type(f.scanStatus.SetTextColor) == "function" then
+                    pcall(f.scanStatus.SetTextColor, f.scanStatus, 1, 0.82, 0.35)
+                end
                 pcall(f.scanStatus.SetText, f.scanStatus, "Sync is on cooldown.")
                 if type(f.scanStatus.Show) == "function" then
                     pcall(f.scanStatus.Show, f.scanStatus)
@@ -1423,6 +1442,9 @@ function RankBrowser.AnnounceSyncReceived(count)
         total = tonumber(c) or 0
     end
     local msg = string.format("Sync received: %d record%s (%d total)", num, num == 1 and "" or "s", total)
+    if type(f.scanStatus.SetTextColor) == "function" then
+        pcall(f.scanStatus.SetTextColor, f.scanStatus, 1, 1, 1)
+    end
     if type(f.scanStatus.SetText) == "function" then
         pcall(f.scanStatus.SetText, f.scanStatus, msg)
     end
@@ -1444,25 +1466,91 @@ function RankBrowser.AnnounceSyncReceived(count)
     end
 end
 
--- Paint the progress bar from Scanner.GetProgress.
+local function paintSyncProgress(f)
+    local sync = namespace.RankSync
+    local syncProg = type(sync) == "table" and type(sync.GetSyncProgress) == "function"
+        and sync.GetSyncProgress() or nil
+    if not syncProg or type(syncProg) ~= "table" then
+        return false
+    end
+    local syncStatus = syncProg.status
+    if not syncStatus or syncStatus == "idle" then
+        return false
+    end
+    f.scanning = false
+    local pct = tonumber(syncProg.percent) or 0
+    if pct < 0 then
+        pct = 0
+    elseif pct > 1 then
+        pct = 1
+    end
+    if syncProg.status == "syncing" and pct <= 0 then
+        pct = 0.08
+    elseif syncProg.status == "complete" or syncProg.status == "failed" then
+        pct = 1
+    end
+    f.progressBar:Show()
+    if type(f.progressBar.SetStatusBarColor) == "function" then
+        if syncProg.status == "complete" then
+            pcall(f.progressBar.SetStatusBarColor, f.progressBar, 0.24, 0.78, 0.34)
+        elseif syncProg.status == "failed" then
+            pcall(f.progressBar.SetStatusBarColor, f.progressBar, 0.86, 0.24, 0.24)
+        else
+            pcall(f.progressBar.SetStatusBarColor, f.progressBar, 0.66, 0.48, 0.86)
+        end
+    end
+    f.progressBar:SetValue(pct)
+    if type(f.progressBar.text) == "table" and type(f.progressBar.text.SetText) == "function" then
+        local label
+        if syncProg.status == "complete" then
+            label = ("Complete (100%%) - %s"):format(tostring(syncProg.message or "Sync complete."))
+        elseif syncProg.status == "failed" then
+            label = ("Failed - %s"):format(tostring(syncProg.message or "Sync failed."))
+        else
+            label = ("%d%% - %s"):format(math.floor(pct * 100 + 0.5), tostring(syncProg.message or "Syncing..."))
+        end
+        pcall(f.progressBar.text.SetText, f.progressBar.text, label)
+    end
+    if type(f.scanStatus) == "table" and type(f.scanStatus.SetText) == "function" then
+        local statusText = tostring(syncProg.message or "")
+        if statusText == "" then
+            statusText = syncProg.status == "complete" and "Sync complete."
+                or (syncProg.status == "failed" and "Sync failed." or "Syncing...")
+        end
+        if type(f.scanStatus.SetTextColor) == "function" then
+            if syncProg.status == "complete" then
+                pcall(f.scanStatus.SetTextColor, f.scanStatus, 0.32, 0.90, 0.42)
+            elseif syncProg.status == "failed" then
+                pcall(f.scanStatus.SetTextColor, f.scanStatus, 0.96, 0.36, 0.36)
+            else
+                pcall(f.scanStatus.SetTextColor, f.scanStatus, 0.90, 0.82, 1.00)
+            end
+        end
+        pcall(f.scanStatus.SetText, f.scanStatus, statusText)
+        if type(f.scanStatus.Show) == "function" then
+            pcall(f.scanStatus.Show, f.scanStatus)
+        end
+    end
+    return true
+end
+
+-- Paint the progress bar from Scanner.GetProgress or RankSync.GetSyncProgress.
 --
 -- Hidden when there is nothing to show, so the window carries no dead rail when
--- idle. Kept visible and full at 100% until the scan reports inactive, because
--- hiding it the instant it fills reads as "the scan failed".
+-- idle. Kept visible and full at 100% until the scan/sync reports inactive,
+-- because hiding it the instant it fills reads as "the operation failed".
 function RankBrowser.RefreshProgress()
     local f = rankFrame
     if not f or type(f.progressBar) ~= "table" then
         return false
     end
-    -- The rank scan is blocked. Keep the control greyed here as well as at
-    -- creation, and never paint this rail from the gear-inspection scanner's
-    -- progress -- that scanner still runs for the character and inspect
-    -- summaries, and a moving bar under a "Scan disabled" button reads as a
-    -- working scan.
     if f.scanButton then
         RankBrowser.StyleScanButton(f.scanButton)
     end
     if not RankBrowser.IsScanAvailable() then
+        if paintSyncProgress(f) then
+            return true
+        end
         f.progressBar:Hide()
         f.scanning = false
         return true
@@ -2946,6 +3034,15 @@ function RankBrowser.CreateUI()
     local bar = g.CreateFrame("StatusBar", nil, f)
     bar:SetSize(ROW_WIDTH, PROGRESS_BAR_HEIGHT)
     bar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", ROW_LEFT, progressBottom())
+    if type(bar.CreateTexture) == "function" then
+        local track = bar:CreateTexture(nil, "BACKGROUND")
+        if track and type(track.SetAllPoints) == "function" then
+            track:SetAllPoints(bar)
+            if type(track.SetColorTexture) == "function" then
+                pcall(track.SetColorTexture, track, 0.08, 0.08, 0.11, 0.85)
+            end
+        end
+    end
     -- SetStatusBarTexture is a real StatusBar method, but a guarded call costs
     -- nothing and this window must never fail to open because one method was
     -- absent -- the same rule the rest of this file follows for frame methods.

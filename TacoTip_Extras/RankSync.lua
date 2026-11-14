@@ -66,6 +66,57 @@ local outcomes = {}
 local lastRecordRejectedReason = nil
 local lastEvictedKind = nil
 
+local syncSession = {
+    active = false,
+    status = "idle", -- "idle" | "syncing" | "complete" | "failed"
+    percent = 0,
+    sent = 0,
+    queued = 0,
+    received = 0,
+    stored = 0,
+    dispatched = 0,
+    failedSends = 0,
+    transports = 0,
+    startedAt = 0,
+    finishedAt = 0,
+    message = "",
+    reason = nil,
+    token = 0,
+}
+
+local function notifySyncProgress(isTerminal)
+    local browser = namespace.RankBrowser
+    if type(browser) == "table" then
+        if type(browser.RefreshProgress) == "function" then
+            pcall(browser.RefreshProgress)
+        end
+        if isTerminal and type(browser.UpdateUI) == "function" then
+            pcall(browser.UpdateUI)
+        end
+    end
+    local dashRefresh = rawget(_G, "TacoTip_RefreshExtrasLeaderboardUI")
+    if type(dashRefresh) == "function" then
+        pcall(dashRefresh)
+    end
+end
+
+function RankSync.GetSyncProgress()
+    return {
+        active = syncSession.active == true,
+        status = syncSession.status or "idle",
+        percent = syncSession.percent or 0,
+        sent = syncSession.sent or 0,
+        queued = syncSession.queued or 0,
+        received = syncSession.received or 0,
+        stored = syncSession.stored or 0,
+        dispatched = syncSession.dispatched or 0,
+        failedSends = syncSession.failedSends or 0,
+        transports = syncSession.transports or 0,
+        message = syncSession.message or "",
+        reason = syncSession.reason,
+    }
+end
+
 -- The first-login hole (earlier review §3.6, expansion audit §3.1): the local
 -- record only ever travels when gear CHANGES. A fresh install joined the sync
 -- channel with nothing on the wire, so peers who logged in after it had no way
@@ -201,9 +252,10 @@ local function removeSyncChannelIfMade()
 
     local removed = false
 
-    -- Check if ttgssync is currently a joined channel by name
+    -- Check if ttgssync accidentally occupied a protected slot (1..4); leave
+    -- only if it sits in 1..4 so valid high slots (5+) keep carrying sync traffic.
     local okName, idByName, nameByName = pcall(getChan, CHANNEL_NAME)
-    if okName and type(idByName) == "number" and idByName > 0 then
+    if okName and type(idByName) == "number" and idByName > 0 and idByName <= 4 then
         if type(leaveByName) == "function" then
             pcall(leaveByName, CHANNEL_NAME)
             if type(nameByName) == "string" and nameByName ~= "" then
@@ -510,6 +562,18 @@ end
 -- sendNoInfo rather than an error, because a nil result usually means "sent".
 -- The pre-Stage-1 code pcall'd and ignored the result entirely, so a throttled
 -- or refused send was indistinguishable from a delivered one.
+local function recordSessionSendOutcome(outcome)
+    if not syncSession.active then
+        return
+    end
+    syncSession.dispatched = (syncSession.dispatched or 0) + 1
+    if outcome == "sendSuccess" or outcome == "sendNoInfo" then
+        syncSession.sent = (syncSession.sent or 0) + 1
+    elseif outcome == "sendError" or outcome == "sendInvalidChannel" then
+        syncSession.failedSends = (syncSession.failedSends or 0) + 1
+    end
+end
+
 local function rawSend(msg, chatType, target)
     local g = _G
     local result
@@ -518,6 +582,7 @@ local function rawSend(msg, chatType, target)
         local ok, r = pcall(cChat.SendAddonMessage, PREFIX, msg, chatType, target)
         if not ok then
             countOutcome("sendError")
+            recordSessionSendOutcome("sendError")
             return "sendError"
         end
         result = r
@@ -525,11 +590,13 @@ local function rawSend(msg, chatType, target)
         local ok = pcall(g["SendAddonMessage"], PREFIX, msg, chatType, target)
         if not ok then
             countOutcome("sendError")
+            recordSessionSendOutcome("sendError")
             return "sendError"
         end
         result = nil
     else
         countOutcome("sendError")
+        recordSessionSendOutcome("sendError")
         return "sendError"
     end
 
@@ -547,6 +614,7 @@ local function rawSend(msg, chatType, target)
     else
         outcome = "sendOther"
     end
+    recordSessionSendOutcome(outcome)
     countOutcome(outcome)
     return outcome
 end
@@ -709,6 +777,9 @@ function RankSync.Enqueue(msg, chatType, target)
         chatType = chatType or "GUILD",
         target = target,
     }
+    if syncSession.active then
+        syncSession.queued = (syncSession.queued or 0) + 1
+    end
     processQueue()
 end
 
@@ -944,6 +1015,20 @@ local function makeRequestId()
     return ("%04x%02x"):format(seconds % 0xFFFF, requestCounter % 0x100)
 end
 
+local function countAvailableTransports()
+    local count = 0
+    if groupChatType() then
+        count = count + 1
+    end
+    if flagIsOn("IsInGuild") then
+        count = count + 1
+    end
+    if channelSendTarget() then
+        count = count + 1
+    end
+    return count
+end
+
 local function broadcastToAll(msg)
     -- Group (PARTY / RAID / INSTANCE_CHAT), Guild, and -- while the state
     -- machine says it carries -- the hidden custom channel.
@@ -964,6 +1049,17 @@ end
 -- peers throttle their answers themselves.
 function RankSync.RequestSync()
     local id = makeRequestId()
+    if syncSession.active then
+        local transports = countAvailableTransports()
+        syncSession.transports = transports
+        if (syncSession.percent or 0) < 0.55 then
+            syncSession.percent = 0.55
+        end
+        syncSession.message = transports > 0
+            and ("Querying peers (%d transport%s)..."):format(transports, transports == 1 and "" or "s")
+            or "No active sync transport..."
+        notifySyncProgress(false)
+    end
     broadcastToAll("Q;" .. id)
     return id
 end
@@ -1541,9 +1637,23 @@ end
 -- letter "R" and silently store nothing, which is the failure this comment
 -- exists to prevent. Hence the fixed stride, and hence RECORD_FIELDS being
 -- derived from SerializeRecord's layout rather than guessed.
+local function recordSessionReceive(validCount, storedCount)
+    if not syncSession.active or validCount <= 0 then
+        return
+    end
+    syncSession.received = (syncSession.received or 0) + validCount
+    syncSession.stored = (syncSession.stored or 0) + (storedCount or 0)
+    local nextPct = 0.65 + math.min(0.30, syncSession.received * 0.03)
+    if nextPct > (syncSession.percent or 0) then
+        syncSession.percent = math.min(0.95, nextPct)
+    end
+    syncSession.message = ("Receiving peer records (%d received)..."):format(syncSession.received)
+    notifySyncProgress(false)
+end
+
 local function ingestRecords(payload)
     local parts = splitFields(payload)
-    local stored, seen = 0, 0
+    local stored, seen, validSeen = 0, 0, 0
     local index = 3
     while index + RECORD_FIELDS - 1 <= #parts do
         if parts[index] ~= "R" then
@@ -1551,6 +1661,9 @@ local function ingestRecords(payload)
         end
         seen = seen + 1
         local record = recordFromParts(parts, index)
+        if record then
+            validSeen = validSeen + 1
+        end
         if record and namespace.RankDB
             and type(namespace.RankDB.StoreRecord) == "function" then
             local storedOK, storeReason = namespace.RankDB.StoreRecord(record)
@@ -1567,6 +1680,9 @@ local function ingestRecords(payload)
             end
         end
         index = index + RECORD_FIELDS
+    end
+    if validSeen > 0 then
+        recordSessionReceive(validSeen, stored)
     end
     if stored > 0 then
         local browser = namespace.RankBrowser
@@ -1598,6 +1714,7 @@ local function handlePayload(payload, chatType, sender)
         if rec and namespace.RankDB
             and type(namespace.RankDB.StoreRecord) == "function" then
             local storedOK, storeReason = namespace.RankDB.StoreRecord(rec)
+            recordSessionReceive(1, storedOK and 1 or 0)
             if storedOK then
                 local browser = namespace.RankBrowser
                 if browser and type(browser.UpdateUI) == "function" then
@@ -1611,6 +1728,8 @@ local function handlePayload(payload, chatType, sender)
                 countOutcome("recordRejected")
                 lastRecordRejectedReason = tostring(storeReason or "unknown")
             end
+        elseif rec then
+            recordSessionReceive(1, 0)
         end
         return
     end
@@ -1682,6 +1801,7 @@ local function handlePayload(payload, chatType, sender)
         local parsed = parseGearMessage(payload)
         if parsed then
             ingestGearMessage(parsed)
+            recordSessionReceive(1, 0)
         end
         return
     end
@@ -1692,11 +1812,87 @@ RankSync.RESPOND_INTERVAL = RESPOND_INTERVAL
 RankSync.INBOUND_WINDOW_MAX = INBOUND_WINDOW_MAX
 RankSync.INBOUND_WINDOW_SECONDS = INBOUND_WINDOW_SECONDS
 
+local function finishSyncSession(token)
+    if token ~= syncSession.token or not syncSession.active then
+        return
+    end
+    syncSession.active = false
+    syncSession.finishedAt = getClock()
+    syncSession.percent = 1
+    local transports = countAvailableTransports()
+    syncSession.transports = transports
+    local received = syncSession.received or 0
+    local stored = syncSession.stored or 0
+    local sent = syncSession.sent or 0
+    local dispatched = syncSession.dispatched or 0
+    local failedSends = syncSession.failedSends or 0
+    local queued = syncSession.queued or 0
+
+    if received > 0 then
+        syncSession.status = "complete"
+        syncSession.reason = nil
+        if stored > 0 then
+            syncSession.message = ("Sync complete: %d received (%d updated)."):format(received, stored)
+        else
+            syncSession.message = ("Sync complete: %d peer record%s up to date."):format(
+                received, received == 1 and "" or "s")
+        end
+    elseif sent > 0 then
+        syncSession.status = "complete"
+        syncSession.reason = nil
+        syncSession.message = ("Sync complete: %d query sent (up to date)."):format(sent)
+    elseif dispatched > 0 and sent == 0 then
+        syncSession.status = "failed"
+        if failedSends > 0 then
+            syncSession.reason = "send_failed"
+            syncSession.message = "Sync failed: unable to send addon messages."
+        else
+            syncSession.reason = "throttled"
+            syncSession.message = "Sync failed: addon traffic throttled."
+        end
+    elseif queued > 0 and dispatched == 0 and transports > 0 then
+        syncSession.status = "complete"
+        syncSession.reason = nil
+        syncSession.message = ("Sync queued (%d transport%s)."):format(
+            transports, transports == 1 and "" or "s")
+    elseif transports == 0 then
+        syncSession.status = "failed"
+        syncSession.reason = "no_transport"
+        syncSession.message = "Sync failed: no active transport (guild, party, or channel)."
+    else
+        syncSession.status = "failed"
+        syncSession.reason = "no_dispatch"
+        syncSession.message = "Sync failed: unable to dispatch query."
+    end
+    notifySyncProgress(true)
+end
+
+local function scheduleFinishWindow(token, cTimer)
+    if type(cTimer) == "table" and type(cTimer.After) == "function" then
+        cTimer.After(1.8, function()
+            if token ~= syncSession.token or not syncSession.active then
+                return
+            end
+            if (syncSession.percent or 0) < 0.82 then
+                syncSession.percent = 0.82
+            end
+            syncSession.message = ("Collecting peer responses (%d received)..."):format(syncSession.received or 0)
+            notifySyncProgress(false)
+        end)
+        cTimer.After(3.8, function()
+            finishSyncSession(token)
+        end)
+    else
+        finishSyncSession(token)
+    end
+end
+
 -- Join the channel and then ASK. A query sent before the join lands reaches
 -- nobody, and GetChannelName can lag the join by a frame or two, so the first
 -- attempt is retried once rather than fired into a channel id that is still nil.
-local function joinThenQuery(retries)
+local function joinThenQuery(retries, token, isManual)
     retries = retries or 0
+    token = token or syncSession.token
     local g = _G
     local getChan = rawget(g, "GetChannelName")
     local cTimer = rawget(g, "C_Timer")
@@ -1704,8 +1900,13 @@ local function joinThenQuery(retries)
     if retries < 3 and type(getChan) == "function" and type(cTimer) == "table" and type(cTimer.After) == "function" then
         local ok1, id1 = pcall(getChan, 1)
         if not (ok1 and type(id1) == "number" and id1 > 0) then
-            cTimer.After(5.0, function()
-                joinThenQuery(retries + 1)
+            if token == syncSession.token and syncSession.active then
+                syncSession.percent = math.min(0.35, 0.20 + retries * 0.05)
+                syncSession.message = "Waiting for chat channels..."
+                notifySyncProgress(false)
+            end
+            cTimer.After(isManual and 2.5 or 5.0, function()
+                joinThenQuery(retries + 1, token, isManual)
             end)
             return
         end
@@ -1713,18 +1914,35 @@ local function joinThenQuery(retries)
 
     joinSyncChannel()
     armChannelProbe()
+    if token == syncSession.token and syncSession.active then
+        syncSession.transports = countAvailableTransports()
+        if (syncSession.percent or 0) < 0.35 then
+            syncSession.percent = 0.35
+        end
+        syncSession.message = "Transports ready, sending query..."
+        notifySyncProgress(false)
+    end
+
     if channel.id and channel.id > 0 then
         RankSync.RequestSync()
+        scheduleFinishWindow(token, cTimer)
         return
     end
     if type(cTimer) == "table" and type(cTimer.After) == "function" then
-        cTimer.After(4.0, function()
+        if token == syncSession.token and syncSession.active then
+            syncSession.percent = math.max(syncSession.percent or 0, 0.42)
+            syncSession.message = "Waiting for sync channel..."
+            notifySyncProgress(false)
+        end
+        cTimer.After(isManual and 1.5 or 4.0, function()
             joinSyncChannel()
             armChannelProbe()
             RankSync.RequestSync()
+            scheduleFinishWindow(token, cTimer)
         end)
     else
         RankSync.RequestSync()
+        scheduleFinishWindow(token, cTimer)
     end
 end
 
@@ -1765,12 +1983,32 @@ local function syncNow(force)
     end
     lastSyncAt = now
 
+    syncSession.token = (syncSession.token or 0) + 1
+    local token = syncSession.token
+    syncSession.active = true
+    syncSession.status = "syncing"
+    syncSession.percent = 0.15
+    syncSession.sent = 0
+    syncSession.queued = 0
+    syncSession.received = 0
+    syncSession.stored = 0
+    syncSession.dispatched = 0
+    syncSession.failedSends = 0
+    syncSession.transports = countAvailableTransports()
+    syncSession.startedAt = now
+    syncSession.finishedAt = 0
+    syncSession.reason = nil
+    syncSession.message = "Connecting to sync transports..."
+    notifySyncProgress(false)
+
     registerPrefix()
     local cTimer = rawget(_G, "C_Timer")
     if type(cTimer) == "table" and type(cTimer.After) == "function" then
-        cTimer.After(force and 1.0 or 4.0, joinThenQuery)
+        cTimer.After(force and 0.6 or 4.0, function()
+            joinThenQuery(0, token, force == true)
+        end)
     else
-        joinThenQuery()
+        joinThenQuery(0, token, force == true)
     end
     return true
 end
@@ -1847,3 +2085,11 @@ local function syncNowGlobal(manual)
     return false
 end
 rawset(_G, "TacoTipExtrasSyncNow", syncNowGlobal)
+
+local function getSyncProgressGlobal()
+    if type(RankSync.GetSyncProgress) == "function" then
+        return RankSync.GetSyncProgress()
+    end
+    return nil
+end
+rawset(_G, "TacoTipExtrasGetSyncProgress", getSyncProgressGlobal)

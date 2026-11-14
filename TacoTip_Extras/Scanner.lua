@@ -274,6 +274,71 @@ end
 
 local GUILD_NAME_MAX = 24
 
+local RACE_FACTION_MAP = {
+    Human = "Alliance",
+    Dwarf = "Alliance",
+    NightElf = "Alliance",
+    Gnome = "Alliance",
+    Draenei = "Alliance",
+    Worgen = "Alliance",
+    DarkIronDwarf = "Alliance",
+    LightforgedDraenei = "Alliance",
+    VoidElf = "Alliance",
+    KulTiran = "Alliance",
+    Mechagnome = "Alliance",
+    Orc = "Horde",
+    Scourge = "Horde",
+    Undead = "Horde",
+    Tauren = "Horde",
+    Troll = "Horde",
+    Goblin = "Horde",
+    BloodElf = "Horde",
+    Nightborne = "Horde",
+    HighmountainTauren = "Horde",
+    MagharOrc = "Horde",
+    ZandalariTroll = "Horde",
+    Vulpera = "Horde",
+}
+
+local function isUsablePlayerName(val)
+    if isSecretValue(val) or type(val) ~= "string" then
+        return false
+    end
+    local unk = rawget(_G, "UNKNOWNOBJECT")
+    if val == "" or val == "Unknown" or (type(unk) == "string" and val == unk) then
+        return false
+    end
+    return true
+end
+
+local function resolvePlayerInfoByGUID(guid)
+    if isSecretValue(guid) or type(guid) ~= "string" or guid == "" then
+        return nil, nil, nil, nil
+    end
+    local getByGUID = rawget(_G, "GetPlayerInfoByGUID")
+    if type(getByGUID) ~= "function" then
+        return nil, nil, nil, nil
+    end
+    local ok, _, englishClass, _, englishRace, _, pName, pRealm = pcall(getByGUID, guid)
+    if not ok then
+        return nil, nil, nil, nil
+    end
+    local cleanClass = nil
+    if not isSecretValue(englishClass) and type(englishClass) == "string" and englishClass ~= "" then
+        cleanClass = englishClass
+    end
+    local cleanName = isUsablePlayerName(pName) and pName or nil
+    local cleanRealm = nil
+    if not isSecretValue(pRealm) and type(pRealm) == "string" and pRealm ~= "" then
+        cleanRealm = pRealm
+    end
+    local derivedFaction = nil
+    if not isSecretValue(englishRace) and type(englishRace) == "string" then
+        derivedFaction = RACE_FACTION_MAP[englishRace]
+    end
+    return cleanClass, cleanName, cleanRealm, derivedFaction
+end
+
 -- Guild name for the scanned unit. The engine form is verified with "player"
 -- on all five branches (PaperDollFrame.lua:95 classic family,
 -- InstanceDifficulty.lua:219 forever / :216 live); the remote-unit form is
@@ -282,11 +347,11 @@ local GUILD_NAME_MAX = 24
 -- blank-until-next-scan is the specified degradation.
 local function captureGuildName(unit)
     local getGuild = rawget(_G, "GetGuildInfo")
-    if type(getGuild) ~= "function" or type(unit) ~= "string" or unit == "" then
+    if type(getGuild) ~= "function" or isSecretValue(unit) or type(unit) ~= "string" or unit == "" then
         return ""
     end
     local ok, guildName = pcall(getGuild, unit)
-    if not ok or Core.IsSecretValue(guildName) or type(guildName) ~= "string" then
+    if not ok or isSecretValue(guildName) or type(guildName) ~= "string" then
         return ""
     end
     -- Sanitize exactly like the store (strip ";" -- a ";" would shift the
@@ -432,82 +497,246 @@ local function capturePvPFields(unit)
     return pvpRank, arena
 end
 
-local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCell)
+local function snapshotRemoteMeta(meta, unit, guid)
+    if type(meta) ~= "table" then
+        return
+    end
+    local liveUnit = (type(unit) == "string" and not isSecretValue(unit) and unit ~= "" and unit ~= guid) and unit or nil
+    local g = _G
+    if liveUnit then
+        local uNameFn = rawget(g, "UnitName")
+        if type(uNameFn) == "function" then
+            local ok, n = pcall(uNameFn, liveUnit)
+            if ok and isUsablePlayerName(n) then
+                meta.name = n
+            end
+        end
+        local uFacFn = rawget(g, "UnitFactionGroup")
+        if type(uFacFn) == "function" then
+            local ok, f = pcall(uFacFn, liveUnit)
+            if ok and not isSecretValue(f) and (f == "Alliance" or f == "Horde") then
+                meta.faction = f
+            end
+        end
+        local uClassFn = rawget(g, "UnitClass")
+        if type(uClassFn) == "function" then
+            local ok, _, token = pcall(uClassFn, liveUnit)
+            if ok and not isSecretValue(token) and type(token) == "string" and token ~= "" then
+                meta.classToken = token
+            end
+        end
+        local uLevelFn = rawget(g, "UnitLevel")
+        if type(uLevelFn) == "function" then
+            local ok, lvl = pcall(uLevelFn, liveUnit)
+            if ok and not isSecretValue(lvl) and isNonnegativeInteger(lvl) and lvl > 0 then
+                meta.level = lvl
+            end
+        end
+        local gName = captureGuildName(liveUnit)
+        if gName ~= "" then
+            meta.guild = gName
+        end
+        if inspector then
+            if type(inspector.GetLocalizedSpecName) == "function" then
+                local ok, sName = pcall(inspector.GetLocalizedSpecName, inspector, liveUnit)
+                if ok and not isSecretValue(sName) and type(sName) == "string" and sName ~= "" then
+                    meta.specName = sName
+                end
+            end
+            if type(inspector.GetLocalizedSpecIcon) == "function" then
+                local ok, sIcon = pcall(inspector.GetLocalizedSpecIcon, inspector, liveUnit)
+                if ok and not isSecretValue(sIcon) and sIcon then
+                    meta.specIcon = sIcon
+                end
+            end
+        end
+        local sID = captureSpecID(liveUnit)
+        if sID > 0 then
+            meta.specID = sID
+        end
+        local pRank, pArena = capturePvPFields(liveUnit)
+        if pRank > 0 or meta.pvpRank == nil then
+            meta.pvpRank = pRank
+        end
+        if pArena > 0 or meta.arena == nil then
+            meta.arena = pArena
+        end
+    end
+
+    if inspector and type(inspector.GetUnitData) == "function" and type(guid) == "string" and not isSecretValue(guid) and guid ~= "" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
+        if okData and type(cached) == "table" then
+            if not meta.name and isUsablePlayerName(cached.name) then
+                meta.name = cached.name
+            end
+            if not meta.faction and not isSecretValue(cached.faction) and (cached.faction == "Alliance" or cached.faction == "Horde") then
+                meta.faction = cached.faction
+            end
+            if not meta.classToken and not isSecretValue(cached.class) and type(cached.class) == "string" and cached.class ~= "" then
+                meta.classToken = cached.class
+            end
+            if not meta.level and not isSecretValue(cached.level) and isNonnegativeInteger(cached.level) and cached.level > 0 then
+                meta.level = cached.level
+            end
+            if (not meta.guild or meta.guild == "") and not isSecretValue(cached.guild) and type(cached.guild) == "string" and cached.guild ~= "" then
+                meta.guild = cached.guild
+            end
+            if (not meta.specName or meta.specName == "") and not isSecretValue(cached.specName) and type(cached.specName) == "string" and cached.specName ~= "" then
+                meta.specName = cached.specName
+            end
+            if not meta.specIcon and not isSecretValue(cached.specIcon) and cached.specIcon then
+                meta.specIcon = cached.specIcon
+            end
+            if (not meta.specID or meta.specID == 0) and not isSecretValue(cached.specID) and type(cached.specID) == "number" and cached.specID > 0 then
+                meta.specID = math.floor(cached.specID)
+            end
+        end
+    end
+
+    if (not meta.name or not meta.classToken or not meta.faction) and type(guid) == "string" and guid ~= "" then
+        local gClass, gName, _, gFaction = resolvePlayerInfoByGUID(guid)
+        if not meta.classToken and gClass then
+            meta.classToken = gClass
+        end
+        if not meta.name and gName then
+            meta.name = gName
+        end
+        if not meta.faction and gFaction then
+            meta.faction = gFaction
+        end
+    end
+end
+
+local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCell, meta)
     local rankSync = namespace.RankSync
     if type(rankSync) ~= "table" or type(rankSync.QueueInspectRecord) ~= "function" then
         return
     end
-    if Core.IsSecretValue(guid) then
+    if isSecretValue(guid) then
         return
     end
     if type(guid) ~= "string" or guid == "" then
         return
     end
-    local gs = type(result) == "table"
+    local gsMetric = type(result) == "table"
         and type(result.metrics) == "table"
-        and type(result.metrics.gearScore) == "table"
-        and result.metrics.gearScore.status == "complete"
-        and result.metrics.gearScore.value
-    if Core.IsSecretValue(gs) then
-        return
+        and result.metrics.gearScore
+    local gsComplete = false
+    local gs = nil
+    if type(gsMetric) == "table" and gsMetric.status == "complete" then
+        gsComplete = true
+        gs = gsMetric.value
     end
-    if type(gs) ~= "number" or gs <= 0 then
+    if isSecretValue(gs) then
         return
     end
 
-    local avgMetric = result.metrics.averageItemLevel
+    local avgMetric = type(result) == "table"
+        and type(result.metrics) == "table"
+        and result.metrics.averageItemLevel
     local ilvl = 0
     if type(avgMetric) == "table" and avgMetric.status == "complete" and type(avgMetric.value) == "table" then
         local rawVal = avgMetric.value.raw or avgMetric.value.display or 0
-        if Core.IsSecretValue(rawVal) then
+        if isSecretValue(rawVal) then
             ilvl = 0
         else
             ilvl = rawVal
         end
     end
 
+    -- Low-level characters (e.g. grey/white gear or hunters without ranged weapons)
+    -- can score 0 in strict enhancement evaluation even with valid equipped gear.
+    -- Fall back to TacoTip's native scorer or rounded iLvl when GS status is complete
+    -- so low-level characters are still recorded cleanly on the leaderboard.
+    if gsComplete and (type(gs) ~= "number" or gs <= 0) then
+        local ttGSMod = rawget(_G, "TT_GS")
+        if type(ttGSMod) == "table" and type(ttGSMod.GetScore) == "function" then
+            local targetArg = (type(unit) == "string" and not isSecretValue(unit) and unit ~= "" and unit ~= guid) and unit or guid
+            local okGS, fallbackGS = pcall(ttGSMod.GetScore, ttGSMod, targetArg, false)
+            if okGS and not isSecretValue(fallbackGS) and type(fallbackGS) == "number" and fallbackGS > 0 then
+                gs = math.floor(fallbackGS + 0.5)
+            end
+        end
+        if (type(gs) ~= "number" or gs <= 0) and type(ilvl) == "number" and ilvl > 0 then
+            gs = math.max(1, math.floor(ilvl + 0.5))
+        end
+    end
+
+    if type(gs) ~= "number" or gs <= 0 then
+        return
+    end
+
     local g = _G
+    local liveUnit = (type(unit) == "string" and not isSecretValue(unit) and unit ~= "" and unit ~= guid) and unit or nil
     local pName
     local uName = rawget(g, "UnitName")
-    if type(uName) == "function" and unit then
-        local ok, n = pcall(uName, unit)
-        if ok and not Core.IsSecretValue(n) and type(n) == "string" and n ~= "" then
+    if type(uName) == "function" and liveUnit then
+        local ok, n = pcall(uName, liveUnit)
+        if ok and isUsablePlayerName(n) then
             pName = n
         end
     end
+    if not pName and type(meta) == "table" and isUsablePlayerName(meta.name) then
+        pName = meta.name
+    end
     if (not pName) and inspector and type(inspector.GetUnitData) == "function" then
-        local okData, cached = pcall(inspector.GetUnitData, inspector, guid or unit)
-        if okData and type(cached) == "table" and type(cached.name) == "string" and not Core.IsSecretValue(cached.name) and cached.name ~= "" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
+        if okData and type(cached) == "table" and isUsablePlayerName(cached.name) then
             pName = cached.name
         end
+    end
+    local gClass, gName, _, gFaction = resolvePlayerInfoByGUID(guid)
+    if not pName and gName then
+        pName = gName
     end
 
     local pFaction = "Unknown"
     local uFaction = rawget(g, "UnitFactionGroup")
-    if type(uFaction) == "function" and unit then
-        local ok, f = pcall(uFaction, unit)
-        if ok and not Core.IsSecretValue(f) and (f == "Alliance" or f == "Horde") then
+    if type(uFaction) == "function" and liveUnit then
+        local ok, f = pcall(uFaction, liveUnit)
+        if ok and not isSecretValue(f) and (f == "Alliance" or f == "Horde") then
             pFaction = f
         end
+    end
+    if pFaction == "Unknown" and type(meta) == "table" and (meta.faction == "Alliance" or meta.faction == "Horde") then
+        pFaction = meta.faction
+    end
+    if pFaction == "Unknown" and inspector and type(inspector.GetUnitData) == "function" then
+        local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
+        if okData and type(cached) == "table" and not isSecretValue(cached.faction)
+            and (cached.faction == "Alliance" or cached.faction == "Horde") then
+            pFaction = cached.faction
+        end
+    end
+    if pFaction == "Unknown" and gFaction then
+        pFaction = gFaction
     end
 
     local cToken = (type(classToken) == "table" and classToken.value)
         or (type(classToken) == "string" and classToken)
+        or (type(meta) == "table" and meta.classToken)
+        or gClass
         or "UNKNOWN"
     local specName, specIcon
-    if inspector and unit then
+    if inspector and liveUnit then
         if type(inspector.GetLocalizedSpecName) == "function" then
-            local ok, sName = pcall(inspector.GetLocalizedSpecName, inspector, unit)
-            if ok and not Core.IsSecretValue(sName) and type(sName) == "string" then
+            local ok, sName = pcall(inspector.GetLocalizedSpecName, inspector, liveUnit)
+            if ok and not isSecretValue(sName) and type(sName) == "string" then
                 specName = sName
             end
         end
         if type(inspector.GetLocalizedSpecIcon) == "function" then
-            local ok, sIcon = pcall(inspector.GetLocalizedSpecIcon, inspector, unit)
-            if ok and not Core.IsSecretValue(sIcon) and sIcon then
+            local ok, sIcon = pcall(inspector.GetLocalizedSpecIcon, inspector, liveUnit)
+            if ok and not isSecretValue(sIcon) and sIcon then
                 specIcon = sIcon
             end
         end
+    end
+    if (not specName or specName == "") and type(meta) == "table" and type(meta.specName) == "string" and meta.specName ~= "" then
+        specName = meta.specName
+    end
+    if not specIcon and type(meta) == "table" and meta.specIcon then
+        specIcon = meta.specIcon
     end
 
     -- The server clock, for the record's timestamp. pcall-guarded like every
@@ -526,11 +755,43 @@ local function queueRankSync(guid, unit, classToken, result, sourceTag, levelCel
 
     -- Stage-3 cheap-field capture (all feature-detected, all pcall-guarded;
     -- anything unresolvable degrades to ""/0, never a raise).
-    local guild = captureGuildName(unit)
+    local guild = captureGuildName(liveUnit or unit)
+    if guild == "" and type(meta) == "table" and type(meta.guild) == "string" and meta.guild ~= "" then
+        guild = meta.guild
+    end
     local level = captureLevelNumber(levelCell)
-    if Core.IsSecretValue(level) then level = 0 end
-    local specID = captureSpecID(unit)
-    local pvpRank, arena = capturePvPFields(unit)
+    if isSecretValue(level) then level = 0 end
+    if level == 0 and type(meta) == "table" and type(meta.level) == "number" and meta.level > 0 then
+        level = math.floor(meta.level)
+    end
+    local specID = liveUnit and captureSpecID(liveUnit) or 0
+    if specID == 0 and type(meta) == "table" and type(meta.specID) == "number" and meta.specID > 0 then
+        specID = math.floor(meta.specID)
+    end
+    local pvpRank, arena = 0, 0
+    if liveUnit then
+        pvpRank, arena = capturePvPFields(liveUnit)
+    elseif type(meta) == "table" then
+        pvpRank = tonumber(meta.pvpRank) or 0
+        arena = tonumber(meta.arena) or 0
+    end
+
+    local db = namespace.RankDB
+    local existing = type(db) == "table" and type(db.GetRecord) == "function" and db.GetRecord(guid) or nil
+    if type(existing) == "table" then
+        if not pName and isUsablePlayerName(existing.name) then
+            pName = existing.name
+        end
+        if pFaction == "Unknown" and (existing.faction == "Alliance" or existing.faction == "Horde") then
+            pFaction = existing.faction
+        end
+        if guild == "" and type(existing.guild) == "string" and existing.guild ~= "" then
+            guild = existing.guild
+        end
+        if level == 0 and type(existing.level) == "number" and existing.level > 0 then
+            level = existing.level
+        end
+    end
 
     rankSync.QueueInspectRecord({
         guid = guid,
@@ -565,9 +826,9 @@ end
 -- A raising read degrades to the blocked cell the function already builds
 -- for an unreadable value, so the scan still publishes a result -- with the
 -- class or the level marked unavailable -- instead of dying.
-local function capturePlayerCells(unit)
+local function capturePlayerCells(unit, guid, meta)
     local classToken
-    if type(UnitClass) == "function" then
+    if type(UnitClass) == "function" and not isSecretValue(unit) and type(unit) == "string" and unit ~= "" then
         local ok, _, token = pcall(UnitClass, unit)
         -- UnitClass's class token is ConditionalSecret under
         -- SecretWhenUnitIdentityRestricted, and UnitLevel is
@@ -579,28 +840,57 @@ local function capturePlayerCells(unit)
         -- and would finally be written into the rank cache as a secret
         -- key/value, marking the table inaccessible. Reject at the capture so
         -- every downstream consumer only ever sees plain values.
-        if ok and token and not Core.IsSecretValue(token) then
+        if ok and token and not isSecretValue(token) then
             classToken = token
         end
     end
 
     local level
-    if type(UnitLevel) == "function" then
+    if type(UnitLevel) == "function" and not isSecretValue(unit) and type(unit) == "string" and unit ~= "" then
         local ok, value = pcall(UnitLevel, unit)
-        if ok and value and not Core.IsSecretValue(value) then
+        if ok and value and not isSecretValue(value) then
             level = value
         end
     end
 
-    if (not classToken or not level) and inspector and type(inspector.GetUnitData) == "function" then
-        local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
+    if type(meta) == "table" then
+        if not classToken and not isSecretValue(meta.classToken) and type(meta.classToken) == "string" and meta.classToken ~= "" then
+            classToken = meta.classToken
+        end
+        if (not level or not isNonnegativeInteger(level) or level <= 0)
+            and not isSecretValue(meta.level) and isNonnegativeInteger(meta.level) and meta.level > 0 then
+            level = meta.level
+        end
+    end
+
+    if (not classToken or not level or (type(level) == "number" and level <= 0))
+        and inspector and type(inspector.GetUnitData) == "function" then
+        local lookupKey = (type(guid) == "string" and guid ~= "") and guid or unit
+        local okData, cached = pcall(inspector.GetUnitData, inspector, lookupKey)
         if okData and type(cached) == "table" then
-            if not classToken and cached.class and not Core.IsSecretValue(cached.class) then
+            if not classToken and cached.class and not isSecretValue(cached.class) then
                 classToken = cached.class
             end
-            if not level and cached.level and not Core.IsSecretValue(cached.level) then
+            if (not level or (type(level) == "number" and level <= 0))
+                and cached.level and not isSecretValue(cached.level) then
                 level = cached.level
             end
+        end
+    end
+
+    if not classToken and type(guid) == "string" and guid ~= "" then
+        local gClass = resolvePlayerInfoByGUID(guid)
+        if gClass then
+            classToken = gClass
+        end
+    end
+
+    if type(meta) == "table" then
+        if type(classToken) == "string" and not isSecretValue(classToken) and classToken ~= "" then
+            meta.classToken = classToken
+        end
+        if isNonnegativeInteger(level) and level > 0 then
+            meta.level = level
         end
     end
 
@@ -979,7 +1269,8 @@ local function captureSlot(
     temporaryWeaponEffect,
     targetGeneration,
     priorPending,
-    nextPending
+    nextPending,
+    slotCache
 )
     -- The two inventory reads are pcall-guarded for the same reason as every
     -- other client read in this file: this function runs inside the library's
@@ -993,14 +1284,14 @@ local function captureSlot(
     local rawItemID
     if type(GetInventoryItemID) == "function" then
         local ok, value = pcall(GetInventoryItemID, unit, slotID)
-        if ok and not Core.IsSecretValue(value) then
+        if ok and not isSecretValue(value) then
             rawItemID = value
         end
     end
     local nativeLink
     if type(GetInventoryItemLink) == "function" then
         local ok, value = pcall(GetInventoryItemLink, unit, slotID)
-        if ok and not Core.IsSecretValue(value) and value then
+        if ok and not isSecretValue(value) and value then
             nativeLink = value
         end
     end
@@ -1008,7 +1299,7 @@ local function captureSlot(
         local okMixin, mixin = pcall(inspector.GetInventoryItemMixin, inspector, unit, slotID)
         if okMixin and type(mixin) == "table" and type(mixin.GetItemLink) == "function" then
             local okLink, link = pcall(mixin.GetItemLink, mixin)
-            if okLink and not Core.IsSecretValue(link) and type(link) == "string" and link ~= "" then
+            if okLink and not isSecretValue(link) and type(link) == "string" and link ~= "" then
                 nativeLink = link
             end
         end
@@ -1017,7 +1308,7 @@ local function captureSlot(
         local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
         if okData and type(cached) == "table" and type(cached.items) == "table" then
             local link = cached.items[slotID]
-            if not Core.IsSecretValue(link) and type(link) == "string" and link ~= "" then
+            if not isSecretValue(link) and type(link) == "string" and link ~= "" then
                 nativeLink = link
             end
         end
@@ -1029,6 +1320,27 @@ local function captureSlot(
         local parsedID = extracted and tonumber(extracted) or nil
         if isPositiveInteger(parsedID) then
             effectiveItemID = parsedID
+        end
+    end
+
+    if type(slotCache) == "table" then
+        local priorSlot = slotCache[slotID]
+        if effectiveItemID == nil and nativeLink == nil and type(priorSlot) == "table" then
+            rawItemID = priorSlot.rawItemID
+            nativeLink = priorSlot.nativeLink
+            effectiveItemID = isPositiveInteger(rawItemID) and rawItemID or nil
+            if effectiveItemID == nil and type(nativeLink) == "string" then
+                local extracted = string.match(nativeLink, "item:(%d+)")
+                local parsedID = extracted and tonumber(extracted) or nil
+                if isPositiveInteger(parsedID) then
+                    effectiveItemID = parsedID
+                end
+            end
+        elseif effectiveItemID ~= nil or nativeLink ~= nil then
+            slotCache[slotID] = {
+                rawItemID = effectiveItemID or (type(priorSlot) == "table" and priorSlot.rawItemID) or rawItemID,
+                nativeLink = nativeLink or (type(priorSlot) == "table" and priorSlot.nativeLink) or nil,
+            }
         end
     end
 
@@ -1330,6 +1642,9 @@ captureRemoteBody = function(context)
         return failRemote(context, "inventory-api-unavailable")
     end
 
+    context.meta = context.meta or {}
+    context.capturedSlots = context.capturedSlots or {}
+
     local unit = resolveRemoteUnit(context.guid, context.unit)
     if not unit then
         if inspector and type(inspector.GetUnitData) == "function" then
@@ -1339,12 +1654,16 @@ captureRemoteBody = function(context)
             end
         end
     end
+    if not unit and context.hasCapturedSnapshot == true then
+        unit = context.guid
+    end
     if not unit then
         return failRemote(context, "remote-unit-unavailable")
     end
     context.unit = unit
 
-    local classToken, level = capturePlayerCells(unit)
+    snapshotRemoteMeta(context.meta, unit, context.guid)
+    local classToken, level = capturePlayerCells(unit, context.guid, context.meta)
     local priorPending = context.pendingItems
     local nextPending = {}
     local slots = {}
@@ -1362,7 +1681,8 @@ captureRemoteBody = function(context)
             remoteTemporary,
             context.generation,
             priorPending,
-            nextPending
+            nextPending,
+            context.capturedSlots
         )
         if not callOK then
             return failRemote(context, "inventory-read-failed")
@@ -1376,6 +1696,7 @@ captureRemoteBody = function(context)
             slots[slotID] = slot
         end
     end
+    context.hasCapturedSnapshot = true
 
     if not remoteContextIsCurrent(context) then
         return false
@@ -1419,7 +1740,7 @@ captureRemoteBody = function(context)
         if type(context.itemsRev) == "number" and context.itemsRev > 0 then
             remoteItemRevs[context.guid] = context.itemsRev
         end
-        queueRankSync(context.guid, unit, classToken, result, "inspect", level)
+        queueRankSync(context.guid, unit, classToken, result, "inspect", level, context.meta)
     end
     return published
 end
@@ -1485,7 +1806,7 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
         if type(freshEntry) == "table"
             and freshEntry.state == "complete"
             and type(freshEntry.revision) == "table" then
-            local classCell, levelCell = capturePlayerCells(resolved)
+            local classCell, levelCell = capturePlayerCells(resolved, guid)
             local existingClass = type(freshEntry.revision.classToken) == "table" and freshEntry.revision.classToken.value or nil
             local curClass = type(classCell) == "table" and classCell.value or nil
             local existingLevel = type(freshEntry.revision.level) == "table" and freshEntry.revision.level.value or nil
@@ -1493,18 +1814,29 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
             if (curClass == nil or existingClass == curClass)
                 and (curLevel == nil or existingLevel == curLevel) then
                 remoteCacheSkips = remoteCacheSkips + 1
+                if namespace.RankDB
+                    and type(namespace.RankDB.GetRecord) == "function"
+                    and namespace.RankDB.GetRecord(guid) == nil then
+                    local skipMeta = {}
+                    snapshotRemoteMeta(skipMeta, resolved, guid)
+                    queueRankSync(guid, resolved, freshEntry.revision.classToken, freshEntry.result, "inspect", freshEntry.revision.level, skipMeta)
+                end
                 return true
             end
         end
     end
 
     remoteGeneration = remoteGeneration + 1
+    local meta = {}
+    snapshotRemoteMeta(meta, resolved, guid)
     local context = {
         guid = guid,
         generation = remoteGeneration,
         unit = resolved,
         pendingItems = {},
         itemsRev = curItemsRev,
+        meta = meta,
+        capturedSlots = {},
     }
     remoteContexts[guid] = context
     remoteItemRevs[guid] = nil
