@@ -1,7 +1,7 @@
 ---
 name: wow-api-auditor
-description: Verifies Blizzard WoW API signatures, generated-documentation entries, presence, secret-value annotations, secret-value power-bar handling for UnitPowerMax and UnitPower, combat-restricted aura tooltip passthrough rules, nested generated-doc blocks via awk Name-to-close range reads, and Forever ClassTalentsFrame/PlayerSpells inspect paths across Classic Era, Anniversary, Titan, Forever, and Live clients using read-only origin/<branch> reads of the local FrameXML checkout.
-whenToUse: Use when you need to confirm an API's signature, generated-documentation entry, availability, secret annotation, or aura tooltip passthrough behavior differs across WoW client families; to trace Forever inspect/trait-config paths (ClassTalentsFrame RefreshConfigID, PlayerSpells inspectUnit, INSPECT_TRAIT_CONFIG_ID/TraitConsts, TraitConfigInfo); when grep -A truncates or returns no output for nested documentation blocks and an awk Name-to-close range read is needed; to audit addon code for unsafe secret/combat handling and direct protected-function calls (CanInspect, CheckInteractDistance); to fix or audit the tooltip power bar that shows when UnitPowerMax/UnitPower are secret values on Forever/Live; or when luacheck reports W113 for issecretvalue, without mutating the checkout.
+description: Verifies Blizzard WoW API signatures, generated-documentation entries, presence, secret-value annotations, cross-client presence and gating of issecretvalue/canaccessvalue/canaccesstable, secret-value power-bar handling for UnitPowerMax and UnitPower, combat-restricted aura tooltip passthrough rules, nested generated-doc blocks via awk Name-to-close range reads, and Forever ClassTalentsFrame/PlayerSpells inspect paths across Classic Era, Anniversary, Titan, Forever, and Live clients using read-only origin/<branch> reads of the local FrameXML checkout.
+whenToUse: Use when you need to confirm an API's signature, generated-documentation entry, availability, secret annotation, or aura tooltip passthrough behavior differs across WoW client families; to trace Forever inspect/trait-config paths (ClassTalentsFrame RefreshConfigID, PlayerSpells inspectUnit, INSPECT_TRAIT_CONFIG_ID/TraitConsts, TraitConfigInfo); when grep -A truncates or returns no output for nested documentation blocks and an awk Name-to-close range read is needed; to audit addon code for unsafe secret/combat handling and direct protected-function calls (CanInspect, CheckInteractDistance); to fix or audit the tooltip power bar that shows when UnitPowerMax/UnitPower are secret values on Forever/Live; to verify that issecretvalue, canaccessvalue, and canaccesstable are present and ungated on all five client families before using them without client guards; when harness and release-gate evidence is required before allowing unconditional use; or when luacheck reports W113 for issecretvalue, without mutating the checkout.
 ---
 
 # WoW API Auditor Skill
@@ -250,6 +250,51 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
        ```
        A bare `luacheck main.lua Tests/harness/tooltip_test.lua --codes` must not show `W113 accessing undefined variable 'issecretvalue'`; if it does, the `read_globals` declaration is missing — fix the declaration, do not reach for `_G.`.
 
+15. **Cross-client verification of secret helpers before unconditional use.** Verify that `issecretvalue`, `canaccessvalue`, and `canaccesstable` are documented and callable on all five supported branches, and that the Classic families do not gate them with `SecretArguments` or `SecretWhen` annotations:
+    ```bash
+    cd /home/sam/wow-ui-source
+    for b in origin/classic_era origin/classic_anniversary origin/classic_titan origin/forever origin/live; do
+      doc="$b:Interface/AddOns/Blizzard_APIDocumentationGenerated/FrameScriptDocumentation.lua"
+      printf "%-24s " "$b"
+      for fn in issecretvalue canaccessvalue canaccesstable; do
+        printf "%s=%s " "$fn" "$(git show "$doc" | grep -c "Name = \"$fn\"")"
+      done
+      printf "SecretArguments=%s SecretWhen=%s\n" \
+        "$(git show "$doc" | grep -c 'SecretArguments')" \
+        "$(git show "$doc" | grep -c 'SecretWhen')"
+    done
+    ```
+    Expected: each helper has count `1` on every branch. Classic Era, Anniversary, and Titan report `SecretArguments=0` and `SecretWhen=0`. Forever and Live report helper blocks with `AllowedWhenUntainted` gating and `SecretWhen` annotations. Then tie the gating to the helper itself rather than the whole documentation file:
+    ```bash
+    cd /home/sam/wow-ui-source
+    for b in origin/classic_era origin/classic_anniversary origin/classic_titan origin/forever origin/live; do
+      echo "== $b"
+      doc="$b:Interface/AddOns/Blizzard_APIDocumentationGenerated/FrameScriptDocumentation.lua"
+      git show "$doc" | awk '/Name = "issecretvalue"/,/^\t\t},$/ {print}' | grep -E 'Name = |Secret|Arguments|Returns'
+    done
+    ```
+    Do not declare the helpers usable without family gating from source presence alone; complete step 16 first.
+
+16. **No family gating on secret helpers.** After confirming availability, inspect the addon helper definitions and their immediate guards:
+    ```bash
+    grep -n -B6 -A16 'function TT\.isSecretValue\|function TT\.tooltipDataReadable' main.lua
+    ```
+    The definitions must not be guarded by `isForever`, `isRetail`, `isClassic`, `isTitan`, or similar client-family predicates. A helper-definition excerpt containing such a guard is a failure. Then run focused gates and release verification; do not claim completion if any gate fails:
+    ```bash
+    cd /home/sam/TacoTip-Gearscore-TBC
+    for fam in "2 11509 CLASSIC_ERA" "5 20506 TBC_ANNIV" "11 38002 TITANFORGE" "1 16001 FOREVER pipeline" "1 120105 RETAIL pipeline"; do
+      lua5.1 Tests/harness/tooltip_test.lua $fam
+    done
+    lua5.1 Tests/harness/forever_tooltip_test.lua
+    lua5.1 Tests/harness/font_test.lua
+    LUA=lua5.1 bash Tests/harness/run_all.sh
+    LUA=luajit bash Tests/harness/run_all.sh
+    LUA=lua5.4 bash Tests/harness/run_all.sh
+    luacheck .
+    bash Tools/verify_release.sh --worktree
+    ```
+    Report exact pass/fail counts and any failing gate. Only state that `issecretvalue`, `canaccessvalue`, and `canaccesstable` may be used unconditionally after all of the above pass.
+
 ## Pitfalls
 
 - **Never run `git checkout`.** It mutates the working tree and invalidates parallel branch reads. Always use `origin/<branch>:path` or `git grep <ref>`.
@@ -275,6 +320,10 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - **Do not compare `UnitPowerMax` with `> 0` before checking secrecy.** On Forever/Live the value is secret when the unit's power is restricted (`SecretWhenUnitPowerRestricted`); the comparison itself is unsafe. Check `issecretvalue` first and return true for secret values.
 - **Do not drop secret power values before StatusBar.** `SetMinMaxValues`/`SetValue` accept secret arguments. Pass the raw values through uncompared — comparing, converting to a number/string, or logging them first breaks the Forever/Live path.
 - **Do not ship a power-bar gate without a secret-mock pin and mutant proof.** If a `UnitPowerMax > 0` mutant does not fail the pins, the pins do not cover the secret path.
+- **Do not family-gate secret helpers.** Classic Era, Anniversary, and Titan expose `issecretvalue`, `canaccessvalue`, and `canaccesstable` too. Guarding their use with `isForever` or `isRetail` incorrectly implies Classic clients lack support.
+- **Presence count is not gating count.** A nonzero `SecretArguments` count on Forever/Live can come from other APIs. Tie gating to the `issecretvalue` helper block and report the Classic families as zero.
+- **Do not claim unconditional use from source presence alone.** Availability in `wow-ui-source` does not prove addon behavior. Complete the harness, luacheck, and release-gate evidence in step 16 first.
+- **Classic era is not the only Classic client.** The branch set includes `classic_era`, `classic_anniversary`, and `classic_titan`; do not treat `classic_era` alone as representative of all Classic families.
 
 ## Verification
 
@@ -294,3 +343,6 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - Tooltip harness passes for FOREVER and RETAIL with secret-value pins, a `UnitPowerMax > 0` mutant fails those pins (red), and the restored helper returns to green.
 - Nested `SpecializationInfoDocumentation` and `SharedTraitsDocumentation` blocks are extracted with awk Name-to-close ranges and report full fields verbatim, including TalentInfoQuery groupIndex, isInspect, and tier and TalentInfoResult fields.
 - The Forever inspect chain cites `TraitConstantsDocumentation.lua:352` (`INSPECT_TRAIT_CONFIG_ID = -1`) and `Blizzard_ClassTalentsFrame.lua:887` (`SetConfigID(...INSPECT_TRAIT_CONFIG_ID...)`).
+- Cross-client secret helper verification lists all five branches with presence counts `1` for `issecretvalue`, `canaccessvalue`, and `canaccesstable`, reports zero `SecretArguments` and zero `SecretWhen` on Classic Era, Anniversary, and Titan, and reports `AllowedWhenUntainted` gating plus `SecretWhen` annotations on Forever and Live.
+- Secret helper definitions in `main.lua` have no `isForever`, `isRetail`, `isClassic`, or `isTitan` guards.
+- Focused harness, full suite on three interpreters, `luacheck`, and `Tools/verify_release.sh --worktree` all pass before claiming that the secret helpers may be used unconditionally.
