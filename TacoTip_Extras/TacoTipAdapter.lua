@@ -748,10 +748,12 @@ local function captureEquipmentCompatibility(contextKey)
     local configValid = equipmentConfigValid(config)
     -- Same probe as the tooltip surface: the functions we call, never a version
     -- number the library never published.
-    local inspectorValid, inspectorMissing = probeCapabilities(
+    local inspectorValid, inspectorMissing, inspectorPresent = probeCapabilities(
         library,
         INSPECTOR_CAPABILITIES
     )
+    local inspectorCapsSummary = inspectorValid and "complete"
+        or missingSignature(inspectorMissing)
     local common = isTacoTipLoaded()
         and versionAtLeast(getMetadataVersion(), MINIMUM_TACOTIP_VERSION)
         and type(tacoTip) == "table"
@@ -791,8 +793,7 @@ local function captureEquipmentCompatibility(contextKey)
         "existing-fonts", tostring(existingFonts),
         "hook", tostring(hook),
         "lci", tostring(libraryVersion or "unpublished"),
-        "lci-caps", inspectorValid and "complete"
-            or missingSignature(inspectorMissing),
+        "lci-caps", inspectorCapsSummary,
         "config-types",
         type(config) == "table" and type(config.show_gs_character) or "missing",
         type(config) == "table" and type(config.show_avg_ilvl) or "missing",
@@ -820,6 +821,8 @@ local function captureEquipmentCompatibility(contextKey)
         initPath = initPath,
         inspector = library,
         inspectorVersion = libraryVersion,
+        inspectorCapabilitiesPresent = inspectorPresent,
+        inspectorCapabilitiesMissing = inspectorMissing,
         refreshHookInstalled = false,
         initHookInstalled = false,
     }
@@ -2350,6 +2353,8 @@ function Adapter.GetEquipmentSurfaceDiagnostics(contextKey)
         capturedMovers = capturedMovers,
         inspectorVersion = captured and captured.inspectorVersion or nil,
         inspectorCallbackRegistered = callbackRegistered == true,
+        inspectorCapabilitiesPresent = captured and captured.inspectorCapabilitiesPresent or {},
+        inspectorCapabilitiesMissing = captured and captured.inspectorCapabilitiesMissing or {},
         initPath = captured and captured.initPath or nil,
         refreshHookInstalled = captured
             and captured.refreshHookInstalled == true

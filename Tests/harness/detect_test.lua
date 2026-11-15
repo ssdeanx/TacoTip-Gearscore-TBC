@@ -3368,6 +3368,118 @@ do
         next(ciLC.inspectOutOfRange) == nil and ciLC._scanPlateCursor == 1)
 end
 
+-- ==========================================================================
+-- 1.0.4 BOUNDED CROSS-RELOAD RECENT INSPECT CACHE (128 entries, 1800s TTL)
+-- ==========================================================================
+do
+    local rcNow = 500
+    local rcEpoch = 1700001000
+    local rcEvents = {}
+    local ciRC = run(P.WOW_PROJECT_BURNING_CRUSADE_CLASSIC, 20506, "slot4", CONSTS, {
+        CreateFrame = function()
+            return {
+                RegisterEvent = function(_, ev) rcEvents[ev] = true end,
+                SetScript = function() end,
+            }
+        end,
+        GetTime = function() return rcNow end,
+        GetServerTime = function() return rcEpoch end,
+        UnitGUID = function(u)
+            if u == "player" then return "Player-self" end
+            return nil
+        end,
+        UnitExists = function() return false end,
+    })
+
+    check("1.0.4 recentCache constants: cap=128, ttl=1800",
+        ciRC.RECENT_CACHE_MAX_ENTRIES == 128 and ciRC.RECENT_CACHE_TTL == 1800)
+
+    -- Populate 135 complete inspect records and export + prune to top 128 newest
+    local store = {}
+    for i = 1, 135 do
+        local g = string.format("Player-5555-%06X", i)
+        ciRC.cache[g] = {
+            items = { [1] = "item:19019", [16] = "item:22691" },
+            _itemsRev = i,
+            time = rcNow - (135 - i),
+            savedAt = rcEpoch - (135 - i),
+            name = "Recent" .. i,
+            realm = "Faerlina",
+            class = "WARRIOR",
+            level = 70,
+            faction = "Alliance",
+            guild = "G" .. i,
+            specName = "Arms",
+            specIndex = 1,
+            talentPoints = { [1] = { 33, 28, 0 } },
+        }
+        local exp = ciRC:ExportRecentEntry(g)
+        if exp then store[g] = exp end
+    end
+    -- Include self / expired / secret entries that must be stripped
+    ciRC.cache["Player-self"] = { items = { [1] = "item:1" }, time = rcNow, savedAt = rcEpoch }
+    store["Player-expired"] = { t = rcEpoch - 2000, i = { [1] = "item:1" } }
+    store["Player-bad"] = { t = "not-a-number", i = {} }
+
+    local kept = ciRC:PruneAndTrimRecentTable(store)
+    check("1.0.4 recentCache: exports exclude self, prune expired/bad, cap at 128 newest",
+        ciRC:ExportRecentEntry("Player-self") == nil
+        and kept == 128
+        and store["Player-expired"] == nil
+        and store["Player-bad"] == nil
+        and store[string.format("Player-5555-%06X", 1)] == nil
+        and store[string.format("Player-5555-%06X", 7)] == nil
+        and type(store[string.format("Player-5555-%06X", 8)]) == "table"
+        and type(store[string.format("Player-5555-%06X", 135)]) == "table",
+        "kept=" .. tostring(kept))
+
+    -- Reload simulation: fresh client boot (rcNow = 10, epoch advanced by 600s)
+    -- Age for entry 135 was 0s -> now 600s (within 1800s TTL, >300s freshness);
+    -- Add a brand-new 60s-old entry so both <300s fresh and 300..1800s scorable paths are verified.
+    rcNow = 10
+    rcEpoch = rcEpoch + 600
+    store["Player-5555-00FFFF"] = {
+        t = rcEpoch - 60,
+        i = { [1] = "|cffff8000|Hitem:19019::::::::70|h[Thunderfury]|h|r" },
+        ir = 9,
+        nm = "FreshReload",
+        cl = "PALADIN",
+        lv = 70,
+        fa = "Alliance",
+        sn = "Protection",
+        sx = 2,
+    }
+    -- Seed a newer live entry that RestoreRecentCache must NOT overwrite
+    ciRC.cache = {
+        [string.format("Player-5555-%06X", 135)] = {
+            items = { [1] = "item:99999" },
+            _itemsRev = 999,
+            time = rcNow,
+            savedAt = rcEpoch,
+        },
+    }
+    local restoredCount = ciRC:RestoreRecentCache(store)
+    local restoredOlder = ciRC:GetUnitData(string.format("Player-5555-%06X", 134))
+    local _, olderCacheTime = ciRC:GetLastCacheTime(string.format("Player-5555-%06X", 134))
+    local newerPreserved = ciRC:GetUnitData(string.format("Player-5555-%06X", 135))
+    check("1.0.4 recentCache restore: trims to 128, preserves fresher live record, restores <300s fresh and 300-1800s readable (non-zero GetLastCacheTime)",
+        restoredCount == 127
+        and store[string.format("Player-5555-%06X", 8)] == nil
+        and ciRC:IsCacheFresh("Player-5555-00FFFF") == true
+        and type(restoredOlder) == "table"
+        and restoredOlder.name == "Recent134"
+        and restoredOlder.items[1] == "item:19019"
+        and olderCacheTime ~= 0
+        and ciRC:IsCacheFresh(string.format("Player-5555-%06X", 134)) == false
+        and newerPreserved and newerPreserved._itemsRev == 999 and newerPreserved.items[1] == "item:99999",
+        ("restored=%s fresh60=%s fresh601=%s olderTime=%s"):format(
+            tostring(restoredCount),
+            tostring(ciRC:IsCacheFresh("Player-5555-00FFFF")),
+            tostring(ciRC:IsCacheFresh(string.format("Player-5555-%06X", 69))),
+            tostring(olderCacheTime)))
+    local _ = rcEvents
+end
+
 STD.io.write(table.concat(results, "\n") .. "\n")
 STD.io.write("\n" .. (allok and "ALL PASS" or "*** FAILURES ***") .. "\n")
 STD.os.exit(allok and 0 or 1)

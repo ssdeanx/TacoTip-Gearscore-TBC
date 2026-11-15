@@ -1813,7 +1813,11 @@ function Tooltips.Initialize(runtimeSettings)
     localListener = localPublished
     remoteListener = remotePublished
     Scanner.Subscribe(localListener)
-    Cache.Subscribe(remoteListener)
+    if type(Scanner.SubscribeRemote) == "function" then
+        Scanner.SubscribeRemote(remoteListener)
+    else
+        Cache.Subscribe(remoteListener)
+    end
 
     if type(_G.TooltipDataProcessor) == "table"
         and type(_G.TooltipDataProcessor.AddTooltipPostCall) == "function"
@@ -1885,7 +1889,11 @@ function Tooltips.Shutdown()
         Scanner.Unsubscribe(localListener)
     end
     if remoteListener then
-        Cache.Unsubscribe(remoteListener)
+        if type(Scanner.UnsubscribeRemote) == "function" then
+            Scanner.UnsubscribeRemote(remoteListener)
+        else
+            Cache.Unsubscribe(remoteListener)
+        end
     end
     localListener = nil
     remoteListener = nil

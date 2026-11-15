@@ -212,6 +212,9 @@ function TT:SafeSanitizeConfig(config)
             and config.combat_modifier ~= "CTRL" and config.combat_modifier ~= "ALT") then
         config.combat_modifier = defaults.combat_modifier
     end
+    if (config.recentCache ~= nil and type(config.recentCache) ~= "table") then
+        config.recentCache = nil
+    end
 
     -- Sanitise numeric slider/range keys so out-of-bounds values from
     -- corruption or old versions do not cause layout or logic issues.

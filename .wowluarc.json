@@ -169,7 +169,10 @@
             "multi-return-projection": "error",
             "nil-table-key": "error",
             "nil-index": "error",
-            "need-check-nil": "error"
+            "need-check-nil": "error",
+            "unused-local": "warning",
+            "unused-function": "warning",
+            "unused-vararg": "warning"
         }
     }
 }

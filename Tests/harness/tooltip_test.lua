@@ -6943,6 +6943,54 @@ do
             if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
             bgCI.cache[bgGuid] = savedRec
         end
+
+        -- Pin 1.0.4: main.lua SaveRecentInspectCache / RestoreRecentInspectCache / PLAYER_LOGOUT roundtrip
+        local rcCI = REALG.LibStub and REALG.LibStub("LibForeverInspector")
+        if (rcCI and type(TT.SaveRecentInspectCache) == "function" and type(TT.RestoreRecentInspectCache) == "function") then
+            local savedSrvTime = REALG.GetServerTime
+            local savedRecent = CFG.recentCache
+            local rGuid = "Player-9999-ABCDEF"
+            local prevEntry = rcCI.cache[rGuid]
+            local epNow = 1700500000
+            REALG.GetServerTime = function() return epNow end
+
+            CFG.recentCache = nil
+            rcCI.cache[rGuid] = {
+                items = { [1] = "|cffa335ee|Hitem:28773::::::::70|h[Gorehowl]|h|r" },
+                _itemsRev = 3,
+                time = 500,
+                savedAt = epNow - 40,
+                name = "Reloaded",
+                class = "WARRIOR",
+                level = 70,
+                faction = "Horde",
+            }
+            if (TT.frame and TT.frame:GetScript("OnEvent")) then
+                TT.frame:GetScript("OnEvent")(TT.frame, "PLAYER_LOGOUT")
+            else
+                TT:SaveRecentInspectCache()
+            end
+            local savedCount = 0
+            if (type(CFG.recentCache) == "table") then
+                for _ in pairs(CFG.recentCache) do savedCount = savedCount + 1 end
+            end
+            rcCI.cache[rGuid] = nil
+            local restoredN = TT:RestoreRecentInspectCache()
+            local afterRec = rcCI.cache[rGuid]
+            check("1.0.4 main.lua recentCache: PLAYER_LOGOUT persists and RestoreRecentInspectCache rehydrates",
+                savedCount >= 1
+                and restoredN >= 1
+                and type(CFG.recentCache) == "table"
+                and type(CFG.recentCache[rGuid]) == "table"
+                and type(afterRec) == "table"
+                and afterRec.name == "Reloaded"
+                and afterRec.items[1]:find("Gorehowl", 1, true) ~= nil,
+                "savedCount=" .. tostring(savedCount) .. " restoredN=" .. tostring(restoredN))
+
+            rcCI.cache[rGuid] = prevEntry
+            CFG.recentCache = savedRecent
+            REALG.GetServerTime = savedSrvTime
+        end
     end
 
     CFG.tooltip_max_width = prevMaxW

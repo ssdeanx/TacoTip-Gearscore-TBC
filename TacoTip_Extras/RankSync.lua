@@ -950,7 +950,9 @@ function RankSync.QueueInspectRecord(record)
                 end
                 recentInspectBroadcasts[guid] = { sig = sig, at = now }
             end
-            RankSync.BroadcastRecord(record)
+            if record.skipBroadcast ~= true then
+                RankSync.BroadcastRecord(record)
+            end
         end
     end
 end

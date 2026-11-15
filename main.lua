@@ -3078,6 +3078,65 @@ function TT:WarmGearItemData(guid)
     return requested > 0, requested
 end
 
+-- Persist up to 128 recently inspected player snapshots inside TacoTipConfig.recentCache
+-- across /reload and relog (bounded + 30-minute TTL managed by LibForeverInspector).
+function TT:SaveRecentInspectEntry(guid)
+    if (type(TacoTipConfig) ~= "table" or not CI or type(CI.ExportRecentEntry) ~= "function") then
+        return false
+    end
+    local exported = CI:ExportRecentEntry(guid)
+    if (not exported) then
+        return false
+    end
+    if (type(TacoTipConfig.recentCache) ~= "table") then
+        TacoTipConfig.recentCache = {}
+    end
+    TacoTipConfig.recentCache[guid] = exported
+    if (type(CI.PruneAndTrimRecentTable) == "function") then
+        local count = 0
+        for _ in pairs(TacoTipConfig.recentCache) do
+            count = count + 1
+        end
+        if (count > (CI.RECENT_CACHE_MAX_ENTRIES or 128)) then
+            CI:PruneAndTrimRecentTable(TacoTipConfig.recentCache)
+        end
+    end
+    return true
+end
+
+function TT:SaveRecentInspectCache()
+    if (type(TacoTipConfig) ~= "table" or not CI or type(CI.cache) ~= "table" or type(CI.ExportRecentEntry) ~= "function") then
+        return 0
+    end
+    if (type(TacoTipConfig.recentCache) ~= "table") then
+        TacoTipConfig.recentCache = {}
+    end
+    local store = TacoTipConfig.recentCache
+    for guid in pairs(CI.cache) do
+        local exported = CI:ExportRecentEntry(guid)
+        if (exported) then
+            local prev = store[guid]
+            if (type(prev) ~= "table" or type(prev.t) ~= "number" or exported.t >= prev.t) then
+                store[guid] = exported
+            end
+        end
+    end
+    if (type(CI.PruneAndTrimRecentTable) == "function") then
+        return CI:PruneAndTrimRecentTable(store)
+    end
+    return 0
+end
+
+function TT:RestoreRecentInspectCache()
+    if (type(TacoTipConfig) ~= "table" or type(TacoTipConfig.recentCache) ~= "table") then
+        return 0
+    end
+    if (not CI or type(CI.RestoreRecentCache) ~= "function") then
+        return 0
+    end
+    return CI:RestoreRecentCache(TacoTipConfig.recentCache)
+end
+
 -- ---------------------------------------------------------------------------
 -- Forever / Camelot: unit-frame scope and the player's zone row
 -- ---------------------------------------------------------------------------
@@ -4549,7 +4608,7 @@ if (dataPipelineActive(GameTooltip)) then
 end
 TT.HookedTooltipScripts.Unit = TT.HookedTooltipScripts.Unit
     or hookTooltipScripts("OnTooltipSetUnit",
-        function(tooltip, ...)
+        function(tooltip)
             handleTooltipSetUnit(tooltip)
         end,
         { { GameTooltip, "GameTooltip" } })
@@ -6463,7 +6522,7 @@ local function collectActiveUnitSection()
             local cached = CI:GetUnitData(guid)
             if (cached) then
                 local now = (type(GetTime) == "function") and GetTime() or 0
-                local age = (cached.time and cached.time > 0 and now > 0)
+                local age = (cached.time and cached.time ~= 0 and now > 0)
                     and string.format("%.1fs ago", now - cached.time) or "unknown"
                 local cacheStatus = "info"
                 if (cached.incomplete and not cached.retryPending) then cacheStatus = "warn" end
@@ -7851,6 +7910,9 @@ local function onEvent(self, event, ...)
             if (TT.ApplyConfigDefaults) then
                 TT:ApplyConfigDefaults(TacoTipConfig)
             end
+            if (TT.RestoreRecentInspectCache) then
+                TT:RestoreRecentInspectCache()
+            end
             if (TT.InitMinimapIcon) then
                 TT:InitMinimapIcon()
             end
@@ -7970,8 +8032,14 @@ local function onEvent(self, event, ...)
                 TT.clearPawnRetry(guid)
                 TT.clearGearScoreMemo(guid)
                 TT:WarmGearItemData(guid)
+                if (invData and not invData.incomplete) then
+                    TT:SaveRecentInspectEntry(guid)
+                end
             elseif (event == "TALENTS_READY") then
                 TT.clearPawnRetry(guid)
+                if (invData and not invData.incomplete) then
+                    TT:SaveRecentInspectEntry(guid)
+                end
             end
             local ttUnit = resolveTooltipUnit(GameTooltip)
             if (ttUnit and TT.safeEquals(TT.safeUnitGUID(ttUnit), guid)) then
@@ -8003,6 +8071,10 @@ local function onEvent(self, event, ...)
         if (TT.EvaluatePlayerEquipment) then
             TT:EvaluatePlayerEquipment(true)
         end
+    elseif (event == "PLAYER_LOGOUT") then
+        if (TT.SaveRecentInspectCache) then
+            TT:SaveRecentInspectCache()
+        end
     end
 end
 
@@ -8017,6 +8089,7 @@ do
     f:RegisterEvent("UNIT_TARGET")
     f:RegisterEvent("ADDON_LOADED")
     f:RegisterEvent("PLAYER_LOGIN")
+    f:RegisterEvent("PLAYER_LOGOUT")
     CI.RegisterCallback(addOnName, "INVENTORY_READY", function(...) return safeCall(onEvent, f, ...) end)
     CI.RegisterCallback(addOnName, "TALENTS_READY", function(...) return safeCall(onEvent, f, ...) end)
     TT.frame = f

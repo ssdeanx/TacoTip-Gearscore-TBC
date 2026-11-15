@@ -612,6 +612,35 @@ local function scheduleLoginPrune()
     end)
 end
 
+local seedScheduleToken = 0
+local SEED_SLICE_SIZE = 4
+local SEED_SLICE_INTERVAL = 0.05
+
+local function scheduleSeedFromInspector(initialDelay)
+    local scanner = namespace.Scanner
+    if type(scanner) ~= "table"
+        or type(scanner.SeedFromInspectorCache) ~= "function" then
+        return false
+    end
+    seedScheduleToken = seedScheduleToken + 1
+    local token = seedScheduleToken
+    local function step()
+        if token ~= seedScheduleToken then
+            return
+        end
+        local ok, _, remaining = pcall(scanner.SeedFromInspectorCache, SEED_SLICE_SIZE)
+        local left = (ok and type(remaining) == "number") and remaining or 0
+        if left > 0 then
+            scheduleOneShot(SEED_SLICE_INTERVAL, step)
+        end
+    end
+    return scheduleOneShot(initialDelay or 0.25, step)
+end
+
+function Core.RequestInspectorSeed(delay)
+    return scheduleSeedFromInspector(delay or 0)
+end
+
 local function scheduleWelcome(runtimeSettings, initializationSucceeded)
     if welcomeScheduled
         or initializationSucceeded ~= true
@@ -1513,7 +1542,11 @@ local function printDebugSnapshot()
     addChatLine("inspect-ready-errors=" .. tostring(engineStats and engineStats.inspectReadyErrors)
         .. " last-inspect-ready-error=" .. tostring(engineStats and engineStats.lastInspectReadyError))
     addChatLine("scanner-reevaluate-errors=" .. tostring(scannerDebug and scannerDebug.reevaluateErrors)
-        .. " last-scanner-reevaluate-error=" .. tostring(scannerDebug and scannerDebug.lastReevaluateError))
+        .. " last-scanner-reevaluate-error=" .. tostring(scannerDebug and scannerDebug.lastReevaluateError)
+        .. " remote-seeded=" .. tostring(scannerDebug and scannerDebug.remoteSeededCount)
+        .. " stale-contexts-pruned=" .. tostring(scannerDebug and scannerDebug.staleContextsPruned)
+        .. " async-queue=" .. tostring(scannerDebug and scannerDebug.asyncQueueDepth)
+        .. " async-processed=" .. tostring(scannerDebug and scannerDebug.asyncProcessedCount))
     addChatLine("records-rejected=" .. outcomeCount(counts, "recordRejected")
         .. " last-record-rejected-reason="
         .. tostring(syncState and syncState.lastRecordRejectedReason))
@@ -1734,6 +1767,7 @@ local function initialize(self)
     guarded("DebugSnapshot", publishDebugSnapshot)
     guarded("EventRegistration", function()
         self:RegisterEvent("PLAYER_ENTERING_WORLD")
+        self:RegisterEvent("PLAYER_REGEN_ENABLED")
         self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
         self:RegisterEvent("UNIT_INVENTORY_CHANGED")
         self:RegisterEvent("ITEM_DATA_LOAD_RESULT")
@@ -1812,6 +1846,9 @@ local function onEvent(self, event, ...)
         -- (and vice versa), so both are deferred independently.
         scheduleLoginPrune()
         scheduleLocalScan("entering-world")
+        Core.RequestInspectorSeed(0.25)
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        Core.RequestInspectorSeed(0.15)
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         scheduleLocalScan("equipment-changed")
     elseif event == "UNIT_INVENTORY_CHANGED" then

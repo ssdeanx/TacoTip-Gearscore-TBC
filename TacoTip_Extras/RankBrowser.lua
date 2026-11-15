@@ -3245,6 +3245,10 @@ function RankBrowser.Toggle()
             pcall(f.Raise, f)
         end
         f:Show()
+        -- Flush any completed LibForeverInspector snapshots that landed while in a city.
+        if namespace.Core and type(namespace.Core.RequestInspectorSeed) == "function" then
+            pcall(namespace.Core.RequestInspectorSeed, 0.05)
+        end
         -- OnShow already refreshed at the new offset; this is a safety net for
         -- any client where Show does not fire OnShow synchronously.
         RankBrowser.UpdateUI()

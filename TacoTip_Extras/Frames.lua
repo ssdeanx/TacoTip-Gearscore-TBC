@@ -257,6 +257,8 @@ local function cancelInspectExpiry(context)
     end
 end
 
+local scheduleInspectExpiry
+
 local function validPlayerGUID(guid)
     -- Secret test first: `== ""` is a comparison on a secret string (raises), and
     -- the string.match fallback below would run a pattern match over a secret
@@ -945,6 +947,9 @@ local function renderState(context, state)
         context.state = "unavailable"
     end
     showContextBlock(context)
+    if context.key == "inspect" and context.state == "pending" and scheduleInspectExpiry then
+        scheduleInspectExpiry(context)
+    end
 end
 
 local function renderLocal(state)
@@ -1096,6 +1101,53 @@ renderRemote = function(snapshot)
     end
     renderState(context, snapshot.state)
     return true
+end
+
+-- Align inspect panel pending expiry closely with LibForeverInspector's
+-- INSPECT_PENDING_TIMEOUT (1.2s Forever/Retail, 3.0s Classic) so stalled city
+-- item lookups do not block the UI for 8s.
+local INSPECT_PENDING_TIMEOUT_MODERN = 3
+local INSPECT_PENDING_TIMEOUT_CLASSIC = 4
+
+local function inspectPendingTimeout()
+    if type(Core) == "table" then
+        if (type(Core.IsForeverClient) == "function" and Core.IsForeverClient())
+            or (type(Core.IsRetailClient) == "function" and Core.IsRetailClient()) then
+            return INSPECT_PENDING_TIMEOUT_MODERN
+        end
+    end
+    return INSPECT_PENDING_TIMEOUT_CLASSIC
+end
+
+scheduleInspectExpiry = function(context)
+    if not context or context.key ~= "inspect" or context.state ~= "pending" then
+        return false
+    end
+    local expectedGuid = context.guid
+    if type(expectedGuid) ~= "string" or expectedGuid == "" then
+        return false
+    end
+    if type(Core) ~= "table" or type(Core.ScheduleEquipmentExpiry) ~= "function" then
+        return false
+    end
+    local token = {}
+    context.expiryToken = token
+    return Core.ScheduleEquipmentExpiry(inspectPendingTimeout(), function()
+        if context.expiryToken ~= token then
+            return
+        end
+        context.expiryToken = nil
+        if not context.bound or not context.visible or context.state ~= "pending"
+            or context.guid ~= expectedGuid or not inspectPaperDollActive(context) then
+            return
+        end
+        local snapshot = Cache.Get(expectedGuid)
+        if type(snapshot) == "table" and snapshot.state == "complete" then
+            renderRemote(snapshot)
+            return
+        end
+        renderState(context, "unavailable")
+    end)
 end
 
 local function requestLocalScan()
@@ -1586,7 +1638,11 @@ function Frames.Initialize(runtimeSettings)
     localListener = localPublished
     remoteListener = remotePublished
     Scanner.Subscribe(localListener)
-    Cache.Subscribe(remoteListener)
+    if type(Scanner.SubscribeRemote) == "function" then
+        Scanner.SubscribeRemote(remoteListener)
+    else
+        Cache.Subscribe(remoteListener)
+    end
     eventFrame = CreateFrame("Frame")
     eventFrame:SetScript("OnEvent", onEvent)
     eventFrame:RegisterEvent("ADDON_LOADED")
@@ -1709,7 +1765,11 @@ function Frames.Shutdown()
         Scanner.Unsubscribe(localListener)
     end
     if remoteListener then
-        Cache.Unsubscribe(remoteListener)
+        if type(Scanner.UnsubscribeRemote) == "function" then
+            Scanner.UnsubscribeRemote(remoteListener)
+        else
+            Cache.Unsubscribe(remoteListener)
+        end
     end
     localListener = nil
     remoteListener = nil

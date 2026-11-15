@@ -7,7 +7,7 @@ end
 local Cache = {}
 namespace.Cache = Cache
 
-local MAX_ENTRIES = 32
+local MAX_ENTRIES = 128
 -- Matches LibForeverInspector CACHE_REFRESH_DELAY (300s): the library re-inspects
 -- on that cadence, so remote results must stay renderable for the same window.
 -- At 10s the tooltip rows expired and vanished seconds after appearing.

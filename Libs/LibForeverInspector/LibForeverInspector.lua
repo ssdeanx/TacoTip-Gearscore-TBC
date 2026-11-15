@@ -4346,6 +4346,29 @@ local CACHE_FAILED_BACKOFFS = { 1.5, 3.0, 4.0 }
 -- further down, beside the inspect tick; a local declared later is a global
 -- lookup here, not the value.
 local CACHE_EVICT_AGE = 600
+-- Bounded cross-reload cache persisted by TacoTip in TacoTipConfig.recentCache.
+local RECENT_CACHE_MAX_ENTRIES = 128
+local RECENT_CACHE_TTL = 1800
+lib.RECENT_CACHE_MAX_ENTRIES = RECENT_CACHE_MAX_ENTRIES
+lib.RECENT_CACHE_TTL = RECENT_CACHE_TTL
+
+local function epochSeconds()
+    local srv = _G.GetServerTime
+    if (type(srv) == "function") then
+        local ok, v = pcall(srv)
+        if (ok and type(v) == "number" and not isSecretValue(v) and v > 0) then
+            return v
+        end
+    end
+    local clk = _G.time
+    if (type(clk) == "function") then
+        local ok, v = pcall(clk)
+        if (ok and type(v) == "number" and not isSecretValue(v) and v > 0) then
+            return v
+        end
+    end
+    return nil
+end
 
 -- Builds the set of currently referenced unit GUIDs once per eviction sweep,
 -- replacing up to O(N) calls to PlayerGUIDToUnitToken (each scanning 45 unit
@@ -4400,7 +4423,7 @@ local function evictCacheEntries(currentGuid, now)
         if (not live[guid] and type(entry) == "table" and not retrying) then
             local stamp = entry.time or entry.lastAttempt or 0
             local rec = { guid = guid, time = stamp }
-            if (stamp > 0 and (now - stamp) > CACHE_EVICT_AGE) then
+            if (stamp ~= 0 and (now - stamp) > CACHE_EVICT_AGE) then
                 expired = expired or {}
                 expired[#expired + 1] = rec
             elseif (entry.time or entry.incomplete == false or not entry.retryPending) then
@@ -4545,6 +4568,10 @@ local function cacheUnitData(unit, guid, isRetry)
         data.items = staged
         data._itemsRev = (data._itemsRev or 0) + 1
         data.time = now
+        local ep = epochSeconds()
+        if (ep) then
+            data.savedAt = ep
+        end
         data.incomplete = nil
         data.retryCount = nil
         data.retryPending = nil
@@ -6492,6 +6519,282 @@ end
 function lib:GetUnitData(unitorguid)
     local guid = getPlayerGUID(unitorguid)
     return guid and lib.cache[guid] or nil
+end
+
+local function clonePlainNum(v)
+    if (type(v) == "number" and not isSecretValue(v) and v == v and v ~= math.huge and v ~= -math.huge) then
+        return v
+    end
+    return nil
+end
+
+local function clonePlainString(v)
+    if (type(v) == "string" and not isSecretValue(v) and v ~= "") then
+        return v
+    end
+    return nil
+end
+
+local function clonePlainIcon(v)
+    if (isSecretValue(v)) then return nil end
+    if (type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge) then
+        return v
+    end
+    if (type(v) == "string" and v ~= "") then
+        return v
+    end
+    return nil
+end
+
+local function cloneTalentPoints(tp)
+    if (type(tp) ~= "table" or isSecretValue(tp)) then return nil end
+    local out
+    for g = 1, 2 do
+        local grp = tp[g]
+        if (type(grp) == "table" and not isSecretValue(grp)) then
+            local p1 = clonePlainNum(grp[1]) or 0
+            local p2 = clonePlainNum(grp[2]) or 0
+            local p3 = clonePlainNum(grp[3]) or 0
+            out = out or {}
+            out[g] = { p1, p2, p3 }
+        end
+    end
+    return out
+end
+
+local function cloneForeverTalents(ft)
+    if (type(ft) ~= "table" or isSecretValue(ft) or type(ft.groups) ~= "table") then return nil end
+    local groupsOut = {}
+    for g = 1, 2 do
+        local grp = ft.groups[g]
+        if (type(grp) == "table" and not isSecretValue(grp)) then
+            local copyGrp = {
+                active = grp.active == true,
+                points = {},
+            }
+            if (type(grp.points) == "table") then
+                copyGrp.points[1] = clonePlainNum(grp.points[1]) or 0
+                copyGrp.points[2] = clonePlainNum(grp.points[2]) or 0
+                copyGrp.points[3] = clonePlainNum(grp.points[3]) or 0
+            else
+                copyGrp.points = { 0, 0, 0 }
+            end
+            if (type(grp.trees) == "table") then
+                local treesOut = {}
+                for t = 1, 3 do
+                    local tr = grp.trees[t]
+                    if (type(tr) == "table" and not isSecretValue(tr)) then
+                        treesOut[t] = {
+                            name = clonePlainString(tr.name),
+                            icon = clonePlainIcon(tr.icon),
+                            points = clonePlainNum(tr.points) or 0,
+                        }
+                    end
+                end
+                if (#treesOut > 0) then
+                    copyGrp.trees = treesOut
+                end
+            end
+            groupsOut[g] = copyGrp
+        end
+    end
+    if (#groupsOut == 0) then return nil end
+    return {
+        numGroups = clonePlainNum(ft.numGroups) or #groupsOut,
+        groups = groupsOut,
+    }
+end
+
+-- Exports a compact, secret-free, self-excluding snapshot for persistence across
+-- /reload (stored inside TacoTipConfig.recentCache by TacoTip/main.lua).
+function lib:ExportRecentEntry(guid)
+    if (not guid or isSecretValue(guid) or type(guid) ~= "string" or not guid:find("^Player%-")) then
+        return nil
+    end
+    local selfGUID = safeUnitGUID("player")
+    if (selfGUID and safeEquals(guid, selfGUID)) then
+        return nil
+    end
+    local cached = lib.cache[guid]
+    if (type(cached) ~= "table" or cached.incomplete or type(cached.items) ~= "table") then
+        return nil
+    end
+    if (type(cached.time) ~= "number" or cached.time == 0) then
+        return nil
+    end
+    local epNow = epochSeconds()
+    local ep = clonePlainNum(cached.savedAt)
+    if (not ep or ep <= 0) then
+        local monoNow = uptimeSeconds()
+        if (epNow and monoNow) then
+            local elapsed = monoNow - cached.time
+            if (elapsed < 0) then elapsed = 0 end
+            ep = epNow - elapsed
+        elseif (epNow) then
+            ep = epNow
+        end
+    end
+    if (not ep or ep <= 0) then
+        return nil
+    end
+    if (epNow and (epNow - ep) > RECENT_CACHE_TTL) then
+        return nil
+    end
+    local cleanItems = {}
+    for slot = 1, 18 do
+        local link = clonePlainString(cached.items[slot])
+        if (link) then
+            cleanItems[slot] = link
+        end
+    end
+    local sg
+    if (type(cached.specIndexByGroup) == "table" and not isSecretValue(cached.specIndexByGroup)) then
+        for g = 1, 2 do
+            local idx = clonePlainNum(cached.specIndexByGroup[g])
+            if (idx) then
+                sg = sg or {}
+                sg[g] = idx
+            end
+        end
+    end
+    local fa = (cached.faction == "Alliance" or cached.faction == "Horde") and cached.faction or nil
+    local gu = (type(cached.guild) == "string" and not isSecretValue(cached.guild)) and cached.guild or nil
+    return {
+        t = ep,
+        i = cleanItems,
+        ir = clonePlainNum(cached._itemsRev) or 1,
+        tp = cloneTalentPoints(cached.talentPoints),
+        ag = clonePlainNum(cached.activeGroup),
+        sn = clonePlainString(cached.specName),
+        si = clonePlainIcon(cached.specIcon),
+        sd = clonePlainNum(cached.specID),
+        sx = clonePlainNum(cached.specIndex),
+        sg = sg,
+        ap = clonePlainNum(cached.achievements),
+        ft = cloneForeverTalents(cached.foreverTalents),
+        nm = clonePlainString(cached.name),
+        rm = clonePlainString(cached.realm),
+        cl = clonePlainString(cached.class),
+        lv = clonePlainNum(cached.level),
+        fa = fa,
+        gu = gu,
+    }
+end
+
+-- Removes invalid or expired records and trims oldest beyond maxEntries (default 128).
+function lib:PruneAndTrimRecentTable(recentTable, maxEntries, maxAgeSeconds)
+    if (type(recentTable) ~= "table") then return 0 end
+    local cap = (type(maxEntries) == "number" and maxEntries > 0) and maxEntries or RECENT_CACHE_MAX_ENTRIES
+    local maxAge = (type(maxAgeSeconds) == "number" and maxAgeSeconds > 0) and maxAgeSeconds or RECENT_CACHE_TTL
+    local epNow = epochSeconds()
+    local survivors = {}
+    local removeKeys = {}
+    for k, rec in pairs(recentTable) do
+        local valid = (type(k) == "string" and not isSecretValue(k) and k:find("^Player%-") ~= nil
+            and type(rec) == "table" and not isSecretValue(rec)
+            and type(rec.t) == "number" and rec.t > 0 and not isSecretValue(rec.t)
+            and type(rec.i) == "table" and not isSecretValue(rec.i))
+        if (valid and epNow and (epNow - rec.t) > maxAge) then
+            valid = false
+        end
+        if (valid) then
+            survivors[#survivors + 1] = { guid = k, t = rec.t }
+        else
+            removeKeys[#removeKeys + 1] = k
+        end
+    end
+    for i = 1, #removeKeys do
+        recentTable[removeKeys[i]] = nil
+    end
+    local count = #survivors
+    if (count > cap) then
+        table.sort(survivors, function(a, b)
+            if (a.t ~= b.t) then return a.t > b.t end
+            return a.guid < b.guid
+        end)
+        for i = cap + 1, count do
+            recentTable[survivors[i].guid] = nil
+        end
+        count = cap
+    end
+    return count
+end
+
+-- Hydrates lib.cache from a persisted recentTable without overwriting fresher
+-- live entries. Maps epoch timestamps back onto the GetTime clock (never 0) so
+-- <300s entries skip immediate re-inspects across /reload while 300s-1800s entries
+-- remain scorable on hover/seeding and eligible for background refresh.
+function lib:RestoreRecentCache(recentTable, maxAgeSeconds)
+    if (type(recentTable) ~= "table") then return 0 end
+    local maxAge = (type(maxAgeSeconds) == "number" and maxAgeSeconds > 0) and maxAgeSeconds or RECENT_CACHE_TTL
+    lib:PruneAndTrimRecentTable(recentTable, RECENT_CACHE_MAX_ENTRIES, maxAge)
+
+    local epNow = epochSeconds()
+    local monoNow = uptimeSeconds()
+    local selfGUID = safeUnitGUID("player")
+    local restored = 0
+
+    for guid, rec in pairs(recentTable) do
+        if (type(guid) == "string" and not isSecretValue(guid) and (not selfGUID or not safeEquals(guid, selfGUID))) then
+            local age = (epNow and type(rec.t) == "number") and math.max(0, epNow - rec.t) or 0
+            if (age <= maxAge) then
+                local monoTime = monoNow and (monoNow - age) or 1
+                if (monoTime == 0) then
+                    monoTime = -1
+                end
+                local existing = lib.cache[guid]
+                local shouldApply = (existing == nil)
+                    or (existing.incomplete and not existing.time)
+                    or (type(existing.time) == "number" and existing.time < monoTime)
+                if (shouldApply) then
+                    local cleanItems = {}
+                    for slot = 1, 18 do
+                        local link = clonePlainString(rec.i[slot])
+                        if (link) then
+                            cleanItems[slot] = link
+                        end
+                    end
+                    local sg
+                    if (type(rec.sg) == "table" and not isSecretValue(rec.sg)) then
+                        for g = 1, 2 do
+                            local idx = clonePlainNum(rec.sg[g])
+                            if (idx) then
+                                sg = sg or {}
+                                sg[g] = idx
+                            end
+                        end
+                    end
+                    lib.cache[guid] = {
+                        items = cleanItems,
+                        _itemsRev = clonePlainNum(rec.ir) or 1,
+                        time = monoTime,
+                        savedAt = rec.t,
+                        lastAttempt = monoNow or 1,
+                        talentPoints = cloneTalentPoints(rec.tp),
+                        activeGroup = clonePlainNum(rec.ag),
+                        specName = clonePlainString(rec.sn),
+                        specIcon = clonePlainIcon(rec.si),
+                        specID = clonePlainNum(rec.sd),
+                        specIndex = clonePlainNum(rec.sx),
+                        specIndexByGroup = sg,
+                        achievements = clonePlainNum(rec.ap),
+                        foreverTalents = cloneForeverTalents(rec.ft),
+                        name = clonePlainString(rec.nm),
+                        realm = clonePlainString(rec.rm),
+                        class = clonePlainString(rec.cl),
+                        level = clonePlainNum(rec.lv),
+                        faction = (rec.fa == "Alliance" or rec.fa == "Horde") and rec.fa or nil,
+                        guild = (type(rec.gu) == "string" and not isSecretValue(rec.gu)) and rec.gu or nil,
+                    }
+                    restored = restored + 1
+                end
+            end
+        end
+    end
+    if (restored > 0) then
+        evictCacheEntries(nil, monoNow or 0)
+    end
+    return restored
 end
 
 function lib:GetInventoryItemMixin(unitorguid, slot)

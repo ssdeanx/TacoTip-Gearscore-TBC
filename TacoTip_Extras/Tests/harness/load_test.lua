@@ -1795,8 +1795,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.2.9",
-    "TOC ## Version is 1.2.9", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.3.0",
+    "TOC ## Version is 1.3.0", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -10528,6 +10528,347 @@ do
         REALG.C_Timer = savedCTimer
     end)
     runV129Pins()
+
+    -- =======================================================================
+    -- v1.3.0 upgrades: Cache capacity 128, async SeedFromInspectorCache into
+    -- Extras Cache + RankDB without broadcast flood, newer RankDB preservation
+    -- =======================================================================
+    local runV130Pins = function()
+        out(("\n-- v1.3.0 recent-cache seeding & cache capacity --\n"))
+        local CacheV130 = namespace and namespace.Cache
+        local ScannerV130 = namespace and namespace.Scanner
+        local RankDBV130 = namespace and namespace.RankDB
+        local RankSyncV130 = namespace and namespace.RankSync
+        check(CacheV130 and CacheV130.MAX_ENTRIES == 128,
+            "v1.3.0 Cache.MAX_ENTRIES is 128 (holds full raids & 128-entry restored recentCache)",
+            "got=" .. tostring(CacheV130 and CacheV130.MAX_ENTRIES))
+
+        if not (ScannerV130 and RankDBV130 and RankSyncV130 and CacheV130) then
+            return
+        end
+
+        local insp = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+        if not (insp and type(insp.cache) == "table") then
+            return
+        end
+
+        local savedGetUnitData = insp.GetUnitData
+        local savedGetInvID = REALG.GetInventoryItemID
+        local savedGetInvLink = REALG.GetInventoryItemLink
+        local savedGetItemInfo = REALG.C_Item and REALG.C_Item.GetItemInfo or REALG.GetItemInfo
+        local savedGetDetailedIlvl = REALG.C_Item and REALG.C_Item.GetDetailedItemLevelInfo or REALG.GetDetailedItemLevelInfo
+        local savedGetPlayerInfoByGUID = REALG.GetPlayerInfoByGUID
+
+        local SEED_LINK = "|cffa335ee|Hitem:28773::::::::70|h[Gorehowl]|h|r"
+        local g1 = "Player-1300-0000A001"
+        local g2 = "Player-1300-0000A002"
+        local g3 = "Player-1300-0000A003"
+        local now130 = (REALG.GetServerTime and REALG.GetServerTime()) or 2000500
+
+        -- Seed newer record for g3 so SeedFromInspectorCache's older savedAt will not clobber it
+        RankDBV130.StoreRecord({
+            guid = g3,
+            name = "AlreadyNewer",
+            faction = "Horde",
+            class = "WARRIOR",
+            classID = 1,
+            gs = 5500,
+            ilvl = 140,
+            timestamp = now130 - 5,
+            source = "sync",
+        })
+
+        insp.cache[g1] = {
+            items = { [1] = SEED_LINK, [16] = SEED_LINK },
+            _itemsRev = 1,
+            time = 900,
+            savedAt = now130 - 20,
+            name = "SeededOne",
+            class = "PALADIN",
+            level = 70,
+            faction = "Alliance",
+            guild = "SilverHand",
+            specName = "Retribution",
+            specID = 70,
+        }
+        insp.cache[g2] = {
+            items = { [1] = SEED_LINK, [16] = SEED_LINK },
+            _itemsRev = 1,
+            time = 880,
+            savedAt = now130 - 40,
+            name = "SeededTwo",
+            class = "MAGE",
+            level = 70,
+            faction = "Horde",
+            guild = "KirinTor",
+        }
+        insp.cache[g3] = {
+            items = { [1] = SEED_LINK, [16] = SEED_LINK },
+            _itemsRev = 1,
+            time = 860,
+            savedAt = now130 - 60,
+            name = "SeededThree",
+            class = "WARRIOR",
+            level = 70,
+            faction = "Horde",
+        }
+
+        insp.GetUnitData = function(_, u)
+            return insp.cache[u]
+        end
+        REALG.GetInventoryItemID = function(u, slot)
+            local rec = insp.cache[u]
+            return rec and rec.items and rec.items[slot] and 28773 or nil
+        end
+        REALG.GetInventoryItemLink = function(u, slot)
+            local rec = insp.cache[u]
+            return rec and rec.items and rec.items[slot] or nil
+        end
+        local itemInfoFn = function(item)
+            if item == 28773 or item == SEED_LINK or tostring(item):find("28773", 1, true) then
+                return "Gorehowl", SEED_LINK, 4, 115, 70, "Weapon", "Two-Handed Axes", 1, "INVTYPE_2HWEAPON", 132394, 100, 2, 8
+            end
+        end
+        if REALG.C_Item then
+            REALG.C_Item.GetItemInfo = itemInfoFn
+            REALG.C_Item.GetDetailedItemLevelInfo = function(item)
+                if tostring(item):find("28773", 1, true) then return 115 end
+            end
+        end
+        REALG.GetPlayerInfoByGUID = function(g)
+            local r = insp.cache[g]
+            if r then
+                return r.class, r.class, nil, nil, nil, r.name
+            end
+        end
+
+        local queueDepthBefore = (RankSyncV130.GetDebugState and RankSyncV130.GetDebugState().queueDepth) or 0
+        local seeded1, rem1 = ScannerV130.SeedFromInspectorCache(2)
+        local seeded2, rem2 = ScannerV130.SeedFromInspectorCache(2)
+        local queueDepthAfter = (RankSyncV130.GetDebugState and RankSyncV130.GetDebugState().queueDepth) or 0
+        local rec1 = RankDBV130.GetRecord(g1)
+        local rec2 = RankDBV130.GetRecord(g2)
+        local rec3 = RankDBV130.GetRecord(g3)
+        local fresh1 = CacheV130.GetFresh(g1)
+
+        check(seeded1 == 2 and rem1 >= 1 and seeded2 >= 1 and rem2 == 0,
+            "v1.3.0 Scanner.SeedFromInspectorCache processes restored inspector entries in bounded async slices",
+            ("s1=%s r1=%s s2=%s r2=%s"):format(tostring(seeded1), tostring(rem1), tostring(seeded2), tostring(rem2)))
+        check(type(fresh1) == "table" and fresh1.state == "complete"
+                and type(rec1) == "table" and rec1.name == "SeededOne" and rec1.gs > 0
+                and type(rec2) == "table" and rec2.name == "SeededTwo" and rec2.gs > 0
+                and type(rec3) == "table" and rec3.gs == 5500,
+            "v1.3.0 SeedFromInspectorCache populates Cache + RankDB while keeping newer RankDB records intact",
+            ("rec1gs=%s rec2gs=%s rec3gs=%s"):format(
+                tostring(rec1 and rec1.gs), tostring(rec2 and rec2.gs), tostring(rec3 and rec3.gs)))
+        check(queueDepthAfter == queueDepthBefore,
+            "v1.3.0 SeedFromInspectorCache sets skipBroadcast so reloads never flood RankSync queue",
+            ("before=%d after=%d"):format(queueDepthBefore, queueDepthAfter))
+
+        local eqDiag = namespace.TacoTipAdapter
+            and type(namespace.TacoTipAdapter.GetEquipmentSurfaceDiagnostics) == "function"
+            and namespace.TacoTipAdapter.GetEquipmentSurfaceDiagnostics("character")
+            or nil
+        check(type(eqDiag) == "table"
+                and type(eqDiag.inspectorCapabilitiesPresent) == "table"
+                and type(eqDiag.inspectorCapabilitiesMissing) == "table",
+            "v1.3.0 GetEquipmentSurfaceDiagnostics exposes inspectorCapabilitiesPresent and inspectorCapabilitiesMissing",
+            "eqDiag=" .. tostring(type(eqDiag)))
+
+        local remoteSubHits = 0
+        local remoteSubFn = function() remoteSubHits = remoteSubHits + 1 end
+        local subscribedRemote = type(ScannerV130.SubscribeRemote) == "function"
+            and ScannerV130.SubscribeRemote(remoteSubFn)
+        local pendingTimers130 = {}
+        local savedAfter130 = REALG.C_Timer and REALG.C_Timer.After
+        REALG.C_Timer = REALG.C_Timer or {}
+        REALG.C_Timer.After = function(delay, cb)
+            if type(cb) == "function" then
+                pendingTimers130[#pendingTimers130 + 1] = { delay = delay, cb = cb }
+            end
+            return true
+        end
+        local CoreV130 = namespace and namespace.Core
+        local g4 = "Player-1300-0000A004"
+        insp.cache[g4] = {
+            items = { [1] = SEED_LINK, [16] = SEED_LINK },
+            _itemsRev = 1,
+            time = 910,
+            savedAt = now130 - 10,
+            name = "SeededAsync",
+            class = "PRIEST",
+            level = 70,
+            faction = "Alliance",
+        }
+        local reqSeedStarted = CoreV130 and type(CoreV130.RequestInspectorSeed) == "function"
+            and CoreV130.RequestInspectorSeed(0.05)
+        local guard130 = 0
+        while #pendingTimers130 > 0 and guard130 < 8 do
+            local batch = pendingTimers130
+            pendingTimers130 = {}
+            guard130 = guard130 + 1
+            for _, t in ipairs(batch) do
+                t.cb()
+            end
+        end
+        REALG.C_Timer.After = savedAfter130
+        if type(ScannerV130.UnsubscribeRemote) == "function" then
+            ScannerV130.UnsubscribeRemote(remoteSubFn)
+        end
+        local rec4 = RankDBV130.GetRecord(g4)
+        insp.cache[g4] = nil
+        check(reqSeedStarted == true and type(rec4) == "table" and rec4.name == "SeededAsync",
+            "v1.3.0 Core.RequestInspectorSeed drives async SeedFromInspectorCache via C_Timer",
+            ("started=%s rec4=%s"):format(tostring(reqSeedStarted), tostring(rec4 and rec4.name)))
+        check(subscribedRemote ~= nil and remoteSubHits >= 1,
+            "v1.3.0 Scanner.SubscribeRemote receives seeded remote updates",
+            ("sub=%s hits=%d"):format(tostring(subscribedRemote), remoteSubHits))
+
+        if CLIENT_PROFILE.isForever then
+            local savedUnitExists = REALG.UnitExists
+            local savedUnitIsPlayer = REALG.UnitIsPlayer
+            local savedUnitGUID = REALG.UnitGUID
+            local savedUnitName = REALG.UnitName
+            local savedUnitClass = REALG.UnitClass
+            local savedUnitLevel = REALG.UnitLevel
+            local savedAfterBg = REALG.C_Timer and REALG.C_Timer.After
+
+            local bgGuids = {
+                nameplate1 = "Player-1300-0000B001",
+                nameplate2 = "Player-1300-0000B002",
+                nameplate3 = "Player-1300-0000B003",
+                mouseover = "Player-1300-0000B004",
+            }
+            for u, bg in pairs(bgGuids) do
+                insp.cache[bg] = {
+                    items = { [1] = SEED_LINK, [16] = SEED_LINK },
+                    _itemsRev = 1,
+                    time = 920,
+                    savedAt = now130 - 5,
+                    name = "Async_" .. u,
+                    class = "WARRIOR",
+                    level = 70,
+                    faction = "Alliance",
+                }
+            end
+            REALG.UnitExists = function(u)
+                return bgGuids[u] ~= nil or (type(savedUnitExists) == "function" and savedUnitExists(u)) or false
+            end
+            REALG.UnitIsPlayer = function(u)
+                return bgGuids[u] ~= nil or (type(savedUnitIsPlayer) == "function" and savedUnitIsPlayer(u)) or false
+            end
+            REALG.UnitGUID = function(u)
+                if bgGuids[u] then return bgGuids[u] end
+                if u == "player" then return "Player-1300-00000001" end
+                if type(savedUnitGUID) == "function" then return savedUnitGUID(u) end
+                return nil
+            end
+            REALG.UnitName = function(u)
+                local bg = bgGuids[u] or u
+                local rec = insp.cache[bg]
+                if rec then return rec.name, nil end
+                if type(savedUnitName) == "function" then return savedUnitName(u) end
+                return nil
+            end
+            REALG.UnitClass = function(u)
+                local bg = bgGuids[u] or u
+                local rec = insp.cache[bg]
+                if rec then return rec.class, rec.class end
+                if type(savedUnitClass) == "function" then return savedUnitClass(u) end
+                return nil
+            end
+            REALG.UnitLevel = function(u)
+                local bg = bgGuids[u] or u
+                local rec = insp.cache[bg]
+                if rec then return rec.level end
+                if type(savedUnitLevel) == "function" then return savedUnitLevel(u) end
+                return nil
+            end
+
+            local bgTimers = {}
+            REALG.C_Timer = REALG.C_Timer or {}
+            REALG.C_Timer.After = function(delay, cb)
+                if type(cb) == "function" then
+                    bgTimers[#bgTimers + 1] = { delay = delay, cb = cb }
+                end
+                return true
+            end
+
+            local q1 = ScannerV130.HandleInventoryReady("INVENTORY_READY", bgGuids.nameplate1, true, "nameplate1")
+            local q2 = ScannerV130.HandleInventoryReady("INVENTORY_READY", bgGuids.nameplate2, true, "nameplate2")
+            local q3 = ScannerV130.HandleInventoryReady("INVENTORY_READY", bgGuids.nameplate3, true, "nameplate3")
+            local moNow = ScannerV130.HandleInventoryReady("INVENTORY_READY", bgGuids.mouseover, true, "mouseover")
+
+            local bg1Before = CacheV130.Get(bgGuids.nameplate1)
+            local moBefore = CacheV130.Get(bgGuids.mouseover)
+            local dbgBefore = ScannerV130.GetDebugState()
+
+            -- Pump slice 1 (should process 2 background units: nameplate1, nameplate2)
+            local slice1 = bgTimers
+            bgTimers = {}
+            for _, t in ipairs(slice1) do t.cb() end
+            local bg1After1 = CacheV130.Get(bgGuids.nameplate1)
+            local bg3After1 = CacheV130.Get(bgGuids.nameplate3)
+
+            -- Pump slice 2 (should finish nameplate3)
+            local guardBg = 0
+            while #bgTimers > 0 and guardBg < 4 do
+                local batch = bgTimers
+                bgTimers = {}
+                guardBg = guardBg + 1
+                for _, t in ipairs(batch) do t.cb() end
+            end
+            local bg3After2 = CacheV130.Get(bgGuids.nameplate3)
+            local dbgAfter = ScannerV130.GetDebugState()
+
+            check(q1 and q2 and q3 and moNow
+                    and bg1Before and bg1Before.state == "pending"
+                    and moBefore and moBefore.state == "complete"
+                    and dbgBefore and dbgBefore.asyncQueueDepth == 3
+                    and bg1After1 and bg1After1.state == "complete"
+                    and bg3After1 and bg3After1.state == "pending"
+                    and bg3After2 and bg3After2.state == "complete"
+                    and RankDBV130.GetRecord(bgGuids.nameplate3) ~= nil
+                    and dbgAfter and dbgAfter.asyncQueueDepth == 0 and dbgAfter.asyncProcessedCount >= 3,
+                "v1.3.0 WoW Forever: background nameplate captures run in 2-unit async C_Timer slices while mouseover stays immediate",
+                ("depth0=%s bg1pre=%s mo=%s bg1s1=%s bg3s1=%s bg3s2=%s proc=%s"):format(
+                    tostring(dbgBefore and dbgBefore.asyncQueueDepth),
+                    tostring(bg1Before and bg1Before.state),
+                    tostring(moBefore and moBefore.state),
+                    tostring(bg1After1 and bg1After1.state),
+                    tostring(bg3After1 and bg3After1.state),
+                    tostring(bg3After2 and bg3After2.state),
+                    tostring(dbgAfter and dbgAfter.asyncProcessedCount)))
+
+            for _, bg in pairs(bgGuids) do
+                insp.cache[bg] = nil
+            end
+            REALG.UnitExists = savedUnitExists
+            REALG.UnitIsPlayer = savedUnitIsPlayer
+            REALG.UnitGUID = savedUnitGUID
+            REALG.UnitName = savedUnitName
+            REALG.UnitClass = savedUnitClass
+            REALG.UnitLevel = savedUnitLevel
+            if REALG.C_Timer then
+                REALG.C_Timer.After = savedAfterBg
+            end
+        end
+
+        -- Clean up mocks and test rows
+        insp.cache[g1] = nil
+        insp.cache[g2] = nil
+        insp.cache[g3] = nil
+        insp.GetUnitData = savedGetUnitData
+        REALG.GetInventoryItemID = savedGetInvID
+        REALG.GetInventoryItemLink = savedGetInvLink
+        if REALG.C_Item then
+            REALG.C_Item.GetItemInfo = savedGetItemInfo
+            REALG.C_Item.GetDetailedItemLevelInfo = savedGetDetailedIlvl
+        end
+        REALG.GetPlayerInfoByGUID = savedGetPlayerInfoByGUID
+    end
+    runV130Pins()
 end
 
 out(("\n-------------------------------------------------------------\n"))
