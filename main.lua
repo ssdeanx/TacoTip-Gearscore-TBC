@@ -1,6 +1,6 @@
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.3"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.4"
 
 
 
@@ -422,6 +422,8 @@ local safeUnitIsPVP = TT.safeUnitIsPVP
 ---@field inspectRenderTime number|nil -- GetTime() monotonic timestamp of the last inspect render
 ---@field ownerUnitGUID string|nil     -- GUID of the tooltip owner's unit frame token
 ---@field ownerUnitToken string|nil    -- Unit token of the tooltip owner's frame (e.g. "party1")
+---@field wideBottomPadding number|nil -- desired bottom padding (px) for active wide_style unit tooltip
+---@field inTooltipRefreshShow boolean|nil -- re-entrancy guard around layout refresh Show()
 
 -- Inert fallback state for getTooltipState(nil): keeps the documented
 -- "state is always a table" contract so no call site needs a nil check.
@@ -2299,7 +2301,7 @@ end
 -- done between attempts. The next due time is checked on the next render.
 do
     local GS_RETRY_FIRST = 0.5
-    local GS_RETRY_MAX = 8
+    local GS_RETRY_MAX = 2
     local GS_RETRY_CAP = 512
 
     local function pruneRetryLedger(retries, count, now)
@@ -2598,6 +2600,24 @@ end
 local gsCallbackActive = false
 local gsCallbackPending = nil
 
+-- Silently computes and caches a positive GearScore when an asynchronous
+-- item load completes after the cursor has already left that unit, so the
+-- next hover gets an immediate memo hit instead of re-scoring from scratch.
+local function warmGearScoreMemoForGUID(guid)
+    if (not guid or TT.isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return end
+    if (not (CI and type(CI.GetUnitData) == "function")) then return end
+    local gsEngine = _G.TT_GS or GearScore
+    if (not (gsEngine and type(gsEngine.GetScore) == "function")) then return end
+    local okD, data = pcall(CI.GetUnitData, CI, guid)
+    if (not okD or type(data) ~= "table" or not data.items or data.incomplete) then return end
+    if (TT.getGearScoreMemo(guid, data.items)) then return end
+    local okS, gs, ilvl = pcall(gsEngine.GetScore, gsEngine, guid, false)
+    if (okS and type(gs) == "number" and gs > 0 and type(ilvl) == "number") then
+        TT.setGearScoreMemo(guid, data.items, gs, ilvl)
+        TT.ev.gsBackgroundWarm = (TT.ev.gsBackgroundWarm or 0) + 1
+    end
+end
+
 function TacoTip_GSCallback(guid)
     if (not guid or TT.isSecretValue(guid)) then return end
     TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
@@ -2617,11 +2637,13 @@ function TacoTip_GSCallback(guid)
         -- shows that unit" is a normal state (the cursor moved, the tooltip
         -- hid), so it is counted separately and never as a resolution failure.
         TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
+        warmGearScoreMemoForGUID(guid)
         return
     end
     local ttGUID = safeUnitGUID(ttUnit)
     if (not safeEquals(ttGUID, guid)) then
         TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
+        warmGearScoreMemoForGUID(guid)
         return
     end
     gsCallbackActive = true
@@ -2729,6 +2751,40 @@ local function clearPowerBarPadding(tooltip)
     tooltip._tacoTipPadding = nil
 end
 
+---Idempotently applies or clears bottom interior padding on a tooltip.
+---Coordinates with Blizzard's `GameTooltip_CalculatePadding` (which resets
+---padding on `<OnShow>`) by checking live `GetPadding()` when readable while
+---avoiding redundant `SetPadding` calls on settled refreshes.
+---@param tooltip table|nil
+---@param bottomPad number|nil
+function TT:ApplyTooltipBottomPadding(tooltip, bottomPad)
+    if (not tooltip) then
+        return
+    end
+    local target = (type(bottomPad) == "number" and bottomPad > 0) and bottomPad or 0
+    if (target == 0) then
+        clearPowerBarPadding(tooltip)
+        return
+    end
+    if (type(tooltip.SetPadding) ~= "function") then
+        return
+    end
+    local needsWrite = (not tooltip._tacoTipPaddingSet or tooltip._tacoTipPadding ~= target)
+    if (not needsWrite and type(tooltip.GetPadding) == "function") then
+        local okPad, _, curBottom = pcall(tooltip.GetPadding, tooltip)
+        if (okPad and type(curBottom) == "number" and not isSecretValue(curBottom)) then
+            if (math.abs(curBottom - target) > 0.5) then
+                needsWrite = true
+            end
+        end
+    end
+    if (needsWrite) then
+        pcall(tooltip.SetPadding, tooltip, 0, target, 0, 0)
+        tooltip._tacoTipPaddingSet = true
+        tooltip._tacoTipPadding = target
+    end
+end
+
 local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reason, retainModel)
     if (not tooltip) then
         return
@@ -2778,7 +2834,9 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     if (not keepModel) then
         state.portraitSide = nil
         state.portraitAnchored = false
-        for i = 2, 20 do
+        state.wideBottomPadding = nil
+        local maxWideReset = math.max((tooltip.NumLines and tooltip:NumLines()) or 0, 20)
+        for i = 2, maxWideReset do
             local leftLine = getTooltipLeftLine(tooltip, i)
             if (leftLine and leftLine._tacoTipWideAnchor) then
                 leftLine._tacoTipWideAnchor = nil
@@ -3006,8 +3064,10 @@ function TT:WarmGearItemData(guid)
                     -- last == 0 is a real stamp on clients without GetTime, so
                     -- the "not last" test cannot re-request every render there.
                     if (not last or (now > 0 and (now - last) >= GEAR_WARM_COOLDOWN)) then
+                        if (last == nil) then
+                            TT._gearWarmCount = (TT._gearWarmCount or 0) + 1
+                        end
                         warmAt[itemID] = now
-                        TT._gearWarmCount = (TT._gearWarmCount or 0) + 1
                         pcall(request, itemID)
                         requested = requested + 1
                     end
@@ -3225,6 +3285,7 @@ local function onTooltipSetUnit(tooltip, data)
         end
         return
     end
+
     noteOwnerUnitGUID(tooltip)
     -- Guarded: on some clients this method is a Lua shim that dereferences a
     -- namespace which may not be loaded, and an unguarded call here throws
@@ -4127,13 +4188,14 @@ local function onTooltipSetUnit(tooltip, data)
     end
     if (wide_style) then
         local anchorLine = getTooltipLeftLine(tooltip, n)
-        while (n < numLines) do
-            n = n + 1
-            local left = getTooltipLeftLine(tooltip, n)
-            local right = getTooltipRightLine(tooltip, n)
+        local nextAddedIndex = math.max(n, numLines) + 1
+        for i = n + 1, numLines do
+            local left = getTooltipLeftLine(tooltip, i)
+            local right = getTooltipRightLine(tooltip, i)
             if (left) then
                 left:SetText()
                 left:Hide()
+                left._tacoTipWideAnchor = nil
             end
             if (right) then
                 right:SetText()
@@ -4149,24 +4211,33 @@ local function onTooltipSetUnit(tooltip, data)
                 if (tooltip) then tooltip:AddLine(v[1], v[2] or 1, v[3] or 1, v[4] or 1) end
             end
         end
-        local nextLeft = getTooltipLeftLine(tooltip, n + 1)
-        if (nextLeft and anchorLine) then
-            -- Compare the line we anchored last time rather than re-asserting
-            -- unconditionally: both are pooled FontStrings, so on a re-render of
-            -- the same shape they are the same two objects and the point is
-            -- already exactly right. Comparing the anchor object (not a "done"
-            -- flag) is what makes this correct when n moves -- a different pair
-            -- is a different anchor and has to be written.
-            --
-            -- GetNumPoints/GetPoint would read the anchor back more directly,
-            -- but a FontString is a Region and has neither on a real client, so
-            -- that check would hold in the harness and do nothing in game.
-            if (nextLeft._tacoTipWideAnchor ~= anchorLine) then
-                if (nextLeft.ClearAllPoints) then
-                    nextLeft:ClearAllPoints()
+        if (linesToAddCount > 0) then
+            local nextLeft = getTooltipLeftLine(tooltip, nextAddedIndex)
+            if (nextLeft and anchorLine and nextLeft ~= anchorLine) then
+                -- Comparing nextLeft._tacoTipWideAnchor skips redundant SetPoint calls on
+                -- identical re-renders, while verifying GetPoint(1) (when present and
+                -- non-secret) catches Blizzard C++ ClearLines() resetting the point when
+                -- keepModel skips clearing _tacoTipWideAnchor on same-unit refreshes.
+                local alreadyAnchored = (nextLeft._tacoTipWideAnchor == anchorLine)
+                if (alreadyAnchored and type(nextLeft.GetPoint) == "function") then
+                    local okPt, pt, relTo, relPt, offX, offY = pcall(nextLeft.GetPoint, nextLeft, 1)
+                    if (not okPt or isSecretValue(pt) or isSecretValue(relTo) or isSecretValue(relPt) or isSecretValue(offX) or isSecretValue(offY)) then
+                        alreadyAnchored = false
+                    elseif (pt ~= nil) then
+                        local anchorName = anchorLine.GetName and anchorLine:GetName() or nil
+                        local relMatches = (relTo == anchorLine) or (anchorName ~= nil and relTo == anchorName)
+                        alreadyAnchored = (pt == "TOPLEFT" and relMatches and relPt == "BOTTOMLEFT" and offX == 0 and offY == -2)
+                    else
+                        alreadyAnchored = false
+                    end
                 end
-                nextLeft:SetPoint("TOPLEFT", anchorLine, "BOTTOMLEFT", 0, -2)
-                nextLeft._tacoTipWideAnchor = anchorLine
+                if (not alreadyAnchored) then
+                    if (nextLeft.ClearAllPoints) then
+                        nextLeft:ClearAllPoints()
+                    end
+                    nextLeft:SetPoint("TOPLEFT", anchorLine, "BOTTOMLEFT", 0, -2)
+                    nextLeft._tacoTipWideAnchor = anchorLine
+                end
             end
         end
     else
@@ -4319,16 +4390,22 @@ local function onTooltipSetUnit(tooltip, data)
                 end
                 TacoTipPowerBar._tacoTipUnit = tooltipUnit
             end
-            clearPowerBarPadding(tooltip)
+            if (not wide_style) then
+                clearPowerBarPadding(tooltip)
+            end
         else
             TacoTipPowerBar:Hide()
             stopPowerBarTicker()
-            clearPowerBarPadding(tooltip)
+            if (not wide_style) then
+                clearPowerBarPadding(tooltip)
+            end
         end
     elseif (TacoTipPowerBar) then
         TacoTipPowerBar:Hide()
         stopPowerBarTicker()
-        clearPowerBarPadding(tooltip)
+        if (not wide_style) then
+            clearPowerBarPadding(tooltip)
+        end
     end
 
     -- Unconditional in the old code: not even a capability check, let alone a
@@ -4351,6 +4428,25 @@ local function onTooltipSetUnit(tooltip, data)
     applyTooltipMaxWidth(tooltip)
 
     TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
+
+    local wideBottomPad = 0
+    if (wide_style) then
+        local fontSize = (TacoTipConfig and TacoTipConfig.tooltip_font_size) or 12
+        wideBottomPad = 4 + math.max(0, math.floor((fontSize - 12) * 0.5))
+    end
+    local tipState = getTooltipState(tooltip)
+    tipState.wideBottomPadding = (wideBottomPad > 0) and wideBottomPad or nil
+    TT:ApplyTooltipBottomPadding(tooltip, wideBottomPad)
+
+    -- Refresh layout when updating an already-shown tooltip so font size changes,
+    -- wrapping bounds, wide_style continuation anchors, and bottom padding are
+    -- reflected in the frame height immediately.
+    if (tooltip and tooltip.IsShown and tooltip:IsShown()
+            and type(tooltip.Show) == "function" and not tipState.inTooltipRefreshShow) then
+        tipState.inTooltipRefreshShow = true
+        pcall(tooltip.Show, tooltip)
+        tipState.inTooltipRefreshShow = nil
+    end
 end
 
 -- Tells whether a tooltip actually runs the modern data pipeline, as opposed to
@@ -4386,6 +4482,7 @@ local function handleTooltipSetUnit(tooltip, data)
         end
         return
     end
+
     local delay = TacoTipConfig.tooltip_delay or 0
     if (delay > 0 and tooltip == GameTooltip and not InCombatLockdown() and type(NewTimer) == "function") then
         local state = getTooltipState(tooltip)
@@ -4969,6 +5066,14 @@ local function onTooltipShow(tooltip)
             tooltip:Hide()
         end
         return
+    end
+
+    if (state and state.wideBottomPadding and state.wideBottomPadding > 0) then
+        local itemShown = tooltip.ItemTooltip and tooltip.ItemTooltip.IsShown and tooltip.ItemTooltip:IsShown()
+        local bottomShown = tooltip.BottomFontString and tooltip.BottomFontString.IsShown and tooltip.BottomFontString:IsShown()
+        if (not itemShown and not bottomShown) then
+            TT:ApplyTooltipBottomPadding(tooltip, state.wideBottomPadding)
+        end
     end
 
     -- Modern clients: the unit post-call runs before Show(), so the portrait
@@ -7975,7 +8080,7 @@ do
                         return
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
-                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.3")))
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.4")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)

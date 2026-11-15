@@ -3162,6 +3162,212 @@ do
     end
 end
 
+-- 1.0.4: City congestion fixes -- busy-slot DoInspect enqueue + async nameplate slicing
+do
+    local nowBusy = 1000
+    local sentBusy = {}
+    local busyTick
+    local ciBusy = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        UnitExists = function(u) return u == "player" or u == "target" or u == "mouseover" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u) sentBusy[#sentBusy + 1] = u return true end,
+        GetTime = function() return nowBusy end,
+        C_Timer = {
+            NewTicker = function(interval, fn)
+                if (interval == 0.5) then busyTick = fn end
+            end,
+            After = function() end,
+        },
+    })
+    ciBusy:DoInspect("target")
+    -- Advance past INSPECT_DELAY (0.4s) while still inside INSPECT_PENDING_TIMEOUT (1.2s)
+    -- so now >= nextInspectTime AND inspectPendingUnit == "target" is busy.
+    nowBusy = 1000.6
+    local okHoverBusy = ciBusy:DoInspect("mouseover")
+    local stBusy = ciBusy:GetInspectStats()
+    check("1.0.4 DoInspect: mouseover while now >= nextInspectTime and target pending is queued, not dropped",
+        okHoverBusy == true and stBusy.queueLength == 1 and #sentBusy == 1,
+        "ok=" .. tostring(okHoverBusy) .. " qlen=" .. tostring(stBusy.queueLength) .. " sent=" .. #sentBusy)
+    -- Target's inspect finishes (or target is already cached); next tick must drain queued mouseover
+    ciBusy.cache["Player-target"] = { time = nowBusy, items = { [1] = "item:1" } }
+    nowBusy = 1002.0
+    if (busyTick) then busyTick() end
+    check("1.0.4 DoInspect: queued mouseover dispatches once pending slot clears",
+        #sentBusy == 2 and sentBusy[2] == "mouseover",
+        "sent=" .. table.concat(sentBusy, ","))
+
+    -- Async nameplate slicing: 35 plates with player at #28 processes 20 first,
+    -- defers remainder via C_Timer.After(0.05), then catches #28 on async slice.
+    local asyncSliceFn = nil
+    local cityPlates = {}
+    for i = 1, 35 do
+        cityPlates[i] = { unit = "nameplate" .. i }
+    end
+    local ciCity = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        UnitExists = function(u)
+            return u == "player" or (type(u) == "string" and u:match("^nameplate%d+$") ~= nil)
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return 2000 end,
+        GetNamePlates = function() return cityPlates end,
+        C_Timer = {
+            NewTicker = function() end,
+            After = function(_, fn) asyncSliceFn = fn end,
+        },
+    })
+    for i = 1, 25 do
+        ciCity.cache["Player-nameplate" .. i] = { time = 2000 }
+    end
+    ciCity:SetScanEnabled(true)
+    ciCity.ScanNearby()
+    local enqAfterSlice1 = ciCity:GetInspectStats().scanEnqueued or 0
+    check("1.0.4 city scan: synchronous slice stops at 20 plates and schedules async continuation",
+        enqAfterSlice1 == 0 and type(asyncSliceFn) == "function",
+        "enq=" .. tostring(enqAfterSlice1) .. " async=" .. tostring(type(asyncSliceFn)))
+    if (asyncSliceFn) then asyncSliceFn() end
+    local enqAfterSlice2 = ciCity:GetInspectStats().scanEnqueued or 0
+    check("1.0.4 city scan: async continuation discovers uncached player beyond slice boundary",
+        enqAfterSlice2 == 1,
+        "enq=" .. tostring(enqAfterSlice2))
+
+    -- 1.0.4 lifecycle events (PLAYER_FOCUS_CHANGED, PLAYER_REGEN_ENABLED, PLAYER_ENTERING_WORLD),
+    -- queued mouseover priority over Priority 2 raid scans, and Blizzard InspectFrame piggyback.
+    local lcEvents, lcScripts = {}, {}
+    local lcNow = 3000
+    local lcSent = {}
+    local lcRaidRoster = true
+    local lcHooks = {}
+    local lcLinks = {}
+    local lcInCombat = false
+    local lcInspectShown = false
+    local ciLC = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        CreateFrame = function()
+            return {
+                RegisterEvent = function(_, ev) lcEvents[ev] = true end,
+                SetScript = function(_, k, fn) lcScripts[k] = fn end,
+            }
+        end,
+        hooksecurefunc = function(name, fn)
+            lcHooks[name] = fn
+        end,
+        InspectFrame = {
+            unit = "target",
+            IsShown = function() return lcInspectShown end,
+        },
+        InspectFrame_Show = function() end,
+        InCombatLockdown = function() return lcInCombat end,
+        IsInGroup = function() return lcRaidRoster end,
+        IsInRaid = function() return lcRaidRoster end,
+        UnitGroupRolesAssigned = function() return "TANK" end,
+        UnitExists = function(u)
+            return u == "player" or u == "focus" or u == "mouseover" or u == "raid1" or u == "target"
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function(a, b) return a == b end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return "Player-" .. tostring(u)
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u)
+            lcSent[#lcSent + 1] = u
+            return true
+        end,
+        GetInventoryItemLink = function(u, slot)
+            return lcLinks[u] and lcLinks[u][slot] or nil
+        end,
+        GetInventoryItemTexture = function(u, slot)
+            return lcLinks[u] and lcLinks[u][slot] and "tex" or nil
+        end,
+        GetTime = function() return lcNow end,
+        C_Timer = {
+            NewTicker = function(_, fn) lcScripts._tick = fn end,
+            After = function(_, fn) lcScripts._after = fn end,
+        },
+    })
+
+    check("1.0.4 lifecycle: registers focus, regen, entering world, addon loaded",
+        lcEvents["PLAYER_FOCUS_CHANGED"] == true
+        and lcEvents["PLAYER_REGEN_ENABLED"] == true
+        and lcEvents["PLAYER_ENTERING_WORLD"] == true
+        and lcEvents["ADDON_LOADED"] == true)
+
+    -- (a) Active queued mouseover beats Priority 2 raid1
+    ciLC.cache["Player-target"] = { time = lcNow, items = { [1] = "item:1" } }
+    lcRaidRoster = false
+    ciLC:DoInspect("focus")      -- occupies pending slot (not target)
+    lcRaidRoster = true
+    ciLC:DoInspect("mouseover")  -- enqueues "mouseover" while "focus" is pending
+    ciLC.cache["Player-focus"] = { time = lcNow, items = { [1] = "item:1b" } }
+    lcScripts["OnEvent"](nil, "INSPECT_READY", "Player-focus")
+    lcInCombat = true
+    lcNow = lcNow + 2
+    lcInCombat = false
+    -- PLAYER_REGEN_ENABLED drops combat and immediately drains queued "mouseover" BEFORE "raid1"
+    lcSent = {}
+    lcScripts["OnEvent"](nil, "PLAYER_REGEN_ENABLED")
+    check("1.0.4 regen + hover priority: PLAYER_REGEN_ENABLED immediately serves queued mouseover before raid1",
+        lcSent[1] == "mouseover",
+        "sent1=" .. tostring(lcSent[1]))
+
+    -- Clear raid flag and cached focus so focus test is deterministic
+    lcRaidRoster = false
+    ciLC.cache["Player-focus"] = nil
+    lcNow = lcNow + 2
+    ciLC.cache["Player-mouseover"] = { time = lcNow, items = { [1] = "item:2" } }
+    lcScripts["OnEvent"](nil, "INSPECT_READY", "Player-mouseover")
+    lcSent = {}
+    lcNow = lcNow + 2
+    lcScripts["OnEvent"](nil, "PLAYER_FOCUS_CHANGED")
+    check("1.0.4 focus event: PLAYER_FOCUS_CHANGED auto-inspects valid focus unit",
+        lcSent[1] == "focus",
+        "sent1=" .. tostring(lcSent[1]))
+
+    -- (b) Blizzard InspectFrame_Show clears failure park & captures INSPECT_READY / buffer
+    ciLC.cache["Player-target"] = { incomplete = true, failedUntil = 99999, failedCount = 3, lastAttempt = lcNow }
+    lcLinks["target"] = { [1] = "item:22691" }
+    ciLC.lastInspectGUID = "Player-target"
+    lcHooks["InspectFrame_Show"]("target")
+    check("1.0.4 InspectFrame hook: clears failed park and captures preloaded buffer",
+        ciLC.cache["Player-target"]
+        and ciLC.cache["Player-target"].failedUntil == nil
+        and ciLC.cache["Player-target"].items
+        and ciLC.cache["Player-target"].items[1] == "item:22691")
+
+    -- (c) PLAYER_ENTERING_WORLD clears stale city queue/pending state
+    lcInCombat = true
+    ciLC:DoInspect("focus") -- enqueues into queue
+    lcInCombat = false
+    ciLC.inspectOutOfRange = ciLC.inspectOutOfRange or {}
+    ciLC.inspectOutOfRange["Player-focus"] = { time = lcNow, distance = 40 }
+    ciLC._scanPlateCursor = 42
+    lcScripts["OnEvent"](nil, "PLAYER_ENTERING_WORLD")
+    check("1.0.4 portal reset: PLAYER_ENTERING_WORLD clears out-of-range and scan cursor",
+        next(ciLC.inspectOutOfRange) == nil and ciLC._scanPlateCursor == 1)
+end
+
 STD.io.write(table.concat(results, "\n") .. "\n")
 STD.io.write("\n" .. (allok and "ALL PASS" or "*** FAILURES ***") .. "\n")
 STD.os.exit(allok and 0 or 1)

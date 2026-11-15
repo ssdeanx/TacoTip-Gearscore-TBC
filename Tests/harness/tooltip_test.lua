@@ -170,7 +170,11 @@ local function makeWidget(kind, name, parent, template, depth)
     end
     w.RegisterEvent = function(_, e) w.__events[#w.__events + 1] = e end
     w.UnregisterEvent = function() end
-    w.Show = function() w.__shown = true end
+    w.__showCalls = 0
+    w.Show = function()
+        w.__showCalls = (w.__showCalls or 0) + 1
+        w.__shown = true
+    end
     w.Hide = function() w.__shown = false end
     w.IsShown = function() return w.__shown end
     w.SetShown = function(_, v) w.__shown = v and true or false end
@@ -437,6 +441,11 @@ local function makeWidget(kind, name, parent, template, depth)
     w.SetPadding = function(_, l, r, t, b)
         w.__paddingCalls = (w.__paddingCalls or 0) + 1
         w.__padding = { l, r, t, b }
+    end
+    w.GetPadding = function()
+        local p = w.__padding
+        if (not p) then return 0, 0, 0, 0 end
+        return p[1] or 0, p[2] or 0, p[3] or 0, p[4] or 0
     end
     w.__clearPaddingCalls = 0
     w.ClearPadding = function()
@@ -2570,6 +2579,141 @@ do
             check("a wide-style render with a different line count re-anchors",
                 addedShort > 0, "added " .. tostring(addedShort) .. " line SetPoint call(s)")
 
+            -- ---- v1.0.4: wide_style continuation anchor & bottom padding ---
+            local prevPowerW = CFG.show_power_bar
+            local prevFontSizeW = CFG.tooltip_font_size
+            local prevGuildW = CFG.show_guild_name
+            local prevTargetW = CFG.show_target
+            local prevTalentsW = CFG.show_talents
+            local prevGsW = CFG.show_gs_player
+            local prevIlvlW = CFG.show_avg_ilvl
+            local prevPawnW = CFG.show_pawn_player
+            local prevAchiW = CFG.show_achievement_points
+            local prevSepW = CFG.show_separators
+            local prevSec = REALG.issecretvalue
+
+            CFG.tip_style = 1
+            CFG.show_power_bar = false
+            CFG.tooltip_font_size = 12
+            CFG.show_target = true
+            CFG.show_gs_player = true
+
+            local function renderWideStock(stockCount)
+                GT.__shown = true
+                currentUnit = "player"
+                installUnitResolver()
+                GT:ClearLines()
+                for i = 1, stockCount do
+                    if (i <= 2) then
+                        GT:AddLine("stock line " .. i)
+                    else
+                        GT:AddLine("PvP")
+                    end
+                end
+                local u = UNITS[currentUnit]
+                local guid = (u and u.guid) or "Player-1-00000001"
+                if (POSTCALLS and POSTCALLS[1]) then
+                    POSTCALLS[1].fn(GT, { guid = guid })
+                elseif (GT.__hooks and GT.__hooks.OnTooltipSetUnit) then
+                    GT.__hooks.OnTooltipSetUnit(GT, guid)
+                end
+            end
+
+            -- 1. Same-unit refresh after C++ ClearLines() resets nextLeft anchor back
+            --    to a hidden line (the 31px phantom-gap / bottom-cutoff trap).
+            -- Stock has lines 1..4; Name (1), <Guild> (2), Level (3) stay visible (n=3),
+            -- line 4 ("PvP") is hidden, and line 5 is the first added wide line.
+            renderWideStock(4)
+            local widePool = rawget(GT, "__linePool") or {}
+            local anchor1 = widePool[3]
+            local nextL = widePool[5]
+            local _, initRel = nextL:GetPoint(1)
+            check("v1.0.4 wide_style: initial render anchors continuation line to visible anchorLine",
+                initRel == (anchor1 and anchor1:GetName()),
+                "rel=" .. tostring(initRel) .. " expected=" .. tostring(anchor1 and anchor1:GetName()))
+
+            nextL:ClearAllPoints()
+            nextL:SetPoint("TOPLEFT", widePool[4], "BOTTOMLEFT", 0, -2)
+            local showBefore = GT.__showCalls or 0
+            renderWideStock(4)
+            local pt2, rel2, relPt2, ox2, oy2 = nextL:GetPoint(1)
+            check("v1.0.4 wide_style: same-unit refresh restores anchor after ClearLines reset",
+                pt2 == "TOPLEFT" and rel2 == (anchor1 and anchor1:GetName())
+                    and relPt2 == "BOTTOMLEFT" and ox2 == 0 and oy2 == -2,
+                string.format("pt=%s rel=%s relPt=%s (%s,%s)", tostring(pt2), tostring(rel2), tostring(relPt2), tostring(ox2), tostring(oy2)))
+            check("v1.0.4 wide_style: shown tooltip calls Show() to fit font/anchor changes",
+                (GT.__showCalls or 0) > showBefore,
+                "showCalls=" .. tostring(showBefore) .. "->" .. tostring(GT.__showCalls))
+
+            -- 2. Bottom padding applies for wide_style, scales with font size, is
+            --    idempotent on settled refreshes, and survives OnShow padding resets.
+            check("v1.0.4 wide_style: default 12pt applies 4px bottom padding",
+                GT.__padding ~= nil and GT.__padding[2] == 4,
+                "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
+
+            local padBase = GT.__paddingCalls or 0
+            renderWideStock(4)
+            check("v1.0.4 wide_style: settled refresh makes 0 extra SetPadding calls",
+                (GT.__paddingCalls or 0) == padBase,
+                "added=" .. tostring((GT.__paddingCalls or 0) - padBase))
+
+            CFG.tooltip_font_size = 16
+            renderWideStock(4)
+            check("v1.0.4 wide_style: 16pt font scales bottom padding to 6px",
+                GT.__padding ~= nil and GT.__padding[2] == 6,
+                "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
+
+            GT:ClearPadding()
+            if (GT.__hooks and GT.__hooks.OnShow) then
+                GT.__hooks.OnShow(GT)
+            end
+            check("v1.0.4 wide_style: OnShow restores bottom padding after Blizzard ClearPadding",
+                GT.__padding ~= nil and GT.__padding[2] == 6,
+                "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
+
+            local savedGetPad = GT.GetPadding
+            GT.GetPadding = function() return "secR", "secB", "secL", "secT" end
+            REALG.issecretvalue = function(v) return v == "secR" or v == "secB" or v == "secL" or v == "secT" end
+            local okSecPad = pcall(function() renderWideStock(4) end)
+            check("v1.0.4 wide_style: secret GetPadding return does not raise", okSecPad)
+            GT.GetPadding = savedGetPad
+            REALG.issecretvalue = prevSec
+
+            -- 3. wide_style with linesToAddCount == 0 does not anchor a hidden line
+            CFG.show_target = false
+            CFG.show_talents = false
+            CFG.show_gs_player = false
+            CFG.show_avg_ilvl = false
+            CFG.show_guild_name = false
+            CFG.show_pawn_player = false
+            CFG.show_achievement_points = false
+            CFG.show_separators = false
+            for i = 3, 10 do
+                if (widePool[i]) then widePool[i]._tacoTipWideAnchor = nil end
+            end
+            renderWideStock(4)
+            local emptyAnchorLeft = widePool[5] and widePool[5]._tacoTipWideAnchor
+            check("v1.0.4 wide_style: 0 added lines does not set wide anchor on unused line",
+                emptyAnchorLeft == nil,
+                "anchor=" .. tostring(emptyAnchorLeft))
+
+            -- 4. Switching back to non-wide tip_style = 3 clears wide bottom padding
+            CFG.show_target = prevTargetW
+            CFG.show_talents = prevTalentsW
+            CFG.show_gs_player = prevGsW
+            CFG.show_avg_ilvl = prevIlvlW
+            CFG.show_guild_name = prevGuildW
+            CFG.show_pawn_player = prevPawnW
+            CFG.show_achievement_points = prevAchiW
+            CFG.show_separators = prevSepW
+            CFG.tooltip_font_size = prevFontSizeW
+            CFG.show_power_bar = prevPowerW
+            CFG.tip_style = 3
+            renderWideStock(4)
+            check("v1.0.4 wide_style -> normal: non-wide without power bar has no bottom padding",
+                GT.__padding == nil,
+                "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
+
             CFG.tip_style = prevStyle
             for _ = 1, PAIR do settleUnitRender("player") end
         end
@@ -4511,13 +4655,38 @@ do
                 "incomplete=" .. tostring(d6 and d6.incomplete)
                 .. " time=" .. tostring(d6 and d6.time))
             check("cache: exhaustion parks the entry for a short GetTime backoff",
-                type(d6) == "table" and d6.failedUntil == 1020,
-                "failedUntil=" .. tostring(d6 and d6.failedUntil))
+                type(d6) == "table" and d6.failedUntil == 1001.5 and d6.failedCount == 1,
+                "failedUntil=" .. tostring(d6 and d6.failedUntil)
+                .. " failedCount=" .. tostring(d6 and d6.failedCount))
             check("cache: the backoff suppresses the next ask inside its window",
                 CI:IsCacheFresh(guid) == true)
-            REALG.__testClock = 1021
+            REALG.__testClock = 1002
             check("cache: the backoff expires and the entry is askable again",
                 CI:IsCacheFresh(guid) == false)
+            -- Repeated exhaustions step progressively (1.5 -> 3.0 -> 4.0s cap).
+            triggerInspect()
+            guard = 0
+            while (type(REALG.__pendingRetry) == "function" and guard < 12) do
+                local fn = REALG.__pendingRetry
+                REALG.__pendingRetry = nil
+                pcall(fn)
+                guard = guard + 1
+            end
+            check("cache: 2nd exhaustion steps to 3.0s backoff",
+                d6.failedUntil == 1005.0 and d6.failedCount == 2,
+                "failedUntil=" .. tostring(d6 and d6.failedUntil))
+            REALG.__testClock = 1006
+            triggerInspect()
+            guard = 0
+            while (type(REALG.__pendingRetry) == "function" and guard < 12) do
+                local fn = REALG.__pendingRetry
+                REALG.__pendingRetry = nil
+                pcall(fn)
+                guard = guard + 1
+            end
+            check("cache: 3rd exhaustion caps at 4.0s backoff (not 20s)",
+                d6.failedUntil == 1010.0 and d6.failedCount == 3,
+                "failedUntil=" .. tostring(d6 and d6.failedUntil))
             REALG.__testClock = 1000
 
             -- 6b. A FIRST inspect that exhausts must not look fresh with no data.
@@ -4570,6 +4739,41 @@ do
                 count <= 512, "count=" .. count)
             check("cache: eviction never removes an entry whose retry is in flight",
                 CI.cache["Player-9-incomplete"] ~= nil)
+
+            -- 9. City flood: >512 completed entries all younger than 600s are STILL
+            --    bounded at <=512 without waiting 10 minutes.
+            CI.cache = {}
+            for i = 1, 520 do
+                CI.cache["Player-9-" .. string.format("%08d", i)] =
+                    { items = { [1] = "item:1" }, time = 950 + (i % 40) }
+            end
+            CI.cache["Player-9-incomplete"] = { items = {}, time = 950, incomplete = true, retryPending = true }
+            links = { [1] = "item:3001" }
+            textures = { [1] = true }
+            triggerInspect()
+            local cityCount = 0
+            for _ in pairs(CI.cache) do cityCount = cityCount + 1 end
+            check("cache: city flood bounds cache at <=512 even when entries are <600s old",
+                cityCount <= 512 and CI.cache["Player-9-incomplete"] ~= nil,
+                "count=" .. cityCount)
+
+            -- 10. Overwritten inspect buffer: retry timer stops when lastInspectGUID changes.
+            CI.cache = {}
+            links = { [1] = "item:2001", [2] = "item:1002" }
+            textures = { [1] = true, [2] = true, [3] = true }
+            REALG.__pendingRetry = nil
+            REALG.C_Timer.After = function(_, fn) saveRetry(fn) end
+            local dOv = triggerInspect()
+            check("cache: incomplete inspect schedules retry before overwrite check",
+                type(dOv) == "table" and dOv.retryPending == true and type(REALG.__pendingRetry) == "function")
+            CI.lastInspectGUID = "Player-Other-Buffer"
+            local ovFn = REALG.__pendingRetry
+            REALG.__pendingRetry = nil
+            if (type(ovFn) == "function") then pcall(ovFn) end
+            check("cache: overwritten inspect buffer cancels pending retry cleanly",
+                dOv and dOv.retryPending == false and CI.lastInspectGUID == "Player-Other-Buffer",
+                "retryPending=" .. tostring(dOv and dOv.retryPending)
+                .. " lastGUID=" .. tostring(CI.lastInspectGUID))
 
             CI.cache = savedCache
             REALG.GetInventoryItemLink = savedLink
@@ -6688,6 +6892,57 @@ do
             REALG.C_Item.GetItemQualityColor = savedGetQCol
         end
         CFG.tooltip_border_item_quality = savedBorderOpt
+    end
+
+    -- v1.0.4: GS retry delay caps at 2s and background item-load callbacks
+    -- pre-score and memoize cached units even after cursor leaves them.
+    do
+        local bgCI = REALG.LibStub("LibForeverInspector")
+        local GS = REALG.TT_GS
+        local savedGetScore = GS and GS.GetScore
+        local bgGuid = UNITS.mouseover.guid
+        local savedRec = bgCI and bgCI.cache and bgCI.cache[bgGuid]
+        if (bgCI and bgCI.cache and GS and type(savedGetScore) == "function" and type(_G.TacoTip_GSCallback) == "function") then
+            TT.clearGearScoreRetry(bgGuid)
+            TT.__testClock = nil
+            for step = 1, 5 do
+                TT.noteGearScoreRetry(bgGuid, 3000 + step)
+            end
+            local maxRetryDelay = TT._gsRetry and TT._gsRetry[bgGuid] and TT._gsRetry[bgGuid].delay
+            check("1.0.4 GS retry cap: delay never exceeds 2.0s",
+                type(maxRetryDelay) == "number" and maxRetryDelay <= 2.0,
+                "delay=" .. tostring(maxRetryDelay))
+            TT.clearGearScoreRetry(bgGuid)
+
+            local bgItems = { [1] = "item:19019" }
+            bgCI.cache[bgGuid] = { items = bgItems, time = 3000 }
+            TT.clearGearScoreMemo(bgGuid)
+            local savedUnit, savedShown, savedGetUnit = GT.__unit, GT.__shown, GT.GetUnit
+            local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+            -- Point tooltip at a different unit ("player") while callback lands for bgGuid ("mouseover")
+            GT.__unit = "player"
+            GT.__shown = true
+            GT.GetUnit = mockGetUnit("player")
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+            end
+            GS.GetScore = function(_, u)
+                if (u == bgGuid) then return 4321, 219 end
+                return 0, 0
+            end
+            local warmBefore = (TT.ev and TT.ev.gsBackgroundWarm) or 0
+            pcall(_G.TacoTip_GSCallback, bgGuid)
+            local mScore, mIlvl = TT.getGearScoreMemo(bgGuid, bgItems)
+            check("1.0.4 background warm: late GSCallback pre-scores and memoizes off-cursor unit",
+                mScore == 4321 and mIlvl == 219 and ((TT.ev and TT.ev.gsBackgroundWarm) or 0) == warmBefore + 1,
+                "score=" .. tostring(mScore) .. " ilvl=" .. tostring(mIlvl))
+
+            TT.clearGearScoreMemo(bgGuid)
+            GS.GetScore = savedGetScore
+            GT.GetUnit, GT.__unit, GT.__shown = savedGetUnit, savedUnit, savedShown
+            if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+            bgCI.cache[bgGuid] = savedRec
+        end
     end
 
     CFG.tooltip_max_width = prevMaxW

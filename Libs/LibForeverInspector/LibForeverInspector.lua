@@ -4336,45 +4336,94 @@ end
 -- call. (The old budget was per entry and could start exhausted.)
 local CACHE_MAX_ENTRIES = 512
 local CACHE_RETRY_LIMIT = 6
-local CACHE_RETRY_DELAYS = { 0.20, 0.35, 0.50, 0.75, 1.00, 1.50 }
+local CACHE_RETRY_DELAYS = { 0.15, 0.25, 0.40, 0.65, 1.00, 1.50 }
 -- How long a read that exhausted its retries parks the entry before another
--- hover may ask again. Short enough that a transient server silence heals on
--- the next hover or two, long enough that a player the client will never
--- describe cannot turn every tooltip render into a NotifyInspect.
-local CACHE_FAILED_BACKOFF = 20
+-- hover may ask again. Progressive short ladder (1.5s -> 3s -> 4s) so moving
+-- between players in a city recovers quickly instead of stalling for 15-30s,
+-- while still stopping every single frame from firing NotifyInspect.
+local CACHE_FAILED_BACKOFFS = { 1.5, 3.0, 4.0 }
 -- 2 x CACHE_REFRESH_DELAY (300). Literal because that constant is declared
 -- further down, beside the inspect tick; a local declared later is a global
 -- lookup here, not the value.
 local CACHE_EVICT_AGE = 600
 
--- Evicts only entries that can no longer be in use: older than ten minutes,
--- not resolvable to a live unit token, and with no retry in flight. Failed
--- reads are reclaimable too, aged by their last attempt -- otherwise records
--- that never completed could not be deleted at all and the ceiling would stop
--- holding as soon as enough of them accumulated. Soft ceiling: if every
--- survivor is live or retrying, the cache stays above it rather than dropping
--- a player that is being looked at right now. Single-pass over lib.cache.
+-- Builds the set of currently referenced unit GUIDs once per eviction sweep,
+-- replacing up to O(N) calls to PlayerGUIDToUnitToken (each scanning 45 unit
+-- tokens) with a single O(45) pass.
+local function buildLiveGUIDSet(currentGuid)
+    local live = {}
+    if (currentGuid and not isSecretValue(currentGuid)) then
+        live[currentGuid] = true
+    end
+    local g = safeUnitGUID("player")
+    if (g) then live[g] = true end
+    g = safeUnitGUID("target")
+    if (g) then live[g] = true end
+    g = safeUnitGUID("focus")
+    if (g) then live[g] = true end
+    g = safeUnitGUID("mouseover")
+    if (g) then live[g] = true end
+    local insFrame = rawget(_G, "InspectFrame")
+    if (insFrame and safeUnitExists(insFrame.unit)) then
+        g = safeUnitGUID(insFrame.unit)
+        if (g) then live[g] = true end
+    end
+    if (type(IsInGroup) == "function" and IsInGroup()) then
+        local isRaid = (type(IsInRaid) == "function" and IsInRaid())
+        local prefix = isRaid and "raid" or "party"
+        local n = isRaid and 40 or 4
+        for i = 1, n do
+            g = safeUnitGUID(prefix .. i)
+            if (g) then live[g] = true end
+        end
+    end
+    return live
+end
+
+-- Evicts non-live, non-retrying cache entries when over CACHE_MAX_ENTRIES.
+-- Prefers entries older than CACHE_EVICT_AGE (10 minutes); if a crowded city
+-- pushed the cache above CACHE_MAX_ENTRIES before 10 minutes elapsed, evicts
+-- oldest completed/non-live entries down to the cap so scans never grow
+-- unbounded or stall every frame.
 local function evictCacheEntries(currentGuid, now)
     local count = 0
-    local victims
-    for guid, entry in pairs(lib.cache) do
+    for _ in pairs(lib.cache) do
         count = count + 1
+    end
+    if (count <= CACHE_MAX_ENTRIES) then return end
+
+    local live = buildLiveGUIDSet(currentGuid)
+    local expired
+    local candidates
+    for guid, entry in pairs(lib.cache) do
         local retrying = (type(entry) == "table") and entry.incomplete and entry.retryPending
-        if (not safeEquals(guid, currentGuid) and type(entry) == "table" and not retrying) then
-            local stamp = entry.time or entry.lastAttempt
-            if (stamp and (now - stamp) > CACHE_EVICT_AGE
-                    and not lib:PlayerGUIDToUnitToken(guid)) then
-                victims = victims or {}
-                victims[#victims + 1] = { guid = guid, time = stamp }
+        if (not live[guid] and type(entry) == "table" and not retrying) then
+            local stamp = entry.time or entry.lastAttempt or 0
+            local rec = { guid = guid, time = stamp }
+            if (stamp > 0 and (now - stamp) > CACHE_EVICT_AGE) then
+                expired = expired or {}
+                expired[#expired + 1] = rec
+            elseif (entry.time or entry.incomplete == false or not entry.retryPending) then
+                candidates = candidates or {}
+                candidates[#candidates + 1] = rec
             end
         end
     end
-    if (count <= CACHE_MAX_ENTRIES or not victims) then return end
-    table.sort(victims, function(a, b) return a.time < b.time end)
-    for i = 1, #victims do
-        if (count <= CACHE_MAX_ENTRIES) then break end
-        lib.cache[victims[i].guid] = nil
-        count = count - 1
+    if (expired) then
+        table.sort(expired, function(a, b) return a.time < b.time end)
+        for i = 1, #expired do
+            if (count <= CACHE_MAX_ENTRIES) then break end
+            lib.cache[expired[i].guid] = nil
+            count = count - 1
+        end
+    end
+    if (count > CACHE_MAX_ENTRIES and candidates) then
+        table.sort(candidates, function(a, b) return a.time < b.time end)
+        for i = 1, #candidates do
+            if (count <= CACHE_MAX_ENTRIES) then break end
+            lib.cache[candidates[i].guid] = nil
+            count = count - 1
+        end
     end
 end
 
@@ -4499,6 +4548,7 @@ local function cacheUnitData(unit, guid, isRetry)
         data.incomplete = nil
         data.retryCount = nil
         data.retryPending = nil
+        data.failedCount = nil
         data.failedUntil = nil
     elseif (retriesExhausted) then
         -- The client never produced the last link. Give up on THIS read, never
@@ -4508,11 +4558,14 @@ local function cacheUnitData(unit, guid, isRetry)
         -- that player showed no GearScore and was never re-inspected for five
         -- minutes. Keeping the last complete stamp (or none at all) means the
         -- record stays honestly incomplete, and the short GetTime backoff
-        -- below is what stops it from re-asking on every single render.
+        -- below (1.5s -> 3.0s -> 4.0s) is what stops it from re-asking on every render.
         data.incomplete = true
         data.retryCount = nil
         data.retryPending = false
-        data.failedUntil = (now > 0) and (now + CACHE_FAILED_BACKOFF) or nil
+        local failStep = math.min((data.failedCount or 0) + 1, #CACHE_FAILED_BACKOFFS)
+        data.failedCount = failStep
+        local backoff = CACHE_FAILED_BACKOFFS[failStep] or CACHE_FAILED_BACKOFFS[#CACHE_FAILED_BACKOFFS]
+        data.failedUntil = (now > 0) and (now + backoff) or nil
     else
         data.incomplete = true
         data.retryCount = (data.retryCount or 0) + 1
@@ -4521,6 +4574,13 @@ local function cacheUnitData(unit, guid, isRetry)
             local delay = CACHE_RETRY_DELAYS[data.retryCount] or CACHE_RETRY_DELAYS[CACHE_RETRY_LIMIT]
             _G.C_Timer.After(delay, function()
                 if (data.retryGeneration ~= retryGeneration) then return end
+                -- Another inspect has overwritten Blizzard's single inspect buffer:
+                -- stop retrying on stale buffer data instead of reading another player's
+                -- inventory or overwriting lastInspectGUID.
+                if (lib.lastInspectGUID and not safeEquals(lib.lastInspectGUID, guid)) then
+                    data.retryPending = false
+                    return
+                end
                 data.retryPending = false
                 local targetUnit = unit
                 if (not safeUnitExists(targetUnit)
@@ -4611,7 +4671,9 @@ local function cacheUnitData(unit, guid, isRetry)
 
     if (not isSecretValue(guid)) then
         lib.cache[guid] = data
-        evictCacheEntries(guid, now)
+        if (not isRetry) then
+            evictCacheEntries(guid, now)
+        end
     end
     if (lib.inspectStats) then lib.inspectStats.ready = (lib.inspectStats.ready or 0) + 1 end
     lib.callbacks:Fire("INVENTORY_READY", guid, true, unit)
@@ -4622,7 +4684,16 @@ local nextInspectTime = 0
 inspectPendingSince = 0
 inspectPendingGUID = nil
 
+local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
+
+-- How long a request may stay outstanding before the watchdog gives up on it.
+-- Declared above OnEvent so lifecycle recovery (PLAYER_REGEN_ENABLED) shares
+-- the same single timeout constant without a separate magic threshold.
+local INSPECT_PENDING_TIMEOUT = (isRetail or isForever) and 1.2 or 3.0
+local scanNearbyContinuePending = false
+
 local inspectQueueTick
+local ensureBlizzardInspectHooks
 
 -- Forward declaration. The OnEvent handler below runs the distance pre-filter on
 -- every player target and every player mouseover, but the function itself lives
@@ -4676,6 +4747,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 unit = "target"
             elseif (safeUnitExists("mouseover") and safeEquals(safeUnitGUID("mouseover"), guid)) then
                 unit = "mouseover"
+            elseif (guid and lib.PlayerGUIDToUnitToken) then
+                unit = lib:PlayerGUIDToUnitToken(guid)
             else
                 unit = nil
             end
@@ -4716,22 +4789,67 @@ frame:SetScript("OnEvent", function(_, event, ...)
             end
         end
     elseif (event == "PLAYER_TARGET_CHANGED") then
-        if (type(UnitExists) == "function" and UnitExists("target")
-                and type(UnitIsPlayer) == "function" and UnitIsPlayer("target")
+        if (safeUnitExists("target") and safeUnitIsPlayer("target")
                 and (not safeUnitIsUnit("target", "player"))
                 and isCloseEnoughToAsk("target")) then
             lib:DoInspect("target")
         end
+    elseif (event == "PLAYER_FOCUS_CHANGED") then
+        if (safeUnitExists("focus") and safeUnitIsPlayer("focus")
+                and (not safeUnitIsUnit("focus", "player"))
+                and isCloseEnoughToAsk("focus")) then
+            lib:DoInspect("focus")
+        end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
-        if (type(UnitExists) == "function" and UnitExists("mouseover")
-                and type(UnitIsPlayer) == "function" and UnitIsPlayer("mouseover")
+        if (safeUnitExists("mouseover") and safeUnitIsPlayer("mouseover")
                 and (not safeUnitIsUnit("mouseover", "player"))
                 and isCloseEnoughToAsk("mouseover")) then
             lib:DoInspect("mouseover")
         end
+    elseif (event == "PLAYER_REGEN_ENABLED") then
+        local now = type(GetTime) == "function" and GetTime() or 0
+        if (inspectPendingUnit and inspectPendingSince > 0 and (now - inspectPendingSince) > INSPECT_PENDING_TIMEOUT) then
+            inspectPendingUnit = nil
+            inspectPendingGUID = nil
+            inspectPendingSince = 0
+            pendingRefusal = nil
+        end
+        if (inspectQueueTick) then
+            if (now >= nextInspectTime) then
+                inspectQueueTick()
+            elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
+                C_Timer.After(math.max(0.05, nextInspectTime - now), inspectQueueTick)
+            end
+        end
+    elseif (event == "PLAYER_ENTERING_WORLD") then
+        if (type(queue) == "table") then
+            for i = #queue, 1, -1 do
+                queue[i] = nil
+            end
+        end
+        inspectPendingUnit = nil
+        inspectPendingGUID = nil
+        inspectPendingSince = 0
+        pendingRefusal = nil
+        nextInspectTime = 0
+        scanNearbyContinuePending = false
+        lib._scanPlateCursor = 1
+        if (type(lib.inspectOutOfRange) == "table") then
+            for k in pairs(lib.inspectOutOfRange) do
+                lib.inspectOutOfRange[k] = nil
+            end
+        end
+        if (inspectQueueTick) then
+            inspectQueueTick()
+        end
     elseif (event == "GROUP_ROSTER_UPDATE") then
         if (inspectQueueTick) then
             inspectQueueTick()
+        end
+    elseif (event == "ADDON_LOADED") then
+        local addonName = ...
+        if (addonName == "Blizzard_InspectUI" and ensureBlizzardInspectHooks) then
+            ensureBlizzardInspectHooks()
         end
     elseif (event == "UNIT_INVENTORY_CHANGED") then
         local unit = ...
@@ -4759,26 +4877,79 @@ end)
 ---@diagnostic enable: redundant-parameter
 frame:RegisterEvent("INSPECT_READY")
 frame:RegisterEvent("PLAYER_TARGET_CHANGED")
+frame:RegisterEvent("PLAYER_FOCUS_CHANGED")
 frame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+frame:RegisterEvent("ADDON_LOADED")
 
-local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
-
--- How long a request may stay outstanding before the watchdog gives up on it.
---
--- ONE window, and it is the documented one. There used to be a second, earlier
--- release (`now > nextInspectTime + 0.8`) that always fired first in real time,
--- because the ticker runs every 0.5s and the top of the tick only lets the
--- pending block run once `now >= nextInspectTime`. Two consequences, both real:
--- the 3s branch -- the only one that increments `timeouts` -- was unreachable
--- outside a loading screen or a hitch, so `/tacotip diag` under-reported stalled
--- inspects; and a unit that never answers (throttled, disconnected, or silently
--- refused on a client with no guard) was re-requested at nearly twice the
--- intended rate, forever, for as long as it stayed targeted.
-local INSPECT_PENDING_TIMEOUT = (isRetail or isForever) and 1.2 or 3.0
 local CACHE_REFRESH_DELAY = 300
 queue = {}
+
+-- Piggyback Blizzard's own InspectFrame_Show / InspectUnit manual inspects so
+-- manual /inspect or portrait right-clicks clear stale failure parks and feed
+-- lib.cache via INSPECT_READY (or directly when Blizzard's single buffer already
+-- holds that player's links) without issuing duplicate NotifyInspect requests.
+local hookedInspectFrameShow = false
+local hookedInspectUnit = false
+local isCacheFresh
+
+local function onBlizzardInspectTrigger(unit)
+    local insFrame = rawget(_G, "InspectFrame")
+    local targetUnit = unit
+    if (not targetUnit and type(insFrame) == "table") then
+        targetUnit = insFrame.unit
+    end
+    if (not safeUnitExists(targetUnit) or not safeUnitIsPlayer(targetUnit)
+            or safeUnitIsUnit(targetUnit, "player")) then
+        return
+    end
+    local guid = safeUnitGUID(targetUnit)
+    if (not guid or isSecretValue(guid)) then
+        return
+    end
+    if (lib.inspectRejected) then lib.inspectRejected[guid] = nil end
+    if (lib.inspectOutOfRange) then lib.inspectOutOfRange[guid] = nil end
+    local cached = lib.cache and lib.cache[guid]
+    if (type(cached) == "table") then
+        cached.failedUntil = nil
+        cached.failedCount = nil
+    end
+    local now = uptimeSeconds()
+    if (now > 0) then
+        local throttleEnd = now + INSPECT_DELAY
+        if (throttleEnd > nextInspectTime) then
+            nextInspectTime = throttleEnd
+        end
+    end
+    inspectPendingUnit = targetUnit
+    inspectPendingGUID = guid
+    inspectPendingSince = now
+    if (not (isCacheFresh and isCacheFresh(cached)) and safeEquals(lib.lastInspectGUID, guid)) then
+        for slot = 1, 18 do
+            if (inventoryItemLink(targetUnit, slot)) then
+                cacheUnitData(targetUnit, guid)
+                return
+            end
+        end
+    end
+end
+
+ensureBlizzardInspectHooks = function()
+    if (type(_G.hooksecurefunc) ~= "function") then return end
+    if (not hookedInspectFrameShow and type(_G.InspectFrame_Show) == "function") then
+        hookedInspectFrameShow = true
+        _G.hooksecurefunc("InspectFrame_Show", onBlizzardInspectTrigger)
+    end
+    if (not hookedInspectUnit and type(_G.InspectUnit) == "function") then
+        hookedInspectUnit = true
+        _G.hooksecurefunc("InspectUnit", onBlizzardInspectTrigger)
+    end
+end
+
+ensureBlizzardInspectHooks()
 
 -- Fresh = has a COMPLETE snapshot, has not been flagged stale by
 -- UNIT_INVENTORY_CHANGED, is younger than the refresh window, and is not in the
@@ -4793,7 +4964,7 @@ queue = {}
 -- unit, or the client has no timers) is NOT fresh: it must be re-asked. That is
 -- the fix for the old record that kept its previous timestamp, cleared .stale,
 -- and was then served as fresh for the rest of the 300s window.
-local function isCacheFresh(cached)
+isCacheFresh = function(cached)
     if (not cached) then return false end
     -- A read that exhausted its retries parks the entry for a short window, so a
     -- player this client will not describe is not re-requested on every hover.
@@ -5063,29 +5234,19 @@ end
 -- behaviour as though this path can execute today.
 local function inspectDistance(unit)
     if (not unit or isSecretValue(unit)) then return nil end
-    -- Every comparison happens INSIDE the pcall. The docs mark UnitDistanceSquared
-    -- as SecretArguments-only on forever/live (returns are plain numbers), but a
-    -- protected return is exactly the sort of thing that differs by build, and
-    -- comparing one raises in the caller -- outside the pcall, on the inspect hot
-    -- path. Measuring must never be able to break inspection.
     if (type(_G.UnitDistanceSquared) == "function") then
-        local ok, yards = pcall(function()
-            local dist, checked = _G.UnitDistanceSquared(unit)
-            if (isSecretValue(dist) or isSecretValue(checked)) then return nil end
-            if (type(dist) ~= "number" or dist < 0) then return nil end
-            if (checked ~= nil and checked ~= true) then return nil end
+        local ok, dist, checked = pcall(_G.UnitDistanceSquared, unit)
+        if (ok and not isSecretValue(dist) and not isSecretValue(checked)
+                and type(dist) == "number" and dist >= 0
+                and (checked == nil or checked == true)) then
             return math.sqrt(dist)
-        end)
-        if (ok and type(yards) == "number") then return yards end
+        end
     end
     if (type(_G.UnitDistance) == "function") then
-        local ok, yards = pcall(function()
-            local d = _G.UnitDistance(unit)
-            if (isSecretValue(d)) then return nil end
-            if (type(d) ~= "number" or d < 0) then return nil end
+        local ok, d = pcall(_G.UnitDistance, unit)
+        if (ok and not isSecretValue(d) and type(d) == "number" and d >= 0) then
             return d
-        end)
-        if (ok and type(yards) == "number") then return yards end
+        end
     end
     return nil
 end
@@ -5096,18 +5257,14 @@ end
 local function inspectDistanceSquared(unit)
     if (not unit or isSecretValue(unit)) then return nil end
     if (type(_G.UnitDistanceSquared) == "function") then
-        local ok, dist = pcall(function()
-            local d, checked = _G.UnitDistanceSquared(unit)
-            if (isSecretValue(d) or isSecretValue(checked)) then return nil end
-            if (type(d) ~= "number" or d < 0) then return nil end
-            if (checked ~= nil and checked ~= true) then return nil end
-            return d
-        end)
-        if (ok and type(dist) == "number") then return dist end
+        local ok, dist, checked = pcall(_G.UnitDistanceSquared, unit)
+        if (ok and not isSecretValue(dist) and not isSecretValue(checked)
+                and type(dist) == "number" and dist >= 0
+                and (checked == nil or checked == true)) then
+            return dist
+        end
         return nil
     end
-    -- No squared form: derive it from the plain yards helper. Its own pcall
-    -- already swallowed any raise, so this is safe to call directly.
     local yards = inspectDistance(unit)
     return yards and (yards * yards) or nil
 end
@@ -5877,6 +6034,39 @@ isCloseEnoughToAsk = function(unit)
     return distSq <= (NEARBY_ASK_YARDS * NEARBY_ASK_YARDS)
 end
 
+local function enqueueInspectUnit(guid, unit)
+    for i = 1, #queue do
+        local item = queue[i]
+        local g = type(item) == "table" and item.guid or item
+        if (g == guid) then
+            if (type(item) == "table" and unit) then
+                item.unit = unit
+            end
+            if (unit == "mouseover" and i < #queue) then
+                table.remove(queue, i)
+                table.insert(queue, item)
+            end
+            return true
+        end
+    end
+    if (#queue >= 25) then
+        if (lib.inspectStats) then
+            lib.inspectStats.queueOverflowDrops = (lib.inspectStats.queueOverflowDrops or 0) + 1
+        end
+        table.remove(queue, 1)
+    end
+    local newEntry = { guid = guid, unit = unit }
+    if (unit ~= "mouseover" and #queue > 0) then
+        local top = queue[#queue]
+        if (type(top) == "table" and top.unit == "mouseover") then
+            table.insert(queue, #queue, newEntry)
+            return true
+        end
+    end
+    table.insert(queue, newEntry)
+    return true
+end
+
 function lib:DoInspect(unitorguid)
     if (not unitorguid or isSecretValue(unitorguid)) then return false end
     local unit = unitorguid
@@ -5889,24 +6079,13 @@ function lib:DoInspect(unitorguid)
         return false
     end
 
-    -- Freshness BEFORE the gates. This is the addon's hottest path -- the tooltip
-    -- show handler calls it on every unit render -- and the chain below costs a
-    -- distance query, plus on the classic family an interact probe and the
-    -- CanInspect query, plus the closures those run inside. For a unit whose data
-    -- is already fresh the answer is known from memory, so the cheap lookup goes
-    -- first and none of that runs. Stale data (.stale, set by
-    -- UNIT_INVENTORY_CHANGED) still runs the whole chain.
+    -- Freshness BEFORE the gates.
     local cached = lib.cache[guid]
     if (isCacheFresh(cached)) then
         return true
     end
 
-    -- Distance pre-filter, so callers that invoke DoInspect directly (e.g. the
-    -- tooltip show path in main.lua) cannot bypass the per-client ask range.
-    -- isCloseEnoughToAsk is the single source of truth for "is this unit near
-    -- enough to even try"; without it here, classic-era tooltips on units past
-    -- the gate reached NotifyInspect and produced the message this release exists
-    -- to stop.
+    -- Distance pre-filter before probes.
     if (not isCloseEnoughToAsk(unit)) then
         return false
     end
@@ -5921,42 +6100,37 @@ function lib:DoInspect(unitorguid)
             inspectPendingGUID = nil
             inspectPendingSince = 0
             pendingRefusal = nil
+        elseif (inspectPendingUnit and inspectPendingSince > 0 and (now - inspectPendingSince) > INSPECT_PENDING_TIMEOUT) then
+            inspectPendingUnit = nil
+            inspectPendingGUID = nil
+            inspectPendingSince = 0
+            pendingRefusal = nil
+            if (lib.inspectStats) then
+                lib.inspectStats.timeouts = (lib.inspectStats.timeouts or 0) + 1
+            end
         end
         if (not inspectPendingUnit) then
             return requestInspect(unit, true)
         end
-    else
-        for i = 1, #queue do
-            local item = queue[i]
-            local g = type(item) == "table" and item.guid or item
-            if (g == guid) then
-                if (type(item) == "table" and unit) then
-                    item.unit = unit
-                end
-                if (unit == "mouseover" and i < #queue) then
-                    table.remove(queue, i)
-                    table.insert(queue, item)
-                end
-                return true
-            end
-        end
-        if (#queue >= 25) then
-            if (lib.inspectStats) then
-                lib.inspectStats.queueOverflowDrops = (lib.inspectStats.queueOverflowDrops or 0) + 1
-            end
-            table.remove(queue, 1)
-        end
-        local newEntry = { guid = guid, unit = unit }
-        if (unit ~= "mouseover" and #queue > 0) then
-            local top = queue[#queue]
-            if (type(top) == "table" and top.unit == "mouseover") then
-                table.insert(queue, #queue, newEntry)
-                return true
-            end
-        end
-        table.insert(queue, newEntry)
-        return true
     end
+    -- Always enqueue when another inspect is still in flight (even if now >= nextInspectTime)
+    -- instead of silently dropping hovers on the floor in busy hubs.
+    return enqueueInspectUnit(guid, unit)
+end
+
+local roleBuckets = { {}, {}, {}, {} }
+
+local function getGroupUnitRolePriority(unit)
+    if (type(UnitGroupRolesAssigned) == "function") then
+        local ok, role = pcall(UnitGroupRolesAssigned, unit)
+        if (ok and not isSecretValue(role) and type(role) == "string") then
+            if (role == "TANK") then return 1
+            elseif (role == "HEALER") then return 2
+            elseif (role == "DAMAGER") then return 3
+            end
+        end
+    end
+    return 4
 end
 
 inspectQueueTick = function()
@@ -5974,10 +6148,7 @@ inspectQueueTick = function()
     end
     -- Watchdog: if an inspect was requested but INSPECT_READY never arrives
     -- (throttled server, disconnected unit, a silent refusal, etc.), release the
-    -- pending slot so the rest of the queue keeps moving instead of stalling
-    -- forever. One window (INSPECT_PENDING_TIMEOUT) and it is counted, so the
-    -- number `/tacotip diag` prints is the number of requests that actually
-    -- stalled.
+    -- pending slot so the rest of the queue keeps moving instead of stalling.
     if (inspectPendingUnit) then
         local abandonedMouseover = false
         if (inspectPendingUnit == "mouseover" and inspectPendingGUID) then
@@ -5999,15 +6170,11 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 1: Current player target. Freshness FIRST: for a target whose data
-    -- is already fresh there is nothing to do, and the gate chain (a distance
-    -- query, plus the classic-family interact probe and CanInspect query) is the
-    -- expensive part of this tick. The tick runs every 0.5s, so skipping that for
-    -- a settled target is the difference between a tick that costs nothing and one
-    -- that costs engine calls for as long as the player stands there.
-    if (type(UnitExists) == "function" and UnitExists("target")) then
+    -- Priority 1: Current player target.
+    if (safeUnitExists("target")) then
         local guid = safeUnitGUID("target")
         if (guid and not isSecretValue(guid) and not isCacheFresh(lib.cache[guid])
+                and not isInspectCoolingDown("target") and not exceedsLearnedRange("target")
                 and isCloseEnoughToAsk("target") and lib:CanInspect("target")) then
             if (requestInspect("target", true)) then
                 return
@@ -6015,25 +6182,37 @@ inspectQueueTick = function()
         end
     end
 
-    -- Priority 2: In-group members (party/raid) prioritized by role: Tank > Healer > DPS.
-    -- Collect cheap candidates into 4 role buckets without probing CanInspect on all 40
-    -- members every tick, then validate CanInspect + requestInspect lazily in priority order.
-    local function getGroupUnitRolePriority(unit)
-        if (type(UnitGroupRolesAssigned) == "function") then
-            local ok, role = pcall(UnitGroupRolesAssigned, unit)
-            if (ok and not isSecretValue(role) and type(role) == "string") then
-                if (role == "TANK") then return 1
-                elseif (role == "HEALER") then return 2
-                elseif (role == "DAMAGER") then return 3
+    -- Active hover priority: serve a queued "mouseover" whose unit is STILL under
+    -- the cursor before spending ticks pre-scanning 40-man raid/party rosters.
+    if (#queue > 0 and safeUnitExists("mouseover")) then
+        local moGUID = safeUnitGUID("mouseover")
+        if (moGUID and not isSecretValue(moGUID)) then
+            for i = #queue, 1, -1 do
+                local item = queue[i]
+                if (type(item) == "table" and item.unit == "mouseover" and safeEquals(item.guid, moGUID)) then
+                    table.remove(queue, i)
+                    if (not isCacheFresh(lib.cache[moGUID])
+                            and isCloseEnoughToAsk("mouseover") and lib:CanInspect("mouseover")) then
+                        if (requestInspect("mouseover", true)) then
+                            return
+                        end
+                    end
+                    if (lib.inspectStats) then
+                        lib.inspectStats.queueDrainedDrops = (lib.inspectStats.queueDrainedDrops or 0) + 1
+                    end
+                    break
                 end
             end
         end
-        return 4
     end
 
+    -- Priority 2: In-group members prioritized by role: Tank > Healer > DPS.
     if (type(IsInGroup) == "function" and IsInGroup()) then
         local selfGUID = safeUnitGUID("player")
-        local buckets = { {}, {}, {}, {} }
+        for r = 1, 4 do
+            local b = roleBuckets[r]
+            for k = #b, 1, -1 do b[k] = nil end
+        end
         local isRaid = (type(IsInRaid) == "function" and IsInRaid())
         local prefix = isRaid and "raid" or "party"
         local count = isRaid and 40 or 4
@@ -6043,18 +6222,18 @@ inspectQueueTick = function()
                 local guid = safeUnitGUID(u)
                 if (guid and not isSecretValue(guid) and not safeEquals(guid, selfGUID)
                         and not isCacheFresh(lib.cache[guid])
-                        and not isInspectCoolingDown(u)
                         and not exceedsLearnedRange(u)
-                        and isCloseEnoughToAsk(u)) then
+                        and isCloseEnoughToAsk(u)
+                        and not isInspectCoolingDown(u)) then
                     local rank = getGroupUnitRolePriority(u)
-                    local bucket = buckets[rank]
+                    local bucket = roleBuckets[rank]
                     bucket[#bucket + 1] = u
                 end
             end
         end
 
         for rank = 1, 4 do
-            local bucket = buckets[rank]
+            local bucket = roleBuckets[rank]
             for j = 1, #bucket do
                 local u = bucket[j]
                 if (lib:CanInspect(u) and requestInspect(u, true)) then
@@ -6073,11 +6252,6 @@ inspectQueueTick = function()
             if (isSecretValue(guid)) then guid = nil end
             local unitHint = type(item) == "table" and item.unit or nil
             local unit
-            -- The queued token is plain by construction -- DoInspect rejects a
-            -- secret token before it can enqueue one and PlayerGUIDToUnitToken
-            -- answers with literal tokens -- but UnitExists declares
-            -- SecretArguments = "AllowedWhenUntainted", so the token still goes
-            -- through the boundary helper rather than a bare call.
             if (safeUnitExists(unitHint) and safeEquals(safeUnitGUID(unitHint), guid)) then
                 unit = unitHint
             else
@@ -6089,9 +6263,6 @@ inspectQueueTick = function()
                     return
                 end
             end
-            -- The entry came off the queue and was not served (stale re-lookup,
-            -- failed validation, or a refused request): count the shed. The
-            -- counter is additive observability; nothing reads it for behavior.
             if (lib.inspectStats) then
                 lib.inspectStats.queueDrainedDrops = (lib.inspectStats.queueDrainedDrops or 0) + 1
             end
@@ -6147,12 +6318,103 @@ local function scanFallbackUnits()
     return false
 end
 
+local SCAN_SLICE_LIMIT = 20
+
+local function tryScanPlate(plate, selfGUID)
+    local unit
+    if (type(plate) == "table") then
+        if (type(plate.GetUnit) == "function") then
+            local gok, res = pcall(plate.GetUnit, plate)
+            if (gok) then unit = res end
+        elseif (type(plate.unit) == "string") then
+            unit = plate.unit
+        elseif (type(plate.unitToken) == "string") then
+            unit = plate.unitToken
+        end
+    end
+    if (type(unit) == "string" and safeUnitExists(unit)
+            and safeUnitIsPlayer(unit) and (not safeUnitIsUnit(unit, "player"))) then
+        local guid = safeUnitGUID(unit)
+        if (guid and not safeEquals(guid, selfGUID)) then
+            local cached = lib.cache and lib.cache[guid]
+            local fresh = isCacheFresh(cached)
+            if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
+                if (lib:DoInspect(unit)) then
+                    if (lib.inspectStats) then
+                        lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
+                    end
+                    return true, true
+                end
+            elseif (not fresh) then
+                if (lib.inspectStats) then
+                    lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
+                end
+            end
+            return true, false
+        end
+    end
+    return false, false
+end
+
+local function runScanSlice(plates, startIndex, maxSteps, budget)
+    local totalPlates = #plates
+    if (totalPlates == 0) then
+        return 0, 0, startIndex
+    end
+    local selfGUID = safeUnitGUID("player")
+    local platesWithUnit = 0
+    local scanned = 0
+    local idx = startIndex
+    if (idx < 1 or idx > totalPlates) then
+        idx = 1
+    end
+    for _ = 1, maxSteps do
+        if (scanned >= budget) then break end
+        local plate = plates[idx]
+        local plateOk, resolved, didEnqueue = pcall(tryScanPlate, plate, selfGUID)
+        if (plateOk) then
+            if (resolved) then
+                platesWithUnit = platesWithUnit + 1
+            end
+            if (didEnqueue) then
+                scanned = scanned + 1
+            end
+        elseif (lib.inspectStats) then
+            lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
+        end
+        idx = (idx % totalPlates) + 1
+    end
+    return platesWithUnit, scanned, idx
+end
+
+local function scanNearbySlice(remaining)
+    scanNearbyContinuePending = false
+    if (not lib.scanEnabled) then return end
+    if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return end
+    if (inspectPendingUnit == "mouseover" or #queue >= 15) then return end
+    local ok, plates = pcall(_G.GetNamePlates)
+    if (not ok or type(plates) ~= "table") then return end
+    local totalPlates = #plates
+    if (totalPlates == 0) then return end
+    local budget = type(lib.scanBudget) == "number" and lib.scanBudget or 1
+    if (budget < 1) then budget = 1 end
+    local step = math.min(remaining, SCAN_SLICE_LIMIT)
+    local cursor = type(lib._scanPlateCursor) == "number" and lib._scanPlateCursor or 1
+    local _, scanned, nextCursor = runScanSlice(plates, cursor, step, budget)
+    lib._scanPlateCursor = nextCursor
+    local left = remaining - step
+    if (scanned < budget and left > 0 and type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function") then
+        scanNearbyContinuePending = true
+        _G.C_Timer.After(0.05, function() scanNearbySlice(left) end)
+    end
+end
+
 local function scanNearby()
     if (not lib.scanEnabled) then return end
     if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return end
+    if (inspectPendingUnit == "mouseover" or #queue >= 15) then return end
     local ok, plates = pcall(_G.GetNamePlates)
     if (not ok or type(plates) ~= "table") then
-        -- No nameplates at all: fall back rather than doing nothing.
         if (scanFallbackUnits()) then
             if (lib.inspectStats) then
                 lib.inspectStats.scanFallback = (lib.inspectStats.scanFallback or 0) + 1
@@ -6162,73 +6424,19 @@ local function scanNearby()
     end
     local budget = type(lib.scanBudget) == "number" and lib.scanBudget or 1
     if (budget < 1) then budget = 1 end
-    local scanned = 0
-    -- Plates that actually resolved to a player unit this tick. The fallback
-    -- below keys off this, NOT off whether anything was enqueued: a plate that
-    -- resolved but was cached or out of range is a working nameplate system, and
-    -- falling through to target/mouseover on top of it would turn every tick
-    -- into an extra server request. Zero here is the real "no nameplates"
-    -- case -- friendly nameplates off, the default on all five clients.
-    local platesWithUnit = 0
-    for i = 1, #plates do
-        if (scanned >= budget) then break end
-        local plate = plates[i]
-        -- Per-plate fault isolation: a single bad nameplate (secret unit, nil
-        -- methods, etc.) must not abort the whole scan tick.
-        local plateOk = pcall(function()
-            local unit
-            if (type(plate) == "table") then
-                if (type(plate.GetUnit) == "function") then
-                    local gok, res = pcall(plate.GetUnit, plate)
-                    if (gok) then unit = res end
-                elseif (type(plate.unit) == "string") then
-                    unit = plate.unit
-                elseif (type(plate.unitToken) == "string") then
-                    unit = plate.unitToken
-                end
-            end
-            -- safeUnitExists, not a bare UnitExists.
-            --
-            -- type(unit) == "string" is NOT a secrecy test: a secret string
-            -- reports "string", so a nameplate carrying a secret token would reach
-            -- UnitExists, which is SecretArguments="AllowedWhenUntainted" and
-            -- refuses it with an immediate Lua error. The per-plate pcall above
-            -- would catch that, but the plate would then be counted as a distance
-            -- skip -- misleading, and it re-raises on every 2s scan tick. Testing
-            -- the token first means a restricted plate is simply not inspectable,
-            -- which is the truth. The pcall stays as the last-resort isolation for
-            -- any other fault in this block (nil methods, a raising GetUnit).
-            if (type(unit) == "string" and safeUnitExists(unit)
-                    and safeUnitIsPlayer(unit) and (not safeUnitIsUnit(unit, "player"))) then
-                local guid = safeUnitGUID(unit)
-                if (guid and not safeEquals(guid, safeUnitGUID("player"))) then
-                    platesWithUnit = platesWithUnit + 1
-                    local cached = lib.cache and lib.cache[guid]
-                    local fresh = isCacheFresh(cached)
-                    if (not fresh and isCloseEnoughToAsk(unit) and lib:CanInspect(unit)) then
-                        if (lib:DoInspect(unit)) then
-                            scanned = scanned + 1
-                            if (lib.inspectStats) then
-                                lib.inspectStats.scanEnqueued = (lib.inspectStats.scanEnqueued or 0) + 1
-                            end
-                        end
-                    elseif (not fresh) then
-                        if (lib.inspectStats) then
-                            lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
-                        end
-                    end
-                end
-            end
-        end)
-        if (not plateOk) then
-            if (lib.inspectStats) then
-                lib.inspectStats.scanSkippedDistance = (lib.inspectStats.scanSkippedDistance or 0) + 1
-            end
-        end
+    local totalPlates = #plates
+    local step = math.min(totalPlates, SCAN_SLICE_LIMIT)
+    local cursor = type(lib._scanPlateCursor) == "number" and lib._scanPlateCursor or 1
+    local platesWithUnit, scanned, nextCursor = runScanSlice(plates, cursor, step, budget)
+    lib._scanPlateCursor = nextCursor
+    -- In dense cities (#plates > SCAN_SLICE_LIMIT), time-slice remaining nameplates
+    -- asynchronously over 50ms slices instead of stalling the UI frame.
+    local remaining = totalPlates - step
+    if (scanned < budget and remaining > 0 and not scanNearbyContinuePending
+            and type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function") then
+        scanNearbyContinuePending = true
+        _G.C_Timer.After(0.05, function() scanNearbySlice(remaining) end)
     end
-    -- No nameplate resolved to a player at all -- friendly nameplates are off, the
-    -- default on every client. Fall back to the unit tokens that always exist so
-    -- cursor sweep, target and focus coverage keeps working with no game setting.
     if (platesWithUnit == 0) then
         if (scanFallbackUnits()) then
             if (lib.inspectStats) then

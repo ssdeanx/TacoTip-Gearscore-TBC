@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.3
+version: 1.0.4
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 license: MIT
@@ -22,11 +22,11 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, LibDataBroker-1.1, LibDBIcon-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-14)
-linter: wowlua_ls check — 0 errors, no secret-value findings; 39 undefined-field warnings (2026-11-14)
+status: pending in-game verification (2026-11-15)
+linter: wowlua_ls check — 0 errors, no secret-value findings; 41 undefined-field warnings (2026-11-15)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
-gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42, luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-14)
-updated: 2026-11-14
+gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42, luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-15)
+updated: 2026-11-15
 ```
 
 # ⚡ TacoTip ⚡
@@ -35,7 +35,7 @@ updated: 2026-11-14
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.3-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.4-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -117,6 +117,14 @@ updated: 2026-11-14
 | `/tt minimap` or `/tt icon` | Toggle the **LibDBIcon minimap launcher button** |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.4</span>
+
+📏 **<span style="color:#b4e634">Wide Style Bottom Padding & Same-Unit Anchor Fix:</span>** Fixed bottom border crowding and severe same-unit refresh gaps/clipping when using **Wide** tooltip style (`tip_style = 1`/`2`) while keeping all tooltip colors (including yellow/gold `Target:` and `Talents:`) completely unchanged. `TT:ApplyTooltipBottomPadding` now gives wide tooltips scaled bottom padding that survives Blizzard's `GameTooltip_CalculatePadding` `<OnShow>` reset, triggers a guarded `Show()` resize after font/width updates, avoids anchoring unused lines when `linesToAddCount == 0`, clears cached anchor markers past 20 lines, and verifies `GetPoint(1)` (with `isSecretValue` guards) alongside `_tacoTipWideAnchor` so C++ `ClearLines()` resets re-anchor cleanly beneath the last visible header line.
+
+🏙️ **<span style="color:#b4e634">Populated-City Queue, Fast Backoff & Automatic Inspect Lifecycle (`LibForeverInspector` + `main.lua`):</span>** Eliminated crowded-city inspect stalls where `lib:DoInspect` silently dropped hovers behind a pending inspect, shortened failed-read recovery from static `20s` parks / `8s` retries to `1.5s -> 3.0s -> 4.0s` (`2.0s` GS retry cap), hooked `PLAYER_REGEN_ENABLED` (immediate post-combat queue flush), `PLAYER_ENTERING_WORLD` (portal/loading-screen state reset), and `PLAYER_FOCUS_CHANGED` (automatic focus inspection), promoted active queued `mouseover` hovers ahead of Priority 2 party/raid roster scans, pre-scored off-cursor units in `TacoTip_GSCallback` so late item loads are ready on re-hover, piggybacked Blizzard's `InspectFrame_Show`/`InspectUnit` manual inspects via `hooksecurefunc`, bounded cache eviction cleanly (`<= 512`, `<600s` LRU), cancelled overwritten inspect-buffer retry timers, added `PlayerGUIDToUnitToken` fallback on `INSPECT_READY`, removed hot-path closure allocations, time-sliced large city nameplate sweeps (`20` plates/slice asynchronously via `C_Timer.After`), yielded background scans while `mouseover` is in flight, and fixed `_gearWarmCount` double-counting in `TT:WarmGearItemData`.
 
 ---
 
