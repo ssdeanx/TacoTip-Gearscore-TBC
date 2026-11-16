@@ -11,16 +11,18 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.3.0
+version: 1.3.1
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
-license: MIT  # see LICENSE
+reference_upstream: TacoTip GearScore Enhancer (NS, MIT License)
+license: MIT  # see LICENSE (Copyright (c) 2026 NS, Copyright (c) 2026 AcidBomb)
 curseforge_id: 1741092
 project_url: https://www.curseforge.com/wow/addons/tacotip-extras
 tacotip_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
+enhancer_url: https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer
 requires: [TacoTip]
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
-interfaces: ["11509", "20506", "38002", "16001", "120105"]
+interfaces: ["11509", "20506", "38002", "16001", "120105", "120107"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
 status: pending in-game verification (2026-11-15)
 linter: wowlua_ls check — 0 errors, 0 secret-value findings; luacheck clean (2026-11-15)
@@ -28,15 +30,19 @@ updated: 2026-11-15
 ```
 
 
-**TacoTip Extras** is an optional companion add-on for [TacoTip](https://www.curseforge.com/wow/addons/tacotip-gearscore). It adds enhancement-aware GearScore information to genuine player tooltips and to summaries in the Character and Inspect equipment windows. TacoTip stays separately installed and keeps providing everything else it does.
+**TacoTip Extras** is an optional companion add-on for [TacoTip](https://www.curseforge.com/wow/addons/tacotip-gearscore). It adds enhancement-aware GearScore information to genuine player tooltips, summaries in the Character and Inspect equipment windows, and a Server-Wide GearScore Leaderboard with peer-to-peer sync. TacoTip stays separately installed and keeps providing everything else it does.
+
+**Upstream Reference & Credit:** Multiple core enhancement-audit components in TacoTip Extras were derived from and built atop **[TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer)** by **NS** (MIT License, `Copyright (c) 2026 NS`). See [Attribution, Provenance & Changes from TacoTip GearScore Enhancer](#attribution-provenance--changes-from-tacotip-gearscore-enhancer) and [LICENSE](LICENSE) for full details on which parts originate from Enhancer and what TacoTip Extras changed or added.
 
 - **TacoTip** — <https://www.curseforge.com/wow/addons/tacotip-gearscore> (required dependency)
 - **TacoTip Extras** — <https://www.curseforge.com/wow/addons/tacotip-extras> (this add-on)
+- **TacoTip GearScore Enhancer** — <https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer> (MIT-licensed upstream reference by NS)
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing. It is not a fork of TacoTip, and it implies no endorsement by either.
 
-**Version:** 1.3.0
+**Version:** 1.3.1
 **Author:** AcidBomb (Pilsung)
+**Original Enhancer Credit:** NS ([TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer), MIT License)
 
 ## Requirements
 
@@ -203,7 +209,7 @@ Per-slot equipment detail renders live while a fresh scanner revision exists; pe
 
 ## Known limitations
 
-- **Release status.** Version **1.3.0** is the current build in this repository (ready for in-game verification); version 1.2.6 is the published CurseForge build, and the listing is the distribution channel for the add-on. Asynchronously seeds Extras' 128-entry cache and `RankDB` leaderboard from `TacoTip v1.0.4`'s `LibForeverInspector` cross-reload recent inspect cache in 4-entry slices on login/reload, combat exit, and leaderboard open without flooding `RankSync`, runs WoW Forever background `nameplate*`/`raid*`/`party*` captures asynchronously in 2-unit `C_Timer.After(0.05)` slices, and aligns inspect/remote pending timeouts (`3s`/`4s` panel, `5s`/`8s` remote item TTL) so crowded-city scans never stall leaderboard saves.
+- **Release status.** Version **1.3.1** is the current build in this repository (ready for in-game verification); version 1.2.6 is the published CurseForge build, and the listing is the distribution channel for the add-on. Asynchronously seeds Extras' 128-entry cache and `RankDB` leaderboard from `TacoTip v1.0.4`'s `LibForeverInspector` cross-reload recent inspect cache in 4-entry slices on login/reload, combat exit, and leaderboard open without flooding `RankSync`, runs WoW Forever background `nameplate*`/`raid*`/`party*` captures asynchronously in 2-unit `C_Timer.After(0.05)` slices, aligns inspect/remote pending timeouts (`3s`/`4s` panel, `5s`/`8s` remote item TTL), and updates `LICENSE`, `THIRD_PARTY_NOTICES.md`, `TacoTip_Extras.toc`, and `README.md` with full MIT copyright compliance for TacoTip GearScore Enhancer (`Copyright (c) 2026 NS`).
 - **The Options page's integration and enhancement status lines, and the gear panel's "Last synced" note, are still English only.** The three status lines under the Options page — "TacoTip integration: …", "Remote enhancement analysis: …" and "Remote enhancement blocker: Slot …" — and the forty-seven sentences they can expand into (the compatible / incompatible / not-loaded reasons and the remote complete / unavailable / pending / suppressed / not-observed reasons) are written in English in the source, as are the **Reset summary positions** button label, the **How these scores work** heading, the equipment windows' **Drag** handle label and the gear panel's **Last synced …** and **Synced gear (item IDs only)** notes. Everything else on those surfaces is translated. Localizing them is a separate translation pass, not a code change: the strings are hardcoded English today, and the locale keys that once existed for them were never read by any code path, so they have been removed rather than left as dead weight.
 - **The level-70 restriction is a display rule.** While **Restrict Potential, Completion, and warnings to level 70** is on (the default), Potential GS, Delta, and Completion are not shown for a character below level 70 and the related warnings are held back; Current GS, Unenhanced GS, and Average iLvl still show. Turning the setting off shows the same three values at any level. On Classic Era, TBC Anniversary, and Titanforge those three metrics stay unavailable regardless of the setting, because the client does not expose the socket data they need (see the `GetItemStats` note below).
 - **The socket count comes from the documented API, and a count that contradicts the item's own gems is withheld rather than published.** On Retail and WoW Forever the number of socket slots is read from `C_Item.GetItemNumSockets` — the socket-count API Blizzard's own character frame uses, which passes the raw item link straight into it (`PaperDollFrame.lua:2775`, fed by `GetInventoryItemLink` at `:1728`; documented at `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua:854` on `origin/live`, `:876` on `origin/forever`). The add-on still cross-checks that count against the item's own gem list, parsed from the item link, and now in **both** directions: a count that is too small for the item's gems and a count that is too large for them both leave the socket-based metrics **unavailable rather than guessed** on that item.
@@ -349,8 +355,30 @@ are used directly.
 `Adapter.GetCapabilityReport()` returns every probe and its result, so a refusal
 can be argued with instead of guessed at.
 
+## Attribution, Provenance & Changes from TacoTip GearScore Enhancer
+
+TacoTip Extras builds upon and credits **[TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer)** by **NS** (licensed under the MIT License, `Copyright (c) 2026 NS`).
+
+### Parts from TacoTip GearScore Enhancer (`Copyright (c) 2026 NS`)
+
+- Companion add-on architecture loading alongside TacoTip (`## Dependencies: TacoTip`) and non-destructive tooltip/frame takeover pattern (`TacoTipAdapter`).
+- Enhancement scoring model (`Scoring.lua`): Current GS, Potential GS, Delta, Completion, Average iLvl, optional Unenhanced GS, permanent enchant (`x1.05`) and socket/gem (`+5` per socket) bonus rules, slot policies, item-link gem/enchant parsing, and the level-70 potential/completion display restriction.
+- Session inspect cache concept (`Cache.lua`) and slot-by-slot remote/local gear scanning workflow with asynchronous `ITEM_DATA_LOAD_RESULT` resolution (`Scanner.lua`).
+- Player-tooltip enhancement display modes (`Disabled`, `Minimal`, `Compact`, `Detailed` in `Tooltips.lua`), Character/Inspect summary overlays and draggable handles (`Frames.lua`), Options layout concept (`Options.lua`), and minimap toggle concept (`Minimap.lua`).
+
+### What TacoTip Extras changed and added (`Copyright (c) 2026 AcidBomb`)
+
+- **Rebrand & SavedVariables isolation (`TacoTip_Extras.toc`, `Core.lua`)**: Separated the project and storage (`TacoTipExtrasDB`) cleanly from legacy `TacoTipGearScoreEnhancerDB` (never reads or migrates legacy Enhancer profiles).
+- **Fixed base-GearScore formula drift & compatibility gating (`Scoring.lua`, `TacoTipAdapter.lua`)**: Removed Enhancer's copied GearScore tables (`FORMULAS`, `QUALITY_RULES`, `SCORE_SCALE`, hunter multipliers) that diverged from TacoTip above ilvl 120, delegating base GearScore directly to TacoTip's `TT_GS` and computing only verified enchant/gem deltas; replaced hardcoded version checks (`0.5.1` / inspector `21`) with capability probing and `>= 0.8.0` TacoTip enforcement via `LibForeverInspector`.
+- **Server-Wide Leaderboard & P2P Sync Engine (`RankDB.lua`, `RankSync.lua`, `RankBrowser.lua`)**: Entirely new realm-wide ranking database (20,000-player cap, 2,000-row serialized gear archive, $O(1)$ lookup indices), hidden `ttgssync` channel + `GUILD`/`PARTY`/`RAID`/`INSTANCE_CHAT` P2P wire protocol with token-bucket rate limiting and sync progress UI, interactive filterable/sortable Leaderboard window + clickable 17-slot Gear Panel, tooltip `GS Rank:` standing rows, and TacoTip `/tt` dashboard tab integration.
+- **Five-client engine support & hardening (`Core.lua`, `Tooltips.lua`, `Scanner.lua`, `Frames.lua`, `TacoTipAdapter.lua`)**: Added support for Classic Era (`11509`), TBC Anniversary (`20506`), WotLK Titanforge (`38002`), WoW Forever (`16001`), and Retail (`120105`/`120107`), including `TooltipDataProcessor.AddTooltipPostCall` + `OnUpdate` tooltip driving, `securecall` taint containment, comprehensive `issecretvalue`/`canaccessvalue` secret-value protection, variable-length bonus-ID item link parsing, client-accurate socket gating (`Core.ClientHasSockets`), WoW Forever all-level enhancement completion, Shaman Blue parity, and `/ex` slash-command separation.
+- **11-language localization & performance/async pipeline (`Locale/*.lua`, `Cache.lua`, `Scanner.lua`, `Core.lua`, `Tests/`)**: Added full 11-locale translations (`deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`, `enUS`), raised `Cache.MAX_ENTRIES` (`32` → `128`), added async `Scanner.SeedFromInspectorCache` cross-reload seeding and WoW Forever async background capture slices (`C_Timer.After`), aligned short inspect/remote timeouts (`3s`/`4s` and `5s`/`8s`), and added automated 42-scenario test suites across Lua 5.1, Lua 5.4, and LuaJIT.
+
 ## Credits and license
 
-TacoTip Extras is written and maintained by **AcidBomb (Pilsung)** and is released under the MIT License — see [LICENSE](LICENSE), © 2026 AcidBomb.
+- **TacoTip Extras Author & Maintainer:** **AcidBomb (Pilsung)** (`Copyright (c) 2026 AcidBomb`)
+- **Upstream Reference Author:** **NS** — **[TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer)** (`Copyright (c) 2026 NS`)
+
+TacoTip Extras is released under the **MIT License** — see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full MIT license text (`Copyright (c) 2026 NS` and `Copyright (c) 2026 AcidBomb`) and third-party attributions (`GearScoreTBCClassic`, `TacoTip`, and `LibForeverInspector`).
 
 TacoTip is a required external dependency; it is not bundled, modified, redistributed or forked, and this project does not imply endorsement by TacoTip or its author.

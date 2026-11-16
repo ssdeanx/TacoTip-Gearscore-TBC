@@ -1,8 +1,7 @@
 # Third-party notices — TacoTip Extras
 
-TacoTip Extras is independently written and distributed under its own MIT
-License; see [LICENSE](LICENSE). The following notices concern external work
-or dependencies.
+TacoTip Extras is distributed under the MIT License; see [LICENSE](LICENSE). The
+following notices cover upstream reference work and external dependencies.
 
 Nothing here grants any right to the works named below beyond what their own
 terms allow.
@@ -10,6 +9,59 @@ terms allow.
 License and author statements are taken from the sources named against each
 entry. Where the source states no license, the entry says `UNKNOWN` — nothing
 is asserted here from memory, from an upstream listing, or from convention.
+
+## TacoTip GearScore Enhancer (Reference & Upstream Base)
+
+Multiple components of TacoTip Extras are derived from or inspired by
+**[TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer)**
+by **NS**, distributed under the MIT License:
+
+> MIT License
+>
+> Copyright (c) 2026 NS
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+- **Parts derived from TacoTip GearScore Enhancer (`Copyright (c) 2026 NS`):**
+  the companion add-on structure (`TacoTipAdapter` / tooltip & frame takeover),
+  enhancement metric model (Current GS, Potential GS, Delta, Completion,
+  Average iLvl, Unenhanced GS, enchant/gem bonus rules, slot policies, and the
+  level-70 potential/completion display rule in `Scoring.lua`), session LRU
+  cache concept (`Cache.lua`), gear-slot scanning & item-load retry model
+  (`Scanner.lua`), player tooltip display modes (`Disabled`/`Minimal`/`Compact`/`Detailed`
+  in `Tooltips.lua`), Character/Inspect summary frames and unlock handles
+  (`Frames.lua`), Options foundation (`Options.lua`), and minimap toggle concept
+  (`Minimap.lua`).
+- **Parts changed or added in TacoTip Extras (`Copyright (c) 2026 AcidBomb`):**
+  renamed add-on and separated SavedVariables (`TacoTipExtrasDB` instead of
+  `TacoTipGearScoreEnhancerDB`), removed duplicated GearScore formulas so base
+  GearScore always delegates to TacoTip's `TT_GS`, replaced hardcoded version
+  checks with `>= 0.8.0` capability probing against `LibForeverInspector`,
+  built the Server-Wide Leaderboard & P2P Sync Engine (`RankDB.lua`,
+  `RankSync.lua`, `RankBrowser.lua`, tooltip `GS Rank:` lines, and `/tt`
+  dashboard integration), switched slash commands to `/ex` / `/extras` / `/tte`,
+  added full five-client support (Classic Era, TBC Anniversary, Titanforge, WoW
+  Forever/Camelot, Retail) with Mainline `TooltipDataProcessor` polling,
+  `securecall` taint containment, `issecretvalue`/`canaccessvalue` guards,
+  11-locale translations (`Locale/*.lua`), 128-entry caching, async
+  cross-reload/city seeding & WoW Forever async capture slices, and automated
+  multi-interpreter test harnesses.
 
 ## GearScoreTBCClassic
 
@@ -54,7 +106,7 @@ required external dependency. `TacoTip_Extras.toc` declares
 `## Dependencies: TacoTip`, so TacoTip loads first and nothing in TacoTip
 Extras works without it.
 
-**Version.** TacoTip Extras **1.2.6** enforces a **minimum TacoTip version of
+**Version.** TacoTip Extras **1.3.1** enforces a **minimum TacoTip version of
 0.8.0** — the constant `MINIMUM_TACOTIP_VERSION = { 0, 8, 0 }` at
 `TacoTip_Extras/TacoTipAdapter.lua:44` — and then probes the capabilities it
 actually calls. It deliberately does **not** compare the inspector's version:
