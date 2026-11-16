@@ -594,6 +594,8 @@ local SCRIPT_CYRILLIC, SCRIPT_HANGUL, SCRIPT_CJK = 1, 2, 4
 
 local FACE_SCRIPT_COVERAGE = {
     ["fonts\\frizqt__.ttf"] = 0,                     -- roman only: the defect case
+    ["fonts\\morpheus.ttf"] = 0,                     -- roman only (Blizzard built-in)
+    ["fonts\\skurri.ttf"] = 0,                       -- roman only (Blizzard built-in)
     ["fonts\\frizqt___cyr.ttf"] = SCRIPT_CYRILLIC,   -- Cyrillic + basic Latin, no é/ï/ö
     -- ARIALN is in ruRU's SCRIPT_FONTS set on LibSharedMedia's coverage table
     -- (Cyrillic + Latin), and a Russian player who picked it must keep it.
@@ -616,18 +618,28 @@ local function hasScript(mask, flag)
 end
 
 -- The scripts a text carries, as a mask. UTF-8 lead bytes:
---   U+0400-U+04FF  Cyrillic         D0-D3
---   U+AC00-U+D7A3  Hangul syllables EA-ED
---   U+3000-U+30FF / U+4E00-U+9FFF   CJK symbols, kana, CJK unified   E3-E9
+--   U+0400-U+052F  Cyrillic + Supplement         D0-D3 / D4 80-AF
+--   U+1100-U+11FF  Hangul Jamo                   E1 84-87
+--   U+AC00-U+D7A3  Hangul syllables              EA-ED
+--   U+2E80-U+2FDF / U+3000-U+9FFF / U+F900-U+FFEF / U+20000+  CJK, kana, compat, fullwidth
 -- ASCII short-circuits first: almost every line is plain Latin and must not
--- pay three pattern scans for it.
+-- pay pattern scans for it.
 local function detectScripts(text)
     if (type(text) ~= "string" or text == "") then return 0 end
     if (not string.find(text, "[\128-\255]")) then return 0 end
     local mask = 0
-    if (string.find(text, "[\208-\211]")) then mask = mask + SCRIPT_CYRILLIC end
-    if (string.find(text, "[\234-\237]")) then mask = mask + SCRIPT_HANGUL end
-    if (string.find(text, "[\227-\233]")) then mask = mask + SCRIPT_CJK end
+    if (string.find(text, "[\208-\211]") or string.find(text, "\212[\128-\175]")) then
+        mask = mask + SCRIPT_CYRILLIC
+    end
+    if (string.find(text, "[\234-\237]") or string.find(text, "\225[\132-\135]")) then
+        mask = mask + SCRIPT_HANGUL
+    end
+    if (string.find(text, "[\227-\233]")
+            or string.find(text, "\226[\186-\191]")
+            or string.find(text, "\239[\164-\171\188-\191]")
+            or string.find(text, "\240")) then
+        mask = mask + SCRIPT_CJK
+    end
     return mask
 end
 
@@ -654,7 +666,8 @@ function TT.PickScriptFont(basePath, mask)
     if (type(mask) ~= "number" or mask == 0) then
         return basePath
     end
-    local have = FACE_SCRIPT_COVERAGE[basePath:lower()]
+    local normalized = (string.gsub(basePath, "/", "\\")):lower()
+    local have = FACE_SCRIPT_COVERAGE[normalized]
     if (have == nil) then
         return basePath
     end

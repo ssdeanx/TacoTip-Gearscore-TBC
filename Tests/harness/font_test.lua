@@ -116,6 +116,15 @@ end
   pin("pick: a SharedMedia face is the player's pick and is never overridden",
     pick("Interface\\AddOns\\SharedMedia\\Fonts\\SomeFont.ttf", RU)
       == "Interface\\AddOns\\SharedMedia\\Fonts\\SomeFont.ttf")
+  pin("pick: built-in Morpheus/Skurri roman faces switch to bundled script faces",
+    pick("Fonts\\MORPHEUS.TTF", RU) == bundled.ruRU
+      and pick("Fonts\\SKURRI.TTF", CN) == bundled.zhCN
+      and pick("Fonts\\MORPHEUS.TTF", KR) == bundled.koKR)
+  pin("pick: forward-slash base path normalizes and switches to bundled faces",
+    pick("Fonts/FRIZQT__.TTF", RU) == bundled.ruRU
+      and pick("Fonts/FRIZQT__.TTF", "繁體公會") == bundled.zhTW)
+  pin("pick: CJK fullwidth/compat and Traditional Chinese resolve to bundled Chinese face",
+    pick(ROMAN, "【繁體公會】") == bundled.zhTW and pick(ROMAN, "豈") == bundled.zhCN)
   pin("pick: nil/empty text keeps the resolved face",
     pick(ROMAN, nil) == ROMAN and pick(ROMAN, "") == ROMAN)
 

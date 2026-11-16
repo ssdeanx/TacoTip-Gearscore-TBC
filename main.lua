@@ -1,6 +1,14 @@
+--[[
+
+    TacoTip — Main tooltip & inspect integration module
+    Based on original TacoTip by kebabstorm (https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)
+    Multi-engine extensions & maintenance by AcidBomb (MIT License)
+
+--]]
+
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.5"
 
 
 
@@ -1482,61 +1490,126 @@ local function lineTooltipFont(basePath, line, index, tooltip)
     return TT.PickScriptFont(basePath, mask)
 end
 
--- rememberedMasks: optional { [lineIndex] = scriptMask } for a tooltip whose
--- lines may not be read. In that mode no text is read at all -- the face comes
--- from the cached mask, so nothing restricted is touched.
-local function applyTooltipFonts(tooltip, rememberedMasks)
-    if (not tooltip) then
-        return
+local applyTooltipFonts
+do
+    local function normalizeFontPath(path)
+        if (type(path) ~= "string") then
+            return ""
+        end
+        return string.lower((string.gsub(path, "/", "\\")))
     end
-    local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont())
-        or (TT.GetLocaleFontPath and TT:GetLocaleFontPath())
-        or TacoTipConfig.tooltip_font
-        or "Fonts\\FRIZQT__.TTF"
-    local fontSize = TacoTipConfig.tooltip_font_size or 12
-    local nameSize = fontSize + TOOLTIP_NAME_FONT_SIZE_DELTA
-    local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
-    for i = 1, math.max(numLines + 4, 20) do
-        local left = getTooltipLeftLine(tooltip, i)
-        local right = getTooltipRightLine(tooltip, i)
-        -- Guard on what was applied, not on a dirty flag. This is the same
-        -- idiom applyTooltipMaxWidth uses for the line width cap, and it is the
-        -- only thing that makes this loop affordable: the floor is 20 lines, so
-        -- an unguarded call costs 20 widget lookups, 20 pcall()s and 20 SetFont
-        -- C calls on EVERY render -- and it does so on the item path too, once
-        -- per hover. Worse, this runs after the SetText loop, so each SetFont
-        -- invalidates the text measurement that loop just computed.
-        --
-        -- No invalidation hook is needed for new lines: a FontString that has
-        -- not been fonted yet carries a nil field, which never compares equal
-        -- to a font, so a line the pool has just handed out is picked up on the
-        -- next render by itself.
-        local lineSize = (i == 1) and nameSize or fontSize
-        if (left) then
-            local wantFont = rememberedMasks
-                and TT.PickScriptFont(fontPath, rememberedMasks[i] or 0)
-                or lineTooltipFont(fontPath, left, i, tooltip)
-            if (left._tacoTipFont ~= wantFont or left._tacoTipFontSize ~= lineSize) then
-                local okFont = callLabeled("applyTooltipFonts", left, "SetFont", wantFont, lineSize)
-                -- SetFont returns false when the path is not loaded (for
-                -- example a font the client does not ship). Do not cache that
-                -- as success or the line is never retried with a real face.
-                if (okFont ~= false) then
-                    left._tacoTipFont, left._tacoTipFontSize = wantFont, lineSize
+
+    -- Shared FontString font updater for GameTooltip and FriendsTooltip:
+    -- 1) Verifies live GetFont() alongside _tacoTipFont so Blizzard C++ resets
+    --    (SetText/AddLine/AddDoubleLine/ClearLines/SetFontObject) never leave a
+    --    stale memo skipping SetFont.
+    -- 2) If SetFont returns false (e.g. a Blizzard locale face absent on this
+    --    client), retries with the bundled script fallback before caching.
+    local function applyFontIfNeeded(line, wantFont, lineSize, wantFlags, label, fallbackFont)
+        if (not line or type(wantFont) ~= "string" or wantFont == "") then
+            return false
+        end
+        local needsSet = (line._tacoTipFont ~= wantFont or line._tacoTipFontSize ~= lineSize)
+        if (not needsSet and type(line.GetFont) == "function") then
+            local okCur, curFont, curSize = pcall(line.GetFont, line)
+            if (okCur and type(curFont) == "string" and curFont ~= "" and not isSecretValue(curFont)) then
+                if (normalizeFontPath(curFont) ~= normalizeFontPath(wantFont)
+                        or math.abs((tonumber(curSize) or 0) - lineSize) > 0.5) then
+                    needsSet = true
                 end
             end
         end
-        if (right) then
-            local wantFont = rememberedMasks
-                and TT.PickScriptFont(fontPath, rememberedMasks[i] or 0)
-                or lineTooltipFont(fontPath, right, i, tooltip)
-            if (right._tacoTipFont ~= wantFont or right._tacoTipFontSize ~= lineSize) then
-                local okFont = callLabeled("applyTooltipFonts", right, "SetFont", wantFont, lineSize)
-                if (okFont ~= false) then
-                    right._tacoTipFont, right._tacoTipFontSize = wantFont, lineSize
+        if (not needsSet) then
+            return false
+        end
+        local appliedFont = wantFont
+        local okFont
+        if (wantFlags ~= nil) then
+            okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize, wantFlags)
+        else
+            okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize)
+        end
+        if (okFont == false and type(fallbackFont) == "string" and fallbackFont ~= ""
+                and normalizeFontPath(fallbackFont) ~= normalizeFontPath(appliedFont)) then
+            appliedFont = fallbackFont
+            if (wantFlags ~= nil) then
+                okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize, wantFlags)
+            else
+                okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize)
+            end
+        end
+        if (okFont ~= false) then
+            line._tacoTipFont, line._tacoTipFontSize = appliedFont, lineSize
+            return true
+        end
+        return false
+    end
+    TT.ApplyFontIfNeeded = applyFontIfNeeded
+
+    local function bundledFallbackForLine(line, explicitMask)
+        local mask = explicitMask
+        if (type(mask) ~= "number" and line and type(line.GetText) == "function" and TT.DetectScripts) then
+            local okT, txt = pcall(line.GetText, line)
+            if (okT and type(txt) == "string" and not isSecretValue(txt)) then
+                mask = TT.DetectScripts(txt)
+            end
+        end
+        if (type(mask) == "number" and mask ~= 0 and TT.PickScriptFont) then
+            return TT.PickScriptFont("Fonts\\FRIZQT__.TTF", mask)
+        end
+        local bundled = TT.bundledTooltipFonts
+        if (type(bundled) == "table" and TT.GetDisplayLocale) then
+            return bundled[TT:GetDisplayLocale()]
+        end
+        return nil
+    end
+
+    local function applyLineFont(line, wantFont, lineSize, explicitMask)
+        if (not line or type(wantFont) ~= "string" or wantFont == "") then
+            return false
+        end
+        local fallback = bundledFallbackForLine(line, explicitMask)
+        return applyFontIfNeeded(line, wantFont, lineSize, nil, "applyTooltipFonts", fallback)
+    end
+
+    -- rememberedMasks: optional { [lineIndex] = scriptMask } for a tooltip whose
+    -- lines may not be read. In that mode no text is read at all -- the face comes
+    -- from the cached mask, so nothing restricted is touched.
+    applyTooltipFonts = function(tooltip, rememberedMasks)
+        if (not tooltip) then
+            return false
+        end
+        local fontPath = (TT.GetResolvedTooltipFont and TT:GetResolvedTooltipFont())
+            or (TT.GetLocaleFontPath and TT:GetLocaleFontPath())
+            or TacoTipConfig.tooltip_font
+            or "Fonts\\FRIZQT__.TTF"
+        local fontSize = TacoTipConfig.tooltip_font_size or 12
+        local nameSize = fontSize + TOOLTIP_NAME_FONT_SIZE_DELTA
+        local numLines = (tooltip.NumLines and tooltip:NumLines()) or 0
+        local changed = false
+        for i = 1, math.max(numLines + 4, 20) do
+            local left = getTooltipLeftLine(tooltip, i)
+            local right = getTooltipRightLine(tooltip, i)
+            local lineSize = (i == 1) and nameSize or fontSize
+            local maskOverride = rememberedMasks and (rememberedMasks[i] or 0) or nil
+            if (left) then
+                local wantFont = rememberedMasks
+                    and TT.PickScriptFont(fontPath, maskOverride)
+                    or lineTooltipFont(fontPath, left, i, tooltip)
+                if (applyLineFont(left, wantFont, lineSize, maskOverride)) then
+                    changed = true
+                end
+            end
+            if (right) then
+                local wantFont = rememberedMasks
+                    and TT.PickScriptFont(fontPath, maskOverride)
+                    or lineTooltipFont(fontPath, right, i, tooltip)
+                if (applyLineFont(right, wantFont, lineSize, maskOverride)) then
+                    changed = true
                 end
             end
         end
+        return changed
     end
 end
 
@@ -1561,6 +1634,7 @@ end
 -- Lua 5.1's 60-upvalue ceiling (the realm-row comment inside it records the
 -- same constraint), and a 61st upvalue makes main.lua fail to LOAD on 5.1 and
 -- luajit. TT is already captured there.
+TT.ApplyTooltipFonts = applyTooltipFonts
 TT.ApplyRememberedLineFonts = applyRememberedLineFonts
 
 local function getOrCreateBackdropFrame(tooltip)
@@ -3522,11 +3596,15 @@ local function onTooltipSetUnit(tooltip, data)
         -- Forever). Nothing here may look at it, but the face this unit's lines
         -- were last drawn with is remembered, so the client's own text keeps
         -- its glyphs instead of falling back to the box-per-character roman one.
-        TT.ApplyRememberedLineFonts(tooltip, guid)
+        if (not TT.ApplyRememberedLineFonts(tooltip, guid)) then
+            TT.ApplyTooltipFonts(tooltip)
+        end
         return
     end
     if (safeUnitIsPlayer(tooltipUnit) and (not text[2] or isSecretValue(text[2]) or text[2] == "")) then
-        TT.ApplyRememberedLineFonts(tooltip, guid)
+        if (not TT.ApplyRememberedLineFonts(tooltip, guid)) then
+            TT.ApplyTooltipFonts(tooltip)
+        end
         return
     end
 
@@ -5104,10 +5182,19 @@ local function onTooltipShow(tooltip)
 
     if (not isUnit) then
         -- F1: When the tooltip shows for non-unit content (items, spells, UI
-        -- elements, options hover-help), the portrait from a previous unit
-        -- display must be cleared. OnTooltipCleared may not have fired on
-        -- this transition path (e.g. ClearLines + Show in showHoverTooltip).
+        -- elements, Who/Guild/Social lists, options hover-help), the portrait
+        -- from a previous unit display must be cleared. OnTooltipCleared may
+        -- not have fired on this transition path (e.g. ClearLines + Show).
         clearTooltipVisuals(tooltip, preservePendingItem, nil, "show-no-class-cache", true)
+        if (not lootTooltip and tooltip) then
+            local fontChanged = applyTooltipFonts(tooltip)
+            if (fontChanged and tooltip.IsShown and tooltip:IsShown()
+                    and type(tooltip.Show) == "function" and not state.inTooltipRefreshShow) then
+                state.inTooltipRefreshShow = true
+                pcall(tooltip.Show, tooltip)
+                state.inTooltipRefreshShow = nil
+            end
+        end
         if (not lootTooltip and (itemTooltip or preservePendingItem or safeShownItemLink ~= nil)
                 and savedItemBorderColor and TacoTipConfig.tooltip_border_item_quality ~= false) then
             state.itemBorderColor = savedItemBorderColor
@@ -5125,6 +5212,10 @@ local function onTooltipShow(tooltip)
             tooltip:Hide()
         end
         return
+    end
+
+    if (not lootTooltip) then
+        applyTooltipFonts(tooltip)
     end
 
     if (state and state.wideBottomPadding and state.wideBottomPadding > 0) then
@@ -5308,8 +5399,108 @@ end
 -- template no longer declares OnTooltipSetSpell, so an unguarded hook here
 -- aborts the rest of main.lua at file scope.
 hookTooltipScripts("OnTooltipSetSpell", function(tooltip)
-    return safeCall(clearTooltipVisuals, tooltip)
+    safeCall(clearTooltipVisuals, tooltip)
+    return safeCall(applyTooltipFonts, tooltip)
 end, { { GameTooltip, "GameTooltip" } })
+
+do
+    local FRIENDS_TOOLTIP_LINE_NAMES = {
+        "FriendsTooltipHeader",
+        "FriendsTooltipNoteText",
+        "FriendsTooltipBroadcastText",
+        "FriendsTooltipLastOnline",
+        "FriendsTooltipOtherGameAccounts",
+        "FriendsTooltipGameAccountMany",
+        "FriendsTooltipGameAccount1Name",
+        "FriendsTooltipGameAccount1Info",
+        "FriendsTooltipGameAccount2Name",
+        "FriendsTooltipGameAccount2Info",
+        "FriendsTooltipGameAccount3Name",
+        "FriendsTooltipGameAccount3Info",
+        "FriendsTooltipGameAccount4Name",
+        "FriendsTooltipGameAccount4Info",
+        "FriendsTooltipGameAccount5Name",
+        "FriendsTooltipGameAccount5Info",
+    }
+
+    local function applyFriendsTooltipLineFont(line, explicitText)
+        if (type(line) ~= "table" or type(line.SetFont) ~= "function") then
+            return false
+        end
+        if (not line._tacoTipOrigFont and type(line.GetFont) == "function") then
+            local okOrig, origFont, origSize, origFlags = pcall(line.GetFont, line)
+            if (okOrig and type(origFont) == "string" and origFont ~= "" and not isSecretValue(origFont)) then
+                line._tacoTipOrigFont = origFont
+                line._tacoTipOrigSize = (type(origSize) == "number" and not isSecretValue(origSize)) and origSize or 12
+                line._tacoTipOrigFlags = (type(origFlags) == "string" and not isSecretValue(origFlags)) and origFlags or nil
+            end
+        end
+        local text = explicitText
+        if (type(text) ~= "string" and type(line.GetText) == "function") then
+            local okText, lineText = pcall(line.GetText, line)
+            text = okText and lineText or nil
+        end
+        if (type(text) ~= "string" or isSecretValue(text)) then
+            return false
+        end
+        local mask = (TT.DetectScripts and TT.DetectScripts(text)) or 0
+        local baseFont = line._tacoTipOrigFont or "Fonts\\FRIZQT__.TTF"
+        local wantFont = (mask ~= 0 and TT.PickScriptFont) and TT.PickScriptFont(baseFont, mask) or baseFont
+        local wantSize = line._tacoTipOrigSize or 12
+        local fallback = (mask ~= 0 and TT.PickScriptFont) and TT.PickScriptFont("Fonts\\FRIZQT__.TTF", mask) or nil
+        return TT.ApplyFontIfNeeded(line, wantFont, wantSize, line._tacoTipOrigFlags, "applyFriendsTooltipFonts", fallback)
+    end
+
+    local function applyFriendsTooltipFonts(tooltip)
+        local changed = false
+        for _, name in ipairs(FRIENDS_TOOLTIP_LINE_NAMES) do
+            local region = rawget(_G, name)
+            if (region and applyFriendsTooltipLineFont(region)) then
+                changed = true
+            end
+        end
+        if (type(tooltip) == "table" and type(tooltip.GetRegions) == "function") then
+            local okRegions, regions = pcall(function() return { tooltip:GetRegions() } end)
+            if (okRegions and type(regions) == "table") then
+                for _, region in ipairs(regions) do
+                    if (type(region) == "table" and type(region.GetText) == "function"
+                            and type(region.SetFont) == "function") then
+                        if (applyFriendsTooltipLineFont(region)) then
+                            changed = true
+                        end
+                    end
+                end
+            end
+        end
+        return changed
+    end
+
+    local friendsTooltipHooked = false
+    local friendsSetLineHooked = false
+    local function initFriendsTooltipHooks()
+        local friendsTT = rawget(_G, "FriendsTooltip")
+        if (not friendsTooltipHooked and type(friendsTT) == "table"
+                and type(friendsTT.HasScript) == "function" and friendsTT:HasScript("OnShow")
+                and type(friendsTT.HookScript) == "function") then
+            friendsTT:HookScript("OnShow", function(f)
+                return safeCall(applyFriendsTooltipFonts, f)
+            end)
+            friendsTooltipHooked = true
+        end
+        if (not friendsSetLineHooked and type(rawget(_G, "FriendsFrameTooltip_SetLine")) == "function"
+                and type(hooksecurefunc) == "function") then
+            hooksecurefunc("FriendsFrameTooltip_SetLine", function(line, _, text)
+                return safeCall(applyFriendsTooltipLineFont, line, text)
+            end)
+            friendsSetLineHooked = true
+        end
+    end
+
+    TT.ApplyFriendsTooltipLineFont = applyFriendsTooltipLineFont
+    TT.ApplyFriendsTooltipFonts = applyFriendsTooltipFonts
+    TT.InitFriendsTooltipHooks = initFriendsTooltipHooks
+    initFriendsTooltipHooks()
+end
 
 
 local function CreateMouseAnchor()
@@ -7982,6 +8173,10 @@ local function onEvent(self, event, ...)
                 pcall(TT.InitInspectFrame, TT)
                 TT.InitInspectFrame = nil
             end
+        elseif (addon == "Blizzard_FriendsFrame") then
+            if (type(TT.InitFriendsTooltipHooks) == "function") then
+                pcall(TT.InitFriendsTooltipHooks)
+            end
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (TacoTipConfig.instant_fade and GameTooltip and GameTooltip:IsShown() and ((GameTooltip.IsUnit and GameTooltip:IsUnit("mouseover")) or (GameTooltip.GetUnit and select(2, GameTooltip:GetUnit()) == "mouseover"))) then
@@ -8153,7 +8348,7 @@ do
                         return
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
-                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.4")))
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.5")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)

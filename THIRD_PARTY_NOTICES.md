@@ -111,10 +111,7 @@ author and maintainers, are reproduced in full in
 
 ### Upstream TacoTip lineage
 
-This project's ancestry includes an earlier TacoTip distribution credited to
-`anzz1`. Where that lineage's own licensing is not recorded in this repository,
-no additional rights or grants are asserted here beyond what this repository's
-LICENSE covers for the current work.
+This project is based on and derived from **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** by **kebabstorm** (`anzz1`), with GearScore calculation originally based on `GearScoreLite` by Mirrikat45 & others and `GearScoreTBCClassic` compatibility adjustments. Both upstream author **kebabstorm** and current maintainer **AcidBomb** are credited in [LICENSE](LICENSE) and [README.md](README.md).
 
 ---
 

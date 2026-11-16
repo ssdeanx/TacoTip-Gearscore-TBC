@@ -12,9 +12,11 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.4
+version: 1.0.5
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
+upstream: TacoTip (GearScore & Talents & Item Level) by kebabstorm
+upstream_url: https://www.curseforge.com/wow/addons/tacotip-gearscore-talents
 license: MIT
 curseforge_id: 1555962
 project_url: https://www.curseforge.com/wow/addons/tacotip-gearscore
@@ -35,7 +37,7 @@ updated: 2026-11-15
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.4-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.5-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -69,6 +71,7 @@ updated: 2026-11-15
 
 💬 **<span style="color:#5865F2"><span style="text-decoration:underline">Official Discord Community</span></span>** — <https://discord.gg/JuVJBwXqv>
 📦 **<span style="color:#f39c12"><span style="text-decoration:underline">CurseForge Page</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore>
+🙏 **<span style="color:#b4e634"><span style="text-decoration:underline">Original TacoTip Credit</span></span>** — Based on **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** by **kebabstorm**
 🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) *(Server leaderboard, guild rank browser & peer-to-peer gear sync)*
 ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png)
 
@@ -117,6 +120,14 @@ updated: 2026-11-15
 | `/tt minimap` or `/tt icon` | Toggle the **LibDBIcon minimap launcher button** |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.5</span>
+
+🌍 **<span style="color:#b4e634">Non-Latin (`ru`/`cn`/`ko`/`tw`) Script Font Fix Across All Styles, Who/Social & Friends Tooltips:</span>** Fixed missing-glyph boxes (`□□□`) on English clients when hovering Russian, Simplified/Traditional Chinese, or Korean player/guild names, BattleTags, notes, or broadcasts in `Wide` style, normal styles, Who/Social hovers, and `FriendsTooltip`. `applyTooltipFonts` now verifies live `FontString:GetFont()` alongside `_tacoTipFont` so Blizzard's C++ `SetText`/`AddLine`/`AddDoubleLine`/`ClearLines` resets back to `FRIZQT__.TTF` never leave stale caches skipping `SetFont`; `onTooltipShow` now applies per-line script fonts on non-unit tooltips (excluding Forever loot tooltips) and re-verifies unit tooltips before presentation; `FriendsFrameTooltip_SetLine` and `FriendsTooltip:OnShow` apply per-line script fonts while preserving each region's original font size and restoring it on Latin lines; and `textures.lua` normalizes font path separators and expands UTF-8 script detection for Cyrillic Supplement, Hangul Jamo, and CJK Compatibility/Fullwidth/Ext-B ranges.
+
+📜 **<span style="color:#b4e634">License, Upstream Attribution & Version Sync:</span>** Updated [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [README.md](README.md), `TacoTip.toc`, and core Lua module headers (`main.lua`, `options.lua`, `gearscore.lua`, `pawn.lua`, `LibForeverInspector.lua`) to explicitly credit the original **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** project by **kebabstorm** alongside current cross-engine maintenance by **AcidBomb**.
 
 ---
 
@@ -318,6 +329,13 @@ TacoTip ships with localized translations for all 11 official World of Warcraft 
 
 TacoTip is distributed under the **MIT License**. The full text ships in [LICENSE](LICENSE).
 
+### Upstream & Original Author Credit
+
+TacoTip is based on and derived from the original **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** by **kebabstorm** (`anzz1`). Full credit goes to **kebabstorm** for the original addon architecture, GearScore module (`gearscore.lua`, originally based on `GearScoreLite` by Mirrikat45 & others), Pawn integration (`pawn.lua`), `LibDetours-1.0`, and `LibClassicInspector` (from which `LibForeverInspector` is derived).
+
+- **Original TacoTip Project:** <https://www.curseforge.com/wow/addons/tacotip-gearscore-talents> (**kebabstorm**)
+- **Current Author & Cross-Engine Maintainer:** **AcidBomb (Pilsung)**
+
 Bundled third-party libraries under `Libs/` keep their **own** licenses and are **not** covered by TacoTip's MIT terms:
 
 | Library | License | Author |
@@ -325,11 +343,11 @@ Bundled third-party libraries under `Libs/` keep their **own** licenses and are 
 | `LibStub` | Public Domain | Kaelten, Cladhaire, ckknight, Mikk, Ammo, Nevcairiel, joshborke |
 | `CallbackHandler-1.0` | MIT | Icedragon and contributors |
 | `LibDetours-1.0` | MIT | kebabstorm |
-| `LibForeverInspector` | MIT | AcidBomb (part of this project) |
+| `LibDataBroker-1.1` | Public Domain | Tekkub and contributors |
+| `LibDBIcon-1.0` | Public Domain | Rabbit, funkehdude and contributors |
+| `LibForeverInspector` | MIT | Derived from `LibClassicInspector` by kebabstorm; extended by AcidBomb |
 
 The three bundled fonts under `Media/Fonts/` keep their **own** licenses, shipped beside each file: **Noto Sans** (SIL OFL 1.1), **NanumGothic** (SIL OFL 1.1) and **WenQuanYi Micro Hei** (Apache 2.0). They are used for player names and guild names in another script, never as a replacement for the client's own UI face.
 
 Full attribution and license notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-GearScore calculation behavior derives from GearScoreTBCClassic; see the notices in [TacoTip Extras' THIRD_PARTY_NOTICES.md](TacoTip_Extras/THIRD_PARTY_NOTICES.md).
-
-Author and maintainer: **AcidBomb (Pilsung)**.
+GearScore calculation behavior derives from GearScoreLite (Mirrikat45 & others) and GearScoreTBCClassic; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [LICENSE](LICENSE).

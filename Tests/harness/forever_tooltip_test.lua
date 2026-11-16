@@ -3182,6 +3182,160 @@ do
 end
 
 --------------------------------------------------------------------------
+-- v1.0.5: Non-roman script fonts (ru/cn/ko/tw) across wide_style,
+-- normal style, Who/non-unit OnShow tooltips, and Blizzard C++ GetFont
+-- resets when _tacoTipFont cache is stale.
+--------------------------------------------------------------------------
+do
+    local bundled = TT.bundledTooltipFonts or {}
+    local savedStyle = C.tip_style
+    local savedGI = REALG.GetGuildInfo
+
+    -- 1. Wide style and normal style both apply script fonts for ru/cn/ko/tw
+    --    and recover when Blizzard resets GetFont() to FRIZQT__.TTF while
+    --    _tacoTipFont still holds the previous render's bundled font.
+    local cases = {
+        { tag = "ru", name = "Иван", guild = "Кровь и Пепел", want = bundled.ruRU },
+        { tag = "cn", name = "测试玩家", guild = "简体公会", want = bundled.zhCN },
+        { tag = "tw", name = "繁體測試", guild = "繁體公會", want = bundled.zhTW },
+        { tag = "ko", name = "한글유저", guild = "한글길드", want = bundled.koKR },
+    }
+    for _, styleVal in ipairs({ 1, 3 }) do
+        C.tip_style = styleVal
+        for _, tc in ipairs(cases) do
+            REALG.GetGuildInfo = function() return tc.guild, "Member" end
+            GT:ClearLines()
+            GT:AddLine(tc.name)
+            GT:AddLine("<" .. tc.guild .. "> Member")
+            GT:AddLine("Level 60 Warrior")
+            -- Simulate Blizzard C++ resetting pooled lines back to FRIZQT__.TTF
+            -- while _tacoTipFont still retains a stale bundled font path.
+            local l1 = GT:GetLeftLine(1)
+            local l2 = GT:GetLeftLine(2)
+            l1._tacoTipFont = tc.want
+            l1._tacoTipFontSize = 14
+            l1.__font = "Fonts\\FRIZQT__.TTF"
+            l1.__fontSize = 14
+            l1.GetFont = function() return l1.__font, l1.__fontSize, "" end
+            l2._tacoTipFont = tc.want
+            l2._tacoTipFontSize = 12
+            l2.__font = "Fonts\\FRIZQT__.TTF"
+            l2.__fontSize = 12
+            l2.GetFont = function() return l2.__font, l2.__fontSize, "" end
+
+            drive("mouseover")
+            check("v1.0.5 font (" .. tc.tag .. ", style=" .. tostring(styleVal) .. "): stale cache recovers via GetFont on line 1+2",
+                l1.__font == tc.want and l2.__font == tc.want,
+                "l1=" .. tostring(l1.__font) .. " l2=" .. tostring(l2.__font))
+        end
+    end
+
+    -- 2. Non-unit SetText + AddLine + Show tooltips (e.g. Who List / Social UI)
+    --    receive per-line script fonts via OnShow without crashing on loot tooltips.
+    for _, tc in ipairs(cases) do
+        GT:ClearLines()
+        GT.GetUnit = function() return nil, nil end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return nil, nil, nil end
+        GT.GetOwner = function() return { unit = nil } end
+        GT:AddLine(tc.name)
+        GT:AddLine("<" .. tc.guild .. ">")
+        GT:AddLine("Level 44 Undead Priest")
+        GT:AddLine("Riverglades")
+        local l1 = GT:GetLeftLine(1)
+        local l2 = GT:GetLeftLine(2)
+        local l3 = GT:GetLeftLine(3)
+        l1.__font = "Fonts\\FRIZQT__.TTF"
+        l1.__fontSize = 14
+        l1.GetFont = function() return l1.__font, l1.__fontSize, "" end
+        l2.__font = "Fonts\\FRIZQT__.TTF"
+        l2.__fontSize = 12
+        l2.GetFont = function() return l2.__font, l2.__fontSize, "" end
+        if (GT.__hooks and GT.__hooks.OnShow) then
+            GT.__hooks.OnShow(GT)
+        end
+        check("v1.0.5 non-unit OnShow (" .. tc.tag .. "): applies bundled font to Who/Social lines, leaves Latin line",
+            l1.__font == tc.want and l2.__font == tc.want and l3.__font == "Fonts\\FRIZQT__.TTF",
+            "l1=" .. tostring(l1.__font) .. " l2=" .. tostring(l2.__font) .. " l3=" .. tostring(l3.__font))
+    end
+
+    -- 3. FriendsTooltip (Battle.net / Friends List) per-line script fonts & Latin restore
+    local function makeFriendLine(text, size)
+        local line = {
+            __text = text,
+            __font = "Fonts\\FRIZQT__.TTF",
+            __fontSize = size,
+            __flags = "",
+        }
+        line.GetFont = function() return line.__font, line.__fontSize, line.__flags end
+        line.SetFont = function(_, f, s, fl)
+            line.__font, line.__fontSize, line.__flags = f, s, fl or ""
+        end
+        line.GetText = function() return line.__text end
+        return line
+    end
+    local fHeader = makeFriendLine("Друг", 12)
+    local fAccName = makeFriendLine("한글친구", 10)
+    local fAccInfo = makeFriendLine("Riverglades - Realm", 10)
+    local fNote = makeFriendLine("繁體備註", 10)
+    local fBroadcast = makeFriendLine("简体广播", 10)
+    local savedFH, savedFAN, savedFAI, savedFN, savedFB =
+        REALG.FriendsTooltipHeader, REALG.FriendsTooltipGameAccount1Name,
+        REALG.FriendsTooltipGameAccount1Info, REALG.FriendsTooltipNoteText,
+        REALG.FriendsTooltipBroadcastText
+    REALG.FriendsTooltipHeader = fHeader
+    REALG.FriendsTooltipGameAccount1Name = fAccName
+    REALG.FriendsTooltipGameAccount1Info = fAccInfo
+    REALG.FriendsTooltipNoteText = fNote
+    REALG.FriendsTooltipBroadcastText = fBroadcast
+    TT.ApplyFriendsTooltipFonts()
+    check("v1.0.5 FriendsTooltip: applies ru/ko/tw/cn bundled fonts while preserving per-line sizes and Latin font",
+        fHeader.__font == bundled.ruRU and fHeader.__fontSize == 12
+            and fAccName.__font == bundled.koKR and fAccName.__fontSize == 10
+            and fAccInfo.__font == "Fonts\\FRIZQT__.TTF" and fAccInfo.__fontSize == 10
+            and fNote.__font == bundled.zhTW and fNote.__fontSize == 10
+            and fBroadcast.__font == bundled.zhCN and fBroadcast.__fontSize == 10,
+        string.format("hdr=%s/%s acc=%s/%s info=%s note=%s bc=%s",
+            tostring(fHeader.__font), tostring(fHeader.__fontSize),
+            tostring(fAccName.__font), tostring(fAccName.__fontSize),
+            tostring(fAccInfo.__font), tostring(fNote.__font), tostring(fBroadcast.__font)))
+    fHeader.__text = "LatinFriend"
+    TT.ApplyFriendsTooltipLineFont(fHeader, "LatinFriend")
+    check("v1.0.5 FriendsTooltip: restores original font when line switches back to Latin",
+        fHeader.__font == "Fonts\\FRIZQT__.TTF" and fHeader.__fontSize == 12,
+        tostring(fHeader.__font) .. "/" .. tostring(fHeader.__fontSize))
+    REALG.FriendsTooltipHeader, REALG.FriendsTooltipGameAccount1Name,
+    REALG.FriendsTooltipGameAccount1Info, REALG.FriendsTooltipNoteText,
+    REALG.FriendsTooltipBroadcastText = savedFH, savedFAN, savedFAI, savedFN, savedFB
+
+    -- 4. When SetFont returns false for an unshipped Blizzard locale face, falls back to bundled font
+    local fMissing = {
+        __text = "Русский",
+        __font = "Fonts\\FRIZQT__.TTF",
+        __fontSize = 12,
+        __flags = "",
+    }
+    fMissing.GetText = function() return fMissing.__text end
+    fMissing.GetFont = function() return fMissing.__font, fMissing.__fontSize, fMissing.__flags end
+    fMissing.SetFont = function(_, f, s, fl)
+        if (f == "Fonts\\FRIZQT___CYR.TTF") then
+            return false
+        end
+        fMissing.__font, fMissing.__fontSize, fMissing.__flags = f, s, fl or ""
+        return true
+    end
+    fMissing._tacoTipOrigFont = "Fonts\\FRIZQT___CYR.TTF"
+    fMissing._tacoTipOrigSize = 12
+    fMissing._tacoTipOrigFlags = ""
+    TT.ApplyFriendsTooltipLineFont(fMissing, "Русский")
+    check("v1.0.5 font fallback: SetFont returning false retries with bundled script font",
+        fMissing.__font == bundled.ruRU and fMissing._tacoTipFont == bundled.ruRU,
+        tostring(fMissing.__font))
+
+    C.tip_style = savedStyle
+    REALG.GetGuildInfo = savedGI
+end
+
+--------------------------------------------------------------------------
 -- Report.
 --------------------------------------------------------------------------
 local fails = 0

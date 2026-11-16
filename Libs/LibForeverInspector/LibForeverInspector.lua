@@ -2,6 +2,8 @@
 
     LibForeverInspector
     Universal multi-engine inspection & specialization library
+    Derived from LibClassicInspector by kebabstorm (https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)
+    Multi-engine extensions by AcidBomb (MIT License)
     Supports: Classic Era / SoD (1.15.x), TBC Anniversary (2.5.x),
               WotLK (3.4.x / 3.80.x), WoW Forever (1.60.x), and Retail (11.x / 12.x)
 

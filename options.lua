@@ -1,6 +1,14 @@
+--[[
+
+    TacoTip — Options & Dashboard UI module
+    Based on original TacoTip by kebabstorm (https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)
+    Multi-engine extensions & dashboard by AcidBomb (MIT License)
+
+--]]
+
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.4"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.5"
 local addOnTitle = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Title")) or
     (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Title")) or addOnName
 local LoadAddOn = _G.LoadAddOn

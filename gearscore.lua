@@ -1,7 +1,9 @@
 --[[
 
     TacoTip GearScore module
-    for WoW Forever & Retail
+    Originally by kebabstorm (https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)
+    Based on original GearScoreLite by Mirrikat45 & others
+    Multi-engine extensions for WoW Forever, Retail, Classic Era, TBC Anniversary & Titanforge by AcidBomb (MIT License)
 
 --]]
 
