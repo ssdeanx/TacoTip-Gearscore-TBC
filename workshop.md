@@ -17,6 +17,11 @@ blizzard truth lives outside the repo at `/home/sam/wow-ui-source`, one
 `origin/`-qualified branch per client. it is the only acceptable source for
 api claims.
 
+current version state lives in `README.md`, `CHANGELOG.md`, both TOCs, the
+`main.lua`/`options.lua` fallbacks and the `load_test.lua` pins. 1.0.6 was
+published but never committed; HEAD `3acebdd` is the 1.0.5 commit and the
+working tree targets 1.0.7 / Extras 1.3.2, pending in-game verification.
+
 ## the invariants — do not touch
 
 not style choices. each one has a release behind it.
@@ -50,9 +55,10 @@ not style choices. each one has a release behind it.
   non-nil but `GetInventoryItemLink` is nil, item data is still in-flight from
   the server. Never commit the staged table, never stamp `data.time`, and never
   finalize GearScore: keep the last complete snapshot and retry on the
-  `{0.20, 0.35, 0.50, 0.75, 1.00, 1.50}` ladder (six attempts, reset per
-  inspection). If the read exhausts, leave the record `incomplete` with a 20 s
-  `GetTime` backoff (`failedUntil`) instead of claiming freshness -- a failed
+  `{0.15, 0.25, 0.40, 0.65, 1.00, 1.50}` ladder (`CACHE_RETRY_DELAYS`, six
+  attempts, reset per inspection). If the read exhausts, leave the record
+  `incomplete` with a progressive `{1.5, 3.0, 4.0}` s `GetTime` backoff
+  (`failedUntil`, `CACHE_FAILED_BACKOFFS`) instead of claiming freshness -- a failed
   read is not a fresh read, and stamping one makes an EMPTY first-inspect record
   look complete for the whole 300 s window.
 - **inspected gear item data is requested, not awaited.** The scoring path
@@ -60,6 +66,19 @@ not style choices. each one has a release behind it.
   `ITEM_DATA_LOAD_RESULT`; it never asks the client for the data.
   `TT:WarmGearItemData` issues `C_Item.RequestLoadItemDataByID` for uncached
   links (2 s per-item throttle, slot 4 skipped because it is unscored).
+- **the v1.0.6 inspect queue, retry and score-memo machinery is release-bearing.**
+  `lib:GetCacheStatus`, the displaced-retry recovery in
+  `onBlizzardInspectTrigger`, the six-step retry ladder above, deterministic
+  LRU eviction (`_seq` stamps) in `setGearScoreMemo`/`setPawnScoreMemo`/
+  `pruneRetryLedger`, and one `ContinueOnItemLoad` closure per item ID all came
+  with a release. do not replace the LRU stamps with `pairs()` half-table wipes
+  or reintroduce duplicate item-load closures.
+- **the Extras 1.3.2 cache/queue contract is release-bearing.** `Cache.MAX_ENTRIES`
+  is 128; eviction touches completed/stale/unavailable rows BEFORE active
+  `"pending"` rows; `Scanner.RetryUnavailableRemote` keeps a 4.0 s per-GUID
+  cooldown bounded at 128 entries; `asyncQueueHead` is the O(1) queue cursor.
+  do not restore `table.remove(queue, 1)` scanning, clone 17-slot snapshots on
+  hover, or turn a pending row into a cache key. realm auto-scan stays off.
 - the extras' whisper path stays deleted. the guild/level line-index
   ownership proof stays as it is, and the inspect-frame guild guard stays
   installed — both are explained in
@@ -91,8 +110,12 @@ not style choices. each one has a release behind it.
   obsolete test assertions.
 - **the unit render must not decide from screen geometry** — never read screen
   geometry (`:GetLeft()`, `:GetTop()`, `:GetRight()`, `:GetWidth()`, `:GetHeight()`)
-  inside `ApplyTooltipAppearance` before the tooltip has been laid out. The only
-  sanctioned reader is `getPortraitSideRightEdge` which measures the handle's target edge.
+  before the tooltip has been laid out. The sanctioned reader is the local
+  `anchorTooltipPortrait` (`main.lua:1946`): it reads `tooltip:GetRight()` only
+  when the frame is shown, keeps `state.portraitAnchored` false while the
+  measurement is zero, and reuses the cached side so a forced OnShow anchor
+  never latches a zero rect. `getPortraitSideRightEdge` survives only in test
+  comments, not in production code.
 - **3D world mouse focus fallback** — on modern and TBC engines, `GetMouseFoci()`
   returns an empty table `{}` when hovering 3D world units. `TT:GetMouseFocus()` must
   check if the returned table is empty and fall back to `WorldFrame`.
@@ -101,7 +124,12 @@ not style choices. each one has a release behind it.
   Never edit or bundle it during core TacoTip tasks.
 - **zero-warning luacheck and clean verifiers** — `luacheck .` must report 0 warnings
   and 0 errors, and both `verify_release.sh --worktree` and `verify_release_extras.sh --worktree`
-  must report PASS before any lane is finished.
+  must report PASS before any lane is finished. observed 2026-11-16 baseline at
+  v1.0.6/1.3.2: `run_all.sh` 75/75 under lua5.1, lua5.4 and luajit (Extras 42/42),
+  `luacheck .` 0/0 in 70 files, both verifiers PASS, Forever pins 217/217, font
+  and locale suites ALL PASS. `lua5.1 Tests/harness/load_test.lua` alone is NOT a
+  gate: the script needs `<projectId> <interface> <layout> <expectFamily> <expectBracket>`
+  and a bare call raises at line 637. use `run_all.sh` or pass all five args.
 - **no state-changing git** — nothing is staged or committed by design; the two
   package verifiers are the only permitted git invocations.
 
@@ -198,8 +226,8 @@ instead of failing.
 
 ## what the client actually does
 
-facts worth not re-deriving. all verified against the mirror or the client db
-during the 0.8.4 release.
+facts worth not re-deriving. verified against the mirror or the client db;
+the pins span the 0.8.4 release through the v1.0.6 audit (2026-11-16).
 
 - **slash dispatch takes ONE token.** the client splits the typed text at the
   first whitespace (`ChatFrameEditBox.lua`: `strmatch(text, "^(/[^%s]+)")`), so
@@ -373,6 +401,11 @@ during the 0.8.4 release.
   `options.lua`'s slash command `/tt diag` must fall back to printing `TT.LOAD_STAGE`,
   `CI.family`, and `CI.interfaceVersion` rather than simply claiming diagnostics are
   unavailable.
+
+- **`TOOLTIP_UPDATE_TIME = 0.2` is a client constant, not a repo constant:**
+  `origin/forever Interface/AddOns/Blizzard_SharedXML/SharedConstants.lua:145`,
+  consumed by `Blizzard_GameTooltip/Mainline/GameTooltip.lua:308,447` for the
+  per-tick unit re-drive. do not go looking for a source location in the repo.
 
 ## how to check a client string the mirror does not carry
 

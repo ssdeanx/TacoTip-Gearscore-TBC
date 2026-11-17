@@ -5,10 +5,14 @@ edit. this file is an index, not a second copy.
 
 ## what this repo is
 
-two addons, one repo: **TacoTip** (root, v1.0.1) and **TacoTip Extras**
-(`TacoTip_Extras/`, v1.2.7), for five client families (era 11509, tbc
-20506, titanforge 38002, forever 16001, retail 120105). the root doubles as
-the workshop — `desks/`, `bench/`, `Tools/`, `OLD/` are not shipped.
+two addons, one repo: **TacoTip** (root, v1.0.7) and **TacoTip Extras**
+(`TacoTip_Extras/`, v1.3.2), for five client families (era 11509, tbc
+20506, titanforge 38002, forever 16001, retail 120105; the Extras TOC also
+declares 120107). 1.0.6 was published but never committed; HEAD `3acebdd`
+is the 1.0.5 commit and the working tree targets 1.0.7. both READMEs carry a
+pending in-game verification status. the root doubles
+as the workshop — `desks/`, `bench/`, `Tools/`, `docs/`, `Tests/` are not
+shipped; `OLD/` was removed in 45ea3ca.
 
 ## client families — classic vs forever (camelot)
 
@@ -107,9 +111,9 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
 - **`pcall` does not make the ANSWER safe.** the classic mistake is
   `local ok, v = pcall(UnitCanAttack, ...)` then `if (ok and v == false)`: the
   pcall guarded the call, and the **comparison** is what raises. this exact
-  shape lived in the power bar, `main.lua:3662` and `:3665`, where
-  `max ~= nil` / `cur ~= nil` ran *before* the `isSecretValue` test at `:3669`;
-  both now test `type(v) ~= "nil"` so the value still reaches
+  shape lived in the power bar, where `max ~= nil` / `cur ~= nil` ran *before*
+  the `isSecretValue` test; both now test `type(v) ~= "nil"` at
+  `main.lua:4518` and `:4521` so the value still reaches
   `SetMinMaxValues`/`SetValue` untouched. every other site routes through a
   `safe*` helper or tests the value first. same trap for `UnitIsUnit`,
   `UnitInRaid`, `UnitIsPVP`, and for `x ~= ""` on a secret string. test the
@@ -153,8 +157,8 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
   tooltips alike.
 - **`WorldFrame` is anchoring, not secrecy.** `TT:GetMouseFocus()` returns
   `WorldFrame` as the sentinel for "the cursor is over the 3D world, not a UI
-  frame" (`main.lua:4803-4812`), and unit hovers in the world anchor off it
-  (`main.lua:4285`, `:4318`, `:4350`). it carries no secret payload; do not
+  frame" (`main.lua:6627-6633`), and unit hovers in the world anchor off it
+  (`main.lua:5702`, `:5735`, `:5767`). it carries no secret payload; do not
   confuse it with the tooltip-data rules above.
 - **`GameTooltip:SetUnit` / `SetLootItem` / `SetLootRollItem` are
   secret-delegated on purpose** (`TooltipDataHandler.lua:582`, `:537-538`;
@@ -177,10 +181,11 @@ source at the pin and, for the mechanism, [warcraft wiki "it's secret"](https://
   arithmetic, then became a secret cache key). all fixed 2026-11-10. Extras also
   **delegates client identity** to `inspector:IsForever()`/`IsClassic()` etc. and
   must never re-derive it from `WOW_PROJECT_ID` — a MAINLINE test is false on
-  Forever. that rule is **not held yet**: `Scoring.lua:124-150` defines its own
-  `isRetailClient`/`isForeverClient` from `GetBuildInfo` bands, `Scoring.lua:164`
-  and `Scanner.lua:637` read `WOW_PROJECT_ID` directly, and the `Scoring` fallback
-  still names the retired `LibClassicInspector`.
+  Forever. that rule is **not fully held**: `Scoring.lua:124` and `:157` still
+  define local `isRetailClient`/`isForeverClient` with `GetBuildInfo` band
+  fallbacks, and those fallbacks (`Scoring.lua:134,167`, `Scanner.lua:1051`)
+  still name the retired `LibClassicInspector`. Core delegation runs first, so
+  behavior is correct; the only `WOW_PROJECT_ID` reads in Extras are in Core.lua.
 - **the boundary helpers are the pattern**: `safeUnitExists`,
   `safeUnitIsPlayer`, `safeUnitIsConnected`, `safeUnitIsDeadOrGhost`,
   `safeUnitGUID`, `safeUnitIsUnit` in `LibForeverInspector`, and the `TT.safe*`
@@ -263,8 +268,8 @@ secrets only appear under the restriction conditions, which in
 practice means instanced combat and encounters, so a clean run anywhere else
 proves nothing — force them with `addonCombatRestrictionsForced` and
 `addonEncounterRestrictionsForced`. it called the power-bar sites clean and
-missed `main.lua:3662`/`:3665`, so it supplements the rules here; it does not
-replace them.
+missed the sites now at `main.lua:4518`/`:4521`, so it supplements the rules
+here; it does not replace them.
 
 ## do not
 

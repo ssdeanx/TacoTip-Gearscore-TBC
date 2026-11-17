@@ -1,12 +1,15 @@
 ---
-description: FrameXML research and WoW Classic API signature verification discipline
+description: FrameXML research, WoW Classic/Forever API signature verification, and secrecy guard discipline
 globs: ["*.lua", "Libs/**/*.lua"]
 ---
 
-# Rule 02: FrameXML API Research Discipline
+# Rule 02: FrameXML API & Forever Secrecy Discipline
 
-- **Research First:** Always check `/home/sam/wow-ui-source` before writing client-specific API code:
-  - Branch `origin/classic_era` for Classic Era & SoD (Interface `11509`)
-  - Branch `origin/classic_anniversary` for TBC Classic Anniversary (Interface `20506`)
-- **No Retail APIs:** Do not introduce Retail-only API calls (such as `C_Traits`, modern WidgetManager anchors, or Retail dragon atlas names) into Classic execution paths.
-- **Defensive Fallbacks:** When querying APIs that may be deprecated or gated by CVars (e.g. `_G.GetTalentInfo` vs `C_SpecializationInfo.GetTalentInfo`), always wrap calls in safe fallback helpers.
+- **Research First:** Always inspect `/home/sam/wow-ui-source` (`origin/` branches) before modifying client-specific API calls:
+  - `origin/classic_era` (`11509`), `origin/classic_anniversary` (`20506`), `origin/classic_titan` (`38002`), `origin/forever` (`16001` Camelot, `WOW_PROJECT_CAMELOT = 18`), and `origin/live` (`120105`).
+- **Strict Engine Isolation:** Never bleed Forever/Retail `C_Traits` or `TooltipDataProcessor` assumptions into Classic branches; gate Forever changes strictly on `isForever` / `CI:IsForever()`.
+- **Secret Value Boundaries (Forever `16001`):**
+  - Never pass a possibly-secret value to `SecretArguments = "AllowedWhenUntainted"` functions (`UnitExists`, `UnitIsPlayer`, `UnitIsConnected`, `UnitIsDeadOrGhost`, `UnitInParty`, `UnitGroupRolesAssigned`, `UnitIsSameServer`, `UnitDistanceSquared`, `UnitFactionGroup`). Route through `LibForeverInspector` / `TT.safe*` helpers.
+  - Use `type(v) == "nil"` before comparisons (`==`/`~=`/`<`/`>`/`%`) and apply the strong `issecretvalue` check (`if (not ok or isSec == true)`).
+  - Never index tooltip data tables without `TT.tooltipDataReadable(data)` (`canaccesstable`).
+  - Leave Forever native loot-window tooltips (`SetLootItem` / `SetLootRollItem`) untouched, and skip World Map unit-pin styling whenever in combat, instance, encounter, or active Forever restrictions (`TT.CanStyleWorldMapTooltip()`).

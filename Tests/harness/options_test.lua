@@ -1403,6 +1403,25 @@ do
         check("snapshot pin OnEnter/OnLeave inspects stats cleanly",
             tick1 ~= nil and tick1:IsShown() and okPin,
             "shown=" .. tostring(tick1 and tick1:IsShown()) .. " err=" .. tostring(errPin))
+
+        local okTabs, errTabs = pcall(function()
+            for _, tId in ipairs({ "general", "units", "appearance", "portrait", "positioning", "character", "diagnostics", "community", "reset" }) do
+                dash:SelectTab(tId)
+            end
+            dash:SelectTab("general")
+            dash:RefreshAll()
+            local sb = rawget(REALG, "TacoTipDashboardSearch")
+            if (sb and sb.SetText) then
+                sb:SetText("border")
+                local onChg = sb:GetScript("OnTextChanged")
+                if (onChg) then onChg(sb) end
+                sb:SetText("")
+                if (onChg) then onChg(sb) end
+            end
+        end)
+        check("dashboard tabs, RefreshAll, and search reflow run cleanly",
+            okTabs, "err=" .. tostring(errTabs))
+
         if (dash.Hide) then dash:Hide() end
     end
 

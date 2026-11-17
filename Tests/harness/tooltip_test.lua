@@ -6991,6 +6991,136 @@ do
             CFG.recentCache = savedRecent
             REALG.GetServerTime = savedSrvTime
         end
+
+        -- Pin 1.0.6: FIFO gsCallbackQueue, LRU score memo eviction, and CI:GetCacheStatus
+        local gscCI = REALG.LibStub and REALG.LibStub("LibForeverInspector")
+        if (gscCI and type(gscCI.GetCacheStatus) == "function") then
+            local missSt = gscCI:GetCacheStatus("Player-0000-NOMATCH")
+            check("1.0.6 CI:GetCacheStatus reports 'missing' for uncached GUID", missSt == "missing",
+                "status=" .. tostring(missSt))
+            local sGuid = UNITS.mouseover.guid
+            local prevS = gscCI.cache[sGuid]
+            gscCI.cache[sGuid] = { items = { [1] = "item:19019" }, incomplete = true, retryPending = true }
+            local retrySt = gscCI:GetCacheStatus(sGuid)
+            check("1.0.6 CI:GetCacheStatus reports 'retrying' when retryPending=true", retrySt == "retrying",
+                "status=" .. tostring(retrySt))
+            gscCI.cache[sGuid] = { items = { [1] = "item:19019" }, incomplete = true, failedUntil = 999999 }
+            local backoffSt = gscCI:GetCacheStatus(sGuid)
+            check("1.0.6 CI:GetCacheStatus reports 'backoff' while failedUntil active", backoffSt == "backoff",
+                "status=" .. tostring(backoffSt))
+            gscCI.cache[sGuid] = prevS
+        end
+
+        if (type(_G.TacoTip_GSCallback) == "function" and REALG.TT_GS) then
+            local savedGetScoreRe = REALG.TT_GS.GetScore
+            local savedUnit, savedShown, savedGetUnit = GT.__unit, GT.__shown, GT.GetUnit
+            local savedGetOwner, savedUpdateTooltip = GT.GetOwner, GT.UpdateTooltip
+            local savedDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+            local gA = UNITS.mouseover.guid
+            local gB = "Player-1060-0000000B"
+            local gC = "Player-1060-0000000C"
+            local bgCI2 = REALG.LibStub("LibForeverInspector")
+            local prevA, prevB, prevC = bgCI2.cache[gA], bgCI2.cache[gB], bgCI2.cache[gC]
+            local itemsB = { [1] = "item:19019" }
+            local itemsC = { [1] = "item:19019" }
+            bgCI2.cache[gB] = { items = itemsB, time = 4000 }
+            bgCI2.cache[gC] = { items = itemsC, time = 4000 }
+            TT.clearGearScoreMemo(gB)
+            TT.clearGearScoreMemo(gC)
+            local triggeredRe = false
+            local seen = {}
+            local reentrantBefore = (TT.ev and TT.ev.gsCallbackReentrant) or 0
+            GT.__unit = "mouseover"
+            GT.__shown = true
+            GT.GetUnit = mockGetUnit("mouseover")
+            GT.GetOwner = function() return nil end
+            if (REALG.TooltipUtil) then
+                REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "mouseover", gA end
+            end
+            GT.UpdateTooltip = function()
+                if (not triggeredRe) then
+                    triggeredRe = true
+                    _G.TacoTip_GSCallback(gB)
+                    _G.TacoTip_GSCallback(gC)
+                end
+            end
+            REALG.TT_GS.GetScore = function(_, u)
+                if (u == gB) then
+                    seen.B = true
+                    return 2222, 110
+                elseif (u == gC) then
+                    seen.C = true
+                    return 3333, 125
+                end
+                return 0, 0
+            end
+            pcall(_G.TacoTip_GSCallback, gA)
+            local bScore = TT.getGearScoreMemo(gB, itemsB)
+            local cScore = TT.getGearScoreMemo(gC, itemsC)
+            local reentrantDelta = ((TT.ev and TT.ev.gsCallbackReentrant) or 0) - reentrantBefore
+            check("1.0.6 FIFO TacoTip_GSCallback: concurrent re-entrant GUIDs B and C both drain without overwrite",
+                reentrantDelta == 2 and seen.B == true and seen.C == true and bScore == 2222 and cScore == 3333,
+                "reentrant=" .. tostring(reentrantDelta) .. " seenB=" .. tostring(seen.B)
+                    .. " seenC=" .. tostring(seen.C)
+                    .. " bScore=" .. tostring(bScore) .. " cScore=" .. tostring(cScore))
+
+            -- LRU memo eviction keeps recently read hot entries over stale unread ones
+            local savedMemo, savedCount = TT._gsMemo, TT._gsMemoCount
+            TT._gsMemo, TT._gsMemoCount = nil, 0
+            local hotItems = { [1] = "item:19019" }
+            TT.setGearScoreMemo("Player-LRU-0001", hotItems, 1111, 90)
+            for idx = 2, 512 do
+                TT.setGearScoreMemo("Player-LRU-" .. idx, hotItems, 1000 + idx, 90)
+            end
+            -- Read entry 1 right before overflow so it becomes MRU
+            TT.getGearScoreMemo("Player-LRU-0001", hotItems)
+            TT.setGearScoreMemo("Player-LRU-513", hotItems, 1999, 95)
+            local hotSurvived = TT.getGearScoreMemo("Player-LRU-0001", hotItems) == 1111
+            local coldEvicted = TT.getGearScoreMemo("Player-LRU-0002", hotItems) == nil
+                and TT.getGearScoreMemo("Player-LRU-2", hotItems) == nil
+            check("1.0.6 LRU memo eviction retains recently read hot entry on overflow",
+                hotSurvived and coldEvicted,
+                "hotSurvived=" .. tostring(hotSurvived) .. " coldEvicted=" .. tostring(coldEvicted))
+
+            -- INSPECT_RENDER_COALESCE must NOT swallow an incomplete -> complete transition
+            -- within 0.1s, while still coalescing a complete INVENTORY_READY + TALENTS_READY pair.
+            local savedClockCoal = REALG.__testClock
+            local savedSetUnitCoal = GT.SetUnit
+            local coalCalls = 0
+            GT.UpdateTooltip = nil
+            GT.SetUnit = function(_, ...)
+                coalCalls = coalCalls + 1
+                return savedSetUnitCoal(GT, ...)
+            end
+            REALG.__testClock = 6000.0
+            if (GT._tacoTipState) then
+                GT._tacoTipState.inspectRenderGUID = nil
+                GT._tacoTipState.inspectRenderTime = nil
+                GT._tacoTipState.inspectRenderRev = nil
+                GT._tacoTipState.inspectRenderComplete = nil
+            end
+            bgCI2.cache[gA] = { items = {}, _itemsRev = 1, incomplete = true }
+            bgCI2.callbacks:Fire("INVENTORY_READY", gA, true, "mouseover")
+            REALG.__testClock = 6000.04
+            bgCI2.cache[gA] = { items = { [1] = "item:19019" }, _itemsRev = 2, time = 6000 }
+            bgCI2.callbacks:Fire("INVENTORY_READY", gA, true, "mouseover")
+            REALG.__testClock = 6000.06
+            bgCI2.callbacks:Fire("TALENTS_READY", gA, "mouseover")
+            check("1.0.6 INSPECT_RENDER_COALESCE renders incomplete->complete transition and still coalesces TALENTS_READY",
+                coalCalls == 2,
+                "calls=" .. tostring(coalCalls))
+            GT.SetUnit = savedSetUnitCoal
+            REALG.__testClock = savedClockCoal
+
+            TT._gsMemo, TT._gsMemoCount = savedMemo, savedCount
+            bgCI2.cache[gA], bgCI2.cache[gB], bgCI2.cache[gC] = prevA, prevB, prevC
+            TT.clearGearScoreMemo(gB)
+            TT.clearGearScoreMemo(gC)
+            REALG.TT_GS.GetScore = savedGetScoreRe
+            GT.GetUnit, GT.__unit, GT.__shown = savedGetUnit, savedUnit, savedShown
+            GT.GetOwner, GT.UpdateTooltip = savedGetOwner, savedUpdateTooltip
+            if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = savedDisp end
+        end
     end
 
     CFG.tooltip_max_width = prevMaxW

@@ -8,7 +8,7 @@
 
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.5"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.7"
 
 
 
@@ -428,6 +428,8 @@ local safeUnitIsPVP = TT.safeUnitIsPVP
 ---@field portraitAnchored boolean|nil -- whether the 3D/2D portrait is anchored to current layout
 ---@field inspectRenderGUID string|nil -- GUID of the inspected unit when last rendered
 ---@field inspectRenderTime number|nil -- GetTime() monotonic timestamp of the last inspect render
+---@field inspectRenderRev integer|nil -- _itemsRev captured on last inspect render
+---@field inspectRenderComplete boolean|nil -- true when last inspect render saw a complete snapshot
 ---@field ownerUnitGUID string|nil     -- GUID of the tooltip owner's unit frame token
 ---@field ownerUnitToken string|nil    -- Unit token of the tooltip owner's frame (e.g. "party1")
 ---@field wideBottomPadding number|nil -- desired bottom padding (px) for active wide_style unit tooltip
@@ -2391,10 +2393,15 @@ do
         end
         if (remaining >= GS_RETRY_CAP) then
             local targetCount = math.floor(GS_RETRY_CAP / 2)
-            for k in pairs(retries) do
-                retries[k] = nil
-                remaining = math.max(remaining - 1, 0)
+            local ordered = {}
+            for k, v in pairs(retries) do
+                ordered[#ordered + 1] = { key = k, at = (type(v) == "table" and v.at) or 0 }
+            end
+            table.sort(ordered, function(a, b) return a.at < b.at end)
+            for i = 1, #ordered do
                 if (remaining <= targetCount) then break end
+                retries[ordered[i].key] = nil
+                remaining = math.max(remaining - 1, 0)
             end
         end
         return remaining
@@ -2476,153 +2483,171 @@ end
 -- live and is not in that cache at all.
 local GS_SCORE_MEMO_CAP = 512
 
-function TT.getGearScoreMemo(guid, items)
-    if (not guid or TT.isSecretValue(guid) or not items) then
-        return nil
-    end
-    local memo = TT._gsMemo
-    local entry = memo and memo[guid]
-    if (entry and entry.items == items and entry.score) then
-        return entry.score, entry.ilvl
-    end
-    return nil
-end
+do
+    local memoSeq = 0
 
-function TT.setGearScoreMemo(guid, items, score, ilvl)
-    if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number"
-            or TT.isSecretValue(score) or score <= 0
-            or (ilvl ~= nil and TT.isSecretValue(ilvl))) then
-        return
+    local function nextMemoSeq()
+        memoSeq = memoSeq + 1
+        return memoSeq
     end
-    local memo = TT._gsMemo
-    if (not memo) then
-        memo = {}
-        TT._gsMemo = memo
-        TT._gsMemoCount = 0
-    end
-    if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
-        local target = math.floor(GS_SCORE_MEMO_CAP / 2)
-        local remaining = TT._gsMemoCount or 0
-        for k in pairs(memo) do
-            memo[k] = nil
-            remaining = math.max(remaining - 1, 0)
-            if (remaining <= target) then break end
+
+    local function evictScoreMemoHalf(memo, count)
+        local remaining = count or 0
+        if (remaining < GS_SCORE_MEMO_CAP) then
+            return remaining
         end
-        TT._gsMemoCount = remaining
+        local target = math.floor(GS_SCORE_MEMO_CAP / 2)
+        local ordered = {}
+        for k, v in pairs(memo) do
+            ordered[#ordered + 1] = { key = k, seq = (type(v) == "table" and v._seq) or 0 }
+        end
+        table.sort(ordered, function(a, b) return a.seq < b.seq end)
+        for i = 1, #ordered do
+            if (remaining <= target) then break end
+            memo[ordered[i].key] = nil
+            remaining = math.max(remaining - 1, 0)
+        end
+        return remaining
     end
-    local entry = memo[guid]
-    if (not entry) then
-        TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
-        entry = { items = items }
-        memo[guid] = entry
-    elseif (entry.items ~= items) then
-        entry = { items = items }
-        memo[guid] = entry
-    end
-    entry.score = score
-    entry.ilvl = ilvl
-end
 
-function TT.getPawnScoreMemo(guid, items, activeGroup)
-    if (not guid or TT.isSecretValue(guid)) then
+    function TT.getGearScoreMemo(guid, items)
+        if (not guid or TT.isSecretValue(guid) or not items) then
+            return nil
+        end
+        local memo = TT._gsMemo
+        local entry = memo and memo[guid]
+        if (entry and entry.items == items and entry.score) then
+            entry._seq = nextMemoSeq()
+            return entry.score, entry.ilvl
+        end
         return nil
     end
-    activeGroup = activeGroup or 1
-    -- Self never has an inspect-cache record, so the items-keyed memo below can
-    -- never answer for the player. Keep the last live Pawn score under its own
-    -- key instead; without this the line was computed on one render and then
-    -- missing on the next (the blink).
-    if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
-        local selfMemo = TT._selfPawnMemo
-        if (selfMemo) then
-            local groupMemo = selfMemo[activeGroup]
+
+    function TT.setGearScoreMemo(guid, items, score, ilvl)
+        if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number"
+                or TT.isSecretValue(score) or score <= 0
+                or (ilvl ~= nil and TT.isSecretValue(ilvl))) then
+            return
+        end
+        local memo = TT._gsMemo
+        if (not memo) then
+            memo = {}
+            TT._gsMemo = memo
+            TT._gsMemoCount = 0
+        end
+        if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
+            TT._gsMemoCount = evictScoreMemoHalf(memo, TT._gsMemoCount or 0)
+        end
+        local entry = memo[guid]
+        if (not entry) then
+            TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
+            entry = { items = items }
+            memo[guid] = entry
+        elseif (entry.items ~= items) then
+            entry = { items = items }
+            memo[guid] = entry
+        end
+        entry.score = score
+        entry.ilvl = ilvl
+        entry._seq = nextMemoSeq()
+    end
+
+    function TT.getPawnScoreMemo(guid, items, activeGroup)
+        if (not guid or TT.isSecretValue(guid)) then
+            return nil
+        end
+        activeGroup = activeGroup or 1
+        -- Self never has an inspect-cache record, so the items-keyed memo below can
+        -- never answer for the player. Keep the last live Pawn score under its own
+        -- key instead; without this the line was computed on one render and then
+        -- missing on the next (the blink).
+        if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
+            local selfMemo = TT._selfPawnMemo
+            if (selfMemo) then
+                local groupMemo = selfMemo[activeGroup]
+                if (groupMemo and groupMemo.pawnScore ~= nil) then
+                    return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
+                end
+                if (selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore ~= nil) then
+                    return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
+                end
+            end
+            return nil
+        end
+        if (not items) then
+            return nil
+        end
+        local memo = TT._gsMemo
+        local entry = memo and memo[guid]
+        if (entry and entry.items == items) then
+            entry._seq = nextMemoSeq()
+            local groupMemo = entry.pawnScores and entry.pawnScores[activeGroup]
             if (groupMemo and groupMemo.pawnScore ~= nil) then
                 return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
             end
-            if (selfMemo.pawnGroup == activeGroup and selfMemo.pawnScore ~= nil) then
-                return selfMemo.pawnScore, selfMemo.pawnSpecName, selfMemo.pawnSpecColor
+            if (entry.pawnGroup == activeGroup and entry.pawnScore ~= nil) then
+                return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
             end
         end
         return nil
     end
-    if (not items) then
-        return nil
-    end
-    local memo = TT._gsMemo
-    local entry = memo and memo[guid]
-    if (entry and entry.items == items) then
-        local groupMemo = entry.pawnScores and entry.pawnScores[activeGroup]
-        if (groupMemo and groupMemo.pawnScore ~= nil) then
-            return groupMemo.pawnScore, groupMemo.pawnSpecName, groupMemo.pawnSpecColor
-        end
-        if (entry.pawnGroup == activeGroup and entry.pawnScore ~= nil) then
-            return entry.pawnScore, entry.pawnSpecName, entry.pawnSpecColor
-        end
-    end
-    return nil
-end
 
-function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
-    if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number"
-            or TT.isSecretValue(pawnScore) or pawnScore < 0) then
-        return
-    end
-    if (TT.isSecretValue(specName)) then specName = nil end
-    if (TT.isSecretValue(specColor)) then specColor = nil end
-    activeGroup = activeGroup or 1
-    if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
-        TT._selfPawnMemo = TT._selfPawnMemo or {}
-        TT._selfPawnMemo[activeGroup] = {
+    function TT.setPawnScoreMemo(guid, items, activeGroup, pawnScore, specName, specColor)
+        if (not guid or TT.isSecretValue(guid) or type(pawnScore) ~= "number"
+                or TT.isSecretValue(pawnScore) or pawnScore < 0) then
+            return
+        end
+        if (TT.isSecretValue(specName)) then specName = nil end
+        if (TT.isSecretValue(specColor)) then specColor = nil end
+        activeGroup = activeGroup or 1
+        if (TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
+            TT._selfPawnMemo = TT._selfPawnMemo or {}
+            TT._selfPawnMemo[activeGroup] = {
+                pawnGroup = activeGroup,
+                pawnScore = pawnScore,
+                pawnSpecName = specName,
+                pawnSpecColor = specColor,
+            }
+            TT._selfPawnMemo.pawnGroup = activeGroup
+            TT._selfPawnMemo.pawnScore = pawnScore
+            TT._selfPawnMemo.pawnSpecName = specName
+            TT._selfPawnMemo.pawnSpecColor = specColor
+            return
+        end
+        if (not items) then
+            return
+        end
+        local memo = TT._gsMemo
+        if (not memo) then
+            memo = {}
+            TT._gsMemo = memo
+            TT._gsMemoCount = 0
+        end
+        if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
+            TT._gsMemoCount = evictScoreMemoHalf(memo, TT._gsMemoCount or 0)
+        end
+        local entry = memo[guid]
+        if (not entry) then
+            TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
+            entry = { items = items, pawnScores = {} }
+            memo[guid] = entry
+        elseif (entry.items ~= items) then
+            entry = { items = items, pawnScores = {} }
+            memo[guid] = entry
+        end
+        entry.pawnScores = entry.pawnScores or {}
+        entry.pawnScores[activeGroup] = {
             pawnGroup = activeGroup,
             pawnScore = pawnScore,
             pawnSpecName = specName,
             pawnSpecColor = specColor,
         }
-        TT._selfPawnMemo.pawnGroup = activeGroup
-        TT._selfPawnMemo.pawnScore = pawnScore
-        TT._selfPawnMemo.pawnSpecName = specName
-        TT._selfPawnMemo.pawnSpecColor = specColor
-        return
+        entry.pawnGroup = activeGroup
+        entry.pawnScore = pawnScore
+        entry.pawnSpecName = specName
+        entry.pawnSpecColor = specColor
+        entry._seq = nextMemoSeq()
     end
-    if (not items) then
-        return
-    end
-    local memo = TT._gsMemo
-    if (not memo) then
-        memo = {}
-        TT._gsMemo = memo
-        TT._gsMemoCount = 0
-    end
-    if (not memo[guid] and (TT._gsMemoCount or 0) >= GS_SCORE_MEMO_CAP) then
-        local target = math.floor(GS_SCORE_MEMO_CAP / 2)
-        local remaining = TT._gsMemoCount or 0
-        for k in pairs(memo) do
-            memo[k] = nil
-            remaining = math.max(remaining - 1, 0)
-            if (remaining <= target) then break end
-        end
-        TT._gsMemoCount = remaining
-    end
-    local entry = memo[guid]
-    if (not entry) then
-        TT._gsMemoCount = (TT._gsMemoCount or 0) + 1
-        entry = { items = items, pawnScores = {} }
-        memo[guid] = entry
-    elseif (entry.items ~= items) then
-        entry = { items = items, pawnScores = {} }
-        memo[guid] = entry
-    end
-    entry.pawnScores = entry.pawnScores or {}
-    entry.pawnScores[activeGroup] = {
-        pawnGroup = activeGroup,
-        pawnScore = pawnScore,
-        pawnSpecName = specName,
-        pawnSpecColor = specColor,
-    }
-    entry.pawnGroup = activeGroup
-    entry.pawnScore = pawnScore
-    entry.pawnSpecName = specName
-    entry.pawnSpecColor = specColor
 end
 
 function TT.clearGearScoreMemo(guid)
@@ -2671,69 +2696,94 @@ end
 -- in progress, so it is dropped. A nested call for a DIFFERENT guid is deferred
 -- and run once after we unwind, so no work is lost. The common, non-nested case
 -- is unchanged.
-local gsCallbackActive = false
-local gsCallbackPending = nil
+do
+    local gsCallbackActive = false
+    local gsCallbackQueue = {}
+    local GS_CALLBACK_QUEUE_CAP = 16
 
--- Silently computes and caches a positive GearScore when an asynchronous
--- item load completes after the cursor has already left that unit, so the
--- next hover gets an immediate memo hit instead of re-scoring from scratch.
-local function warmGearScoreMemoForGUID(guid)
-    if (not guid or TT.isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return end
-    if (not (CI and type(CI.GetUnitData) == "function")) then return end
-    local gsEngine = _G.TT_GS or GearScore
-    if (not (gsEngine and type(gsEngine.GetScore) == "function")) then return end
-    local okD, data = pcall(CI.GetUnitData, CI, guid)
-    if (not okD or type(data) ~= "table" or not data.items or data.incomplete) then return end
-    if (TT.getGearScoreMemo(guid, data.items)) then return end
-    local okS, gs, ilvl = pcall(gsEngine.GetScore, gsEngine, guid, false)
-    if (okS and type(gs) == "number" and gs > 0 and type(ilvl) == "number") then
-        TT.setGearScoreMemo(guid, data.items, gs, ilvl)
-        TT.ev.gsBackgroundWarm = (TT.ev.gsBackgroundWarm or 0) + 1
+    -- Silently computes and caches a positive GearScore when an asynchronous
+    -- item load completes after the cursor has already left that unit, so the
+    -- next hover gets an immediate memo hit instead of re-scoring from scratch.
+    local function warmGearScoreMemoForGUID(guid)
+        if (not guid or TT.isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return end
+        if (not (CI and type(CI.GetUnitData) == "function")) then return end
+        local gsEngine = _G.TT_GS or GearScore
+        if (not (gsEngine and type(gsEngine.GetScore) == "function")) then return end
+        local okD, data = pcall(CI.GetUnitData, CI, guid)
+        if (not okD or type(data) ~= "table" or not data.items or data.incomplete) then return end
+        if (TT.getGearScoreMemo(guid, data.items)) then return end
+        local okS, gs, ilvl = pcall(gsEngine.GetScore, gsEngine, guid, false)
+        if (okS and type(gs) == "number" and gs > 0 and type(ilvl) == "number") then
+            TT.setGearScoreMemo(guid, data.items, gs, ilvl)
+            TT.ev.gsBackgroundWarm = (TT.ev.gsBackgroundWarm or 0) + 1
+        elseif (okS and (not gs or gs == 0)) then
+            -- Keep warming any remaining uncached items off-hover so re-hovering
+            -- this player in a city answers from cache on the first frame.
+            TT:WarmGearItemData(guid)
+        end
     end
-end
 
-function TacoTip_GSCallback(guid)
-    if (not guid or TT.isSecretValue(guid)) then return end
-    TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
-    -- The data this ladder was waiting for has arrived (or the client has just
-    -- finished with it); the next render starts from a clean attempt.
-    TT.clearGearScoreRetry(guid)
-    TT.clearPawnRetry(guid)
-    TT.clearGearScoreMemo(guid)
-    if (gsCallbackActive) then
-        gsCallbackPending = guid
-        TT.ev.gsCallbackReentrant = (TT.ev.gsCallbackReentrant or 0) + 1
-        return
+    local function enqueuePendingGSCallback(guid)
+        for i = 1, #gsCallbackQueue do
+            if (safeEquals(gsCallbackQueue[i], guid)) then
+                return
+            end
+        end
+        if (#gsCallbackQueue >= GS_CALLBACK_QUEUE_CAP) then
+            table.remove(gsCallbackQueue, 1)
+        end
+        gsCallbackQueue[#gsCallbackQueue + 1] = guid
     end
-    local ttUnit = resolveTooltipUnit(GameTooltip)
-    if (not ttUnit) then
-        -- An item-load completion is not a render. "The tooltip no longer
-        -- shows that unit" is a normal state (the cursor moved, the tooltip
-        -- hid), so it is counted separately and never as a resolution failure.
-        TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
-        warmGearScoreMemoForGUID(guid)
-        return
+
+    local function runGSCallback(guid)
+        local ttUnit = resolveTooltipUnit(GameTooltip)
+        if (not ttUnit) then
+            -- An item-load completion is not a render. "The tooltip no longer
+            -- shows that unit" is a normal state (the cursor moved, the tooltip
+            -- hid), so it is counted separately and never as a resolution failure.
+            TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
+            warmGearScoreMemoForGUID(guid)
+            return
+        end
+        local ttGUID = safeUnitGUID(ttUnit)
+        if (not safeEquals(ttGUID, guid)) then
+            TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
+            warmGearScoreMemoForGUID(guid)
+            return
+        end
+        -- pcall both branches and clear the guard unconditionally: this is a global
+        -- callback reached from the item-load path, and a throw here would either
+        -- leave the guard latched (silently killing every later callback) or
+        -- surface as an unrelated error from deep inside a load handler.
+        local ok, err = pcall(refreshUnitTooltip, ttUnit, true)
+        if (not ok and err) then
+            TT:RecordError("GSCallback", err)
+        end
     end
-    local ttGUID = safeUnitGUID(ttUnit)
-    if (not safeEquals(ttGUID, guid)) then
-        TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
-        warmGearScoreMemoForGUID(guid)
-        return
-    end
-    gsCallbackActive = true
-    -- pcall both branches and clear the guard unconditionally: this is a global
-    -- callback reached from the item-load path, and a throw here would either
-    -- leave the guard latched (silently killing every later callback) or
-    -- surface as an unrelated error from deep inside a load handler.
-    local ok, err = pcall(refreshUnitTooltip, ttUnit, true)
-    if (not ok and err) then
-        TT:RecordError("GSCallback", err)
-    end
-    gsCallbackActive = false
-    local pending = gsCallbackPending
-    gsCallbackPending = nil
-    if (pending and not safeEquals(pending, guid)) then
-        TacoTip_GSCallback(pending)
+
+    function TacoTip_GSCallback(guid)
+        if (not guid or TT.isSecretValue(guid)) then return end
+        TT.ev.gsCallback = (TT.ev.gsCallback or 0) + 1
+        -- The data this ladder was waiting for has arrived (or the client has just
+        -- finished with it); the next render starts from a clean attempt.
+        TT.clearGearScoreRetry(guid)
+        TT.clearPawnRetry(guid)
+        TT.clearGearScoreMemo(guid)
+        if (gsCallbackActive) then
+            TT.ev.gsCallbackReentrant = (TT.ev.gsCallbackReentrant or 0) + 1
+            enqueuePendingGSCallback(guid)
+            return
+        end
+        gsCallbackActive = true
+        runGSCallback(guid)
+        while (#gsCallbackQueue > 0) do
+            local nextGUID = table.remove(gsCallbackQueue, 1)
+            if (nextGUID and not safeEquals(nextGUID, guid)) then
+                guid = nextGUID
+                runGSCallback(nextGUID)
+            end
+        end
+        gsCallbackActive = false
     end
 end
 
@@ -3111,10 +3161,15 @@ function TT:WarmGearItemData(guid)
         end
         if (remaining > GEAR_WARM_ENTRY_CAP) then
             local targetCount = math.floor(GEAR_WARM_ENTRY_CAP / 2)
-            for itemID in pairs(warmAt) do
-                warmAt[itemID] = nil
-                remaining = math.max(remaining - 1, 0)
+            local ordered = {}
+            for itemID, ts in pairs(warmAt) do
+                ordered[#ordered + 1] = { id = itemID, ts = (type(ts) == "number") and ts or 0 }
+            end
+            table.sort(ordered, function(a, b) return a.ts < b.ts end)
+            for i = 1, #ordered do
                 if (remaining <= targetCount) then break end
+                warmAt[ordered[i].id] = nil
+                remaining = math.max(remaining - 1, 0)
             end
         end
         TT._gearWarmCount = remaining
@@ -5187,12 +5242,18 @@ local function onTooltipShow(tooltip)
         -- not have fired on this transition path (e.g. ClearLines + Show).
         clearTooltipVisuals(tooltip, preservePendingItem, nil, "show-no-class-cache", true)
         if (not lootTooltip and tooltip) then
-            local fontChanged = applyTooltipFonts(tooltip)
-            if (fontChanged and tooltip.IsShown and tooltip:IsShown()
-                    and type(tooltip.Show) == "function" and not state.inTooltipRefreshShow) then
-                state.inTooltipRefreshShow = true
-                pcall(tooltip.Show, tooltip)
-                state.inTooltipRefreshShow = nil
+            local allowFont = true
+            if (TT.IsWorldMapPinTooltip and TT.IsWorldMapPinTooltip(tooltip)) then
+                allowFont = (TT.CanStyleWorldMapTooltip and TT.CanStyleWorldMapTooltip()) or false
+            end
+            if (allowFont) then
+                local fontChanged = applyTooltipFonts(tooltip)
+                if (fontChanged and tooltip.IsShown and tooltip:IsShown()
+                        and type(tooltip.Show) == "function" and not state.inTooltipRefreshShow) then
+                    state.inTooltipRefreshShow = true
+                    pcall(tooltip.Show, tooltip)
+                    state.inTooltipRefreshShow = nil
+                end
             end
         end
         if (not lootTooltip and (itemTooltip or preservePendingItem or safeShownItemLink ~= nil)
@@ -5215,7 +5276,10 @@ local function onTooltipShow(tooltip)
     end
 
     if (not lootTooltip) then
-        applyTooltipFonts(tooltip)
+        if (not TT.IsWorldMapPinTooltip or not TT.IsWorldMapPinTooltip(tooltip)
+                or (TT.CanStyleWorldMapTooltip and TT.CanStyleWorldMapTooltip())) then
+            applyTooltipFonts(tooltip)
+        end
     end
 
     if (state and state.wideBottomPadding and state.wideBottomPadding > 0) then
@@ -5502,6 +5566,107 @@ do
     initFriendsTooltipHooks()
 end
 
+do
+    local function isWorldMapPinTooltip(tooltip)
+        if (not tooltip or type(tooltip.GetOwner) ~= "function") then
+            return false
+        end
+        local okOwn, owner = pcall(tooltip.GetOwner, tooltip)
+        if (not okOwn or type(owner) ~= "table" or isSecretValue(owner)) then
+            return false
+        end
+        if (type(owner.GetCurrentMouseOverUnits) == "function"
+                or type(owner.UpdateUnitTooltips) == "function") then
+            return true
+        end
+        local worldMap = rawget(_G, "WorldMapFrame")
+        if (worldMap and owner == worldMap) then
+            return true
+        end
+        if (type(owner.GetParent) == "function") then
+            local okP, parent = pcall(owner.GetParent, owner)
+            if (okP and type(parent) == "table" and not isSecretValue(parent)) then
+                if (worldMap and (parent == worldMap or parent == worldMap.ScrollContainer)) then
+                    return true
+                end
+                if (type(parent.GetMap) == "function") then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- World Map player pins cannot safely touch tooltip text during combat,
+    -- encounters, or instances (NameUtil formats secret unit names there).
+    local WORLDMAP_RESTRICTION_KEYS = { "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map" }
+
+    local function canStyleWorldMapTooltip()
+        if (type(InCombatLockdown) == "function" and InCombatLockdown()) then
+            return false
+        end
+        local isInInstFn = rawget(_G, "IsInInstance")
+        if (type(isInInstFn) == "function") then
+            local okInst, inInst = pcall(isInInstFn)
+            if (okInst and inInst) then
+                return false
+            end
+        end
+        local ci = rawget(_G, "C_InstanceEncounter")
+        if (type(ci) == "table" and type(ci.IsEncounterInProgress) == "function") then
+            local okEnc, inEnc = pcall(ci.IsEncounterInProgress)
+            if (okEnc and inEnc) then
+                return false
+            end
+        end
+        local ra = rawget(_G, "C_RestrictedActions")
+        local rEnum = rawget(_G, "Enum") and rawget(_G, "Enum").AddOnRestrictionType
+        if (type(ra) == "table" and type(ra.IsAddOnRestrictionActive) == "function"
+                and type(rEnum) == "table") then
+            for i = 1, #WORLDMAP_RESTRICTION_KEYS do
+                local val = rEnum[WORLDMAP_RESTRICTION_KEYS[i]]
+                if (val ~= nil) then
+                    local okR, active = pcall(ra.IsAddOnRestrictionActive, val)
+                    if (not okR or isSecretValue(active) or active == true) then
+                        return false
+                    end
+                end
+            end
+        end
+        return true
+    end
+
+    local worldMapPinHooked = false
+    local function initWorldMapTooltipHooks()
+        local mixin = rawget(_G, "UnitPositionFrameMixin")
+        if (not worldMapPinHooked and type(mixin) == "table"
+                and type(mixin.UpdateUnitTooltips) == "function"
+                and type(hooksecurefunc) == "function") then
+            hooksecurefunc(mixin, "UpdateUnitTooltips", function(_, tooltipFrame)
+                if (not tooltipFrame or not canStyleWorldMapTooltip()) then
+                    return
+                end
+                local changed = applyTooltipFonts(tooltipFrame)
+                if (changed and tooltipFrame.IsShown and tooltipFrame:IsShown()
+                        and type(tooltipFrame.Show) == "function") then
+                    local state = getTooltipState(tooltipFrame)
+                    if (not state.inTooltipRefreshShow) then
+                        state.inTooltipRefreshShow = true
+                        pcall(tooltipFrame.Show, tooltipFrame)
+                        state.inTooltipRefreshShow = nil
+                    end
+                end
+            end)
+            worldMapPinHooked = true
+        end
+    end
+
+    TT.IsWorldMapPinTooltip = isWorldMapPinTooltip
+    TT.CanStyleWorldMapTooltip = canStyleWorldMapTooltip
+    TT.InitWorldMapTooltipHooks = initWorldMapTooltipHooks
+    initWorldMapTooltipHooks()
+end
+
 
 local function CreateMouseAnchor()
     TacoTipMouseAnchor = CreateFrame("Frame", nil, UIParent)
@@ -5511,16 +5676,21 @@ local function CreateMouseAnchor()
     TacoTipMouseAnchor:SetClampedToScreen(true)
     TacoTipMouseAnchor:SetSize(1, 1)
     TacoTipMouseAnchor:SetPoint("CENTER", UIParent, "BOTTOMLEFT", 0, 0)
+    local lastCX, lastCY, lastScale
     TacoTipMouseAnchor:SetScript("OnUpdate", function(self)
         -- The anchor persists for the whole session once created; skip all
-        -- work while mouse anchoring is disabled or the tooltip is hidden
-        -- so the per-frame cursor read and point mutation only run while
-        -- a tooltip is actively visible and consuming it.
+        -- work while mouse anchoring is disabled or the tooltip is hidden, and
+        -- skip ClearAllPoints/SetPoint when cursor coordinates did not change.
         if (not TacoTipConfig.anchor_mouse or not GameTooltip or not GameTooltip:IsShown()) then
+            lastCX = nil
             return
         end
         local cx, cy = GetCursorPosition()
         local scale = UIParent:GetEffectiveScale()
+        if (cx == lastCX and cy == lastCY and scale == lastScale) then
+            return
+        end
+        lastCX, lastCY, lastScale = cx, cy, scale
         self:ClearAllPoints()
         self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx / scale, cy / scale)
     end)
@@ -5740,6 +5910,177 @@ end
 -- works rather than silently disappearing.
 local characterFrameHost = (isForever and (_G.PaperDollItemsFrame or _G.PaperDollFrame)) or _G.CharacterModelFrame or _G.PaperDollFrame
 
+do
+    local function countPlayerScoredSlots()
+        local count = 0
+        if (type(_G.GetInventoryItemLink) ~= "function") then
+            return nil
+        end
+        for slot = 1, 18 do
+            if (slot ~= 4) then
+                local okL, link = pcall(_G.GetInventoryItemLink, "player", slot)
+                if (okL and type(link) == "string" and link ~= "" and not isSecretValue(link)) then
+                    count = count + 1
+                end
+            end
+        end
+        return count
+    end
+
+    local function showCharacterStatTooltip(anchorFrame, mode, gs, ilvl, qr, qg, qb)
+        local tooltip = _G.GameTooltip
+        if (not anchorFrame or not tooltip or type(tooltip.SetOwner) ~= "function") then
+            return
+        end
+        local scoreVal = tonumber(gs) or 0
+        local ilvlVal = tonumber(ilvl) or 0
+        local r, g, b = qr, qg, qb
+        local qDesc = "Starter"
+        if (GearScore and type(GearScore.GetQuality) == "function") then
+            local cr, cg, cb, desc = GearScore:GetQuality(scoreVal)
+            if (type(cr) == "number") then
+                r = r or cr
+                g = g or cg
+                b = b or cb
+            end
+            if (type(desc) == "string" and desc ~= "") then
+                qDesc = desc
+            end
+        end
+        r, g, b = r or 1, g or 1, b or 1
+        local bracket = (GearScore and tonumber(GearScore.BRACKET_SIZE)) or 200
+        local scoredSlots = countPlayerScoredSlots()
+
+        tooltip:SetOwner(anchorFrame, "ANCHOR_RIGHT")
+        if (type(tooltip.ClearLines) == "function") then
+            tooltip:ClearLines()
+        end
+        if (mode == "ilvl") then
+            if (type(tooltip.AddDoubleLine) == "function") then
+                tooltip:AddDoubleLine((_G.STAT_AVERAGE_ITEM_LEVEL or "Average Item Level"),
+                    tostring(ilvlVal), 1, 0.82, 0.1, r, g, b)
+            elseif (type(tooltip.AddLine) == "function") then
+                tooltip:AddLine((_G.STAT_AVERAGE_ITEM_LEVEL or "Average Item Level") .. ": " .. tostring(ilvlVal), 1, 0.82, 0.1)
+            end
+            if (type(_G.GetAverageItemLevel) == "function" and type(tooltip.AddDoubleLine) == "function") then
+                local okAvg, overallAvg, equippedAvg = pcall(_G.GetAverageItemLevel)
+                if (okAvg and type(overallAvg) == "number" and not isSecretValue(overallAvg)
+                        and type(equippedAvg) == "number" and not isSecretValue(equippedAvg)) then
+                    tooltip:AddDoubleLine("Client Equipped / Bag Avg:",
+                        string.format("%.1f / %.1f", equippedAvg, overallAvg), 0.7, 0.75, 0.82, 0.9, 0.9, 0.9)
+                end
+            end
+            if (type(tooltip.AddDoubleLine) == "function") then
+                tooltip:AddDoubleLine("GearScore:", string.format("%d (%s)", scoreVal, qDesc), 0.7, 0.75, 0.82, r, g, b)
+                if (scoredSlots ~= nil) then
+                    tooltip:AddDoubleLine("Scored Equipment Slots:", string.format("%d equipped", scoredSlots),
+                        0.7, 0.75, 0.82, 1, 1, 1)
+                end
+            end
+            if (type(tooltip.AddLine) == "function") then
+                tooltip:AddLine(" ")
+                tooltip:AddLine(
+                    "Weighted average item level across your currently equipped gear (excluding Shirt and Tabard). Higher item level directly increases your GearScore and tooltip tier.",
+                    0.82, 0.86, 0.92, true)
+            end
+        else
+            if (type(tooltip.AddDoubleLine) == "function") then
+                tooltip:AddDoubleLine("GearScore", tostring(scoreVal), 1, 0.82, 0.1, r, g, b)
+                tooltip:AddDoubleLine("Quality Tier:", string.format("%s (%d GS/tier)", qDesc, bracket),
+                    0.7, 0.75, 0.82, r, g, b)
+                tooltip:AddDoubleLine("Average Item Level:", tostring(ilvlVal), 0.7, 0.75, 0.82, 1, 1, 1)
+                if (type(TT.GetGearLevelInfo) == "function") then
+                    local okLvl, lvl = pcall(TT.GetGearLevelInfo, TT, scoreVal)
+                    if (okLvl and type(lvl) == "table") then
+                        tooltip:AddDoubleLine("Gear Rank:",
+                            string.format("Lv.%d %s", tonumber(lvl.level) or 1, tostring(lvl.title or "Novice")),
+                            0.7, 0.75, 0.82, 0.72, 0.92, 0.35)
+                    end
+                end
+                if (isForever and type(TT.GetForeverProgressSection) == "function") then
+                    local okSec, fSec, _, fIdx = pcall(TT.GetForeverProgressSection, TT, scoreVal)
+                    if (okSec and type(fSec) == "table") then
+                        local list = TT.FOREVER_GS_SECTIONS
+                        local rangeTxt = (type(list) == "table" and fIdx == #list)
+                            and string.format("%d+ GS", tonumber(fSec.minGS) or 0)
+                            or string.format("%d–%d GS", tonumber(fSec.minGS) or 0, tonumber(fSec.maxGS) or 0)
+                        tooltip:AddDoubleLine("Forever Progression Stage:",
+                            string.format("|c%s%s|r (%s)", tostring(fSec.hex or "FFFFFFFF"),
+                                tostring(fSec.label or ""), rangeTxt),
+                            0.7, 0.75, 0.82, 1, 1, 1)
+                        local nextSec = (type(list) == "table" and type(fIdx) == "number") and list[fIdx + 1] or nil
+                        if (nextSec) then
+                            local need = math.max(0, (tonumber(nextSec.minGS) or 0) - scoreVal)
+                            tooltip:AddDoubleLine("Next Stage:",
+                                string.format("+%d GS to |c%s%s|r (%d GS)", need,
+                                    tostring(nextSec.hex or "FFFFFFFF"), tostring(nextSec.label or ""),
+                                    tonumber(nextSec.minGS) or 0),
+                                0.7, 0.75, 0.82, 0.9, 0.9, 0.9)
+                        end
+                    end
+                end
+                if (scoredSlots ~= nil) then
+                    tooltip:AddDoubleLine("Scored Equipment Slots:", string.format("%d equipped", scoredSlots),
+                        0.7, 0.75, 0.82, 1, 1, 1)
+                end
+            elseif (type(tooltip.AddLine) == "function") then
+                tooltip:AddLine("GearScore: " .. tostring(scoreVal), r, g, b)
+            end
+            if (type(tooltip.AddLine) == "function") then
+                tooltip:AddLine(" ")
+                tooltip:AddLine(
+                    "Measures overall equipment power from item level, item rarity (Uncommon to Legendary), and slot weight (two-handed weapons, armor, jewelry/trinkets, and Hunter ranged scaling; Shirt and Tabard excluded). Type /tt to open the TacoTip Dashboard.",
+                    0.82, 0.86, 0.92, true)
+            end
+        end
+        if (type(tooltip.Show) == "function") then
+            pcall(tooltip.Show, tooltip)
+        end
+    end
+
+    local function hideCharacterStatTooltip(anchorFrame)
+        local tooltip = _G.GameTooltip
+        if (tooltip and (type(tooltip.GetOwner) ~= "function" or tooltip:GetOwner() == anchorFrame)
+                and type(tooltip.Hide) == "function") then
+            tooltip:Hide()
+        end
+    end
+
+    local function attachStatHoverFrame(parent, mode, passClicks)
+        if (not parent or type(_G.CreateFrame) ~= "function") then
+            return nil
+        end
+        local okH, hit = pcall(_G.CreateFrame, "Frame", nil, parent)
+        if (not okH or type(hit) ~= "table") then
+            return nil
+        end
+        if (type(hit.EnableMouse) == "function") then
+            hit:EnableMouse(true)
+        end
+        if (passClicks and type(hit.SetMouseClickEnabled) == "function") then
+            pcall(hit.SetMouseClickEnabled, hit, false)
+        end
+        if (type(hit.SetScript) == "function") then
+            hit:SetScript("OnEnter", function(self)
+                local store = self._tacoTipStatOwner or parent
+                local c = store and store._tacoTipColor or nil
+                showCharacterStatTooltip(self, mode,
+                    store and store._tacoTipGS or 0,
+                    store and store._tacoTipIlvl or 0,
+                    c and c[1], c and c[2], c and c[3])
+            end)
+            hit:SetScript("OnLeave", function(self)
+                hideCharacterStatTooltip(self)
+            end)
+        end
+        return hit
+    end
+
+    TT.ShowCharacterStatTooltip = showCharacterStatTooltip
+    TT.HideCharacterStatTooltip = hideCharacterStatTooltip
+    TT.AttachStatHoverFrame = attachStatHoverFrame
+end
+
 function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g, b)
     if (not isForever) then
         return
@@ -5810,6 +6151,10 @@ function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g
             if (header.gsLabel and header.gsLabel.SetText) then
                 header.gsLabel:SetText("GearScore")
             end
+            if (TT.AttachStatHoverFrame) then
+                header.ilvlHit = TT.AttachStatHoverFrame(header, "ilvl", false)
+                header.gsHit = TT.AttachStatHoverFrame(header, "gs", false)
+            end
         end
     end
 
@@ -5849,6 +6194,10 @@ function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g
         end
     end
 
+    header._tacoTipGS = myGearScore or 0
+    header._tacoTipIlvl = myAverageScore or 0
+    header._tacoTipColor = { r or 1, g or 1, b or 1 }
+
     if (showIlvl) then
         if (header.ilvlLabel) then
             if (header.ilvlLabel.ClearAllPoints) then header.ilvlLabel:ClearAllPoints() end
@@ -5862,9 +6211,19 @@ function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g
             if (header.ilvlValue.SetTextColor) then header.ilvlValue:SetTextColor(r or 1, g or 1, b or 1, 1) end
             if (header.ilvlValue.Show) then header.ilvlValue:Show() end
         end
+        if (header.ilvlHit) then
+            if (header.ilvlHit.ClearAllPoints) then header.ilvlHit:ClearAllPoints() end
+            if (header.ilvlHit.SetPoint) then
+                header.ilvlHit:SetPoint("TOPLEFT", header, "TOPLEFT", 0, 0)
+                header.ilvlHit:SetPoint("TOPRIGHT", header, "TOPRIGHT", 0, 0)
+            end
+            if (header.ilvlHit.SetHeight) then header.ilvlHit:SetHeight(20) end
+            if (header.ilvlHit.Show) then header.ilvlHit:Show() end
+        end
     else
         if (header.ilvlLabel and header.ilvlLabel.Hide) then header.ilvlLabel:Hide() end
         if (header.ilvlValue and header.ilvlValue.Hide) then header.ilvlValue:Hide() end
+        if (header.ilvlHit and header.ilvlHit.Hide) then header.ilvlHit:Hide() end
     end
 
     if (showGS) then
@@ -5881,9 +6240,19 @@ function TT:RefreshForeverCharacterStatsFooter(myGearScore, myAverageScore, r, g
             if (header.gsValue.SetTextColor) then header.gsValue:SetTextColor(r or 1, g or 1, b or 1, 1) end
             if (header.gsValue.Show) then header.gsValue:Show() end
         end
+        if (header.gsHit) then
+            if (header.gsHit.ClearAllPoints) then header.gsHit:ClearAllPoints() end
+            if (header.gsHit.SetPoint) then
+                header.gsHit:SetPoint("TOPLEFT", header, "TOPLEFT", 0, gsY)
+                header.gsHit:SetPoint("TOPRIGHT", header, "TOPRIGHT", 0, gsY)
+            end
+            if (header.gsHit.SetHeight) then header.gsHit:SetHeight(20) end
+            if (header.gsHit.Show) then header.gsHit:Show() end
+        end
     else
         if (header.gsLabel and header.gsLabel.Hide) then header.gsLabel:Hide() end
         if (header.gsValue and header.gsValue.Hide) then header.gsValue:Hide() end
+        if (header.gsHit and header.gsHit.Hide) then header.gsHit:Hide() end
     end
 
     if (header.Show) then
@@ -5963,6 +6332,26 @@ function TT:InitCharacterFrame()
         PersonalGearScoreText:RefreshPosition()
         PersonalAvgItemLvl:RefreshPosition()
         PersonalAvgItemLvlText:RefreshPosition()
+        if (TT.AttachStatHoverFrame) then
+            local gsHit = TT.AttachStatHoverFrame(characterFrameHost, "gs", true)
+            if (gsHit) then
+                gsHit._tacoTipStatOwner = PersonalGearScore
+                if (gsHit.SetPoint and gsHit.SetSize) then
+                    gsHit:SetSize(74, 28)
+                    gsHit:SetPoint("BOTTOMLEFT", PersonalGearScoreText, "BOTTOMLEFT", -2, -2)
+                end
+                rawset(PersonalGearScore, "hoverHit", gsHit)
+            end
+            local ilvlHit = TT.AttachStatHoverFrame(characterFrameHost, "ilvl", true)
+            if (ilvlHit) then
+                ilvlHit._tacoTipStatOwner = PersonalAvgItemLvl
+                if (ilvlHit.SetPoint and ilvlHit.SetSize) then
+                    ilvlHit:SetSize(60, 28)
+                    ilvlHit:SetPoint("BOTTOMLEFT", PersonalAvgItemLvlText, "BOTTOMLEFT", -2, -2)
+                end
+                rawset(PersonalAvgItemLvl, "hoverHit", ilvlHit)
+            end
+        end
     end
 
     PaperDollFrame:HookScript("OnShow", TT.RefreshCharacterFrame)
@@ -6000,11 +6389,26 @@ function TT:RefreshCharacterFrame()
         TT:RefreshForeverCharacterStatsFooter(MyGearScore, MyAverageScore, r, g, b)
         return
     end
+    PersonalGearScore._tacoTipGS = MyGearScore
+    PersonalGearScore._tacoTipIlvl = MyAverageScore
+    PersonalGearScore._tacoTipColor = { r, g, b }
+    PersonalAvgItemLvl._tacoTipGS = MyGearScore
+    PersonalAvgItemLvl._tacoTipIlvl = MyAverageScore
+    PersonalAvgItemLvl._tacoTipColor = { r, g, b }
+
     if (TacoTipConfig.show_gs_character) then
         PersonalGearScore:SetText(MyGearScore);
         PersonalGearScore:SetTextColor(r, g, b, 1)
         PersonalGearScore:Show()
         PersonalGearScoreText:Show()
+        local gsHit = rawget(PersonalGearScore, "hoverHit")
+        if (gsHit) then
+            if (TacoTipConfig.unlock_info_position) then
+                if (gsHit.Hide) then gsHit:Hide() end
+            elseif (gsHit.Show) then
+                gsHit:Show()
+            end
+        end
         if (TacoTipConfig.unlock_info_position) then
             if (not PersonalGearScoreText.mover) then
                 PersonalGearScoreText.mover = CreateMover(PaperDollFrame, PersonalGearScore, PersonalGearScoreText,
@@ -6022,6 +6426,8 @@ function TT:RefreshCharacterFrame()
     else
         PersonalGearScore:Hide()
         PersonalGearScoreText:Hide()
+        local gsHit = rawget(PersonalGearScore, "hoverHit")
+        if (gsHit and gsHit.Hide) then gsHit:Hide() end
         if (PersonalGearScoreText.mover) then
             PersonalGearScoreText.mover:Hide()
         end
@@ -6031,6 +6437,14 @@ function TT:RefreshCharacterFrame()
         PersonalAvgItemLvl:SetTextColor(r, g, b, 1)
         PersonalAvgItemLvl:Show()
         PersonalAvgItemLvlText:Show()
+        local ilvlHit = rawget(PersonalAvgItemLvl, "hoverHit")
+        if (ilvlHit) then
+            if (TacoTipConfig.unlock_info_position) then
+                if (ilvlHit.Hide) then ilvlHit:Hide() end
+            elseif (ilvlHit.Show) then
+                ilvlHit:Show()
+            end
+        end
         if (TacoTipConfig.unlock_info_position) then
             if (not PersonalAvgItemLvlText.mover) then
                 PersonalAvgItemLvlText.mover = CreateMover(PaperDollFrame, PersonalAvgItemLvl, PersonalAvgItemLvlText,
@@ -6048,6 +6462,8 @@ function TT:RefreshCharacterFrame()
     else
         PersonalAvgItemLvl:Hide()
         PersonalAvgItemLvlText:Hide()
+        local ilvlHit = rawget(PersonalAvgItemLvl, "hoverHit")
+        if (ilvlHit and ilvlHit.Hide) then ilvlHit:Hide() end
         if (PersonalAvgItemLvlText.mover) then
             PersonalAvgItemLvlText.mover:Hide()
         end
@@ -6811,7 +7227,8 @@ local function collectActiveUnitSection()
         if (isForever) then
             local owner = (GameTooltip and type(GameTooltip.GetOwner) == "function")
                 and GameTooltip:GetOwner() or nil
-            local ownerUnit = owner and owner.unit
+            local ownerUnit = (type(owner) == "table" and not TT.isSecretValue(owner)) and owner.unit or nil
+            if (TT.isSecretValue(ownerUnit)) then ownerUnit = nil end
             local watched = isForeverWatchedFrameUnit(ownerUnit)
             local zoneName = getUnitZoneName(ownerUnit) or getUnitZoneName(activeUnit)
             diagRow(s, "zone row", string.format("owner unit=%s | watched=%s | zone=%s",
@@ -8177,6 +8594,10 @@ local function onEvent(self, event, ...)
             if (type(TT.InitFriendsTooltipHooks) == "function") then
                 pcall(TT.InitFriendsTooltipHooks)
             end
+        elseif (addon == "Blizzard_WorldMap" or addon == "Blizzard_SharedMapDataProviders") then
+            if (type(TT.InitWorldMapTooltipHooks) == "function") then
+                pcall(TT.InitWorldMapTooltipHooks)
+            end
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (TacoTipConfig.instant_fade and GameTooltip and GameTooltip:IsShown() and ((GameTooltip.IsUnit and GameTooltip:IsUnit("mouseover")) or (GameTooltip.GetUnit and select(2, GameTooltip:GetUnit()) == "mouseover"))) then
@@ -8217,8 +8638,12 @@ local function onEvent(self, event, ...)
                     if (TT._lastItemsRev[guid] == nil) then
                         TT._lastItemsRevCount = (TT._lastItemsRevCount or 0) + 1
                         if (TT._lastItemsRevCount > GS_SCORE_MEMO_CAP) then
-                            TT._lastItemsRev = {}
-                            TT._lastItemsRevCount = 1
+                            local target = math.floor(GS_SCORE_MEMO_CAP / 2)
+                            for k in pairs(TT._lastItemsRev) do
+                                TT._lastItemsRev[k] = nil
+                                TT._lastItemsRevCount = TT._lastItemsRevCount - 1
+                                if (TT._lastItemsRevCount <= target) then break end
+                            end
                         end
                     end
                     TT._lastItemsRev[guid] = rev
@@ -8247,12 +8672,18 @@ local function onEvent(self, event, ...)
                 -- rebuilds. GetTime is the same monotonic clock the library uses.
                 local st = getTooltipState(GameTooltip)
                 local now = (type(GetTime) == "function") and GetTime() or 0
+                local isCompleteSnapshot = (invData ~= nil and not invData.incomplete)
+                local sameRev = (rev == nil or st.inspectRenderRev == rev)
                 local duplicate = (st.inspectRenderGUID == guid
                     and st.inspectRenderTime ~= nil
-                    and (now - st.inspectRenderTime) < INSPECT_RENDER_COALESCE)
+                    and (now - st.inspectRenderTime) < INSPECT_RENDER_COALESCE
+                    and sameRev
+                    and (st.inspectRenderComplete == true or not isCompleteSnapshot))
                 if (not duplicate) then
                     st.inspectRenderGUID = guid
                     st.inspectRenderTime = now
+                    st.inspectRenderRev = rev
+                    st.inspectRenderComplete = isCompleteSnapshot
                     refreshUnitTooltip(ttUnit)
                 end
             end
@@ -8348,7 +8779,7 @@ do
                         return
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
-                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.5")))
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.7")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)

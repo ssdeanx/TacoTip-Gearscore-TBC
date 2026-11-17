@@ -16,6 +16,13 @@ with a later outcome signal.
   secure aura pipeline. it is not a generic filter for every addon. the
   UnitFrame mover text and the UnitAura secret taint are separate problems;
   the block is not a lever for either.
+- **1.0.6 was published; the working tree now targets TacoTip 1.0.7 /
+  Extras 1.3.2.** HEAD `3acebdd` is the 1.0.5 commit (the published 1.0.6 tree
+  was never committed), so the 1.0.7 bump edits TOCs, Lua fallbacks, version
+  pins and docs. both READMEs carry a pending in-game verification status.
+  the v1.0.6 queue/retry/LRU machinery and the Extras 1.3.2 pending-cache /
+  O(1)-cursor contract are release-bearing; do not "simplify" them in an
+  unrelated lane.
 
 ## signal types
 
@@ -32,9 +39,10 @@ truly blocked — if a reasonable default exists, proceed and note it.
 
 ## problems seen in practice
 
-these failures cost dozens of hours across the 0.8.3–0.8.7 releases. each item
-represents a real, user-visible bug or broken workflow. they are grouped by
-operational domain so lanes do not re-learn them the hard way.
+these failures cost dozens of hours across releases from 0.8.3 through the
+v1.0.6 / Extras 1.3.2 work. each item represents a real, user-visible bug or
+broken workflow. they are grouped by operational domain so lanes do not
+re-learn them the hard way.
 
 ### 1. Lane discipline & developer process
 
@@ -89,8 +97,10 @@ operational domain so lanes do not re-learn them the hard way.
   computed from the handle position plus `tooltip:GetWidth()` before the tooltip
   had been laid out, placing the portrait off-screen. **the fix:** never read
   screen geometry (`:GetLeft()`, `:GetTop()`, `:GetRight()`, `:GetWidth()`,
-  `:GetHeight()`) inside the render pass before layout. The only sanctioned
-  reader is `getPortraitSideRightEdge` which measures the handle's target edge.
+  `:GetHeight()`) before layout. The sanctioned reader is `anchorTooltipPortrait`
+  (`main.lua:1946`), which reads `tooltip:GetRight()` only when shown and keeps
+  `portraitAnchored` false until a nonzero measurement arrives. The old
+  `getPortraitSideRightEdge` name survives only in test comments.
 - **bag item hover tooltip stretch / disappearance.** Blizzard's
   `ContainerFrameItemButton_CalculateItemTooltipAnchors` does not call
   `ClearAllPoints()`. Hooking `GameTooltip_SetDefaultAnchor` without gating
@@ -125,7 +135,8 @@ operational domain so lanes do not re-learn them the hard way.
   locked in a partial score for 5 minutes. **the fix:** check
   `GetInventoryItemTexture`. If a texture exists but link is nil, mark
   `incomplete = true`, do not stamp cache time, and retry on the
-  `{0.20 .. 1.50}` ladder with `PlayerGUIDToUnitToken(guid)`.
+  `{0.15, 0.25, 0.40, 0.65, 1.00, 1.50}` ladder (`CACHE_RETRY_DELAYS`) with
+  `PlayerGUIDToUnitToken(guid)`.
 - **the same defect survived in the exhaustion branch (found in 0.8.8).** The
   0.8.7 fix applied "do not stamp cache time" to the retry path, but the
   `retriesExhausted` branch still wrote `data.time = now` and cleared
@@ -133,7 +144,8 @@ operational domain so lanes do not re-learn them the hard way.
   yet looked fresh for the full 300 s window: no GearScore line and no
   re-inspect for five minutes, which is exactly the reported "sometimes no
   score". **the fix:** leave `.time` alone, keep `incomplete = true`, clear
-  `retryPending`, and park the entry for 20 s (`failedUntil`, `GetTime`) so it
+  `retryPending`, and park the entry on the progressive `{1.5, 3.0, 4.0}` s
+  (`failedUntil`, `GetTime`, `CACHE_FAILED_BACKOFFS`) so it
   is asked again soon without hammering `NotifyInspect` on every hover. Also:
   failed records are now reclaimable by eviction (aged by `lastAttempt`), so
   they can no longer defeat the 512-entry ceiling.
@@ -148,8 +160,11 @@ operational domain so lanes do not re-learn them the hard way.
   state machines with complex architectural rewrites when simple guards suffice.
 - **client misclassification from `GetBuildInfo()` slot layouts.** Classic Era
   returns `nil` in slot 4 and the build in slot 7, causing naive build checks to
-  misclassify Era as Mainline. **the fix:** identify client families from
-  `WOW_PROJECT_ID` alone (2 for Era, 5 for TBC, 11 for Titanforge).
+  misclassify Era as Mainline. **the fix:** identify the classic families from
+  `WOW_PROJECT_ID` (2 Era, 5 TBC, 11 Titanforge) with a build-major fallback, but
+  read Forever from `WOW_PROJECT_CAMELOT` (18) FIRST and keep the 16000-19999
+  interface band only as a fallback; Retail is `WOW_PROJECT_MAINLINE`. A
+  MAINLINE-only test is false on Forever.
 
 ### 4. Diagnostics, telemetry & packaging blindspots
 
@@ -194,7 +209,29 @@ cannot settle it. **when neither applies:** proceed with the defensible
 default, note it in the journal, and keep going — that is what `guarded()`
 and the `checkpoint` signal are for.
 
-### 5. Dispatch, audit and helper process (2026-11-10)
+### 5. Version drift and gate invocation (2026-11-16)
+
+- **the governing index doc kept an old version (fixed 2026-11-16).** `AGENTS.md`
+  named root v1.0.1 / Extras v1.2.7 while the tree shipped 1.0.6 / 1.3.2: the
+  release bumped TOCs, Lua fallbacks, README, CHANGELOG and load_test pins but
+  missed AGENTS.md. **the fix:** a version bump is one complete task — update
+  every token in the same pass; treat a stale AGENTS.md as a hygiene finding,
+  not a new feature. AGENTS.md now carries the verified 1.0.6 / 1.3.2 tokens.
+- **a bare gate command that needs arguments reported a false red.** the audit
+  playbook's `lua5.1 Tests/harness/load_test.lua` fails at line 637 with
+  `bad argument #3 to 'format' (string expected, got nil)` because the script
+  requires five positional arguments. **the fix:** run
+  `bash Tests/harness/run_all.sh` (which calls it correctly) or pass all five
+  args; never report the bare failure as a product defect. correct invocations
+  report `ALL PASS`.
+- **Extras `Scoring.lua` still carries a deprecated identity fallback** (local
+  `isRetailClient`/`isForeverClient` from `GetBuildInfo` bands and
+  `LibClassicInspector` at lines 134/167). Core delegation runs first so
+  behavior is correct; treat it as an OPEN hygiene item, not a defect to fix
+  in an unrelated lane. older notes that Scoring/Scanner read `WOW_PROJECT_ID`
+  directly are stale — only `Core.lua` does.
+
+### 6. Dispatch, audit and helper process (2026-11-10)
 
 - **a task graph with no dependencies runs flat.** every task dispatches at once, including review and
   release gates, which then run against unmodified code and report a meaningless PASS. dependencies must

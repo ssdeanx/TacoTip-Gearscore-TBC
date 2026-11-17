@@ -1,47 +1,33 @@
-# Tooltip Lifecycle, Visual Isolation & 3D Portrait Alpha Sync
+# Tooltip Lifecycle, Non-Latin Script Fonts & Visual Isolation
 
 ## 1. Non-Unit Visual Isolation (`clearTooltipVisuals`)
 
-To ensure non-unit tooltips (items, spells, buffs, action buttons, map POIs) never inherit stale unit state:
-
-- `clearTooltipVisuals(tooltip)` executes synchronously on:
-  - `OnHide` & `OnTooltipCleared`
-  - `OnTooltipSetSpell` & `OnTooltipSetItem`
-  - `onTooltipShow` (when `not unit or not UnitIsPlayer(unit)`)
-  - Top of `onTooltipSetUnit` (before processing new unit)
-
-- **Purge Operations:**
-  1. Increment `tooltip._borderDeferralGen` (invalidates all pending deferred timers)
-  2. Cancel `borderDeferTimer` and `classBorderDeferTimer` via `cancelDeferredAppearance()`
-  3. Reset player class color, border overlay, guild line, and level color line
-  4. Hide 2D portrait (`tooltip.TacoTipPortrait:Hide()`)
-  5. Clean 3D portrait: `tooltip.TacoTipPortrait3D:Hide()`, `pcall(tooltip.TacoTipPortrait3D.ClearModel)`, `tooltip.TacoTipPortrait3D:SetAlpha(1)`
-  6. Hide and stop power bar ticker (`TacoTipPowerBar:Hide()`, `stopPowerBarTicker()`)
-  7. Reset tooltip custom padding (`ClearPadding()` or `SetPadding(0, 0, 0, 0)`)
-  8. Registered on GameTooltip, ShoppingTooltips, ItemRefTooltip, ItemRefShoppingTooltips, WorldMapTooltips, WorldMapCompareTooltips, and SmallTextTooltip
+- `clearTooltipVisuals(tooltip)` resets unit state on `OnHide`, `OnTooltipCleared`, `OnTooltipSetSpell`, `OnTooltipSetItem`, `onTooltipShow` (non-player), and top of `onTooltipSetUnit`:
+  - Increments `tooltip._borderDeferralGen` and cancels pending border/class deferral timers.
+  - Hides 2D portrait (`TacoTipPortrait`) and clears 3D portrait (`Hide()`, `pcall(ClearModel)`, `SetAlpha(1)`).
+  - Hides `TacoTipPowerBar`, stops power-bar ticker, resets custom padding, and disables mouse capture (`GameTooltip:EnableMouse(false)` inside `GameTooltip_SetDefaultAnchor`).
 
 ---
 
-## 2. 3D Portrait Alpha Sync & Screen-Edge Detection
+## 2. Non-Latin Script Font Fallback (`ru` / `cn` / `ko` / `tw`)
 
-- **Alpha Synchronization:** In `ensureTooltipPortrait`, attach an `OnUpdate` script on `tooltip.TacoTipPortrait3D` syncing to parent alpha at 20Hz.
-- **Screen-Edge Clipping Prevention:** During `ApplyTooltipAppearance`, dynamically check if `tooltipRight + portraitW + 8 > screenWidth`. If near the right edge of the screen, dynamically flip the portrait anchor from `TOPLEFT -> TOPRIGHT` to `TOPRIGHT -> TOPLEFT (-8, 0)` so the enlarged portrait never renders off-screen.
-- **Lifecycle Guarantees:**
-  - Zero timer drift or race conditions.
-  - When `tooltip` hides, the engine halts the `OnUpdate` script automatically.
-  - On new unit show, `portrait:SetAlpha(tooltip:GetAlpha() or 1)` is called before `portrait:Show()`.
+Western clients (`enUS` with `FRIZQT__.TTF`, `Expressway`, `Roboto`, `MORPHEUS`, `SKURRI`) lack Cyrillic, CJK, and Hangul glyphs, causing `□□□` boxes in Wide/Compact/Mini tooltips, `Target:` rows, `/who`, `FriendsTooltip`, and World Map player pins.
 
----
-
-## 3. High-Performance Zero-Allocation Hover Pipeline
-
-- `pooledLinesToAdd`, `pooledLineRecords`, `linesToAddCount`, and `pooledPlayerText` recycle sub-tables for all tooltip text lines via `addLineDouble` and `addLineSingle`.
-- Completely eliminates 38 anonymous table literals per hover and eliminates all `unpack(v)` operations in line rendering.
-- `TacoTipMouseAnchor:SetScript("OnUpdate")` returns immediately when `not TacoTipConfig.anchor_mouse or not GameTooltip or not GameTooltip:IsShown()`, saving 144–240Hz cursor polling and layout calculations when tooltips are hidden.
+- **`textures.lua` (`TT.PickScriptFont` & `TT.GetScriptFontPath`):**
+  - `detectScripts(text)` detects Cyrillic (including Cyrillic Supplement `\212[\128-\175]`), Simplified/Traditional CJK (including Radicals/Compat/Fullwidth/Ext-B), and Hangul (Jamo + Syllables).
+  - Normalizes `/` vs `\` font paths and checks `FACE_SCRIPT_COVERAGE` (so Blizzard system fonts missing scripts resolve straight to bundled fallbacks in `Media/Fonts/`: `NotoSans-Regular.ttf` for Cyrillic, `WenQuanYiMicroHei.ttf` for Chinese, `NanumGothic-Regular.ttf` for Korean).
+- **`main.lua` Font Application Pipeline (`TT.ApplyFontIfNeeded`, `TT.ApplyTooltipFonts`):**
+  - Checks the Region's live `GetFont()`, picks script fallback if missing coverage, retries bundled script font if `SetFont` returns `false`, and skips Forever loot tooltips (`GetLootItem`).
+  - Wired into:
+    - Unit tooltips (`onTooltipSetUnit` + remembered line font masks + `onTooltipShow` re-verification across `Wide`, `Compact`, `Mini`, and `Target:` rows)
+    - Spell & non-unit tooltips (`OnTooltipSetSpell`, `WhoList`, Guild/Social)
+    - **`FriendsTooltip`:** Hooks `FriendsFrameTooltip_SetLine` + `FriendsTooltip` `OnShow` (and `Blizzard_FriendsFrame` `ADDON_LOADED`) across `Header`, `NoteText`, `BroadcastText`, `LastOnline`, `OtherGameAccounts`, `GameAccount1..5Name/Info`, `GameAccountMany`.
+    - **World Map Unit Pins:** Hooks `UnitPositionFrameMixin.UpdateUnitTooltips` (plus `Blizzard_WorldMap` / `Blizzard_SharedMapDataProviders` `ADDON_LOADED`), **strictly gated** by `TT.CanStyleWorldMapTooltip()` so tooltips are never touched during combat lockdown, instances, encounters, or active Forever restrictions.
 
 ---
 
-## 4. Minimap & World Map Flicker Prevention
+## 3. Performance & High-Frequency Hygiene
 
-- `GameTooltip:EnableMouse(false)` is enforced inside `GameTooltip_SetDefaultAnchor` so the tooltip never intercepts mouse events and prevents `OnEnter`/`OnLeave` flicker cycles.
-- Caller frame ownership is strictly preserved on `GameTooltip` (never overridden with `SetOwner(TacoTipMouseAnchor)`).
+- Preallocated line tables (`pooledLinesToAdd`, `pooledLineRecords`, `pooledPlayerText`) eliminate per-hover table garbage.
+- `TacoTipMouseAnchor` exits immediately in `OnUpdate` when hidden or mouse-anchoring is disabled.
+- 3D portrait alpha sync runs at 20Hz (`0.05s`) via parent alpha; right-edge screen detection flips portrait anchor side dynamically when `ApplyTooltipAppearance` runs post-layout.

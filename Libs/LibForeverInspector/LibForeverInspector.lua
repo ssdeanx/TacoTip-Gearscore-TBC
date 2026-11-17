@@ -4452,6 +4452,12 @@ local function evictCacheEntries(currentGuid, now)
     end
 end
 
+local nextInspectTime = 0
+local inspectQueueTick
+local isCloseEnoughToAsk
+local isCacheFresh
+local enqueueInspectUnit
+
 local function cacheUnitData(unit, guid, isRetry)
     if (not unit or not guid or isSecretValue(guid)) then return end
     local now = uptimeSeconds()
@@ -4603,14 +4609,6 @@ local function cacheUnitData(unit, guid, isRetry)
             local delay = CACHE_RETRY_DELAYS[data.retryCount] or CACHE_RETRY_DELAYS[CACHE_RETRY_LIMIT]
             _G.C_Timer.After(delay, function()
                 if (data.retryGeneration ~= retryGeneration) then return end
-                -- Another inspect has overwritten Blizzard's single inspect buffer:
-                -- stop retrying on stale buffer data instead of reading another player's
-                -- inventory or overwriting lastInspectGUID.
-                if (lib.lastInspectGUID and not safeEquals(lib.lastInspectGUID, guid)) then
-                    data.retryPending = false
-                    return
-                end
-                data.retryPending = false
                 local targetUnit = unit
                 if (not safeUnitExists(targetUnit)
                         or not safeEquals(safeUnitGUID(targetUnit), guid)) then
@@ -4618,6 +4616,29 @@ local function cacheUnitData(unit, guid, isRetry)
                         targetUnit = lib:PlayerGUIDToUnitToken(guid)
                     end
                 end
+                -- Another inspect has overwritten Blizzard's single inspect buffer:
+                -- do not read another player's inventory or overwrite lastInspectGUID.
+                -- Instead of silently abandoning a valid player in dense hubs,
+                -- re-enqueue the displaced GUID cleanly while leaving retryPending
+                -- false so IsCacheFresh reflects that this entry needs a fresh read.
+                if (lib.lastInspectGUID and not safeEquals(lib.lastInspectGUID, guid)) then
+                    data.retryPending = false
+                    data.retryCount = nil
+                    if (targetUnit and safeUnitExists(targetUnit)
+                            and not isCacheFresh(lib.cache and lib.cache[guid])
+                            and isCloseEnoughToAsk(targetUnit)
+                            and lib:CanInspect(targetUnit)) then
+                        enqueueInspectUnit(guid, targetUnit)
+                        if (lib.inspectStats) then
+                            lib.inspectStats.retryDisplacedRequeued = (lib.inspectStats.retryDisplacedRequeued or 0) + 1
+                        end
+                        if (inspectQueueTick and uptimeSeconds() >= nextInspectTime) then
+                            inspectQueueTick()
+                        end
+                    end
+                    return
+                end
+                data.retryPending = false
                 if (safeUnitExists(targetUnit)) then
                     cacheUnitData(targetUnit, guid, true)
                 end
@@ -4709,7 +4730,6 @@ local function cacheUnitData(unit, guid, isRetry)
     lib.callbacks:Fire("TALENTS_READY", guid, unit)
 end
 
-local nextInspectTime = 0
 inspectPendingSince = 0
 inspectPendingGUID = nil
 
@@ -4721,17 +4741,7 @@ local INSPECT_DELAY = (isRetail or isForever) and 0.4 or 1.0
 local INSPECT_PENDING_TIMEOUT = (isRetail or isForever) and 1.2 or 3.0
 local scanNearbyContinuePending = false
 
-local inspectQueueTick
 local ensureBlizzardInspectHooks
-
--- Forward declaration. The OnEvent handler below runs the distance pre-filter on
--- every player target and every player mouseover, but the function itself lives
--- further down with the rest of the range machinery. A reference to a local that
--- has not been declared yet compiles as a GLOBAL lookup, so without this line
--- every player target and every player hover raised
--- "attempt to call global 'isCloseEnoughToAsk' (a nil value)" and the handler
--- aborted before it could inspect anything.
-local isCloseEnoughToAsk
 
 -- The unit of the last inspect request that has not yet been answered, with the
 -- distance it was measured at. Declared here, beside isCloseEnoughToAsk, for the
@@ -4923,7 +4933,6 @@ queue = {}
 -- holds that player's links) without issuing duplicate NotifyInspect requests.
 local hookedInspectFrameShow = false
 local hookedInspectUnit = false
-local isCacheFresh
 
 local function onBlizzardInspectTrigger(unit)
     local insFrame = rawget(_G, "InspectFrame")
@@ -4953,17 +4962,24 @@ local function onBlizzardInspectTrigger(unit)
             nextInspectTime = throttleEnd
         end
     end
-    inspectPendingUnit = targetUnit
-    inspectPendingGUID = guid
-    inspectPendingSince = now
     if (not (isCacheFresh and isCacheFresh(cached)) and safeEquals(lib.lastInspectGUID, guid)) then
         for slot = 1, 18 do
             if (inventoryItemLink(targetUnit, slot)) then
+                -- Do not arm inspectPendingUnit when reusing Blizzard's existing
+                -- inspect buffer synchronously; leaving it armed stalls queue ticks
+                -- until INSPECT_PENDING_TIMEOUT even though INSPECT_READY is not coming.
+                inspectPendingUnit = nil
+                inspectPendingGUID = nil
+                inspectPendingSince = 0
+                pendingRefusal = nil
                 cacheUnitData(targetUnit, guid)
                 return
             end
         end
     end
+    inspectPendingUnit = targetUnit
+    inspectPendingGUID = guid
+    inspectPendingSince = now
 end
 
 ensureBlizzardInspectHooks = function()
@@ -6063,7 +6079,7 @@ isCloseEnoughToAsk = function(unit)
     return distSq <= (NEARBY_ASK_YARDS * NEARBY_ASK_YARDS)
 end
 
-local function enqueueInspectUnit(guid, unit)
+enqueueInspectUnit = function(guid, unit)
     for i = 1, #queue do
         local item = queue[i]
         local g = type(item) == "table" and item.guid or item
@@ -6473,6 +6489,30 @@ local function scanNearby()
             end
         end
     end
+end
+
+-- Diagnostic status helper for UI/Companion addons without reading internal cache tables.
+function lib:GetCacheStatus(unitorguid)
+    local guid = getPlayerGUID(unitorguid)
+    local cached = guid and lib.cache and lib.cache[guid] or nil
+    if (not cached) then
+        return "missing", nil
+    end
+    local now = uptimeSeconds()
+    local failedUntil = tonumber(cached.failedUntil)
+    if (failedUntil and failedUntil > 0 and now < failedUntil) then
+        return "backoff", cached
+    end
+    if (cached.incomplete and cached.retryPending) then
+        return "retrying", cached
+    end
+    if (cached.incomplete) then
+        return "incomplete", cached
+    end
+    if (cached.stale or not cached.time or (now - cached.time) >= CACHE_REFRESH_DELAY) then
+        return "stale", cached
+    end
+    return "fresh", cached
 end
 
 lib.scanEnabled = (lib.scanEnabled ~= false)

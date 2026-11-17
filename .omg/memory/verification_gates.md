@@ -1,57 +1,30 @@
 # Verification Gates & Testing Protocol
 
-## 1. Zero-Warning Luacheck Gate
+## 1. Static Analysis (`luacheck` & `wowlua_ls`)
 
-- **Command:** `luacheck .`
-- **Standard:** 0 warnings / 0 errors across all 21 repository files.
-- **Rule:** Never use `-- luacheck: ignore` inline comments to suppress warnings. Use dynamic table indexing (e.g. `_G["WorldMapTooltip"]`, `GameTooltip["Method"]`) or local caching.
-
----
-
-## 2. WoWUnit Test Suite (`TacoTip_Tests.lua`)
-
-- **Invocation:** `/tttest` in-game or via local Lua runner mocks.
-- **Suites Registered (9 total):**
-  1. `TacoTip-Core`: Namespace loading, public API presence, version metadata, interface IDs.
-  2. `TacoTip-Config`: Default keys, Shaman Blue override, boolean sanitization, numeric bounds.
-  3. `TacoTip-Borders`: Class-color border painting, non-unit border isolation, SharedMedia resolution caching.
-  4. `TacoTip-Portrait`: 3:4 aspect ratio (`66x88`), integer scaling (50%–200%), `OnUpdate` alpha sync tracking.
-  5. `TacoTip-Guild`: Fallback parser regex, `<Guild> Rank` format, hide suppression.
-  6. `TacoTip-Stats`: Nil-safe GearScore / Pawn calculations, `LibClassicInspector` presence, dual-spec reachability.
-  7. `TacoTip-Mover`: Mover handle sync, options UI refresh nil-safety, custom position initialization.
-  8. `TacoTip-Modules`: Dependent global exposure, default configuration parity.
-  9. `TacoTip-MinimapAndAnchor`: Frame ownership preservation, mouse disablement on `GameTooltip_SetDefaultAnchor`.
+- `luacheck .` — Must report **0 warnings / 0 errors across all 70 files**. Never use inline `-- luacheck: ignore`; use dynamic indexing or local guards (`rawget(_G, ...)`).
+- `wowlua_ls check . 2>&1 | grep -E "error" || echo "wowlua_ls: 0 errors"` — Must report **0 errors** (`.wowluarc.json` declares `classic_era`, `classic`, `forever`, `retail`; never add `"titanforge"`, which `wowlua-ls` rejects).
 
 ---
 
-## 2b. Offline Harness Fidelity Rules (`Tests/harness/`)
+## 2. Offline Harness Suite (`Tests/harness/run_all.sh`)
 
-Learned the hard way in 0.8.3. The offline harness runs stock `lua5.1`, which is **not** the interpreter WoW ships. Three divergences already produced green tests that asserted nothing:
+Run under **both** Lua 5.1 and LuaJIT after edits:
 
-1. **`xpcall` varargs.** WoW's Lua accepts `xpcall(f, handler, ...)`; stock 5.1 accepts exactly two arguments. Blizzard's own FrameXML depends on it and so does `CallbackHandler-1.0` v7 `Dispatch`, which passes the event name and payload through it. `detect_test.lua` now shims it (`xpcallWithArgs`) so handlers receive their arguments. Without the shim every handler gets **zero** arguments.
-2. **The wiped global environment must list every standard the bundled libs capture.** `run()` wipes all of `_G` and restores a fixed list. `next` was missing, so `CallbackHandler` captured `local next = nil` and **every `callbacks:Fire()` raised inside `Dispatch`** — invisibly, because no test fired a callback until 0.8.3.
-3. **Frame scripts take `self` first.** `function(self, event, ...)`. Calling `handler("INSPECT_READY", guid)` puts the event name in the `self` slot, the branch never runs, and the assertion passes because nothing happened. Always pass the frame.
+- `bash Tests/harness/run_all.sh` → **75 / 75 invocations passed, 0 failed**
+- `LUA=luajit bash Tests/harness/run_all.sh` → **75 / 75 passed, 0 failed**
 
-General rule: a harness that never exercises a code path cannot report on it, and `baseEnv`'s `CreateFrame` originally discarded `SetScript` handlers — making the whole event handler unreachable. Tests that need an event must supply a `CreateFrame` that retains scripts.
+Covers `detect_test`, `locale_test`, `font_test`, `specname_test`, `textures_test`, `load_test` (5 clients × `slot4`/`slot7` + missing `GameTooltip_SetDefaultAnchor`), `options_test` (5 clients + `legacy`/`nocolor`/`nofadeout` + dashboard & progression assertions), `settings_test` (5 clients × 4 modes), `fileguard_test`, `batch2_pawn_test`, `batch4_clock_test`, `batch8_pane_test`, `gearscore_test`, `tooltip_test`, `forever_tooltip_test` (217 Forever pins), `secretguard_test`, `custompos_test` (12 pins), `contract_pins_test`, `taint_test`, and `talent_check`.
 
----
-
-## 3. Mock Teardown Discipline
-
-In tests, every global mock (e.g. `GetGuildInfo`, `UnitExists`, `GameTooltip.GetUnit`) must be cleaned up in a guaranteed teardown (`pcall` wrapper with `ClearReplaces()`) so subsequent test runs are never polluted.
+### Harness Fidelity Lessons (0.8.3+)
+1. Shim `xpcall` varargs (`xpcallWithArgs`) for stock Lua 5.1 so `CallbackHandler-1.0` delivers callback payloads.
+2. Preserve `next` and all Lua stdlib symbols inside sandboxed `_G` wipes.
+3. Always pass `(frame, event, ...)` when invoking frame script handlers directly.
 
 ---
 
-## 4. Package Release Verifiers
+## 3. Package Release Verifiers (Worktree Mode)
 
-- **Commands:**
-  - `bash Tools/verify_release.sh --worktree`
-  - `bash Tools/verify_release_extras.sh --worktree`
-- **Standard:** Both must report PASS. Validates the working tree against release packaging allowlists, strictly excluding workshop files (`desks/`, `bench/`, `Tools/`, `OLD/`, `Tests/`), documentation dotfiles, and ensuring valid single-TOC structure.
-
----
-
-## 5. Offline Test Runner Gate
-
-- **Command:** `bash Tests/harness/run_all.sh`
-- **Standard:** 71 passed, 0 failed across all 5 supported client families (`classicEra`, `tbc`, `titanforge`, `forever`, `retail`) and both `GetBuildInfo` return layouts (`slot4`, `slot7`).
+- `bash Tools/verify_release.sh --worktree` — **PASS** (core TacoTip `v1.0.6`, single `.toc`, consistent versions across `TacoTip.toc`/`main.lua`/`options.lua`/`README.md`, 5 interfaces, `logo.tga`).
+- `bash Tools/verify_release_extras.sh --worktree` — Standalone verifier for `TacoTip_Extras/` (`v1.3.2`).
+- Never stage or commit via git manually; only the verifiers invoke read-only git when run.

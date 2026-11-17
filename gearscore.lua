@@ -479,6 +479,34 @@ local function itemcacheCB(tbl, id)
 end
 
 
+local function queueItemLoad(cb_table, item, itemID, useCallback)
+    if (not itemID or isSecretValue(itemID)) then
+        return
+    end
+    if (useCallback) then
+        -- Dedupe on insert: identical item ids (e.g. two identical rings or main/off-hand
+        -- duplicates) must only register one ContinueOnItemLoad closure per cb_table so
+        -- the first completion does not orphan a duplicate callback closure.
+        local alreadyPending = false
+        for _, pendingID in ipairs(cb_table.items) do
+            if (pendingID == itemID) then
+                alreadyPending = true
+                break
+            end
+        end
+        if (not alreadyPending) then
+            table.insert(cb_table.items, itemID)
+            if (type(item.ContinueOnItemLoad) == "function") then
+                item:ContinueOnItemLoad(function()
+                    itemcacheCB(cb_table, itemID)
+                end)
+            end
+        end
+    elseif (RequestLoadItemDataByID) then
+        RequestLoadItemDataByID(itemID)
+    end
+end
+
 function TT_GS:GetScore(unitorguid, useCallback)
     local guid = getPlayerGUID(unitorguid)
     if (guid) then
@@ -540,30 +568,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
                 mainHandLink = mainHandItem:GetItemLink()
             else
                 IsReady = false
-                local itemID = mainHandItem:GetItemID()
-                if (itemID) then
-                    if (useCallback) then
-                        -- Dedupe on insert: identical item ids (e.g. two
-                        -- identical rings) must not occupy two list slots,
-                        -- or the first callback drains both matches and the
-                        -- second slot's callback completes on a drained list.
-                        local alreadyPending = false
-                        for _, pendingID in ipairs(cb_table.items) do
-                            if (pendingID == itemID) then
-                                alreadyPending = true
-                                break
-                            end
-                        end
-                        if (not alreadyPending) then
-                            table.insert(cb_table.items, itemID)
-                        end
-                        mainHandItem:ContinueOnItemLoad(function()
-                            itemcacheCB(cb_table, itemID)
-                        end)
-                    elseif (RequestLoadItemDataByID) then
-                        RequestLoadItemDataByID(itemID)
-                    end
-                end
+                queueItemLoad(cb_table, mainHandItem, mainHandItem:GetItemID(), useCallback)
             end
         end
         if (offHandItem and not isSecretValue(offHandItem)) then
@@ -571,27 +576,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
                 offHandLink = offHandItem:GetItemLink()
             else
                 IsReady = false
-                local itemID = offHandItem:GetItemID()
-                if (itemID) then
-                    if (useCallback) then
-                        -- Same dedupe rule as the main-hand registration.
-                        local alreadyPending = false
-                        for _, pendingID in ipairs(cb_table.items) do
-                            if (pendingID == itemID) then
-                                alreadyPending = true
-                                break
-                            end
-                        end
-                        if (not alreadyPending) then
-                            table.insert(cb_table.items, itemID)
-                        end
-                        offHandItem:ContinueOnItemLoad(function()
-                            itemcacheCB(cb_table, itemID)
-                        end)
-                    elseif (RequestLoadItemDataByID) then
-                        RequestLoadItemDataByID(itemID)
-                    end
-                end
+                queueItemLoad(cb_table, offHandItem, offHandItem:GetItemID(), useCallback)
             end
         end
 
@@ -647,27 +632,7 @@ function TT_GS:GetScore(unitorguid, useCallback)
                     else
                         IsReady = false
                         local itemID = item.GetItemID and item:GetItemID()
-                        if (itemID and not isSecretValue(itemID)) then
-                            if (useCallback) then
-                                -- Same dedupe rule as the weapon-slot
-                                -- registrations above.
-                                local alreadyPending = false
-                                for _, pendingID in ipairs(cb_table.items) do
-                                    if (pendingID == itemID) then
-                                        alreadyPending = true
-                                        break
-                                    end
-                                end
-                                if (not alreadyPending) then
-                                    table.insert(cb_table.items, itemID)
-                                end
-                                item:ContinueOnItemLoad(function()
-                                    itemcacheCB(cb_table, itemID)
-                                end)
-                            elseif (RequestLoadItemDataByID) then
-                                RequestLoadItemDataByID(itemID)
-                            end
-                        end
+                        queueItemLoad(cb_table, item, itemID, useCallback)
                     end
                 end
             end

@@ -1799,6 +1799,64 @@ do
 end
 
 --------------------------------------------------------------------------
+-- VEX-1 (operator report 2, WoW Forever / Camelot): self GearScore must not
+-- vanish on a transient zero live read.
+--
+-- The player has no inspect-cache record, so TT.getGearScoreMemo(guid, nil)
+-- can never answer for self and main.lua:4215 forces the LIVE
+-- GearScore:GetScore path on every 0.2s unit-frame re-drive. One slot whose
+-- item data is still in flight makes GetScore answer 0 (gearscore.lua:642),
+-- and main.lua:4229 drops the GearScore row. Pawn survives that same tick
+-- because it keeps TT._selfPawnMemo; GearScore has no self memo at all. This
+-- block drives exactly that tick and asserts the score row survives -- it is
+-- RED on the shipped tree and turns GREEN with a self-scoped GS memo.
+--------------------------------------------------------------------------
+do
+    local savedTipStyle = C.tip_style
+    local savedGearMode = GEAR_MODE
+    C.tip_style = 1 -- FULL / wide style, as in the operator's screenshot
+    GEAR_MODE = "full"
+    currentUnit = "player"
+    REALG.TooltipUtil.GetDisplayedUnit = function()
+        return "n", "player", UNITS.player.guid
+    end
+    GT.GetUnit = function() return "n", "player" end
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("<Testguild>")
+    GT:AddLine("Level 60 Human")
+
+    -- SetUnit is engine-faithful: the client clears the pooled lines and
+    -- repopulates its own name/guild/level rows before the post-call runs.
+    GT:SetUnit("player")
+    local firstTxt = allText()
+    check("VEX-1 setup: wide self tooltip has a live GearScore row",
+        STD.string.find(firstTxt, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(firstTxt, "\n", " | "))
+
+    -- What the client does on the NEXT 0.2s tick: one item link's data is
+    -- briefly unavailable, so C_Item.GetItemInfo cannot answer and
+    -- GearScore:GetScore legitimately returns 0 for this one render.
+    local savedGetItemInfo = REALG.GetItemInfo
+    REALG.GetItemInfo = function() return nil end
+    REALG.C_Item.GetItemInfo = REALG.GetItemInfo
+    GT:SetUnit("player")
+    local zeroTxt = allText()
+    REALG.GetItemInfo = savedGetItemInfo
+    REALG.C_Item.GetItemInfo = savedGetItemInfo
+
+    check("VEX-1: self GearScore survives a transient zero live read",
+        STD.string.find(zeroTxt, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(zeroTxt, "\n", " | "))
+    check("VEX-1 control: Pawn keeps its row across the same tick",
+        STD.string.find(zeroTxt, "Pawn:", 1, true) ~= nil,
+        STD.string.gsub(zeroTxt, "\n", " | "))
+
+    C.tip_style = savedTipStyle
+    GEAR_MODE = savedGearMode
+end
+
+--------------------------------------------------------------------------
 -- P9: coloring is preserved -- class-colored name, green guild tag, level line.
 --------------------------------------------------------------------------
 do
@@ -3158,19 +3216,24 @@ do
     check("combat hide: releasing modifier hides tooltip again in combat",
         GT:IsShown() == false, "shown=" .. tostring(GT:IsShown()))
 
-    -- 4) Forever Dashboard Progress Bar Sections
-    local fSecPre, fRatioPre = TT:GetForeverProgressSection(300)
-    local fSecT1 = TT:GetForeverProgressSection(700)
-    local fSecT2 = TT:GetForeverProgressSection(900)
-    local fSecT3 = TT:GetForeverProgressSection(1100)
+    -- 4) Forever Dashboard Progress Bar Sections (calibrated to Classic/Forever GearScore formula)
+    local fSecLvl, fRatioLvl = TT:GetForeverProgressSection(275)
+    local fSecPre, fRatioPre = TT:GetForeverProgressSection(750)
+    local fSecT1 = TT:GetForeverProgressSection(920)
+    local fSecT2 = TT:GetForeverProgressSection(1080)
+    local fSecT3 = TT:GetForeverProgressSection(1240)
     local fSecUnk = TT:GetForeverProgressSection(1350)
-    check("forever dashboard bar: maps 0..1400 across Pre-Raid / Tier 1 / Tier 2 / Tier 3 / ???",
-        fSecPre.label == "Pre-Raid" and STD.math.abs(fRatioPre - 0.125) < 0.01
+    local fSecFuture = TT:GetForeverProgressSection(1600, 1800)
+    check("forever dashboard bar: maps 0..1500+ across Leveling / Pre-Raid / T1 / T2 / T3 / ???",
+        fSecLvl.label == "Leveling" and STD.math.abs(fRatioLvl - 0.08) < 0.01
+            and fSecPre.label == "Pre-Raid" and fRatioPre > 0.16 and fRatioPre < 0.34
             and fSecT1.label == "Tier 1"
             and fSecT2.label == "Tier 2"
             and fSecT3.label == "Tier 3"
-            and fSecUnk.label == "???",
-        string.format("%s/%s/%s/%s/%s", fSecPre.label, fSecT1.label, fSecT2.label, fSecT3.label, fSecUnk.label))
+            and fSecUnk.label == "???"
+            and fSecFuture.label == "???",
+        string.format("%s/%s/%s/%s/%s/%s/%s",
+            fSecLvl.label, fSecPre.label, fSecT1.label, fSecT2.label, fSecT3.label, fSecUnk.label, fSecFuture.label))
 
     REALG.InCombatLockdown = savedInCombat
     REALG.IsShiftKeyDown = savedShift
@@ -3330,6 +3393,125 @@ do
     check("v1.0.5 font fallback: SetFont returning false retries with bundled script font",
         fMissing.__font == bundled.ruRU and fMissing._tacoTipFont == bundled.ruRU,
         tostring(fMissing.__font))
+
+    -- 5. Normal style Target: row with non-Latin target name gets script font
+    C.tip_style = 3
+    local savedShowTarget = C.show_target
+    local savedUnitName = REALG.UnitName
+    local savedUnitExists = REALG.UnitExists
+    local savedUnitIsUnit = REALG.UnitIsUnit
+    C.show_target = true
+    REALG.UnitName = function(u)
+        if (u == "mouseovertarget") then return "ЦельИван" end
+        return "Testplayer"
+    end
+    REALG.UnitExists = function(u) return u == "mouseover" or u == "mouseovertarget" end
+    REALG.UnitIsUnit = function(a, b) return a == b end
+    REALG.GetGuildInfo = function() return "Testguild", "Member" end
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("<Testguild> Member")
+    GT:AddLine("Level 60 Warrior")
+    local normalTxt = drive("mouseover")
+    local targetLine = nil
+    for idx = 1, GT:NumLines() do
+        local ll = GT:GetLeftLine(idx)
+        local txt = ll and ll:GetText()
+        if (type(txt) == "string" and STD.string.find(txt, "ЦельИван", 1, true)) then
+            targetLine = ll
+            break
+        end
+    end
+    check("v1.0.5 normal style: Cyrillic Target line receives bundled Cyrillic font",
+        targetLine ~= nil and targetLine.__font == bundled.ruRU,
+        "targetLine=" .. tostring(targetLine and targetLine.__font) .. " txt=" .. tostring(normalTxt))
+    C.show_target = savedShowTarget
+    REALG.UnitName = savedUnitName
+    REALG.UnitExists = savedUnitExists
+    REALG.UnitIsUnit = savedUnitIsUnit
+
+    -- 6. World Map player pin tooltips: styled in open world, strictly skipped in combat/instances/encounters
+    local savedInCombat = REALG.InCombatLockdown
+    local savedIsInInstance = REALG.IsInInstance
+    local savedEnc = REALG.C_InstanceEncounter
+    local savedMapUnitExists = REALG.UnitExists
+    local mapPinOwner = {
+        GetCurrentMouseOverUnits = function() return { party1 = true } end,
+        UpdateUnitTooltips = function() end,
+    }
+    local function testMapPin(inCombat, inInst, inEnc)
+        REALG.UnitExists = function() return false end
+        REALG.InCombatLockdown = function() return inCombat end
+        REALG.IsInInstance = function() return inInst, inInst and "party" or "none" end
+        REALG.C_InstanceEncounter = { IsEncounterInProgress = function() return inEnc end }
+        GT:ClearLines()
+        GT.GetUnit = function() return nil, nil end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return nil, nil, nil end
+        GT.GetOwner = function() return mapPinOwner end
+        GT:AddLine("МагИван")
+        local l1 = GT:GetLeftLine(1)
+        l1.__font = "Fonts\\FRIZQT__.TTF"
+        l1.__fontSize = 14
+        l1.GetFont = function() return l1.__font, l1.__fontSize, "" end
+        if (GT.__hooks and GT.__hooks.OnShow) then
+            GT.__hooks.OnShow(GT)
+        end
+        return l1.__font
+    end
+    check("v1.0.5 map pin: open world applies bundled Cyrillic font",
+        testMapPin(false, false, false) == bundled.ruRU)
+    check("v1.0.5 map pin: skipped in combat",
+        testMapPin(true, false, false) == "Fonts\\FRIZQT__.TTF")
+    check("v1.0.5 map pin: skipped in instance",
+        testMapPin(false, true, false) == "Fonts\\FRIZQT__.TTF")
+    check("v1.0.5 map pin: skipped in encounter",
+        testMapPin(false, false, true) == "Fonts\\FRIZQT__.TTF")
+    REALG.UnitExists = savedMapUnitExists
+    REALG.InCombatLockdown = savedInCombat
+    REALG.IsInInstance = savedIsInInstance
+    REALG.C_InstanceEncounter = savedEnc
+
+    -- 7. Character Frame detailed hover tooltips on Forever stats footer
+    local function readTooltipText()
+        local out = {}
+        for i = 1, (GT:NumLines() or 0) do
+            local ll = GT:GetLeftLine(i)
+            local rr = GT.GetRightLine and GT:GetRightLine(i)
+            if (ll and ll:GetText()) then out[#out + 1] = tostring(ll:GetText()) end
+            if (rr and rr:GetText()) then out[#out + 1] = tostring(rr:GetText()) end
+        end
+        return STD.table.concat(out, "\n")
+    end
+    local savedFooter = TT.foreverStatsFooter
+    local savedStatsBox = REALG.CharacterStatsPaneScrollBox
+    TT.foreverStatsFooter = nil
+    REALG.CharacterStatsPaneScrollBox = REALG.CreateFrame("Frame", "CharacterStatsPaneScrollBox", REALG.UIParent)
+    REALG.CharacterStatsPaneScrollBox.ScrollBox = REALG.CreateFrame("Frame", nil, REALG.CharacterStatsPaneScrollBox)
+    TT:RefreshForeverCharacterStatsFooter(925, 66, 0.63, 0.20, 0.83)
+    local ft = TT.foreverStatsFooter
+    GT:ClearLines()
+    if (ft and ft.gsHit and ft.gsHit.__scripts and ft.gsHit.__scripts.OnEnter) then
+        ft.gsHit.__scripts.OnEnter(ft.gsHit)
+    end
+    local gsTipText = readTooltipText()
+    check("v1.0.5 character frame hover (GearScore): shows detailed tier, iLvl, stage and description",
+        STD.string.find(gsTipText, "GearScore", 1, true) ~= nil
+            and STD.string.find(gsTipText, "925", 1, true) ~= nil
+            and STD.string.find(gsTipText, "Tier 1", 1, true) ~= nil
+            and STD.string.find(gsTipText, "Measures overall equipment power", 1, true) ~= nil,
+        gsTipText)
+    GT:ClearLines()
+    if (ft and ft.ilvlHit and ft.ilvlHit.__scripts and ft.ilvlHit.__scripts.OnEnter) then
+        ft.ilvlHit.__scripts.OnEnter(ft.ilvlHit)
+    end
+    local ilvlTipText = readTooltipText()
+    check("v1.0.5 character frame hover (Item Level): shows detailed iLvl, GearScore and description",
+        STD.string.find(ilvlTipText, "Average Item Level", 1, true) ~= nil
+            and STD.string.find(ilvlTipText, "66", 1, true) ~= nil
+            and STD.string.find(ilvlTipText, "Weighted average item level", 1, true) ~= nil,
+        ilvlTipText)
+    TT.foreverStatsFooter = savedFooter
+    REALG.CharacterStatsPaneScrollBox = savedStatsBox
 
     C.tip_style = savedStyle
     REALG.GetGuildInfo = savedGI

@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.5
+version: 1.0.7
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 upstream: TacoTip (GearScore & Talents & Item Level) by kebabstorm
@@ -24,20 +24,20 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, LibDataBroker-1.1, LibDBIcon-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: pending in-game verification (2026-11-15)
-linter: wowlua_ls check — 0 errors, no secret-value findings; 41 undefined-field warnings (2026-11-15)
+status: 1.0.6 published; 1.0.7 deep audit in progress, pending in-game verification
+linter: wowlua_ls check — 0 errors, no secret-value findings (2026-11-16)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10)
-gates: run_all 75/75 (lua5.1 + luajit), Extras 42/42, luacheck 0 warnings / 0 errors in 91 files, both verifiers PASS (2026-11-15)
-updated: 2026-11-15
+gates: 1.0.6 baseline run_all 75/75 (lua5.1 + luajit), Extras 42/42 (lua5.1/lua5.4/luajit), luacheck 0 warnings / 0 errors, both verifiers PASS (2026-11-16); 1.0.7 audit carries an intentional RED regression pin (VEX-1) pending fix
+updated: 2026-11-17
 ```
 
-# ⚡ TacoTip ⚡
+# ⚡ <span style="color:#b4e634">**_**TacoTip**_**</span> ⚡
 
 ![tbc-ss1](https://media.forgecdn.net/attachments/2178/795/1-png.png)
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.5-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.7-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -60,7 +60,7 @@ updated: 2026-11-15
 ## 🏆 200,000+ Downloads Milestone & Community Celebration
 
 **A monumental thank you to over 200,000 World of Warcraft players and guild leaders worldwide!**
-*Your passionate feedback, bug reports, and community support have powered TacoTip from a Classic tooltip tweak into the definitive cross-engine tooltip suite.*
+_Your passionate feedback, bug reports, and community support have powered TacoTip from a Classic tooltip tweak into the definitive cross-engine tooltip suite._
 **[Join our official Discord community](https://discord.gg/JuVJBwXqv)** to share your ideas, get instant support, and shape the next generation of features!
 
 </div>
@@ -72,7 +72,7 @@ updated: 2026-11-15
 💬 **<span style="color:#5865F2"><span style="text-decoration:underline">Official Discord Community</span></span>** — <https://discord.gg/JuVJBwXqv>
 📦 **<span style="color:#f39c12"><span style="text-decoration:underline">CurseForge Page</span></span>** — <https://www.curseforge.com/wow/addons/tacotip-gearscore>
 🙏 **<span style="color:#b4e634"><span style="text-decoration:underline">Original TacoTip Credit</span></span>** — Based on **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** by **kebabstorm**
-🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) *(Server leaderboard, guild rank browser & peer-to-peer gear sync)*
+🌟 **<span style="color:#b4e634"><span style="text-decoration:underline">Companion Addon (TacoTip Extras)</span></span>** — [TacoTip Extras on CurseForge](https://www.curseforge.com/wow/addons/tacotip-extras) _(Server leaderboard, guild rank browser & peer-to-peer gear sync)_
 ![TacoTip Extras](https://media.forgecdn.net/attachments/2065/485/2-png.png)
 
 | Client Family | Supported Interface | Client Status | Architectural World |
@@ -123,9 +123,23 @@ updated: 2026-11-15
 
 ---
 
+## <span style="color:#e67e23">What's New in v1.0.7</span>
+
+🔎 **<span style="color:#b4e634">Deep five-client audit and version sync (in progress):</span>** Bumped the working version to `1.0.7` (1.0.6 was published but never committed) across the TOC, Lua metadata fallbacks, version pins and project docs. An agent-led audit re-verified the client-truth baseline against the read-only client mirror and is working through the tooltip, GearScore/inspect, Extras scanner/cache and Extras P2P sync paths. One defect is reproduced with a red-first pin: **hovering yourself on WoW Forever unit frames shows Pawn but no GearScore**, because GearScore lacks the self-scoped memo that Pawn has and its live read returns `0,0` while item data is still in flight. The wide-style "text below the box" report is source-traced but still needs an in-game Forever reproduction before any fix. Extras findings include a remote scan that can stay `pending` forever and a specialization index stored as a specID. No player-visible behavior has changed in this entry; fixes land in subsequent commits.
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.6</span>
+
+🏙️ **<span style="color:#b4e634">Large-City Queue, Retry & Frame-Time Hardening (`LibForeverInspector` + `main.lua` + `gearscore.lua`):</span>** Eliminated queue stalls and silent drops when inspecting crowds in capital cities: `onBlizzardInspectTrigger` no longer arms `inspectPendingUnit` when synchronously reusing Blizzard's cached inspect buffer; `cacheUnitData` retry timers displaced by another inspect (`lastInspectGUID` change) now reset `retryCount` and re-enqueue the live target cleanly (`retryDisplacedRequeued`) instead of dying silently; added `CI:GetCacheStatus(unitorguid)` (`"fresh"|"retrying"|"backoff"|"stale"|"incomplete"|"missing"`); moved duplicate-slot `ContinueOnItemLoad` registrations inside `gearscore.lua`'s dedupe helper `queueItemLoad`; replaced random `pairs()` half-table wipes across `_gsRetry`, `_pawnRetry`, `_gsMemo`, `_lastItemsRev`, and `_gearWarmAt` with deterministic LRU/oldest or half-entry eviction; upgraded `TacoTip_GSCallback` to an ordered `16`-slot FIFO queue (`gsCallbackQueue`) while continuing off-hover item warming when scores are incomplete; and memoized `TacoTipMouseAnchor` coordinates so stationary mouse-anchored hovers skip redundant layout passes.
+
+---
+
 ## <span style="color:#e67e23">What's New in v1.0.5</span>
 
-🌍 **<span style="color:#b4e634">Non-Latin (`ru`/`cn`/`ko`/`tw`) Script Font Fix Across All Styles, Who/Social & Friends Tooltips:</span>** Fixed missing-glyph boxes (`□□□`) on English clients when hovering Russian, Simplified/Traditional Chinese, or Korean player/guild names, BattleTags, notes, or broadcasts in `Wide` style, normal styles, Who/Social hovers, and `FriendsTooltip`. `applyTooltipFonts` now verifies live `FontString:GetFont()` alongside `_tacoTipFont` so Blizzard's C++ `SetText`/`AddLine`/`AddDoubleLine`/`ClearLines` resets back to `FRIZQT__.TTF` never leave stale caches skipping `SetFont`; `onTooltipShow` now applies per-line script fonts on non-unit tooltips (excluding Forever loot tooltips) and re-verifies unit tooltips before presentation; `FriendsFrameTooltip_SetLine` and `FriendsTooltip:OnShow` apply per-line script fonts while preserving each region's original font size and restoring it on Latin lines; and `textures.lua` normalizes font path separators and expands UTF-8 script detection for Cyrillic Supplement, Hangul Jamo, and CJK Compatibility/Fullwidth/Ext-B ranges.
+🌍 **<span style="color:#b4e634">Non-Latin (`ru`/`cn`/`ko`/`tw`) Script Font Fix Across All Styles, Who/Social, Friends & Open-World Map Tooltips:</span>** Fixed missing-glyph boxes (`□□□`) on English clients when hovering Russian, Simplified/Traditional Chinese, or Korean player/guild names, target-of-target rows, BattleTags, notes, broadcasts, or open-world map pins across `Wide` style, `Normal` style, Who/Social hovers, `FriendsTooltip`, and World Map player pins (strictly gated out of combat, encounters, and instances so World Map pins never touch restricted instance/combat frames). `applyTooltipFonts` verifies live `FontString:GetFont()` alongside `_tacoTipFont` so Blizzard C++ resets never skip `SetFont`, retries with bundled fonts if a client face fails to load, and `textures.lua` normalizes path separators and expands UTF-8 script detection.
+
+🛡️ **<span style="color:#b4e634">Character Frame Hover Tooltips, Forever Progress Bar & Progression Tab Polish:</span>** Hovering `Item Level` or `GearScore` in the Character Frame (`TT.foreverStatsFooter` on WoW Forever and click-through `PersonalGearScore`/`PersonalAvgItemLvl` on Classic/TBC/Titanforge/Retail) now displays a detailed breakdown tooltip (quality tier, Gear Rank, Forever Stage + GS to next tier, scored slots, and formula description). Updated the WoW Forever dashboard header progress bar to 6 calibrated stages with segmented stage tint bands, `OnSizeChanged` relayout, and dynamic scaling past Tier 3 (`???`): **Leveling** (`0–550`), **Pre-Raid** (`550–800`), **Tier 1** (`800–1000`), **Tier 2** (`1000–1180`), **Tier 3** (`1180–1300`), and **`???`** (`1300+`). Enhanced the **Progression** tab: fixed XP bar width (`734px` instead of truncated `654px`) with quality-colored fill, added a framed player portrait, 3-column Milestone Summary strip (`Next Gear Rank`, `Progression Stage`, `Best Recorded Gain`), distinct per-trophy icons (`def.icon`) with live progress hints, empty-state chronicle prompt, proportional scrollbar thumb, and upgrade-delta tooltips on chronicle rows.
 
 📜 **<span style="color:#b4e634">License, Upstream Attribution & Version Sync:</span>** Updated [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [README.md](README.md), `TacoTip.toc`, and core Lua module headers (`main.lua`, `options.lua`, `gearscore.lua`, `pawn.lua`, `LibForeverInspector.lua`) to explicitly credit the original **[TacoTip (GearScore & Talents & Item Level)](https://www.curseforge.com/wow/addons/tacotip-gearscore-talents)** project by **kebabstorm** alongside current cross-engine maintenance by **AcidBomb**.
 
@@ -187,7 +201,7 @@ updated: 2026-11-15
 
 ## <span style="color:#e67e23">What's New in v1.0.0 Milestone Release</span>
 
-🎮 **<span style="color:#b4e634">Personal Progression & Gear Rank Leveling Mini-Game:</span>** Introducing a gamified local character progression engine with its own dedicated dashboard tab! Level up your character's Gear Rank (Levels 1 to 60+) with prestigious titles ranging from *Novice* to *Immortal Legend*, track live progress with an animated emerald XP bar, collect 10 milestone trophy achievements with unlock timestamps, and browse a searchable 500-entry Equipment Upgrade Chronicle with slot filters (*All*, *Weapons*, *Armor*, *Accessories*), delta badges, item hyperlinks, and Shift-click chat linking. Includes optional private local level-up chat alerts and fanfare sounds.
+🎮 **<span style="color:#b4e634">Personal Progression & Gear Rank Leveling Mini-Game:</span>** Introducing a gamified local character progression engine with its own dedicated dashboard tab! Level up your character's Gear Rank (Levels 1 to 60+) with prestigious titles ranging from _Novice_ to _Immortal Legend_, track live progress with an animated emerald XP bar, collect 10 milestone trophy achievements with unlock timestamps, and browse a searchable 500-entry Equipment Upgrade Chronicle with slot filters (_All_, _Weapons_, _Armor_, _Accessories_), delta badges, item hyperlinks, and Shift-click chat linking. Includes optional private local level-up chat alerts and fanfare sounds.
 
 🎨 **<span style="color:#b4e634">Shaman Blue Toggle Classic Era Restriction:</span>** Gated the "Shaman Blue" toggle across the Blizzard Settings panel, the standalone dashboard, and TacoTip Extras so it only appears on **Classic Era** (`11509`), where Blizzard's original pink class color was used. Cleanly hidden on TBC, Titanforge, WoW Forever, and Retail where Shaman is natively blue.
 
@@ -213,7 +227,7 @@ updated: 2026-11-15
 
 🧭 **<span style="color:#b4e634">Deep WoW Forever Secret-Value Taint Protection:</span>** Hardened map zone caches and inspect data readers against secret key tainting with `rawget(_G, "canaccessvalue")` and `issecretvalue` engine guards.
 
-🧩 **<span style="color:#b4e634">Follow-up Hardening (2026-11-10, same 1.0.0 notes):</span>** All six secret-value predicates in the shipped code now read a refused `issecretvalue`/`canaccessvalue` call as *secret* instead of treating the refusal as "not secret"; `gearscore.lua`, `pawn.lua` and `LibForeverInspector` gained a `UnitIsUnit` guard that pre-checks `C_Secrets.CanCompareUnitTokens` and never boolean-tests an unverified comparison (GUID equality stays authoritative); the saved `custom_pos` writer stores the four-element `{ point, relPoint, x, y }` contract again, so a re-login no longer discards the saved position; and the group check routes `UnitInRaid` through the guarded helper. No player-visible behaviour changes on non-restricted clients.
+🧩 **<span style="color:#b4e634">Follow-up Hardening (2026-11-10, same 1.0.0 notes):</span>** All six secret-value predicates in the shipped code now read a refused `issecretvalue`/`canaccessvalue` call as _secret_ instead of treating the refusal as "not secret"; `gearscore.lua`, `pawn.lua` and `LibForeverInspector` gained a `UnitIsUnit` guard that pre-checks `C_Secrets.CanCompareUnitTokens` and never boolean-tests an unverified comparison (GUID equality stays authoritative); the saved `custom_pos` writer stores the four-element `{ point, relPoint, x, y }` contract again, so a re-login no longer discards the saved position; and the group check routes `UnitInRaid` through the guarded helper. No player-visible behaviour changes on non-restricted clients.
 
 🚨 **<span style="color:#b4e634">Dungeon & Encounter Crash Fix — `bad argument #1 to 'UnitExists'`:</span>** This is the error players have been reporting in instances. `UnitExists`, `UnitIsPlayer`, `UnitIsConnected` and `UnitIsDeadOrGhost` are all `SecretArguments = "AllowedWhenUntainted"`, so handing one of them a secret unit token from add-on code is refused outright — and inside an instance encounter a tooltip's own unit token **is** secret. Eleven call sites in `LibForeverInspector` passed a caller-supplied token straight to those globals, and the inspect-queue gate `CanInspect` did no token test at all; measured on the previous build, `CanInspect(secretToken)` invoked all four. Every site now routes through `safeUnitExists` / `safeUnitIsPlayer` / `safeUnitIsConnected` / `safeUnitIsDeadOrGhost`, and `CanInspect` rejects a secret token before any query runs. A unit the client will not let us read simply yields no row. Also covered: `UnitClass`, `UnitSex`, `UnitIsOtherPlayersPet`, `UnitIsSameServer`, and the nameplate scanner (where `type(v) == "string"` was being mistaken for a secrecy test — a secret string still reports `"string"`).
 
