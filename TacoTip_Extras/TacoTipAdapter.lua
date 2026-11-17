@@ -978,9 +978,11 @@ local function captureEquipmentSnapshot(contextKey)
     local fonts = {}
     local tacoTip = resolveTacoTipTable()
     local foreverBadge = nil
+    local foreverFooter = nil
     if contextKey == "character" and type(tacoTip) == "table" then
         ---@cast tacoTip table
-        foreverBadge = tacoTip.foreverCharStatsBadge
+        foreverBadge = tacoTip.foreverCharStatsBadge or tacoTip.foreverStatsFooter
+        foreverFooter = tacoTip.foreverStatsFooter
     end
     local fontParent = parents[spec.fontParentName]
     if contextKey == "character" and not _G.CharacterModelFrame and parents["PaperDollFrame"] then
@@ -1018,11 +1020,18 @@ local function captureEquipmentSnapshot(contextKey)
     local badgeParent = nil
     if foreverBadge ~= nil then
         local candidateParent = parents["CharacterModelFrame"] or parents["PaperDollFrame"]
+        local statsScrollBox = (foreverBadge == foreverFooter) and _G.CharacterStatsPaneScrollBox or nil
+        local expectedParent = nil
         if fontParent == foreverBadge or (candidateParent and validateVisibilityObject(foreverBadge, "Frame", candidateParent)) then
+            expectedParent = candidateParent
+        elseif statsScrollBox and validateVisibilityObject(foreverBadge, "Frame", statsScrollBox) then
+            expectedParent = statsScrollBox
+        end
+        if expectedParent ~= nil or fontParent == foreverBadge then
             local badgeRead, badgeShown = objectIsShown(foreverBadge)
             if badgeRead then
                 local getParentFn = objectMethod(foreverBadge, "GetParent")
-                local resolvedBadgeParent = candidateParent
+                local resolvedBadgeParent = expectedParent
                 if getParentFn then
                     local bParentOk, bParentVal = pcall(getParentFn, foreverBadge)
                     if bParentOk and bParentVal ~= nil then
@@ -1033,7 +1042,7 @@ local function captureEquipmentSnapshot(contextKey)
                 badgeParent = resolvedBadgeParent
                 records[#records + 1] = {
                     kind = "badge",
-                    name = "foreverCharStatsBadge",
+                    name = (foreverBadge == foreverFooter) and "foreverStatsFooter" or "foreverCharStatsBadge",
                     object = foreverBadge,
                     restoreShown = badgeShown,
                 }
@@ -1176,7 +1185,7 @@ local function validateLeasedObjects(contextKey, allowNewMovers)
         local liveBadge = nil
         if type(liveTacoTip) == "table" then
             ---@cast liveTacoTip table
-            liveBadge = liveTacoTip.foreverCharStatsBadge
+            liveBadge = liveTacoTip.foreverCharStatsBadge or liveTacoTip.foreverStatsFooter
         end
         if liveBadge ~= currentLease.badge
             or not validateVisibilityObject(currentLease.badge, "Frame", currentLease.badgeParent) then

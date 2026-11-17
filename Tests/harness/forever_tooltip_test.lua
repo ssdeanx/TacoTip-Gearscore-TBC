@@ -2261,23 +2261,39 @@ do
     REALG.UIParent.GetRight = savedUiRight
     GT.GetOwner = function() return nil end
 
-    -- Blizzard's "Right Click for Frame Settings" hint is appended AFTER
-    -- SetUnit returns; SetUnit's own Show() fires OnShow before the line
-    -- exists, and the later Show() is a no-op on an already-shown frame. The
-    -- secure post-hook on UnitFrame_UpdateTooltip is the mechanism; this is
-    -- the engine-faithful order.
+    -- Blizzard's "Right Click for Frame Settings" hint + preceding blank spacer
+    -- (" ") are appended AFTER SetUnit returns; clearing/hiding both lines and
+    -- refitting Show() removes the 2-row bottom stretch on unitframe hovers.
     local savedHint = REALG.UNIT_POPUP_RIGHT_CLICK
+    local savedShownHint = GT.__shown
     REALG.UNIT_POPUP_RIGHT_CLICK = "Right Click for Frame Settings"
     GT:ClearLines()
     GT:AddLine("Testplayer")
+    GT:AddLine(" ")
     GT:AddLine("Right Click for Frame Settings")
+    GT.__shown = true
+    local showCalls = 0
+    local origShow = GT.Show
+    GT.Show = function(self, ...)
+        showCalls = showCalls + 1
+        if (origShow) then return origShow(self, ...) end
+    end
     if (SECURE_HOOKS.UnitFrame_UpdateTooltip) then
         SECURE_HOOKS.UnitFrame_UpdateTooltip({})
     end
-    local hintRefresh = GT:GetLeftLine(2)
-    check("hint: the instruction line is blanked after UnitFrame_UpdateTooltip adds it",
-        hintRefresh ~= nil and (hintRefresh:GetText() == "" or hintRefresh:GetText() == nil),
-        "text=" .. tostring(hintRefresh and hintRefresh:GetText()))
+    GT.Show = origShow
+    GT.__shown = savedShownHint
+    local spacerLine = GT:GetLeftLine(2)
+    local hintRefresh = GT:GetLeftLine(3)
+    check("hint: both the spacer line and instruction line are cleared, hidden, and refit after UnitFrame_UpdateTooltip",
+        spacerLine ~= nil and (spacerLine:GetText() == "" or spacerLine:GetText() == nil) and not spacerLine:IsShown()
+            and hintRefresh ~= nil and (hintRefresh:GetText() == "" or hintRefresh:GetText() == nil) and not hintRefresh:IsShown()
+            and showCalls >= 1,
+        "spacer=" .. tostring(spacerLine and spacerLine:GetText())
+            .. " spacerShown=" .. tostring(spacerLine and spacerLine:IsShown())
+            .. " hint=" .. tostring(hintRefresh and hintRefresh:GetText())
+            .. " hintShown=" .. tostring(hintRefresh and hintRefresh:IsShown())
+            .. " showCalls=" .. tostring(showCalls))
     REALG.UNIT_POPUP_RIGHT_CLICK = savedHint
 
     C.tooltip_portrait_3d = saved3D
@@ -4271,6 +4287,81 @@ do
         C.show_gs_player = prevShowGS
         GT.GetUnit, GT.__unit, GT.__shown = prevGetUnit, prevUnit, prevShown
         if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = prevDisp end
+    end
+
+    -- 7. v1.0.8: BetterBlizzFrames Tooltip Tweaks guard disables BBF.ColorTooltips
+    -- active state on ADDON_LOADED / PLAYER_LOGIN / runtime toggle without wiping
+    -- BetterBlizzFramesDB.colorTooltips, and onTooltipSetUnit restores hidden
+    -- reused lines and GameTooltipStatusBar alpha.
+    do
+        local prevBBF = REALG.BBF
+        local prevBBFDB = REALG.BetterBlizzFramesDB
+        local prevHooked = TT._bbfHookedTable
+        local bbfActive = true
+        local bbfCalls = 0
+        REALG.BetterBlizzFramesDB = { colorTooltips = true }
+        REALG.BBF = {
+            ColorTooltips = function()
+                bbfCalls = bbfCalls + 1
+                bbfActive = (REALG.BetterBlizzFramesDB and REALG.BetterBlizzFramesDB.colorTooltips) and true or false
+            end,
+        }
+        local onEv = TT.frame and TT.frame.GetScript and TT.frame:GetScript("OnEvent")
+        if (onEv) then
+            onEv(TT.frame, "ADDON_LOADED", "BetterBlizzFrames")
+        end
+        check("v1.0.8 BBF guard: ADDON_LOADED turns BBF active off while preserving DB.colorTooltips",
+            bbfActive == false and REALG.BetterBlizzFramesDB.colorTooltips == true and bbfCalls == 1,
+            "active=" .. tostring(bbfActive) .. " db=" .. tostring(REALG.BetterBlizzFramesDB.colorTooltips)
+                .. " calls=" .. tostring(bbfCalls))
+
+        bbfCalls = 0
+        bbfActive = true
+        REALG.BBF.ColorTooltips()
+        check("v1.0.8 BBF guard: runtime ColorTooltips toggle is suppressed without recursion or DB wipe",
+            bbfActive == false and REALG.BetterBlizzFramesDB.colorTooltips == true
+                and bbfCalls == 2 and TT._suppressingBBFTooltips == nil,
+            "active=" .. tostring(bbfActive) .. " db=" .. tostring(REALG.BetterBlizzFramesDB.colorTooltips)
+                .. " calls=" .. tostring(bbfCalls))
+
+        local prevShowHP = C.show_hp_bar
+        local prevHPAlpha = REALG.GameTooltipStatusBar and REALG.GameTooltipStatusBar.__alpha
+        local prevUnit, prevShown, prevGetUnit = GT.__unit, GT.__shown, GT.GetUnit
+        local prevDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+        C.show_hp_bar = true
+        if (REALG.GameTooltipStatusBar) then REALG.GameTooltipStatusBar:SetAlpha(0) end
+        GT:ClearLines()
+        GT:AddLine(UNITS.player.name)
+        GT:AddLine("Level 60 Human Warrior")
+        GT:AddLine("Player")
+        local line2 = GT.GetLeftLine and GT:GetLeftLine(2) or nil
+        if (line2 and line2.Hide) then line2:Hide() end
+        GT.__unit = "player"
+        GT.__shown = true
+        GT.GetUnit = function() return UNITS.player.name, "player" end
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return UNITS.player.name, "player", UNITS.player.guid end
+        end
+        if (POSTCALLS.unit) then
+            POSTCALLS.unit(GT, { guid = UNITS.player.guid })
+        end
+        line2 = GT.GetLeftLine and GT:GetLeftLine(2) or nil
+        local line2Shown = line2 and line2.IsShown and line2:IsShown() or false
+        local hpAlpha = REALG.GameTooltipStatusBar and REALG.GameTooltipStatusBar:GetAlpha() or 1
+        check("v1.0.8 BBF defensive: restores hidden reused line and GameTooltipStatusBar alpha",
+            line2Shown == true and hpAlpha == 1,
+            "line2Shown=" .. tostring(line2Shown) .. " hpAlpha=" .. tostring(hpAlpha))
+        C.show_hp_bar = prevShowHP
+        if (REALG.GameTooltipStatusBar and prevHPAlpha ~= nil) then
+            REALG.GameTooltipStatusBar:SetAlpha(prevHPAlpha)
+        elseif (REALG.GameTooltipStatusBar) then
+            REALG.GameTooltipStatusBar:SetAlpha(1)
+        end
+        GT.GetUnit, GT.__unit, GT.__shown = prevGetUnit, prevUnit, prevShown
+        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = prevDisp end
+        REALG.BBF = prevBBF
+        REALG.BetterBlizzFramesDB = prevBBFDB
+        TT._bbfHookedTable = prevHooked
     end
 end
 

@@ -8,7 +8,7 @@
 
 local addOnName = ...
 local addOnVersion = (GetAddOnMetadata and GetAddOnMetadata(addOnName, "Version")) or
-    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.7"
+    (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addOnName, "Version")) or "1.0.8"
 
 
 
@@ -61,6 +61,47 @@ if (not TT) then
     TT = {}
     rawset(_G, addOnName, TT)
 end
+
+-- BetterBlizzFrames ("Tooltip Tweaks" / shared/colorTooltips.lua) injects a
+-- faction atlas onto Line 1 alongside TacoTip's class icon, calls
+-- line:SetText(nil); line:Hide() without shrinking NumLines(), sets
+-- GameTooltipStatusBar:SetAlpha(0), and calls tooltip:Show() prematurely inside
+-- AddTooltipPostCall. Turn BBF's internal `active` flag off via its own toggle
+-- while temporarily holding BetterBlizzFramesDB.colorTooltips false, then
+-- restore the SavedVariable so BBF's setting on disk stays intact.
+local function disableBBFColorTooltipsActive()
+    if (TT._suppressingBBFTooltips) then
+        return
+    end
+    local bbf = rawget(_G, "BBF")
+    local db = rawget(_G, "BetterBlizzFramesDB")
+    if (type(bbf) ~= "table" or type(bbf.ColorTooltips) ~= "function"
+            or type(db) ~= "table" or not db.colorTooltips) then
+        return
+    end
+    local saved = db.colorTooltips
+    TT._suppressingBBFTooltips = true
+    db.colorTooltips = false
+    pcall(bbf.ColorTooltips)
+    db.colorTooltips = saved
+    TT._suppressingBBFTooltips = nil
+    if (TT.ev) then
+        TT.ev.bbfTooltipsSuppressed = (TT.ev.bbfTooltipsSuppressed or 0) + 1
+    end
+end
+
+local function suppressBBFColorTooltips()
+    local bbf = rawget(_G, "BBF")
+    if (type(bbf) ~= "table" or type(bbf.ColorTooltips) ~= "function") then
+        return
+    end
+    if (TT._bbfHookedTable ~= bbf and type(hooksecurefunc) == "function") then
+        TT._bbfHookedTable = bbf
+        pcall(hooksecurefunc, bbf, "ColorTooltips", disableBBFColorTooltipsActive)
+    end
+    disableBBFColorTooltipsActive()
+end
+suppressBBFColorTooltips()
 
 -- Load-progress marker.
 --
@@ -4539,6 +4580,9 @@ local function onTooltipSetUnit(tooltip, data)
                 local line = getTooltipLeftLine(tooltip, n)
                 if (line) then
                     line:SetText(text[i])
+                    if (line.Show and line.IsShown and not line:IsShown()) then
+                        line:Show()
+                    end
                 end
             else
                 if (tooltip) then tooltip:AddLine(text[i], 1, 1, 1) end
@@ -4634,6 +4678,9 @@ local function onTooltipSetUnit(tooltip, data)
                 if (left) then
                     left:SetTextColor(r, g, b)
                     left:SetText(txt)
+                    if (left.Show and left.IsShown and not left:IsShown()) then
+                        left:Show()
+                    end
                 end
             elseif (tooltip) then
                 tooltip:AddLine(txt, r, g, b)
@@ -4655,8 +4702,17 @@ local function onTooltipSetUnit(tooltip, data)
     end
 
 
-    if (not TacoTipConfig.show_hp_bar and GameTooltipStatusBar and GameTooltipStatusBar:IsShown()) then
-        GameTooltipStatusBar:Hide()
+    if (GameTooltipStatusBar) then
+        if (not TacoTipConfig.show_hp_bar) then
+            if (GameTooltipStatusBar:IsShown()) then
+                GameTooltipStatusBar:Hide()
+            end
+        elseif (GameTooltipStatusBar.GetAlpha and GameTooltipStatusBar.SetAlpha) then
+            local barAlpha = GameTooltipStatusBar:GetAlpha()
+            if (not isSecretValue(barAlpha) and type(barAlpha) == "number" and barAlpha < 0.99) then
+                GameTooltipStatusBar:SetAlpha(1)
+            end
+        end
     end
 
     if (TacoTipConfig.show_power_bar) then
@@ -5340,14 +5396,13 @@ TT.HookedTooltipScripts.Item = TT.HookedTooltipScripts.Item
 -- the same frame resets the border back to default gray.
 stage("item-hooks")
 
--- Blizzard's UnitFrame_UpdateTooltip appends the localized UNIT_POPUP_RIGHT_CLICK
--- hint ("Right Click for Frame Settings") AFTER SetUnit returns; SetUnit's own
--- Show() fires OnShow before that, and the later Show() is a no-op on an
--- already-shown frame. So an OnShow hook can never see the line -- the
--- post-hook on UnitFrame_UpdateTooltip is the only place that does, and it
--- covers every 0.2s refresh too. It runs before the frame is drawn. The client
--- adds a blank spacer with the line and the tooltip API has no line-removal
--- call, so one empty row remains.
+-- Blizzard's UnitFrame_UpdateTooltip appends a blank spacer (" ") followed by
+-- the localized UNIT_POPUP_RIGHT_CLICK hint ("<Right Click for Frame Settings>")
+-- AFTER SetUnit returns; SetUnit's own Show() fires OnShow before those lines
+-- exist, and the trailing Show() updates height on an already-shown frame.
+-- Clear and hide both the instruction line and its preceding blank spacer line,
+-- then refit GameTooltip:Show() so hovering a unitframe never leaves blank
+-- rows stretching the bottom of the tooltip in any style.
 local function blankUnitFrameInstruction(tooltip)
     if (not (isForever or isRetail)) then
         return
@@ -5365,7 +5420,35 @@ local function blankUnitFrameInstruction(tooltip)
             local text = line:GetText()
             if (text and not isSecretValue(text) and text == instruction) then
                 if (line.SetText) then
-                    line:SetText("")
+                    line:SetText()
+                end
+                if (line.Hide) then
+                    line:Hide()
+                end
+                if (i > 1) then
+                    local prev = getTooltipLeftLine(tooltip, i - 1)
+                    if (prev and prev.GetText) then
+                        local prevText = prev:GetText()
+                        if (type(prevText) == "string" and not isSecretValue(prevText)
+                                and string.match(prevText, "^%s*$")) then
+                            if (prev.SetText) then
+                                prev:SetText()
+                            end
+                            if (prev.Hide) then
+                                prev:Hide()
+                            end
+                        end
+                    end
+                end
+                local state = getTooltipState(tooltip)
+                if (state and state.wideBottomPadding and state.wideBottomPadding > 0) then
+                    TT:ApplyTooltipBottomPadding(tooltip, state.wideBottomPadding)
+                end
+                if (tooltip.IsShown and tooltip:IsShown()
+                        and type(tooltip.Show) == "function" and not state.inTooltipRefreshShow) then
+                    state.inTooltipRefreshShow = true
+                    pcall(tooltip.Show, tooltip)
+                    state.inTooltipRefreshShow = nil
                 end
                 return
             end
@@ -8812,6 +8895,8 @@ local function onEvent(self, event, ...)
             if (type(TT.InitWorldMapTooltipHooks) == "function") then
                 pcall(TT.InitWorldMapTooltipHooks)
             end
+        elseif (addon == "BetterBlizzFrames") then
+            suppressBBFColorTooltips()
         end
     elseif (event == "UPDATE_MOUSEOVER_UNIT") then
         if (TacoTipConfig.instant_fade and GameTooltip and GameTooltip:IsShown() and ((GameTooltip.IsUnit and GameTooltip:IsUnit("mouseover")) or (GameTooltip.GetUnit and select(2, GameTooltip:GetUnit()) == "mouseover"))) then
@@ -8911,6 +8996,7 @@ local function onEvent(self, event, ...)
             end
         end
     elseif (event == "PLAYER_LOGIN") then
+        suppressBBFColorTooltips()
         if (TT.EvaluatePlayerEquipment) then
             TT:EvaluatePlayerEquipment(true)
         end
@@ -8997,7 +9083,7 @@ do
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
                     tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r",
-                        tostring(addOnVersion or "1.0.7")))
+                        tostring(addOnVersion or "1.0.8")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)

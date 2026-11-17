@@ -61,6 +61,7 @@ local remoteListener
 --   pollWorkTicks  of those, the ones that got past the armed gate
 local driverMode = "none"
 local pollArmed = false
+local postCallRenderedThisShow = false
 local renderAttempts = 0
 local renderRows = 0
 local pollTicks = 0
@@ -247,7 +248,33 @@ local function clearBinding()
     -- build a new one for a tooltip nobody is looking at: that per-frame cost
     -- is the exact thing the poll driver must not have.
     pollArmed = false
+    postCallRenderedThisShow = false
     resetEnhancementStatus()
+end
+
+local function resolveUnitFromGUID(guid)
+    if type(guid) ~= "string" or Core.IsSecretValue(guid) or guid == "" then
+        return nil
+    end
+    if type(_G.UnitGUID) == "function" then
+        for _, u in ipairs({ "mouseover", "target", "player", "focus" }) do
+            local okUG, ug = pcall(_G.UnitGUID, u)
+            if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, guid) then
+                return u
+            end
+        end
+    end
+    local unitTokenFromGUID = rawget(_G, "UnitTokenFromGUID")
+    if type(unitTokenFromGUID) == "function" and type(_G.UnitExists) == "function" then
+        local okTok, tok = pcall(unitTokenFromGUID, guid)
+        if okTok and not Core.IsSecretValue(tok) and type(tok) == "string" and tok ~= "" then
+            local okE, exists = pcall(_G.UnitExists, tok)
+            if okE and not Core.IsSecretValue(exists) and exists == true then
+                return tok
+            end
+        end
+    end
+    return nil
 end
 
 local function tooltipUnit(target)
@@ -265,14 +292,9 @@ local function tooltipUnit(target)
                     return dispUnit
                 end
             end
-            if type(dispGUID) == "string" and not Core.IsSecretValue(dispGUID) and dispGUID ~= ""
-                and type(_G.UnitGUID) == "function" then
-                for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
-                    local okUG, ug = pcall(_G.UnitGUID, u)
-                    if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, dispGUID) then
-                        return u
-                    end
-                end
+            local resolvedDisp = resolveUnitFromGUID(dispGUID)
+            if resolvedDisp then
+                return resolvedDisp
             end
         end
     end
@@ -295,15 +317,9 @@ local function tooltipUnit(target)
                     return name
                 end
             end
-            -- If guid matches a known unit token:
-            if type(guid) == "string" and not Core.IsSecretValue(guid) and guid ~= ""
-                and type(_G.UnitGUID) == "function" then
-                for _, u in ipairs({"mouseover", "target", "player", "focus"}) do
-                    local okUG, ug = pcall(_G.UnitGUID, u)
-                    if okUG and ug and not Core.IsSecretValue(ug) and Core.SafeEquals(ug, guid) then
-                        return u
-                    end
-                end
+            local resolvedUnit = resolveUnitFromGUID(guid)
+            if resolvedUnit then
+                return resolvedUnit
             end
         end
     end
@@ -1681,7 +1697,14 @@ local function onTooltipUpdatePoll(target)
 end
 
 local function onTooltipShow()
-    pollArmed = true
+    -- On Mainline (Forever/Retail), TooltipDataProcessor.AddTooltipPostCall
+    -- runs before Show(), and Blizzard's UnitFrame_UpdateTooltip appends 2
+    -- trailing instruction lines right after SetUnit returns. Arming the
+    -- OnUpdate poll on that Show() would make frame 1 see NumLines() > lineCountAfter
+    -- and append a duplicate copy of Extras' rows until the 0.2s refresh.
+    if not postCallRenderedThisShow then
+        pollArmed = true
+    end
 end
 
 function Tooltips.GetDriverState()
@@ -1877,6 +1900,8 @@ function Tooltips.Initialize(runtimeSettings)
             _G.Enum.TooltipDataType.Unit,
             function(tip)
                 if initialized and tip == tooltip then
+                    postCallRenderedThisShow = true
+                    pollArmed = false
                     renderPlayerTooltip(tip)
                 end
             end

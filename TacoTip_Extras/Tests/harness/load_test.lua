@@ -1262,6 +1262,18 @@ local function baseEnv()
     }
     REALG.UIPanelButtonTemplate = {}
     REALG.GameTooltip = buildGameTooltip()
+    if TOOLTIP_SHAPE == "mainline" then
+        REALG.Enum = REALG.Enum or {}
+        REALG.Enum.TooltipDataType = REALG.Enum.TooltipDataType or { Unit = 0, Item = 1 }
+        REALG.TooltipDataProcessor = {
+            AddTooltipPostCall = function(dataType, fn)
+                if dataType == REALG.Enum.TooltipDataType.Unit and type(fn) == "function" then
+                    REALG.__ttUnitPostCalls = REALG.__ttUnitPostCalls or {}
+                    REALG.__ttUnitPostCalls[#REALG.__ttUnitPostCalls + 1] = fn
+                end
+            end,
+        }
+    end
     REALG.Minimap = newRegion("Frame", "Minimap")
     REALG.PaperDollFrame = newRegion("Frame", "PaperDollFrame")
     if CLIENT == "retail" or CLIENT == "forever" then
@@ -10677,18 +10689,6 @@ do
         local savedIsInGroup = REALG.IsInGroup
         local savedIsInRaid = REALG.IsInRaid
         local savedGetChan = REALG.GetChannelName
-        local savedJoinTemp = REALG.JoinTemporaryChannel
-        local savedJoinChan = REALG.JoinChannelByName
-        local savedCTimer = REALG.C_Timer
-
-        REALG.C_Timer = nil
-        local rf = (RankBrowserV129.CreateUI and RankBrowserV129.CreateUI()) or RAWL.TacoTipRankFrame
-
-        REALG.IsInGuild = function() return true end
-        local startedOk = RankSyncV129.SyncNow(true)
-        local progOk = type(REALG.TacoTipExtrasGetSyncProgress) == "function"
-            and REALG.TacoTipExtrasGetSyncProgress() or RankSyncV129.GetSyncProgress()
-        RankBrowserV129.RefreshProgress()
         local barTextOk = rf and rf.progressBar and rf.progressBar.text and rf.progressBar.text:GetText() or ""
         local statusTextOk = rf and rf.scanStatus and rf.scanStatus:GetText() or ""
         check(startedOk == true
@@ -11336,6 +11336,208 @@ do
         end
         if REALG.C_Timer then
             REALG.C_Timer.After = savedAfterT
+        end
+
+        -- (3) Scanner.HandleInventoryReady skips transient incomplete+retryPending empty
+        --     inspects so Extras waits for LibForeverInspector's 0.15s retry instead of
+        --     churning Cache.Begin + async item retries on an empty snapshot.
+        local retrySkipGuid = "Player-1407-0000C101"
+        local prevRetryUnitData = insp107 and insp107.GetUnitData
+        local prevExistsR = REALG.UnitExists
+        local prevIsPlayerR = REALG.UnitIsPlayer
+        local prevGUIDR = REALG.UnitGUID
+        local prevGIPlayerR = REALG.GUIDIsPlayer
+        REALG.UnitExists = function(u) return u == "target" or u == "player" end
+        REALG.UnitIsPlayer = function(u) return u == "target" or u == "player" end
+        REALG.UnitGUID = function(u)
+            if u == "target" then return retrySkipGuid end
+            if u == "player" then return "Player-1407-00000001" end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g) return g == retrySkipGuid end
+        if insp107 then
+            insp107.GetUnitData = function(_, g)
+                if g == retrySkipGuid then
+                    return { incomplete = true, retryPending = true, items = {} }
+                end
+                if type(prevRetryUnitData) == "function" then
+                    return prevRetryUnitData(insp107, g)
+                end
+                return nil
+            end
+            local startedTransient = ScannerV107.HandleInventoryReady("INVENTORY_READY", retrySkipGuid, true, "target")
+            check(startedTransient == false and CacheV107.Get(retrySkipGuid) == nil,
+                "v1.3.2 Scanner.HandleInventoryReady skips transient empty incomplete+retryPending snapshot",
+                "started=" .. tostring(startedTransient) .. " cache=" .. tostring(CacheV107.Get(retrySkipGuid)))
+            insp107.GetUnitData = prevRetryUnitData
+        end
+        REALG.UnitExists = prevExistsR
+        REALG.UnitIsPlayer = prevIsPlayerR
+        REALG.UnitGUID = prevGUIDR
+        REALG.GUIDIsPlayer = prevGIPlayerR
+
+        -- (4) Tooltips resolves non-group nameplate GUIDs via UnitTokenFromGUID fallback
+        --     while rejecting secret tokens.
+        local TooltipsV107 = namespace and namespace.Tooltips
+        if SURFACE_ACTIVE and TooltipsV107 and type(TooltipsV107.GetDriverState) == "function" then
+            local plateGuid = "Player-1407-0000D101"
+            CacheV107.Begin(plateGuid, 9700, "v107-plate")
+            CacheV107.PublishComplete(plateGuid, 9700,
+                { classToken = { status = "complete", value = "MAGE" },
+                  level = { status = "complete", value = 60 }, slots = {} },
+                { currentGS = 900, unenhancedGS = 900, averageItemLevel = 80,
+                  metrics = { gearScore = { status = "complete", value = 900 } },
+                  warnings = {} })
+            local prevGetUnitGT = GameTooltipFrame.GetUnit
+            local prevSetUnitGT = GameTooltipFrame.SetUnit
+            local prevTokFn = REALG.UnitTokenFromGUID
+            local prevExistsTT = REALG.UnitExists
+            local prevIsPlayerTT = REALG.UnitIsPlayer
+            local prevGUIDTT = REALG.UnitGUID
+            local prevGIPlayerTT = REALG.GUIDIsPlayer
+            local plateTok = "nameplate4"
+            REALG.UnitTokenFromGUID = function(g)
+                if g == plateGuid then return plateTok end
+                return nil
+            end
+            REALG.UnitExists = function(u) return u == "nameplate4" or u == "player" end
+            REALG.UnitIsPlayer = function(u) return u == "nameplate4" or u == "player" end
+            REALG.UnitGUID = function(u)
+                if u == "nameplate4" then return plateGuid end
+                if u == "player" then return "Player-1407-00000001" end
+                return nil
+            end
+            REALG.GUIDIsPlayer = function(g) return g == plateGuid end
+            GameTooltipFrame:ClearLines()
+            GameTooltipFrame:AddLine("PlatePlayer")
+            GameTooltipFrame:AddLine("Level 60")
+            GameTooltipFrame.GetUnit = function() return nil, nil, plateGuid end
+            GameTooltipFrame:Show()
+            local rowsBefore = TooltipsV107.GetDriverState().rows or 0
+            local driveScript = (EXPECTED_DRIVER == "unit-hook") and "OnTooltipSetUnit" or "OnUpdate"
+            if EXPECTED_DRIVER == "poll" then
+                fireScript(GameTooltipFrame, "OnShow")
+            end
+            fireScript(GameTooltipFrame, driveScript)
+            local rowsAfter = TooltipsV107.GetDriverState().rows or 0
+            check(rowsAfter == rowsBefore + 1,
+                "v1.3.2 Tooltips resolves UnitTokenFromGUID fallback for non-group player GUID",
+                "rows=" .. tostring(rowsBefore) .. "->" .. tostring(rowsAfter))
+
+            if EXPECTED_DRIVER == "poll" then
+                fireScript(GameTooltipFrame, "OnHide")
+            else
+                fireScript(GameTooltipFrame, "OnTooltipCleared")
+            end
+            GameTooltipFrame.GetUnit = prevGetUnitGT
+            GameTooltipFrame.SetUnit = prevSetUnitGT
+            REALG.UnitTokenFromGUID = prevTokFn
+            REALG.UnitExists = prevExistsTT
+            REALG.UnitIsPlayer = prevIsPlayerTT
+            REALG.UnitGUID = prevGUIDTT
+            REALG.GUIDIsPlayer = prevGIPlayerTT
+        end
+
+        -- (5) TacoTipAdapter leases and restores TacoTip v1.0.3+ foreverStatsFooter
+        --     parented to CharacterStatsPaneScrollBox alongside PersonalGearScore fonts.
+        if EXPECT_SUPPORTED and type(Adapter.AcquireEquipmentContext) == "function" then
+            local ttPriv = REALG[TT_GLOBAL]
+            if type(ttPriv) == "table" then
+                local prevFooter = ttPriv.foreverStatsFooter
+                local prevScrollBox = REALG.CharacterStatsPaneScrollBox
+                local fontParent = REALG.CharacterModelFrame or REALG.PaperDollFrame
+                local savedFontNames = {}
+                local fontNames = {
+                    "PersonalGearScore", "PersonalGearScoreText",
+                    "PersonalAvgItemLvl", "PersonalAvgItemLvlText",
+                }
+                for _, fname in ipairs(fontNames) do
+                    savedFontNames[fname] = REALG[fname]
+                    local fs = newRegion("FontString", fname, fontParent)
+                    fs:Show()
+                    REALG[fname] = fs
+                end
+                local scrollBox = prevScrollBox or newRegion("Frame", "CharacterStatsPaneScrollBox", REALG.PaperDollFrame)
+                REALG.CharacterStatsPaneScrollBox = scrollBox
+                local footer = newRegion("Frame", nil, scrollBox)
+                footer:Show()
+                ttPriv.foreverStatsFooter = footer
+
+                local acquired = Adapter.AcquireEquipmentContext("character")
+                local activeNow = Adapter.IsEquipmentContextActive("character")
+                local hiddenWhileLeased = (footer:IsShown() == false)
+                local released = Adapter.ReleaseEquipmentContext("character")
+                local restoredAfterRelease = (footer:IsShown() == true)
+                check(acquired and activeNow and hiddenWhileLeased and released and restoredAfterRelease,
+                    "v1.3.2 TacoTipAdapter leases, hides, and restores TacoTip foreverStatsFooter on CharacterStatsPaneScrollBox",
+                    ("acq=%s act=%s hid=%s rel=%s rest=%s reason=%s"):format(
+                        tostring(acquired), tostring(activeNow), tostring(hiddenWhileLeased),
+                        tostring(released), tostring(restoredAfterRelease),
+                        tostring(Adapter.GetEquipmentSurfaceReason("character"))))
+
+                ttPriv.foreverStatsFooter = prevFooter
+                REALG.CharacterStatsPaneScrollBox = prevScrollBox
+                for _, fname in ipairs(fontNames) do
+                    REALG[fname] = savedFontNames[fname]
+                end
+            end
+        end
+
+        -- (6) Mainline (Forever/Retail) UnitFrame hover -> unhover -> rehover must not
+        --     double-append Extras rows when UnitFrame_UpdateTooltip adds 2 trailing
+        --     lines after TooltipDataProcessor.AddTooltipPostCall renders before Show().
+        if SURFACE_ACTIVE and TOOLTIP_SHAPE == "mainline"
+                and type(REALG.__ttUnitPostCalls) == "table" and #REALG.__ttUnitPostCalls > 0
+                and TooltipsV107 and type(TooltipsV107.GetDriverState) == "function" then
+            local prevExistsUF = REALG.UnitExists
+            local prevIsPlayerUF = REALG.UnitIsPlayer
+            local prevGUIDUF = REALG.UnitGUID
+            local prevGIPlayerUF = REALG.GUIDIsPlayer
+            local selfGuid = "Player-1407-00000001"
+            REALG.UnitExists = function(u) return u == "player" end
+            REALG.UnitIsPlayer = function(u) return u == "player" end
+            REALG.UnitGUID = function(u)
+                if u == "player" then return selfGuid end
+                return nil
+            end
+            REALG.GUIDIsPlayer = function(g) return g == selfGuid end
+
+            fireScript(GameTooltipFrame, "OnHide")
+            fireScript(GameTooltipFrame, "OnTooltipCleared")
+            GameTooltipFrame:SetUnit("player")
+            GameTooltipFrame:AddLine("SelfPlayer")
+            GameTooltipFrame:AddLine("Level 70")
+            local stBefore = TooltipsV107.GetDriverState()
+            local linesBeforePC = #GAME_TOOLTIP_ADDED
+            for _, pc in ipairs(REALG.__ttUnitPostCalls) do
+                pc(GameTooltipFrame)
+            end
+            local stAfterPC = TooltipsV107.GetDriverState()
+            local linesAfterPC = #GAME_TOOLTIP_ADDED
+            GameTooltipFrame:Show()
+            fireScript(GameTooltipFrame, "OnShow")
+            -- Blizzard UnitFrame_UpdateTooltip appends 2 lines AFTER SetUnit returns.
+            GameTooltipFrame:AddLine(" ")
+            GameTooltipFrame:AddLine("Right Click for Frame Settings")
+            local linesBeforePoll = #GAME_TOOLTIP_ADDED
+            fireScript(GameTooltipFrame, "OnUpdate")
+            local stAfterPoll = TooltipsV107.GetDriverState()
+            local linesAfterPoll = #GAME_TOOLTIP_ADDED
+            check(stAfterPC.rows == stBefore.rows + 1
+                    and linesAfterPC > linesBeforePC
+                    and stAfterPoll.rows == stAfterPC.rows
+                    and linesAfterPoll == linesBeforePoll,
+                "v1.3.2 Mainline UnitFrame hover: OnUpdate does not double-append Extras rows after AddTooltipPostCall + UnitFrame lines",
+                ("rows %s->%s->%s linesAdded PC=%s poll=%s"):format(
+                    tostring(stBefore.rows), tostring(stAfterPC.rows), tostring(stAfterPoll.rows),
+                    tostring(linesAfterPC - linesBeforePC), tostring(linesAfterPoll - linesBeforePoll)))
+
+            fireScript(GameTooltipFrame, "OnHide")
+            fireScript(GameTooltipFrame, "OnTooltipCleared")
+            REALG.UnitExists = prevExistsUF
+            REALG.UnitIsPlayer = prevIsPlayerUF
+            REALG.UnitGUID = prevGUIDUF
+            REALG.GUIDIsPlayer = prevGIPlayerUF
         end
     end
     runV107Pins()

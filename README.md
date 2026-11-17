@@ -12,7 +12,7 @@ __              _____ _____
 
 ```yaml
 name: TacoTip
-version: 1.0.7
+version: 1.0.8
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 upstream: TacoTip (GearScore & Talents & Item Level) by kebabstorm
@@ -24,10 +24,10 @@ clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Ret
 interfaces: ["11509", "20506", "38002", "16001", "120105"]
 tags: [tooltip, gearscore, gear-score, 3d-portrait, class-colors, talents, pawn, inspect, enhancement, cross-engine]
 requires: [LibStub, CallbackHandler-1.0, LibDetours-1.0, LibDataBroker-1.1, LibDBIcon-1.0, Pawn, LibSharedMedia-3.0, SharedMedia]
-status: 1.0.6 published; 1.0.7 audit + fixes + optimizations complete, pending in-game verification
-linter: wowlua_ls check — 69 warnings / 0 errors (build 0.0.0), no secret-value findings; luacheck 0/0 in 70 files (2026-11-17)
+status: 1.0.7 published; 1.0.8 BetterBlizzFrames Tooltip Tweaks guard complete, pending in-game verification
+linter: wowlua_ls check — 69 warnings / 0 errors (build 0.0.0), no new warnings; luacheck 0/0 on core files (29 pre-existing warnings in TacoTip_Extras/Tests/harness/load_test.lua) (2026-11-17)
 contract audit: 119 Unit/Item call sites audited, 22 corrected, independent review PASS (2026-11-10); shape-first return-shape review PASS on 1.0.7 diffs (2026-11-17)
-gates: main run_all 75/75 (lua5.1/lua5.4/luajit), FOREVER 286/286, Extras 42/42, luacheck 0/0 in 70 files, both --worktree verifiers PASS, font/locale ALL PASS (2026-11-17)
+gates: main run_all 75/75 (lua5.1/luajit), FOREVER 289/289, both --worktree verifiers PASS (2026-11-17)
 updated: 2026-11-17
 ```
 
@@ -37,7 +37,7 @@ updated: 2026-11-17
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Downloads-200%2C000%2B-brightgreen?style=for-the-badge&logo=curseforge&logoColor=white" alt="Downloads" /></a>
-  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.7-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
+  <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Release-v1.0.8-gold?style=for-the-badge&logo=worldofwarcraft&logoColor=white" alt="Version" /></a>
   <a href="https://www.curseforge.com/wow/addons/tacotip-gearscore"><img src="https://img.shields.io/badge/Engine-Universal%20Dual--Engine-blueviolet?style=for-the-badge&logo=codeforces&logoColor=white" alt="Dual Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
   <a href="https://discord.gg/JuVJBwXqv"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
@@ -120,6 +120,12 @@ _Your passionate feedback, bug reports, and community support have powered TacoT
 | `/tt minimap` or `/tt icon` | Toggle the **LibDBIcon minimap launcher button** |
 | `/tt default` | Reset tooltip placement back to stock game default |
 | `/tt help` | Display full in-game command reference |
+
+---
+
+## <span style="color:#e67e23">What's New in v1.0.8</span>
+
+🛡️ **<span style="color:#b4e634">BetterBlizzFrames ("Tooltip Tweaks") Compatibility Guard & Unit-Frame Blank-Line Fix (`main.lua`):</span>** Bumped TacoTip to `1.0.8` (`1.0.7` published) and added a FojjiCore-style source-level compatibility guard (`suppressBBFColorTooltips` / `disableBBFColorTooltipsActive`) so **BetterBlizzFrames**' *Tooltip Tweaks* module (`shared/colorTooltips.lua`) no longer injects a duplicate Horde/Alliance atlas badge next to TacoTip's class icon on Line 1, hides tooltip lines (`SetText(nil); Hide()`), fades out `GameTooltipStatusBar`, or calls `tooltip:Show()` prematurely inside `AddTooltipPostCall`. TacoTip hooks `BBF.ColorTooltips` cleanly via `hooksecurefunc`, switches BBF's internal `active` flag off at load, `ADDON_LOADED("BetterBlizzFrames")`, `PLAYER_LOGIN`, and any runtime `/bbf` toggle without tainting `GameTooltip` and without erasing `BetterBlizzFramesDB.colorTooltips` on disk. Added belt-and-suspenders recovery in `onTooltipSetUnit` to restore hidden reused lines (`line:Show()`) and `GameTooltipStatusBar:SetAlpha(1)` when `show_hp_bar` is enabled, and updated `blankUnitFrameInstruction` (`UnitFrame_UpdateTooltip`) to clear, hide, and refit (`GameTooltip:Show()`) both the `UNIT_POPUP_RIGHT_CLICK` line and its preceding `" "` spacer line so unit-frame tooltips no longer stretch by two blank lines at the bottom in any style.
 
 ---
 

@@ -24,9 +24,9 @@ requires: [TacoTip]
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
 interfaces: ["11509", "20506", "38002", "16001", "120105", "120107"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
-status: pending in-game verification (2026-11-16)
-linter: wowlua_ls check — 0 errors, 0 secret-value findings; luacheck clean (2026-11-16)
-updated: 2026-11-16
+status: pending in-game verification (2026-11-17)
+linter: wowlua_ls check — 0 errors, 0 secret-value findings; luacheck clean (2026-11-17)
+updated: 2026-11-17
 ```
 
 

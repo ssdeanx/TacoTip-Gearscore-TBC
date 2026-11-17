@@ -2108,8 +2108,18 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
     local curItemsRev
     if inspector and type(inspector.GetUnitData) == "function" then
         local okData, cachedData = pcall(inspector.GetUnitData, inspector, guid)
-        if okData and type(cachedData) == "table" and type(cachedData._itemsRev) == "number" and cachedData._itemsRev > 0 then
-            curItemsRev = cachedData._itemsRev
+        if okData and type(cachedData) == "table" then
+            -- LibForeverInspector fires INVENTORY_READY even on incomplete reads while its
+            -- 0.15s retry timer is actively in flight; wait for the populated (or final)
+            -- callback instead of churning Cache.Begin + async item retries on an empty snapshot.
+            if cachedData.incomplete == true
+                and cachedData.retryPending == true
+                and (type(cachedData.items) ~= "table" or next(cachedData.items) == nil) then
+                return false
+            end
+            if type(cachedData._itemsRev) == "number" and cachedData._itemsRev > 0 then
+                curItemsRev = cachedData._itemsRev
+            end
         end
     end
 
