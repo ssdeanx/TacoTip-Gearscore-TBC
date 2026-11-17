@@ -19,8 +19,11 @@ api claims.
 
 current version state lives in `README.md`, `CHANGELOG.md`, both TOCs, the
 `main.lua`/`options.lua` fallbacks and the `load_test.lua` pins. 1.0.6 was
-published but never committed; HEAD `3acebdd` is the 1.0.5 commit and the
-working tree targets 1.0.7 / Extras 1.3.2, pending in-game verification.
+published but never committed; the 1.0.7 version bump, deep-audit fixes and
+behavior-preserving optimizations are committed at `353131e`, pending in-game
+verification. final offline gates: main 75/75 (lua5.1/5.4/luajit), FOREVER
+279/279, Extras 42/42, luacheck 0/0, both --worktree verifiers PASS;
+`wowlua_ls check .` reports 69 warnings / 0 errors (build 0.0.0), unsuppressed.
 
 ## the invariants — do not touch
 

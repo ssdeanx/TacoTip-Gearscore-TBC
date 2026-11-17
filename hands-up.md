@@ -16,13 +16,16 @@ with a later outcome signal.
   secure aura pipeline. it is not a generic filter for every addon. the
   UnitFrame mover text and the UnitAura secret taint are separate problems;
   the block is not a lever for either.
-- **1.0.6 was published; the working tree now targets TacoTip 1.0.7 /
-  Extras 1.3.2.** HEAD `3acebdd` is the 1.0.5 commit (the published 1.0.6 tree
-  was never committed), so the 1.0.7 bump edits TOCs, Lua fallbacks, version
-  pins and docs. both READMEs carry a pending in-game verification status.
+- **1.0.6 was published; TacoTip 1.0.7 / Extras 1.3.2 are committed at
+  `353131e`,** with a pending in-game verification status. the 1.0.7 audit
+  fixed self-hover GearScore on unit-frame tooltips, the wide-style layout,
+  Extras pending scans/specID and six RankSync defects, then applied six
+  behavior-preserving optimizations; one leftover-line optimization was
+  declined as UNKNOWN because only a forbidden `GetText` could invalidate it.
   the v1.0.6 queue/retry/LRU machinery and the Extras 1.3.2 pending-cache /
   O(1)-cursor contract are release-bearing; do not "simplify" them in an
-  unrelated lane.
+  unrelated lane. offline verdict PASS, but no in-game result is claimed:
+  self hover, party1..4 rows and Forever wide-style still need operator check.
 
 ## signal types
 

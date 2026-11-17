@@ -2390,6 +2390,55 @@ do
         settleUnitRender("player")
     end
 
+    -- ---- power bar sits under the health bar, identical in both styles ----
+    --
+    -- "health then power": the power bar is anchored below the tooltip box,
+    -- 9px down while the client health bar is shown and 1px when it is not.
+    -- The wide-style bottom pad grows the box downward; it must NOT drag the
+    -- bar with it, so the offset is a function of show_hp_bar only and is
+    -- asserted here in wide AND compact.
+    do
+        local CFG = REALG.TacoTipConfig
+        local prevStyle, prevHP, prevPower = CFG.tip_style, CFG.show_hp_bar, CFG.show_power_bar
+        local savedMax = REALG.UnitPowerMax
+        CFG.show_power_bar = true
+        REALG.UnitPowerMax = function() return 100 end
+
+        local bar = REALG.TacoTipPowerBar
+        local function anchorY()
+            if (not bar or type(bar.GetPoint) ~= "function") then return nil end
+            -- The harness SetPoint APPENDS (the engine replaces), so read the
+            -- most recent TOPLEFT anchor rather than the first one.
+            local n = (type(bar.GetNumPoints) == "function" and bar:GetNumPoints()) or 0
+            for i = n, 1, -1 do
+                local p, _, _, _, y = bar:GetPoint(i)
+                if (p == "TOPLEFT") then return y end
+            end
+            return nil
+        end
+
+        CFG.tip_style = 1 -- FULL / wide
+        CFG.show_hp_bar = true
+        settleUnitRender("player")
+        check("power bar: wide style keeps -9 under the health bar", anchorY() == -9,
+            "y=" .. tostring(anchorY()))
+
+        CFG.tip_style = 2 -- COMPACT
+        settleUnitRender("player")
+        check("power bar: compact style keeps -9 under the health bar", anchorY() == -9,
+            "y=" .. tostring(anchorY()))
+
+        CFG.tip_style = 1
+        CFG.show_hp_bar = false
+        settleUnitRender("player")
+        check("power bar: no health bar moves it to -1 in wide style", anchorY() == -1,
+            "y=" .. tostring(anchorY()))
+
+        CFG.tip_style, CFG.show_hp_bar, CFG.show_power_bar = prevStyle, prevHP, prevPower
+        REALG.UnitPowerMax = savedMax
+        settleUnitRender("player")
+    end
+
     -- ---- 0.9.6: achievement points are Retail-only -----------------------
     --
     -- The options toggle is disabled outside Retail, but a saved true value
@@ -2625,18 +2674,15 @@ do
                 end
             end
 
-            -- The base padding is identical on every client; on Forever only,
-            -- v1.0.7 adds a per-appended-row reserve so the border closes below
-            -- the last Pawn/iLvl row (see the geometry pin below). Other client
-            -- families must stay byte-identical, so they still assert the exact
-            -- base; Forever asserts at least the base and the geometry pin pins
-            -- the reserve itself.
+            -- The base padding is identical on every client family. The
+            -- FOREVER-only per-appended-row reserve v1.0.7 briefly added was
+            -- removed after the in-game report (2026-11-17): it drew a blank
+            -- band the height of the appended rows, because those rows are
+            -- already inside the measured box by layout time. So every family,
+            -- Forever included, must now apply the exact base and nothing more.
             local function padOkForFamily(bottom, fontSize)
                 if (type(bottom) ~= "number") then return false end
                 local base = 4 + math.max(0, math.floor(((fontSize or 12) - 12) * 0.5))
-                if (label == "FOREVER") then
-                    return bottom >= base
-                end
                 return bottom == base
             end
 
@@ -2692,27 +2738,25 @@ do
                 GT.__padding ~= nil and padOkForFamily(GT.__padding[2], 16),
                 "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
 
-            -- v1.0.7 HIGH (FOREVER only): appended Pawn/iLvl rows must sit INSIDE
-            -- the tooltip border. On Forever the data pipeline lays the tooltip
-            -- out from C_TooltipInfo lines in ProcessLines BEFORE the unit
-            -- post-call appends our rows, so those rows are not part of the
-            -- client's measured content height. The bottom pad has to reserve
-            -- their stacked height or they render below the border. This is a
-            -- box-height-vs-content GEOMETRY assertion -- the pins above only
-            -- check the SetPadding call shape/value.
+            -- v1.0.7 shipped a FOREVER-only per-appended-row reserve here
+            -- (wideBottomPad += linesToAddCount * (fontSize + 2)) on the theory
+            -- that the appended Pawn/iLvl rows sit outside the client-measured
+            -- box. In game (2026-11-17) the reserve showed as a blank band exactly
+            -- as tall as those rows inside the border: the rows are already in
+            -- the measured height by layout time (ProcessLines -> post-calls ->
+            -- Show on Forever; plus the guarded Show() refit below). The pin now
+            -- holds the corrected rule -- wide Forever applies the BASE pad only,
+            -- whatever the row count -- instead of asserting the old arithmetic.
             if (label == "FOREVER") then
                 CFG.tooltip_font_size = 12
                 local addBeforeGeo = ADDLINE_CALLS or 0
                 renderWideStock(4)
-                local appended = (ADDLINE_CALLS or 0) - addBeforeGeo - 4
-                local bottom = (GT.__padding and GT.__padding[2]) or 0
-                local rowH = (CFG.tooltip_font_size or 12) + 2
-                local clientBoxH = 4 * rowH + bottom            -- stock lines + bottom pad
-                local contentBottom = (4 + appended) * rowH    -- last appended row bottom
-                check("v1.0.7 FOREVER wide_style: appended rows fit inside the tooltip border",
-                    appended > 0 and contentBottom <= clientBoxH,
-                    string.format("appended=%d bottom=%g rowH=%d boxH=%d contentBottom=%d",
-                        appended, bottom, rowH, clientBoxH, contentBottom))
+                local geoAppended = (ADDLINE_CALLS or 0) - addBeforeGeo - 4
+                local geoBottom = (GT.__padding and GT.__padding[2]) or 0
+                check("v1.0.7 FOREVER wide_style: appended rows add no bottom reserve",
+                    geoAppended > 0 and geoBottom == 4,
+                    string.format("appended=%d bottom=%g expectedBottom=4",
+                        geoAppended, geoBottom))
             end
 
             local savedGetPad = GT.GetPadding

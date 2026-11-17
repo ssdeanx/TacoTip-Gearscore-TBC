@@ -4064,6 +4064,217 @@ do
 end
 
 --------------------------------------------------------------------------
+-- v1.0.7 follow-up: OnShow post-Show dedup, portrait clear-retain trace
+-- de-noise, UnitTokenFromGUID fallback, and RestrictionSnapshot memo.
+--------------------------------------------------------------------------
+do
+    -- 1. Item OnShow dedup: itemPost -> OnShow preserves border and skips duplicate GetFont scan.
+    local itemPostFn
+    for _, pc in STD.ipairs(POSTCALLS) do
+        if (pc.typ == REALG.Enum.TooltipDataType.Item) then
+            itemPostFn = pc.fn
+            break
+        end
+    end
+    local savedIsTT = GT.IsTooltipType
+    local savedGetItem = GT.GetItem
+    local savedNineSlice = GT.NineSlice
+    local savedGetInfo = REALG.C_Item and REALG.C_Item.GetItemInfo
+    local savedGetQCol = REALG.C_Item and REALG.C_Item.GetItemQualityColor
+    local savedBorderOpt = C.tooltip_border_item_quality
+    local dedupBorder
+    GT.NineSlice = {
+        SetBorderColor = function(_, r, g, b)
+            dedupBorder = { r = r, g = g, b = b }
+        end,
+    }
+    GT.IsTooltipType = function(_, typ) return typ == REALG.Enum.TooltipDataType.Item end
+    local GREEN_ITEM = "|cff1eff00|Hitem:2001::::::::60:::::|h[Green Herb]|h|r"
+    GT.GetItem = function() return "Green Herb", GREEN_ITEM end
+    if (REALG.C_Item) then
+        REALG.C_Item.GetItemInfo = function()
+            return "Green Herb", GREEN_ITEM, 2, 20, 1, "Consumable", "Consumable", 20, ""
+        end
+        REALG.C_Item.GetItemQualityColor = function() return 0.12, 1.0, 0.0 end
+    end
+    C.tooltip_border_item_quality = true
+    GT:ClearLines()
+    GT:AddLine("Green Herb")
+    itemPostFn(GT, { hyperlink = GREEN_ITEM })
+    local lastItemRef1 = TT.ev.lastItem
+    local line1 = GT:GetLeftLine(1)
+    local savedGetFont1 = line1 and line1.GetFont
+    local onShowFontReads = 0
+    if (line1) then
+        line1.GetFont = function(...)
+            onShowFontReads = onShowFontReads + 1
+            return savedGetFont1(...)
+        end
+    end
+    dedupBorder = nil
+    if (GT.__hooks and GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    if (line1 and savedGetFont1) then line1.GetFont = savedGetFont1 end
+    check("v1.0.7 OnShow dedup (item): skips duplicate font scan on immediate OnShow while preserving item border",
+        onShowFontReads == 0 and dedupBorder ~= nil and dedupBorder.g > 0.9,
+        "fontReads=" .. tostring(onShowFontReads) .. " g=" .. tostring(dedupBorder and dedupBorder.g))
+
+    itemPostFn(GT, { hyperlink = GREEN_ITEM })
+    check("v1.0.7 lastItem reuse: itemPost reuses TT.ev.lastItem table in place",
+        TT.ev.lastItem == lastItemRef1,
+        "sameRef=" .. tostring(TT.ev.lastItem == lastItemRef1))
+
+    -- 2. Unit OnShow dedup: pre-Show unitPost -> OnShow skips duplicate font scan.
+    GT.IsTooltipType = savedIsTT
+    GT.GetItem = savedGetItem
+    GT.NineSlice = savedNineSlice
+    if (REALG.C_Item) then
+        REALG.C_Item.GetItemInfo = savedGetInfo
+        REALG.C_Item.GetItemQualityColor = savedGetQCol
+    end
+    C.tooltip_border_item_quality = savedBorderOpt
+
+    local savedOwner2 = GT.GetOwner
+    local savedGetUnit2 = GT.GetUnit
+    local savedDisp2 = REALG.TooltipUtil.GetDisplayedUnit
+    GT.GetOwner = function() return REALG.UIParent end
+    GT.GetUnit = function() return "Testplayer", currentUnit end
+    REALG.TooltipUtil.GetDisplayedUnit = function() return "Testplayer", currentUnit, UNITS[currentUnit].guid end
+
+    seedPlayer()
+    currentUnit = "player"
+    GT.__unit = "player"
+    GT.__shown = false
+    if (POSTCALLS.unit) then
+        POSTCALLS.unit(GT, { guid = UNITS.player.guid })
+    end
+    local unitL1 = GT:GetLeftLine(1)
+    local savedUnitGetFont = unitL1 and unitL1.GetFont
+    local unitOnShowReads = 0
+    if (unitL1) then
+        unitL1.GetFont = function(...)
+            unitOnShowReads = unitOnShowReads + 1
+            return savedUnitGetFont(...)
+        end
+    end
+    GT.__shown = true
+    if (GT.__hooks and GT.__hooks.OnShow) then GT.__hooks.OnShow(GT) end
+    if (unitL1 and savedUnitGetFont) then unitL1.GetFont = savedUnitGetFont end
+    check("v1.0.7 OnShow dedup (unit): skips duplicate font scan on pre-Show -> OnShow transition",
+        unitOnShowReads == 0,
+        "fontReads=" .. tostring(unitOnShowReads))
+
+    -- 3. Portrait clear-retain trace de-noise: already-hidden retained frame does not spam portraitTrace.
+    local savedP = C.tooltip_portrait
+    local savedP3D = C.tooltip_portrait_3d
+    C.tooltip_portrait = true
+    C.tooltip_portrait_3d = true
+    seedPlayer()
+    drive("player")
+    if (GT.__hooks and GT.__hooks.OnTooltipCleared) then GT.__hooks.OnTooltipCleared(GT) end
+    local lastTraceBefore = TT.portraitTrace[#TT.portraitTrace]
+    local keyAfterClear = GT.TacoTipPortrait3D and GT.TacoTipPortrait3D.tacoTipModelKey
+    if (GT.__hooks and GT.__hooks.OnHide) then GT.__hooks.OnHide(GT) end
+    local lastTraceAfter = TT.portraitTrace[#TT.portraitTrace]
+    check("v1.0.7 portrait clear-retain: already-hidden retained frame does not spam portraitTrace",
+        keyAfterClear == UNITS.player.guid and lastTraceBefore == lastTraceAfter,
+        "sameLast=" .. tostring(lastTraceBefore == lastTraceAfter)
+            .. " key=" .. tostring(keyAfterClear))
+    C.tooltip_portrait = savedP
+    C.tooltip_portrait_3d = savedP3D
+    GT.GetOwner = savedOwner2
+    GT.GetUnit = savedGetUnit2
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisp2
+
+    -- 4. resolveUnitTokenFromGUID uses UnitTokenFromGUID fallback for non-group GUIDs.
+    local savedDispU = REALG.TooltipUtil.GetDisplayedUnit
+    local savedGetUnitFn = GT.GetUnit
+    local savedUnitTokFn = REALG.UnitTokenFromGUID
+    local savedExistsU = REALG.UnitExists
+    local savedGUIDU = REALG.UnitGUID
+    local plateGuid = "Creature-0-1-1-1-9999-ABCDEF"
+    REALG.TooltipUtil.GetDisplayedUnit = function() return nil, nil, nil end
+    GT.GetUnit = function() return nil, nil end
+    REALG.UnitTokenFromGUID = function(g)
+        if (g == plateGuid) then return "nameplate2" end
+        return nil
+    end
+    REALG.UnitExists = function(u)
+        if (u == "nameplate2") then return true end
+        return savedExistsU(u)
+    end
+    REALG.UnitGUID = function(u)
+        if (u == "nameplate2") then return plateGuid end
+        return savedGUIDU(u)
+    end
+    local failsBefore = TT.ev.resolveTooltipUnitFailed or 0
+    GT:ClearLines()
+    GT:AddLine("City Guard")
+    GT:AddLine("Level 55")
+    GT.__shown = true
+    if (POSTCALLS.unit) then
+        POSTCALLS.unit(GT, { guid = plateGuid })
+    end
+    check("v1.0.7 resolveUnitTokenFromGUID: resolves UnitTokenFromGUID fallback cleanly",
+        (TT.ev.resolveTooltipUnitFailed or 0) == failsBefore,
+        "fails=" .. tostring(failsBefore) .. " -> " .. tostring(TT.ev.resolveTooltipUnitFailed))
+    REALG.TooltipUtil.GetDisplayedUnit = savedDispU
+    GT.GetUnit = savedGetUnitFn
+    REALG.UnitTokenFromGUID = savedUnitTokFn
+    REALG.UnitExists = savedExistsU
+    REALG.UnitGUID = savedGUIDU
+
+    -- 5. RestrictionSnapshot memo returns consistent string across calls.
+    local snap1 = TT:RestrictionSnapshot()
+    local snap2 = TT:RestrictionSnapshot()
+    check("v1.0.7 RestrictionSnapshot: returns identical memoized snapshot",
+        type(snap1) == "string" and snap1 == snap2,
+        "snap1=" .. tostring(snap1) .. " snap2=" .. tostring(snap2))
+
+    -- 6. Off-hover complete INVENTORY_READY warms GearScore memo with callback-ready flag.
+    if (CI and CI.cache and CI.callbacks and REALG.TT_GS and type(REALG.TT_GS.GetScore) == "function") then
+        local offGuid = "Player-1070-OFFHOVER"
+        local offItems = { [1] = "item:19019" }
+        local prevGSFn = REALG.TT_GS.GetScore
+        local prevRec = CI.cache[offGuid]
+        local prevShowGS = C.show_gs_player
+        local prevUnit, prevShown, prevGetUnit = GT.__unit, GT.__shown, GT.GetUnit
+        local prevDisp = REALG.TooltipUtil and REALG.TooltipUtil.GetDisplayedUnit or nil
+        C.show_gs_player = true
+        GT.__unit = "player"
+        GT.__shown = true
+        GT.GetUnit = function() return UNITS.player.name, "player" end
+        if (REALG.TooltipUtil) then
+            REALG.TooltipUtil.GetDisplayedUnit = function() return UNITS.player.name, "player", UNITS.player.guid end
+        end
+        CI.cache[offGuid] = { items = offItems, _itemsRev = 1, time = 7000 }
+        TT.clearGearScoreMemo(offGuid)
+        local sawGuid, sawCallbackFlag
+        REALG.TT_GS.GetScore = function(_, u, useCb)
+            if (u == offGuid) then
+                sawGuid = u
+                sawCallbackFlag = useCb
+                return 3850, 213
+            end
+            return 0, 0
+        end
+        local warmBefore = (TT.ev and TT.ev.gsBackgroundWarm) or 0
+        CI.callbacks:Fire("INVENTORY_READY", offGuid, true, "target")
+        local mScore, mIlvl = TT.getGearScoreMemo(offGuid, offItems)
+        check("v1.0.7 off-hover INVENTORY_READY: warms GearScore memo and allows async callback",
+            sawGuid == offGuid and sawCallbackFlag == true and mScore == 3850 and mIlvl == 213
+                and ((TT.ev and TT.ev.gsBackgroundWarm) or 0) == warmBefore + 1,
+            "guid=" .. tostring(sawGuid) .. " cb=" .. tostring(sawCallbackFlag)
+                .. " score=" .. tostring(mScore) .. " ilvl=" .. tostring(mIlvl))
+        TT.clearGearScoreMemo(offGuid)
+        CI.cache[offGuid] = prevRec
+        REALG.TT_GS.GetScore = prevGSFn
+        C.show_gs_player = prevShowGS
+        GT.GetUnit, GT.__unit, GT.__shown = prevGetUnit, prevUnit, prevShown
+        if (REALG.TooltipUtil) then REALG.TooltipUtil.GetDisplayedUnit = prevDisp end
+    end
+end
+
+--------------------------------------------------------------------------
 -- Report.
 --------------------------------------------------------------------------
 local fails = 0

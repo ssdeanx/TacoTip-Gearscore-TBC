@@ -3586,6 +3586,207 @@ do
     end
 end
 
+-- ==========================================================================
+-- v1.0.7: Coalesced C_Timer.After queue wakeup & UnitTokenFromGUID fallback
+-- ==========================================================================
+do
+    local wkClock = 5000
+    local wkSent = {}
+    local wkAfterCalls = 0
+    local wkAfterDelay = nil
+    local wkAfterCb = nil
+    local wkSecretToken = "SECRET_PLATE_TOKEN"
+    local wkPlateToken = "nameplate4"
+    local wkTokenForGuid = wkPlateToken
+
+    local wkScripts = {}
+    local wkCI = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        CreateFrame = function()
+            return {
+                RegisterEvent = function() end,
+                SetScript = function(_, k, fn) wkScripts[k] = fn end,
+            }
+        end,
+        UnitExists = function(u)
+            return u == "player" or u == "n1" or u == "n2" or u == "n3" or u == wkPlateToken
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            if (u == wkPlateToken) then return "Player-plate4" end
+            return "Player-" .. tostring(u)
+        end,
+        UnitTokenFromGUID = function(g)
+            if (g == "Player-plate4") then return wkTokenForGuid end
+            return nil
+        end,
+        issecretvalue = function(v)
+            return v == wkSecretToken
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u)
+            wkSent[#wkSent + 1] = u
+            return true
+        end,
+        GetTime = function() return wkClock end,
+        IsInGroup = function() return false end,
+        C_Timer = {
+            NewTicker = function() end,
+            After = function(d, fn)
+                wkAfterCalls = wkAfterCalls + 1
+                wkAfterDelay = d
+                wkAfterCb = fn
+            end,
+        },
+    })
+
+    wkCI:DoInspect("n1")
+    wkCI:DoInspect("n2")
+    wkCI:DoInspect("n3")
+    check("v1.0.7 queue wakeup: coalesces C_Timer.After to one wakeup across queued hovers",
+        wkAfterCalls == 1 and type(wkAfterCb) == "function" and type(wkAfterDelay) == "number" and wkAfterDelay > 0,
+        "afterCalls=" .. tostring(wkAfterCalls) .. " delay=" .. tostring(wkAfterDelay))
+    -- Complete n1 before advancing past INSPECT_DELAY + pending timeout, then fire wakeup
+    wkScripts["OnEvent"](nil, "INSPECT_READY", "Player-n1")
+    wkClock = wkClock + 0.5
+    if (type(wkAfterCb) == "function") then wkAfterCb() end
+    check("v1.0.7 queue wakeup: firing coalesced wakeup dispatches queued unit without waiting for 0.5s ticker",
+        #wkSent == 2 and wkSent[2] == "n3",
+        "sent=" .. table.concat(wkSent, ","))
+
+    check("v1.0.7 PlayerGUIDToUnitToken: resolves UnitTokenFromGUID fallback for non-group GUID",
+        wkCI:PlayerGUIDToUnitToken("Player-plate4") == wkPlateToken,
+        "tok=" .. tostring(wkCI:PlayerGUIDToUnitToken("Player-plate4")))
+    wkTokenForGuid = wkSecretToken
+    check("v1.0.7 PlayerGUIDToUnitToken: rejects secret UnitTokenFromGUID token cleanly",
+        wkCI:PlayerGUIDToUnitToken("Player-plate4") == nil,
+        "tok=" .. tostring(wkCI:PlayerGUIDToUnitToken("Player-plate4")))
+
+    -- Hovering a new mouseover while an old mouseover is pending schedules wakeup at
+    -- INSPECT_DELAY (0.4s), not INSPECT_PENDING_TIMEOUT (1.2s).
+    local wkClock2 = 6000
+    local wkDelay2 = nil
+    local wkCI2 = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        UnitExists = function(u) return u == "player" or u == "mouseover" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return wkClock2 < 6000.1 and "Player-mo1" or "Player-mo2"
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = function() return wkClock2 end,
+        IsInGroup = function() return false end,
+        C_Timer = {
+            NewTicker = function() end,
+            After = function(d) wkDelay2 = d end,
+        },
+    })
+    wkCI2:DoInspect("mouseover")
+    wkClock2 = 6000.1
+    wkCI2:DoInspect("mouseover")
+    check("v1.0.7 queue wakeup: displaced mouseover schedules at INSPECT_DELAY (~0.3s), not 1.2s timeout",
+        type(wkDelay2) == "number" and wkDelay2 <= 0.4,
+        "delay=" .. tostring(wkDelay2))
+
+    -- Timed-out target enters 1.5s progressive backoff so active mouseover / queue proceeds
+    -- without immediately re-requesting the stalled unit; INSPECT_READY clears timeout backoff.
+    local toClock = 7000
+    local toSent = {}
+    local toTick = nil
+    local toScripts = {}
+    local toExist = { player = true, target = true, mouseover = true }
+    local toCI = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        CreateFrame = function()
+            return {
+                RegisterEvent = function() end,
+                SetScript = function(_, k, fn) toScripts[k] = fn end,
+            }
+        end,
+        UnitExists = function(u) return toExist[u] == true end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u) return "Player-" .. tostring(u) end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u)
+            toSent[#toSent + 1] = u
+            return true
+        end,
+        GetTime = function() return toClock end,
+        IsInGroup = function() return false end,
+        C_Timer = {
+            NewTicker = function(interval, cb)
+                if (interval == 0.5) then toTick = cb end
+            end,
+        },
+    })
+    toCI:DoInspect("target")
+    toCI:DoInspect("mouseover")
+    toClock = toClock + 1.25 -- past INSPECT_PENDING_TIMEOUT (1.2s)
+    if (toTick) then toTick() end
+    local afterTimeoutSent = toSent[2]
+    local timeoutCount = toCI:GetInspectStats().timeouts or 0
+    -- Finish mouseover so queue drains, then advance past 1.5s timeout backoff -> target retries
+    toScripts["OnEvent"](nil, "INSPECT_READY", "Player-mouseover")
+    toClock = toClock + 1.6
+    if (toTick) then toTick() end
+    local retriedTarget = toSent[3]
+    toScripts["OnEvent"](nil, "INSPECT_READY", "Player-target")
+    local clearedBackoff = toCI.inspectTimedOut and toCI.inspectTimedOut["Player-target"] == nil
+    check("v1.0.7 timeout backoff: timed-out target yields to queued mouseover, retries after 1.5s, clears on ready",
+        timeoutCount == 1 and afterTimeoutSent == "mouseover" and retriedTarget == "target" and clearedBackoff,
+        "timeouts=" .. tostring(timeoutCount) .. " sent=" .. table.concat(toSent, ",")
+            .. " cleared=" .. tostring(clearedBackoff))
+
+    -- Abandoned mouseover does NOT set timeout backoff so moving back re-inspects immediately.
+    local abClock = 8000
+    local abMoGuid = "Player-moA"
+    local abTick = nil
+    local abSent = {}
+    local abCI = run(P.WOW_PROJECT_CAMELOT or P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        UnitExists = function(u) return u == "player" or u == "mouseover" end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = function(u)
+            if (u == "player") then return "Player-self" end
+            return abMoGuid
+        end,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function(u) abSent[#abSent + 1] = u return true end,
+        GetTime = function() return abClock end,
+        IsInGroup = function() return false end,
+        C_Timer = {
+            NewTicker = function(interval, cb)
+                if (interval == 0.5) then abTick = cb end
+            end,
+        },
+    })
+    abCI:DoInspect("mouseover")
+    abMoGuid = "Player-moB"
+    abClock = abClock + 0.5
+    if (abTick) then abTick() end -- abandonedMouseover clears pending without timeout backoff
+    abMoGuid = "Player-moA"
+    abClock = abClock + 0.45
+    local reasked = abCI:DoInspect("mouseover")
+    check("v1.0.7 abandoned mouseover: clears slot without timeout backoff so re-hover dispatches",
+        (abCI:GetInspectStats().timeouts or 0) == 0 and reasked == true and #abSent == 2,
+        "timeouts=" .. tostring(abCI:GetInspectStats().timeouts) .. " sent=" .. tostring(#abSent))
+end
+
 STD.io.write(table.concat(results, "\n") .. "\n")
 STD.io.write("\n" .. (allok and "ALL PASS" or "*** FAILURES ***") .. "\n")
 STD.os.exit(allok and 0 or 1)

@@ -65,3 +65,26 @@
 ## 2026-11-05 — Operator-found row producer (unverified, operator-reported)
 - Operator reports the extra `Gear score N · item level M` row comes from an addon named "Fojii" (their spelling). Not verified from the repo side.
 - Implication carried over: TacoTip must own/remove that foreign row on Forever rather than preserve it.
+
+## 2026-11-17 — v1.0.7 wide-style row reserve removed (operator in-game report)
+
+- **Symptom:** operator screenshot, Forever, `tip_style = 1` (Wide), power bar on: four rows
+  (Target, Talents, GearScore, Pawn), then a ~4-row blank band inside the border; the bar hangs
+  off the frame's bottom edge, so the gap is obvious. Compact / Compact+Shift is tight.
+- **Cause:** 67efbb8 added `wideBottomPad += linesToAddCount * (fontSize + 2)` for Forever,
+  premised on the client measuring the box before the post-call appends. In game the rows ARE
+  in the measured height by layout time (`ProcessLines -> post-calls -> Show`,
+  `TooltipDataHandler.lua:292-300`, plus the guarded `Show()` refit), so the pad double-counted
+  them. The v1.0.7 "geometry pin" was arithmetic over the mock's recorded SetPadding values
+  (the mock has no height model), so it could not catch this.
+- **Change:** reserve removed; the 4px base pad (scaled by `tooltip_font_size`) stays on every
+  family. `padOkForFamily` now requires the exact base everywhere; the FOREVER pin asserts
+  "appended rows add no bottom reserve". Red proof: with the reserve re-inserted the FOREVER
+  tooltip run showed 4 FAIL (new pin: appended=1 bottom=18 expectedBottom=4); restored tree
+  is 248/248 PASS.
+- **Gates:** run_all 75/75, Extras 42/42, luacheck 0/0 in 70 files, both `--worktree`
+  verifiers PASS, `wowlua_ls` 69 warnings (documented baseline unchanged).
+- **Docs:** CHANGELOG 1.0.7 summary row + wide bullet and the README v1.0.7 paragraph corrected;
+  not committed (operator commits on request).
+- **Next:** operator re-checks Wide in game with the power bar on. If a row still renders
+  outside the border, it is not the pad -- reproduce with a client-faithful height model.

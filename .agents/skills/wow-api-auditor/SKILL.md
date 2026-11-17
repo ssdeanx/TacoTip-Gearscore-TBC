@@ -1,12 +1,12 @@
 ---
 name: wow-api-auditor
-description: Verifies Blizzard WoW API signatures, generated-documentation entries, presence, secret-value annotations, cross-client presence and gating of issecretvalue/canaccessvalue/canaccesstable, secret-value power-bar handling for UnitPowerMax and UnitPower, combat-restricted aura tooltip passthrough rules, nested generated-doc blocks via awk Name-to-close range reads, and Forever ClassTalentsFrame/PlayerSpells inspect paths across Classic Era, Anniversary, Titan, Forever, and Live clients using read-only origin/<branch> reads of the local FrameXML checkout.
-whenToUse: Use when you need to confirm an API's signature, generated-documentation entry, availability, secret annotation, or aura tooltip passthrough behavior differs across WoW client families; to trace Forever inspect/trait-config paths (ClassTalentsFrame RefreshConfigID, PlayerSpells inspectUnit, INSPECT_TRAIT_CONFIG_ID/TraitConsts, TraitConfigInfo); when grep -A truncates or returns no output for nested documentation blocks and an awk Name-to-close range read is needed; to audit addon code for unsafe secret/combat handling and direct protected-function calls (CanInspect, CheckInteractDistance); to fix or audit the tooltip power bar that shows when UnitPowerMax/UnitPower are secret values on Forever/Live; to verify that issecretvalue, canaccessvalue, and canaccesstable are present and ungated on all five client families before using them without client guards; when harness and release-gate evidence is required before allowing unconditional use; or when luacheck reports W113 for issecretvalue, without mutating the checkout.
+description: Verifies Blizzard WoW API signatures, generated-documentation entries, presence, return shapes, argument taint classifications, secret-value annotations and cross-client gating across Classic Era, Anniversary, Titan, Forever and Live using read-only origin/<branch> reads of the local FrameXML checkout, including a blocking return-shape-first gate that establishes every Unit*/item call's nilable, MayReturnNothing, scalar or multi-return shape and ConditionalSecret fields at its documentation pin before the value is used, treats nilability and secrecy as independent, and trusts the pin over any hand-written allow-list (UnitName is AllowedWhenTainted with a secret-string return, UnitNameUnmodified is the untainted variant), plus secret-value power-bar handling, combat-restricted aura tooltip passthrough, awk Name-to-close range reads for nested generated docs, and Forever ClassTalentsFrame/PlayerSpells inspect paths.
+whenToUse: Use when you need to confirm an API's signature, return shape, generated-documentation entry, availability, secret annotation, or aura tooltip passthrough behavior differs across WoW client families; to trace Forever inspect/trait-config paths (ClassTalentsFrame RefreshConfigID, PlayerSpells inspectUnit, INSPECT_TRAIT_CONFIG_ID/TraitConsts, TraitConfigInfo); when grep -A truncates or returns no output for nested documentation blocks and an awk Name-to-close range read is needed; to audit addon code for unsafe secret/combat handling and direct protected-function calls (CanInspect, CheckInteractDistance); to fix or audit the tooltip power bar that shows when UnitPowerMax/UnitPower are secret values on Forever/Live; to verify that issecretvalue, canaccessvalue, and canaccesstable are present and ungated on all five client families before using them without client guards; when harness and release-gate evidence is required before allowing unconditional use; when auditing or reviewing addon diffs for secret-value return-shape correctness and a blocking pass/fail verdict is required; when a Unit*/item call's argument taint class or return shape must be established at the documentation pin before use, including UnitName versus UnitNameUnmodified; or when luacheck reports W113 for issecretvalue, without mutating the checkout.
 ---
 
 # WoW API Auditor Skill
 
-Use this skill whenever you need to verify how a Blizzard API function works, what its signature is, whether it is present or behaves differently across the five supported client families (Classic Era, Anniversary, Titan, Forever, Live), whether it carries secret-value or combat-restriction annotations, whether addon code safely handles secret/combat aura tooltip text and protected Blizzard functions, or whether a power-bar gate is secret-safe when UnitPowerMax/UnitPower are secret values on Forever/Live.
+Use this skill whenever you need to verify how a Blizzard API function works, what its signature and return shape are, whether it is present or behaves differently across the five supported client families (Classic Era, Anniversary, Titan, Forever, Live), whether it carries secret-value or combat-restriction annotations, whether addon code safely handles secret/combat aura tooltip text and protected Blizzard functions, or whether a power-bar gate is secret-safe when UnitPowerMax/UnitPower are secret values on Forever/Live. Every `Unit*`/item read is additionally gated on its documented return shape and argument taint class at the pin (step 5b) before the value is used or reviewed.
 
 ## Steps
 
@@ -72,7 +72,46 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
    # Call sites excluding generated documentation
    git grep -n 'GetConfigsByType\|GetConfigIDsBySpecID' origin/forever -- '*.lua' | grep -v Documentation
    ```
-   GetConfigsByType records SecretArguments AllowedWhenUntainted, and the call-site grep names Blizzard_ClassTalentsFrame.lua:802 calling GetConfigIDsBySpecID. Report the full argument/return/field list from the awk output, not a truncated `grep -A` excerpt. `GetConfigsByType` takes `configType` and returns `configIDs`; `TraitConfigInfo` includes `ID`, `type`, `name`, `treeIDs`, and `usesSharedActionBars`. Copy every field Name verbatim and never normalize or rename fields: TalentInfoQuery lists groupIndex, isInspect, and tier. If you think you see talentGroup in the query, you are misreading the block, so re-extract with the awk range above and report what the output actually shows.
+   GetConfigsByType records SecretArguments AllowedWhenUntainted, and the call-site grep names Blizzard_ClassTalentsFrame.lua:802 calling GetConfigIDsBySpecID. Report the full argument/return/field list from the awk output, not a truncated `grep -A` excerpt. `GetConfigsByType` takes `configType` and returns `configIDs`; `TraitConfigInfo` includes `ID`, `type`, `name`, `treeIDs`, and `usesSharedActionBars`. The Forever `GetSpecialization` block lists both `isInspect` and `isPet` among its arguments; report every argument Name verbatim (including those two) and the full return shape, and never present a reconstructed block — if the awk output is incomplete, re-run the range read and report what it actually shows. Copy every field Name verbatim and never normalize or rename fields: TalentInfoQuery lists groupIndex, isInspect, and tier. If you think you see talentGroup in the query, you are misreading the block, so re-extract with the awk range above and report what the output actually shows.
+
+5b. **Return-shape-first gate (blocking, before any value is used).** For every `Unit*` or item call whose return reaches addon code, establish the return shape and argument classification at the exact documentation pin *before* the value is used or reviewed. Read the block as in steps 5/5a and record:
+
+   - **Argument classification** — `SecretArguments = "AllowedWhenUntainted"` (a secret argument from addon code is refused immediately, because addon execution is tainted) vs `"AllowedWhenTainted"` (secret arguments accepted) vs no annotation.
+   - **Return shape** — scalar (`bool`/`string`/`number`), `Nilable = true`, `MayReturnNothing = true` (the call may return fewer values than documented), multi-return order, and every per-value `ConditionalSecret`/`SecretWhen…`/`NeverSecret` flag.
+   - **Secrecy is per value, not per call** — a `SecretWhen…` predicate on the function can coexist with plain returns, and a return can be secret conditionally; record which field is secret instead of labeling the whole call.
+
+   Guard by shape, not by guess:
+   ```lua
+   -- Presence only: a nil test, never `v == nil` on the guard line.
+   local value = UnitSomeCall(unit)
+   if (type(value) == "nil") then
+       return
+   end
+   ```
+   ```lua
+   -- MayReturnNothing / multi-return: ok-first. `ok == false` is a refused or
+   -- erroring call; `ok == true` with a nil value is a documented absent return.
+   local ok, className, classFile, classID = pcall(UnitClass, unit)
+   if (not ok) then
+       return
+   end
+   if (type(className) == "nil") then
+       return
+   end
+   ```
+   ```lua
+   -- UnitInRaid returns a nilable raid index, not a bool.
+   local raidIndex = UnitInRaid(unit)
+   if (type(raidIndex) ~= "number") then
+       return
+   end
+   ```
+   - `type(v) == "string"` is not a secrecy test (a secret string still reports `"string"`); test `issecretvalue`/`canaccessvalue` separately after establishing presence.
+   - `UnitClass` is the ok-first pattern above (`MayReturnNothing`); never destructure its returns without reading the `ok` flag first. `UnitInRaid` is a nilable index; never treat it as a boolean.
+
+   **Verdicts are pass/fail.** A call whose shape and argument class are not established at the pin is a blocking failure, not a style note. Record one line per call: `file:line — call — pin path:line — SecretArguments — return shape — guard — PASS/FAIL`. A note such as "use exact names", "be careful", or "run before sign-off" is not a verdict.
+
+   **The pin outranks every hand-written list.** If a governance note, an allow-list, or memory of the API disagrees with the generated documentation at the pin, re-read the pin and correct the list before the review continues; cite the pin `path:line` for the corrected claim. Worked example: `UnitName` is `AllowedWhenTainted` with a secret-string return at `UnitDocumentation.lua:2489` (under `Interface/AddOns/Blizzard_APIDocumentationGenerated/`); `UnitNameUnmodified` is the untainted variant (read its own block in the same file and cite the line before relying on it). A list that marks `UnitName` as `AllowedWhenUntainted` is wrong at the pin, and a review built on it misjudges both the argument rule and the secret-string return handling.
 
 6. **Read implementation or call sites via `git show` / `git grep` on the ref.** Determine the client-specific source path first (paths differ by family), then read a section:
    ```bash
@@ -123,7 +162,7 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 
 7. **Parallel branch comparison.** Run the same `git show ... | sed` / `grep -A` extraction for all five branches and compare outputs side by side; record behavioural deltas (e.g. an API absent on some branches, extra parameters, different return shapes). Do not rely on one branch as representative of the others.
 
-8. **Apply findings.** Use only exact signatures and paths verified above in codebase modifications. Do not guess parameters from wikis, which are often outdated. Report a table: branch -> PRESENT/ABSENT, documentation file path, signature/notes.
+8. **Apply findings.** Use only exact signatures, argument classifications and return shapes verified above (step 5b must have passed for every call before its value is used) in codebase modifications. Do not guess parameters from wikis, which are often outdated. Report a table: branch -> PRESENT/ABSENT, documentation file path, signature/notes.
 
 9. **Audit secret-value annotations.** For any API whose combat or restriction behavior matters, read the same generated documentation block and capture every annotation line, not only arguments and returns:
    ```bash
@@ -132,7 +171,7 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
      | grep -A30 'Name = "API_NAME"' \
      | grep -E 'Secret|Requires|Protected|NeverSecret|MayReturnNothing|SecureHooksAllowed'
    ```
-   Record at least these annotations when present: `SecretWhenUnitAuraRestricted`, `SecretArguments`, `RequiresUnitAuraAccess`, `NeverSecret`, `SecureHooksAllowed`, and any other `Secret...` key. Treat these annotations as part of the API contract and cite the exact branch/path where each was found.
+   Record at least these annotations when present: `SecretWhenUnitAuraRestricted`, `SecretArguments`, `RequiresUnitAuraAccess`, `NeverSecret`, `SecureHooksAllowed`, and any other `Secret...` key. Treat these annotations as part of the API contract and cite the exact branch/path where each was found. Keep each annotation tied to the return shape from step 5b: a `SecretWhen…` predicate and a `Nilable`/`MayReturnNothing` return are independent claims, and one neither implies nor excludes the other.
 
 10. **Audit combat-restricted aura tooltip data.** Verify `C_TooltipInfo.GetUnitAura` on Forever and Live (it is absent on Classic Era, Anniversary, and Titan in this checkout):
     ```bash
@@ -304,7 +343,11 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - **Generated docs are branch-specific.** A documentation file present on one branch may be absent or differently named on another; cite the path actually returned for that branch.
 - **Absence is a result.** Report ABSENT explicitly per branch; never infer presence from another branch. `C_TooltipInfo.GetUnitAura` is absent on the Classic families.
 - **Signature blocks are multi-line.** Use `-A20` or more; truncating hides Returns/Arguments and annotation differences.
-- **`grep -A` can return no output or truncate nested docs.** For nested `SpecializationInfoDocumentation`, `SharedTraitsDocumentation`, and `TraitConstantsDocumentation` blocks, use the awk Name-to-close range reads in step 5a and cite the full block.
+- **`grep -A` can return no output or truncate nested docs.** For nested `SpecializationInfoDocumentation`, `SharedTraitsDocumentation`, and `TraitConstantsDocumentation` blocks, use the awk Name-to-close range reads in step 5a and cite the full block. The Forever `GetSpecialization` block includes both `isInspect` and `isPet`; if either is missing from your output, the extraction was truncated — re-run the awk range, never reconstruct the block from memory.
+- **A hand-written allow-list is not a pin.** A short list once marked `UnitName` as `AllowedWhenUntainted`; at the pin it is `AllowedWhenTainted` with a secret-string return (`UnitDocumentation.lua:2489`), and `UnitNameUnmodified` is the untainted variant. Re-read the pin, cite `path:line`, and correct the list before review continues — never let a hand-written classification override the generated documentation.
+- **Nilability and secrecy are independent.** `Nilable`/`MayReturnNothing` answer whether a value can be absent; `SecretWhen…`/`ConditionalSecret`/`NeverSecret` answer whether it can be secret. A secret value can be nil and a nil value can be secret, so each needs its own guard and one flag never proves the other.
+- **Do not treat shape violations as style notes.** A review that says "use exact names" or defers to "run before sign-off" has issued no verdict. Each call needs a blocking PASS/FAIL tied to its pin path:line, its `SecretArguments`, its return shape and its shape-specific guard.
+- **Do not guess multi-return shapes.** `UnitInRaid` returns a nilable index, not a bool; `UnitClass` may return nothing (`MayReturnNothing`), so read the `pcall` ok flag before any return and never destructure without it.
 - **No placeholder audit tables.** A protected-call audit with placeholder text and no file:line entries, or a generic guard claim untied to any call, is a failed audit even when the prose sounds correct. If grep output is unavailable, re-run step 11 until every hit has a concrete file:line and a tied guard or skip.
 - **Never paraphrase documentation field names.** Report groupIndex, tier, and all other field Names exactly as the awk output spells them; normalizing them to talentGroup or moving tier out of the query corrupts the contract.
 - **Forever inspect paths are client-specific.** Use `Blizzard_PlayerSpells/ClassTalents/Blizzard_ClassTalentsFrame.lua` and `Blizzard_PlayerSpells/Blizzard_PlayerSpellsFrame.lua` on `origin/forever`; do not substitute Classic or Retail paths or refs.
@@ -332,6 +375,9 @@ Use this skill whenever you need to verify how a Blizzard API function works, wh
 - Every PRESENT branch cites the exact `Interface/AddOns/...Documentation.lua` path returned by `git grep -l`.
 - No `git checkout` (or other state-changing git) command was executed.
 - Signatures and annotations applied to code match the generated documentation blocks read from `origin/<branch>:path`.
+- Every audited `Unit*`/item call has its return shape and argument classification established at the pin (`path:line`) before the value is used, with per-value secrecy; `UnitName` is reported as `AllowedWhenTainted` with a secret-string return at `UnitDocumentation.lua:2489` and `UnitNameUnmodified` as the untainted variant, and the pin overrides any hand-written list.
+- Shape violations are reported as blocking pass/fail per call, not as style advice. Presence uses `type(v) == "nil"`; `MayReturnNothing`/multi-return reads the `pcall` ok flag before any return; `UnitInRaid` is treated as a nilable index and `UnitClass` as ok-first.
+- The Forever `GetSpecialization` block is read with the awk range and reports `isInspect` and `isPet` plus the full return shape; no block is reported from memory or reconstructed.
 - `C_TooltipInfo.GetUnitAura` is reported with `SecretWhenUnitAuraRestricted = true` where present, and ABSENT on Classic Era, Anniversary, and Titan.
 - Secret aura tooltip text is documented as forward-only: untouched, never compared or string-processed.
 - Every direct `CanInspect`/`CheckInteractDistance` call is listed with a concrete file:line from the step 11 grep and a client-aware guard or skip tied to that call, with no placeholder text and no table lacking file:line entries.

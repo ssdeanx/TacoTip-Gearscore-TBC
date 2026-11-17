@@ -4475,10 +4475,31 @@ local function evictCacheEntries(currentGuid, now)
 end
 
 local nextInspectTime = 0
+local queueWakeupAt = 0
 local inspectQueueTick
 local isCloseEnoughToAsk
 local isCacheFresh
 local enqueueInspectUnit
+
+-- Coalesced one-shot wakeup for queued inspects waiting on INSPECT_DELAY or
+-- INSPECT_PENDING_TIMEOUT, so hovers dispatch immediately when the gate opens
+-- instead of waiting up to 0.5s for the periodic queueTicker.
+local function scheduleQueueWakeup(targetTime)
+    if (not inspectQueueTick or type(targetTime) ~= "number") then return end
+    local timer = _G.C_Timer
+    if (type(timer) ~= "table" or type(timer.After) ~= "function") then return end
+    local now = uptimeSeconds()
+    if (now <= 0 or targetTime <= now) then return end
+    if (queueWakeupAt > now and queueWakeupAt <= targetTime + 0.01) then return end
+    queueWakeupAt = targetTime
+    local delay = math.max(0.05, targetTime - now)
+    timer.After(delay, function()
+        if (queueWakeupAt <= uptimeSeconds() + 0.01) then
+            queueWakeupAt = 0
+        end
+        inspectQueueTick()
+    end)
+end
 
 local function cacheUnitData(unit, guid, isRetry)
     if (not unit or not guid or isSecretValue(guid)) then return end
@@ -4654,8 +4675,12 @@ local function cacheUnitData(unit, guid, isRetry)
                         if (lib.inspectStats) then
                             lib.inspectStats.retryDisplacedRequeued = (lib.inspectStats.retryDisplacedRequeued or 0) + 1
                         end
-                        if (inspectQueueTick and uptimeSeconds() >= nextInspectTime) then
-                            inspectQueueTick()
+                        if (inspectQueueTick) then
+                            if (uptimeSeconds() >= nextInspectTime) then
+                                inspectQueueTick()
+                            else
+                                scheduleQueueWakeup(nextInspectTime)
+                            end
                         end
                     end
                     return
@@ -4794,6 +4819,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if (not guid and safeUnitExists(inspectPendingUnit)) then
             guid = safeUnitGUID(inspectPendingUnit)
         end
+        if (guid and not isSecretValue(guid) and lib.inspectTimedOut) then
+            lib.inspectTimedOut[guid] = nil
+        end
         local unit = inspectPendingUnit
         -- OUTER boundary. On an active encounter the INSPECT_READY payload and the
         -- tokens this handler resolves are themselves secret (SecretWhenUnitIdentity
@@ -4848,8 +4876,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if (inspectQueueTick) then
             if (now >= nextInspectTime) then
                 inspectQueueTick()
-            elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
-                C_Timer.After(math.max(0.05, nextInspectTime - now), inspectQueueTick)
+            else
+                scheduleQueueWakeup(nextInspectTime)
             end
         end
     elseif (event == "PLAYER_TARGET_CHANGED") then
@@ -4881,8 +4909,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if (inspectQueueTick) then
             if (now >= nextInspectTime) then
                 inspectQueueTick()
-            elseif (type(C_Timer) == "table" and type(C_Timer.After) == "function") then
-                C_Timer.After(math.max(0.05, nextInspectTime - now), inspectQueueTick)
+            else
+                scheduleQueueWakeup(nextInspectTime)
             end
         end
     elseif (event == "PLAYER_ENTERING_WORLD") then
@@ -4896,11 +4924,17 @@ frame:SetScript("OnEvent", function(_, event, ...)
         inspectPendingSince = 0
         pendingRefusal = nil
         nextInspectTime = 0
+        queueWakeupAt = 0
         scanNearbyContinuePending = false
         lib._scanPlateCursor = 1
         if (type(lib.inspectOutOfRange) == "table") then
             for k in pairs(lib.inspectOutOfRange) do
                 lib.inspectOutOfRange[k] = nil
+            end
+        end
+        if (type(lib.inspectTimedOut) == "table") then
+            for k in pairs(lib.inspectTimedOut) do
+                lib.inspectTimedOut[k] = nil
             end
         end
         if (inspectQueueTick) then
@@ -4975,6 +5009,7 @@ local function onBlizzardInspectTrigger(unit)
     end
     if (lib.inspectRejected) then lib.inspectRejected[guid] = nil end
     if (lib.inspectOutOfRange) then lib.inspectOutOfRange[guid] = nil end
+    if (lib.inspectTimedOut) then lib.inspectTimedOut[guid] = nil end
     local cached = lib.cache and lib.cache[guid]
     if (type(cached) == "table") then
         cached.failedUntil = nil
@@ -5266,6 +5301,14 @@ function lib:PlayerGUIDToUnitToken(guid)
             end
         end
     end
+    local tokenFromGUID = _G.UnitTokenFromGUID
+    if (type(tokenFromGUID) == "function") then
+        local okTok, tok = pcall(tokenFromGUID, guid)
+        if (okTok and type(tok) == "string" and not isSecretValue(tok) and tok ~= ""
+                and safeUnitExists(tok) and safeEquals(safeUnitGUID(tok), guid)) then
+            return tok
+        end
+    end
     return nil
 end
 
@@ -5490,10 +5533,38 @@ end
 --                               old code released the unit after 10s whether or
 --                               not it had moved, so a target that stayed far away
 --                               cost one server error every 10s, forever.
+local INSPECT_TIMEOUT_PRUNE_AGE = 60
+
+local function noteInspectTimeout(guid)
+    if (not guid or isSecretValue(guid)) then return end
+    local now = uptimeSeconds()
+    if (now <= 0) then return end
+    lib.inspectTimedOut = lib.inspectTimedOut or {}
+    local prev = lib.inspectTimedOut[guid]
+    if (type(prev) == "table" and type(prev.time) == "number" and (now - prev.time) >= INSPECT_TIMEOUT_PRUNE_AGE) then
+        prev = nil
+    end
+    if (not prev) then
+        pruneRejectLedger(lib.inspectTimedOut, now, INSPECT_TIMEOUT_PRUNE_AGE, true)
+    end
+    local step = math.min(((type(prev) == "table" and prev.count) or 0) + 1, #CACHE_FAILED_BACKOFFS)
+    local backoff = CACHE_FAILED_BACKOFFS[step] or CACHE_FAILED_BACKOFFS[#CACHE_FAILED_BACKOFFS]
+    lib.inspectTimedOut[guid] = {
+        count = step,
+        time = now,
+        untilTime = now + backoff,
+    }
+end
+
 local function isInspectCoolingDownImpl(unit)
     local guid = safeUnitGUID(unit)
     if (not guid or isSecretValue(guid)) then return false end
     local now = (type(GetTime) == "function") and GetTime() or 0
+
+    local timedOut = lib.inspectTimedOut and lib.inspectTimedOut[guid]
+    if (type(timedOut) == "table" and type(timedOut.untilTime) == "number" and now < timedOut.untilTime) then
+        return true
+    end
 
     -- Out-of-range memory. Released the moment the unit is measurable AND the
     -- interact-distance signal agrees it is reachable, so recovery is instant.
@@ -5667,6 +5738,9 @@ local function requestInspectImpl(unit, gateAlreadyChecked)
     inspectPendingSince = now
     nextInspectTime = now + INSPECT_DELAY
     if (lib.inspectStats) then lib.inspectStats.notifies = (lib.inspectStats.notifies or 0) + 1 end
+    if (#queue > 0 and now > 0) then
+        scheduleQueueWakeup(now + INSPECT_PENDING_TIMEOUT + 0.01)
+    end
     return true
 end
 
@@ -6212,10 +6286,12 @@ function lib:DoInspect(unitorguid)
             inspectPendingSince = 0
             pendingRefusal = nil
         elseif (inspectPendingUnit and inspectPendingSince > 0 and (now - inspectPendingSince) > INSPECT_PENDING_TIMEOUT) then
+            local timedOutGUID = inspectPendingGUID
             inspectPendingUnit = nil
             inspectPendingGUID = nil
             inspectPendingSince = 0
             pendingRefusal = nil
+            noteInspectTimeout(timedOutGUID)
             if (lib.inspectStats) then
                 lib.inspectStats.timeouts = (lib.inspectStats.timeouts or 0) + 1
             end
@@ -6226,7 +6302,18 @@ function lib:DoInspect(unitorguid)
     end
     -- Always enqueue when another inspect is still in flight (even if now >= nextInspectTime)
     -- instead of silently dropping hovers on the floor in busy hubs.
-    return enqueueInspectUnit(guid, unit)
+    local enqueued = enqueueInspectUnit(guid, unit)
+    if (enqueued) then
+        local wakeAt = nextInspectTime
+        if (inspectPendingUnit and inspectPendingUnit ~= "mouseover" and inspectPendingSince > 0) then
+            local timeoutAt = inspectPendingSince + INSPECT_PENDING_TIMEOUT + 0.01
+            if (timeoutAt > wakeAt) then
+                wakeAt = timeoutAt
+            end
+        end
+        scheduleQueueWakeup(wakeAt)
+    end
+    return enqueued
 end
 
 local roleBuckets = { {}, {}, {}, {} }
@@ -6255,6 +6342,9 @@ local function inspectQueueTickImpl()
     end
     local now = type(GetTime) == "function" and GetTime() or 0
     if (now < nextInspectTime) then
+        if (#queue > 0) then
+            scheduleQueueWakeup(nextInspectTime)
+        end
         return
     end
     -- Watchdog: if an inspect was requested but INSPECT_READY never arrives
@@ -6269,17 +6359,25 @@ local function inspectQueueTickImpl()
             end
         end
         if (abandonedMouseover or (inspectPendingSince > 0 and now - inspectPendingSince > INSPECT_PENDING_TIMEOUT)) then
+            local timedOutGUID = inspectPendingGUID
             inspectPendingUnit = nil
             inspectPendingGUID = nil
             inspectPendingSince = 0
             pendingRefusal = nil
-            if (not abandonedMouseover and lib.inspectStats) then
-                lib.inspectStats.timeouts = (lib.inspectStats.timeouts or 0) + 1
+            if (not abandonedMouseover) then
+                noteInspectTimeout(timedOutGUID)
+                if (lib.inspectStats) then
+                    lib.inspectStats.timeouts = (lib.inspectStats.timeouts or 0) + 1
+                end
             end
         else
+            if (#queue > 0 and inspectPendingUnit ~= "mouseover" and inspectPendingSince > 0) then
+                scheduleQueueWakeup(inspectPendingSince + INSPECT_PENDING_TIMEOUT + 0.01)
+            end
             return
         end
     end
+    queueWakeupAt = 0
 
     -- Priority 1: Current player target.
     if (safeUnitExists("target")) then

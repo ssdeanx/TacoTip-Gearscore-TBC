@@ -8,9 +8,10 @@ edit. this file is an index, not a second copy.
 two addons, one repo: **TacoTip** (root, v1.0.7) and **TacoTip Extras**
 (`TacoTip_Extras/`, v1.3.2), for five client families (era 11509, tbc
 20506, titanforge 38002, forever 16001, retail 120105; the Extras TOC also
-declares 120107). 1.0.6 was published but never committed; HEAD `3acebdd`
-is the 1.0.5 commit and the working tree targets 1.0.7. both READMEs carry a
-pending in-game verification status. the root doubles
+declares 120107). 1.0.6 was published but never committed; the 1.0.7 version
+bump, Extras tree, deep-audit fixes and behavior-preserving optimizations are
+committed at `353131e`. both READMEs carry a pending in-game verification
+status. the root doubles
 as the workshop — `desks/`, `bench/`, `Tools/`, `docs/`, `Tests/` are not
 shipped; `OLD/` was removed in 45ea3ca.
 

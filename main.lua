@@ -449,6 +449,9 @@ local safeUnitIsPVP = TT.safeUnitIsPVP
 ---@field ownerUnitToken string|nil    -- Unit token of the tooltip owner's frame (e.g. "party1")
 ---@field wideBottomPadding number|nil -- desired bottom padding (px) for active wide_style unit tooltip
 ---@field inTooltipRefreshShow boolean|nil -- re-entrancy guard around layout refresh Show()
+---@field itemTooltip boolean|nil        -- Forever: tooltip currently holds item content from post-call
+---@field itemStyledForShow boolean|nil  -- Forever: item post-call already styled fonts and border for pending Show()
+---@field unitFontsAppliedForShow boolean|nil -- Forever: unit post-call already ran applyTooltipFonts for pending Show()
 
 -- Inert fallback state for getTooltipState(nil): keeps the documented
 -- "state is always a table" contract so no call site needs a nil check.
@@ -687,6 +690,9 @@ end
 -- state, not a secret: it answers "was this hover inside combat / an encounter /
 -- a restricted map" in the report. Feature-detected and secret-safe throughout;
 -- returns "not exposed" when the client has no C_RestrictedActions.
+local RESTRICTION_NAMES = { "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map" }
+local restrictionSnapshotCache = {}
+
 function TT:RestrictionSnapshot()
     local ra = _G.C_RestrictedActions
     local restrictionEnum = _G.Enum and Enum.AddOnRestrictionType
@@ -694,10 +700,35 @@ function TT:RestrictionSnapshot()
             or type(restrictionEnum) ~= "table") then
         return "not exposed"
     end
-    local names = { "Combat", "Encounter", "ChallengeMode", "PvPMatch", "Map" }
+    local code = 0
+    local count = 0
+    for i = 1, #RESTRICTION_NAMES do
+        local value = restrictionEnum[RESTRICTION_NAMES[i]]
+        if (value ~= nil) then
+            local okActive, active = pcall(ra.IsAddOnRestrictionActive, value)
+            local digit = 2
+            if (okActive) then
+                if (isSecretValue(active)) then
+                    digit = 2
+                elseif (active == true) then
+                    digit = 1
+                else
+                    digit = 0
+                end
+            end
+            code = code * 3 + digit
+            count = count + 1
+        end
+    end
+    if (count == 0) then return "not exposed" end
+    local key = count * 1000 + code
+    local cached = restrictionSnapshotCache[key]
+    if (cached) then
+        return cached
+    end
     local parts = {}
-    for i = 1, #names do
-        local value = restrictionEnum[names[i]]
+    for i = 1, #RESTRICTION_NAMES do
+        local value = restrictionEnum[RESTRICTION_NAMES[i]]
         if (value ~= nil) then
             local okActive, active = pcall(ra.IsAddOnRestrictionActive, value)
             local stateText = "?"
@@ -710,11 +741,13 @@ function TT:RestrictionSnapshot()
                     stateText = "off"
                 end
             end
-            parts[#parts + 1] = names[i] .. "=" .. stateText
+            parts[#parts + 1] = RESTRICTION_NAMES[i] .. "=" .. stateText
         end
     end
     if (#parts == 0) then return "not exposed" end
-    return table.concat(parts, ", ")
+    local formatted = table.concat(parts, ", ")
+    restrictionSnapshotCache[key] = formatted
+    return formatted
 end
 
 local PORTRAIT_TRACE_MAX = 32
@@ -1897,6 +1930,15 @@ local function resolveUnitTokenFromGUID(guid, tooltip)
             return raidToken
         end
     end
+    local tokenFromGUID = _G.UnitTokenFromGUID
+    if (type(tokenFromGUID) == "function") then
+        local okTok, tok = pcall(tokenFromGUID, guid)
+        if (okTok and type(tok) == "string" and not isSecretValue(tok)) then
+            if (tok ~= "" and safeUnitExists(tok) and safeEquals(safeUnitGUID(tok), guid)) then
+                return tok
+            end
+        end
+    end
     return nil
 end
 
@@ -2117,8 +2159,11 @@ local function applyPortrait3DUnit(tooltip, portrait, unit, source)
         portrait._tacoTipZoom = nil
         TT.ev.portraitCanSetFalse = (TT.ev.portraitCanSetFalse or 0) + 1
         recordPortraitTrace("canset-false", source, tooltip, portrait, {
-            unit = unit, prevKey = prevKey, newKey = modelKey,
-            uVis = safePortraitUnitVisible(unit), outcome = "hidden",
+            unit = unit,
+            prevKey = prevKey,
+            newKey = modelKey,
+            uVis = safePortraitUnitVisible(unit),
+            outcome = "hidden",
         })
         return true
     end
@@ -2170,8 +2215,11 @@ local function applyPortrait3DUnit(tooltip, portrait, unit, source)
         portrait._tacoTipPendingSetUnit = true
         TT.ev.portraitSetDeferred = (TT.ev.portraitSetDeferred or 0) + 1
         recordPortraitTrace("setunit-defer", source, tooltip, portrait, {
-            unit = unit, prevKey = prevKey, newKey = modelKey,
-            uVis = uVis, outcome = "pre-show",
+            unit = unit,
+            prevKey = prevKey,
+            newKey = modelKey,
+            uVis = uVis,
+            outcome = "pre-show",
         })
         return false
     end
@@ -2782,7 +2830,7 @@ do
     -- Silently computes and caches a positive GearScore when an asynchronous
     -- item load completes after the cursor has already left that unit, so the
     -- next hover gets an immediate memo hit instead of re-scoring from scratch.
-    local function warmGearScoreMemoForGUID(guid)
+    local function warmGearScoreMemoForGUID(guid, allowCallback)
         if (not guid or TT.isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return end
         if (not (CI and type(CI.GetUnitData) == "function")) then return end
         local gsEngine = _G.TT_GS or GearScore
@@ -2790,7 +2838,7 @@ do
         local okD, data = pcall(CI.GetUnitData, CI, guid)
         if (not okD or type(data) ~= "table" or not data.items or data.incomplete) then return end
         if (TT.getGearScoreMemo(guid, data.items)) then return end
-        local okS, gs, ilvl = pcall(gsEngine.GetScore, gsEngine, guid, false)
+        local okS, gs, ilvl = pcall(gsEngine.GetScore, gsEngine, guid, allowCallback == true)
         if (okS and type(gs) == "number" and gs > 0 and type(ilvl) == "number") then
             TT.setGearScoreMemo(guid, data.items, gs, ilvl)
             TT.ev.gsBackgroundWarm = (TT.ev.gsBackgroundWarm or 0) + 1
@@ -2799,6 +2847,34 @@ do
             -- this player in a city answers from cache on the first frame.
             TT:WarmGearItemData(guid)
         end
+    end
+
+    local function warmPawnScoreMemoForGUID(guid, allowCallback)
+        if (not guid or TT.isSecretValue(guid) or safeEquals(guid, safeUnitGUID("player"))) then return end
+        if (not (isPawnLoaded and TT_PAWN and type(TT_PAWN.GetScore) == "function")) then return end
+        if (not (TacoTipConfig and TacoTipConfig.show_pawn_player)) then return end
+        if (not (CI and type(CI.GetUnitData) == "function")) then return end
+        local okD, data = pcall(CI.GetUnitData, CI, guid)
+        if (not okD or type(data) ~= "table" or not data.items or data.incomplete) then return end
+        local activeGroup = (CI.GetActiveTalentGroup and CI:GetActiveTalentGroup(guid)) or 1
+        if (TT.getPawnScoreMemo(guid, data.items, activeGroup) ~= nil) then return end
+        local okP, pScore, pSpec, pColor, pReady = pcall(TT_PAWN.GetScore, TT_PAWN,
+            guid, allowCallback == true, activeGroup)
+        if (not okP) then return end
+        if (type(pScore) == "number" and pScore > 0) then
+            TT.setPawnScoreMemo(guid, data.items, activeGroup, pScore, pSpec, pColor)
+            TT.ev.pawnBackgroundWarm = (TT.ev.pawnBackgroundWarm or 0) + 1
+        elseif (pReady == true) then
+            TT.setPawnScoreMemo(guid, data.items, activeGroup, 0, pSpec or "", pColor or "|cffffffff")
+        end
+    end
+
+    function TT.warmBackgroundScoresForGUID(guid, allowCallback)
+        local wantGS = TacoTipConfig and TacoTipConfig.show_gs_player
+        if (wantGS) then
+            warmGearScoreMemoForGUID(guid, allowCallback == true)
+        end
+        warmPawnScoreMemoForGUID(guid, (allowCallback == true) and (not wantGS))
     end
 
     local function enqueuePendingGSCallback(guid)
@@ -2820,13 +2896,15 @@ do
             -- shows that unit" is a normal state (the cursor moved, the tooltip
             -- hid), so it is counted separately and never as a resolution failure.
             TT.ev.gsCallbackNoUnit = (TT.ev.gsCallbackNoUnit or 0) + 1
-            warmGearScoreMemoForGUID(guid)
+            warmGearScoreMemoForGUID(guid, false)
+            warmPawnScoreMemoForGUID(guid, false)
             return
         end
         local ttGUID = safeUnitGUID(ttUnit)
         if (not safeEquals(ttGUID, guid)) then
             TT.ev.gsCallbackWrongUnit = (TT.ev.gsCallbackWrongUnit or 0) + 1
-            warmGearScoreMemoForGUID(guid)
+            warmGearScoreMemoForGUID(guid, false)
+            warmPawnScoreMemoForGUID(guid, false)
             return
         end
         -- pcall both branches and clear the guard unconditionally: this is a global
@@ -2995,8 +3073,11 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
     -- Forever: the item post-call marks the tooltip as item content so OnShow
     -- knows not to read its tooltip info (see onTooltipShow). Every recycle
     -- clears it, so a unit, spell or map tooltip never inherits it.
-    ---@class tacoTipTooltipState.itemTooltip
     state.itemTooltip = nil
+    state.itemStyledForShow = nil
+    if (not keepModel) then
+        state.unitFontsAppliedForShow = nil
+    end
     if (not preservePendingItem) then
         state.generation = state.generation + 1
         cancelItemLoadRefresh(tooltip)
@@ -3139,7 +3220,7 @@ local function clearTooltipVisuals(tooltip, preservePendingItem, keepModel, reas
                 end
             else
                 portrait3D._tacoTipPendingSetUnit = nil
-                if (wasShown or prevKey ~= nil) then
+                if (wasShown) then
                     recordPortraitTrace("clear-retain", reason, tooltip, portrait3D, {
                         prevKey = prevKey, keepModel = false, retainModel = true, outcome = "hidden-retained",
                     })
@@ -4282,6 +4363,8 @@ local function onTooltipSetUnit(tooltip, data)
                     pawnDue = TT.pawnRetryDue(guid, scoreNow)
                 end
             end
+            local skipUnpopulatedCache = (not isSelf and scoreData ~= nil
+                and scoreData.incomplete == true and not scoreData.time)
             if (needGsScore) then
                 local gearscore, avg_ilvl = TT.getGearScoreMemo(guid, items)
                 if (not gearscore) then
@@ -4297,7 +4380,7 @@ local function onTooltipSetUnit(tooltip, data)
                             if (not isSelf or isForever) then
                                 TT.setGearScoreMemo(guid, items, gearscore, avg_ilvl)
                             end
-                        else
+                        elseif (not skipUnpopulatedCache) then
                             -- GetScore just registered the load callbacks for every
                             -- uncached slot; ask for the data too, then let the
                             -- callback re-drive this render. The gate above keeps a
@@ -4368,9 +4451,11 @@ local function onTooltipSetUnit(tooltip, data)
                                 end
                             end
                         elseif (pReady == false) then
-                            TT.notePawnRetry(guid, scoreNow)
-                            if (not warmedThisRender) then
-                                TT:WarmGearItemData(guid)
+                            if (not skipUnpopulatedCache) then
+                                TT.notePawnRetry(guid, scoreNow)
+                                if (not warmedThisRender) then
+                                    TT:WarmGearItemData(guid)
+                                end
                             end
                         else
                             -- All items were cached locally, but Pawn produced 0 (e.g. no scale for class/spec).
@@ -4703,26 +4788,28 @@ local function onTooltipSetUnit(tooltip, data)
 
     TT:ApplyTooltipAppearance(tooltip, tooltipUnit)
 
+    local tipState = getTooltipState(tooltip)
+    if (isForever and tooltip and tooltip.IsShown and not tooltip:IsShown()) then
+        tipState.unitFontsAppliedForShow = true
+    end
+
     local wideBottomPad = 0
     if (wide_style) then
         local fontSize = (TacoTipConfig and TacoTipConfig.tooltip_font_size) or 12
         wideBottomPad = 4 + math.max(0, math.floor((fontSize - 12) * 0.5))
-        -- v1.0.7 HIGH (wide style, Forever only): keep appended stat rows inside
-        -- the border. On Forever the data pipeline runs ProcessLines ->
-        -- ProcessTooltipPostCalls -> Show (TooltipDataHandler.lua
-        -- InternalProcessInfo), so the client measures the tooltip from the
-        -- C_TooltipInfo lines BEFORE our post-call appends the Pawn/iLvl rows.
-        -- Those appended rows are therefore not in the client's measured content
-        -- height and overflow the bottom border by their stacked height. Reserve
-        -- that height in the bottom pad, which onTooltipShow re-applies after
-        -- Blizzard's GameTooltip_CalculatePadding <OnShow> reset. One appended row
-        -- occupies fontSize pixels plus the -2 continuation gap; count them all.
-        -- Gated on isForever so every other client family stays byte-identical.
-        if (isForever and linesToAddCount > 0) then
-            wideBottomPad = wideBottomPad + (linesToAddCount * (fontSize + 2))
-        end
+        -- No per-appended-row reserve belongs here. v1.0.7 first shipped
+        -- wideBottomPad + linesToAddCount * (fontSize + 2) for Forever, on the
+        -- theory that the client measured the box from the C_TooltipInfo lines
+        -- before our post-call appended the Pawn/iLvl rows. Operator-confirmed
+        -- in game (2026-11-17): that reserve rendered as a blank band exactly
+        -- as tall as the appended rows inside the border. The rows ARE in the
+        -- measured height by layout time -- on Forever the pipeline is
+        -- ProcessLines -> post-calls -> Show (TooltipDataHandler.lua:292-300),
+        -- and every already-shown re-render ends with the guarded Show() refit
+        -- below -- so a count-driven pad double-counts them. The base pad alone
+        -- is what keeps the border off the last row; it is identical on every
+        -- client family (see TT:ApplyTooltipBottomPadding).
     end
-    local tipState = getTooltipState(tooltip)
     tipState.wideBottomPadding = (wideBottomPad > 0) and wideBottomPad or nil
     TT:ApplyTooltipBottomPadding(tooltip, wideBottomPad)
 
@@ -5103,14 +5190,17 @@ local function itemToolTipHook(self, data)
     if (type(itemLink) == "string" and not isSecretValue(itemLink)) then
         lastItemID = tonumber(string.match(itemLink, "item:(%d+)"))
     end
-    ev.lastItem = {
-        id = lastItemID,
-        rowsAdded = rowsAfter - rowsBefore,
-        payload = (data == nil) and "none" or (payloadReadable and "readable" or "unreadable"),
-        linkSecret = (ev.itemSecretLink or 0) > 0,
-        restrictions = TT:RestrictionSnapshot(),
-        at = (type(GetTime) == "function") and GetTime() or 0,
-    }
+    local lastItemRec = ev.lastItem
+    if (type(lastItemRec) ~= "table") then
+        lastItemRec = {}
+        ev.lastItem = lastItemRec
+    end
+    lastItemRec.id = lastItemID
+    lastItemRec.rowsAdded = rowsAfter - rowsBefore
+    lastItemRec.payload = (data == nil) and "none" or (payloadReadable and "readable" or "unreadable")
+    lastItemRec.linkSecret = (ev.itemSecretLink or 0) > 0
+    lastItemRec.restrictions = TT:RestrictionSnapshot()
+    lastItemRec.at = (type(GetTime) == "function") and GetTime() or 0
 
     -- Apply cosmetic appearance (font, backdrop texture, border texture) to
     -- item tooltips so user-selected visual style carries through.  Skip
@@ -5149,6 +5239,9 @@ local function itemToolTipHook(self, data)
         state.itemBorderColor = nil
     end
     applyTooltipBorderOverlay(self, nil, borderR, borderG, borderB)
+    if (isForever) then
+        state.itemStyledForShow = true
+    end
 end
 
 local function safeItemToolTipHook(self, ...)
@@ -5291,6 +5384,20 @@ local function onTooltipShow(tooltip)
     -- guards (GameTooltip.lua:994-1003). Use the link the post-call already
     -- stored and skip the reads below.
     local itemTooltip = isForever and state.itemTooltip == true
+    -- Forever: itemToolTipHook just ran before Blizzard's Show(), already cleared
+    -- unit visuals, applied fonts, and set the item quality border. Skip the
+    -- redundant clearTooltipVisuals and second font scan on that Show(), while
+    -- preserving the item quality border check for OnShow handlers.
+    if (itemTooltip and state.itemStyledForShow) then
+        state.itemStyledForShow = nil
+        state.itemTooltip = nil
+        local savedItemBorderColor = state.itemBorderColor
+        if (not isForeverLootTooltip(tooltip) and savedItemBorderColor
+                and TacoTipConfig.tooltip_border_item_quality ~= false) then
+            applyTooltipBorderOverlay(tooltip, nil, savedItemBorderColor.r, savedItemBorderColor.g, savedItemBorderColor.b)
+        end
+        return
+    end
     local shownItemLink
     -- The loot-window tooltip is deliberately not read here: reading its
     -- tooltip info from this tainted OnShow hook is the read Blizzard guards
@@ -5307,7 +5414,8 @@ local function onTooltipShow(tooltip)
     end
     -- If the same item re-shows (shopping tooltip compare), keep its pending
     -- item-load registration alive instead of tearing it down and re-requesting.
-    local safeShownItemLink = (type(shownItemLink) ~= "nil" and not isSecretValue(shownItemLink)) and shownItemLink or nil
+    local safeShownItemLink = (type(shownItemLink) ~= "nil" and not isSecretValue(shownItemLink)) and shownItemLink or
+    nil
     local preservePendingItem = safeShownItemLink ~= nil and state.currentItemLink == safeShownItemLink
     local savedItemBorderColor = state.itemBorderColor
     -- Forever loot-window tooltip: do not read its tooltip data at all. Both
@@ -5355,7 +5463,8 @@ local function onTooltipShow(tooltip)
         if (not lootTooltip and (itemTooltip or preservePendingItem or safeShownItemLink ~= nil)
                 and savedItemBorderColor and TacoTipConfig.tooltip_border_item_quality ~= false) then
             state.itemBorderColor = savedItemBorderColor
-            applyTooltipBorderOverlay(tooltip, nil, savedItemBorderColor.r, savedItemBorderColor.g, savedItemBorderColor.b)
+            applyTooltipBorderOverlay(tooltip, nil, savedItemBorderColor.r, savedItemBorderColor.g,
+                savedItemBorderColor.b)
         end
         return
     end
@@ -5371,7 +5480,10 @@ local function onTooltipShow(tooltip)
         return
     end
 
-    if (not lootTooltip) then
+    local skipUnitFonts = isForever and state.unitFontsAppliedForShow == true
+        and unit ~= nil and (not TT.IsWorldMapPinTooltip or not TT.IsWorldMapPinTooltip(tooltip))
+    state.unitFontsAppliedForShow = nil
+    if (not lootTooltip and not skipUnitFonts) then
         if (not TT.IsWorldMapPinTooltip or not TT.IsWorldMapPinTooltip(tooltip)
                 or (TT.CanStyleWorldMapTooltip and TT.CanStyleWorldMapTooltip())) then
             applyTooltipFonts(tooltip)
@@ -5380,7 +5492,8 @@ local function onTooltipShow(tooltip)
 
     if (state and state.wideBottomPadding and state.wideBottomPadding > 0) then
         local itemShown = tooltip.ItemTooltip and tooltip.ItemTooltip.IsShown and tooltip.ItemTooltip:IsShown()
-        local bottomShown = tooltip.BottomFontString and tooltip.BottomFontString.IsShown and tooltip.BottomFontString:IsShown()
+        local bottomShown = tooltip.BottomFontString and tooltip.BottomFontString.IsShown and
+        tooltip.BottomFontString:IsShown()
         if (not itemShown and not bottomShown) then
             TT:ApplyTooltipBottomPadding(tooltip, state.wideBottomPadding)
         end
@@ -5404,7 +5517,7 @@ local function onTooltipShow(tooltip)
         if (portrait) then
             anchorTooltipPortrait(tooltip, portrait, true)
             if (TacoTipConfig.tooltip_portrait_3d and portrait == tooltip.TacoTipPortrait3D
-                and portrait._tacoTipPendingSetUnit and unit and portrait.SetUnit) then
+                    and portrait._tacoTipPendingSetUnit and unit and portrait.SetUnit) then
                 local hidePortrait = applyPortrait3DUnit(tooltip, portrait, unit, "onshow")
                 if (hidePortrait) then
                     if (portrait.Hide) then
@@ -5592,7 +5705,8 @@ do
             if (okOrig and type(origFont) == "string" and origFont ~= "" and not isSecretValue(origFont)) then
                 line._tacoTipOrigFont = origFont
                 line._tacoTipOrigSize = (type(origSize) == "number" and not isSecretValue(origSize)) and origSize or 12
-                line._tacoTipOrigFlags = (type(origFlags) == "string" and not isSecretValue(origFlags)) and origFlags or nil
+                line._tacoTipOrigFlags = (type(origFlags) == "string" and not isSecretValue(origFlags)) and origFlags or
+                nil
             end
         end
         local text = explicitText
@@ -5608,7 +5722,8 @@ do
         local wantFont = (mask ~= 0 and TT.PickScriptFont) and TT.PickScriptFont(baseFont, mask) or baseFont
         local wantSize = line._tacoTipOrigSize or 12
         local fallback = (mask ~= 0 and TT.PickScriptFont) and TT.PickScriptFont("Fonts\\FRIZQT__.TTF", mask) or nil
-        return TT.ApplyFontIfNeeded(line, wantFont, wantSize, line._tacoTipOrigFlags, "applyFriendsTooltipFonts", fallback)
+        return TT.ApplyFontIfNeeded(line, wantFont, wantSize, line._tacoTipOrigFlags, "applyFriendsTooltipFonts",
+            fallback)
     end
 
     local function applyFriendsTooltipFonts(tooltip)
@@ -6004,7 +6119,8 @@ end
 -- there, so the font strings keep the same parent and the same positions. On
 -- Retail the strings are parented to PaperDollFrame instead, so the feature
 -- works rather than silently disappearing.
-local characterFrameHost = (isForever and (_G.PaperDollItemsFrame or _G.PaperDollFrame)) or _G.CharacterModelFrame or _G.PaperDollFrame
+local characterFrameHost = (isForever and (_G.PaperDollItemsFrame or _G.PaperDollFrame)) or _G.CharacterModelFrame or
+_G.PaperDollFrame
 
 do
     local function countPlayerScoredSlots()
@@ -6056,7 +6172,8 @@ do
                 tooltip:AddDoubleLine((_G.STAT_AVERAGE_ITEM_LEVEL or "Average Item Level"),
                     tostring(ilvlVal), 1, 0.82, 0.1, r, g, b)
             elseif (type(tooltip.AddLine) == "function") then
-                tooltip:AddLine((_G.STAT_AVERAGE_ITEM_LEVEL or "Average Item Level") .. ": " .. tostring(ilvlVal), 1, 0.82, 0.1)
+                tooltip:AddLine((_G.STAT_AVERAGE_ITEM_LEVEL or "Average Item Level") .. ": " .. tostring(ilvlVal), 1,
+                    0.82, 0.1)
             end
             if (type(_G.GetAverageItemLevel) == "function" and type(tooltip.AddDoubleLine) == "function") then
                 local okAvg, overallAvg, equippedAvg = pcall(_G.GetAverageItemLevel)
@@ -8783,6 +8900,9 @@ local function onEvent(self, event, ...)
                     st.inspectRenderComplete = isCompleteSnapshot
                     refreshUnitTooltip(ttUnit)
                 end
+            elseif (event == "INVENTORY_READY" and invData and not invData.incomplete and invData.items
+                    and type(TT.warmBackgroundScoresForGUID) == "function") then
+                TT.warmBackgroundScoresForGUID(guid, true)
             end
             if (event == "INVENTORY_READY") then
                 if (InspectFrame and InspectFrame:IsShown()) then
@@ -8876,7 +8996,8 @@ do
                         return
                     end
                     local clientTag = (CI and CI.GetClientLabel and CI:GetClientLabel()) or "WoW"
-                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r", tostring(addOnVersion or "1.0.7")))
+                    tooltip:AddLine(string.format("|cff59f0dcTacoTip|r |cffffb81cv%s|r",
+                        tostring(addOnVersion or "1.0.7")))
                     tooltip:AddLine("|cff9ca3af" .. tostring(clientTag) .. "|r", 0.7, 0.72, 0.75)
                     if (TT.GetPlayerProgression) then
                         local okProg, rec = pcall(TT.GetPlayerProgression, TT)
@@ -8884,12 +9005,15 @@ do
                             local gs = math.floor((tonumber(rec.currentScore) or 0) + 0.5)
                             local ilvl = tonumber(rec.avgItemLevel) or 0
                             local tierInfo = (TT.GetGearLevelInfo and TT:GetGearLevelInfo(gs)) or nil
-                            local tierStr = (tierInfo and tierInfo.title) and (" |cff" .. (tierInfo.tierColorHex or "b4e634") .. "[" .. tierInfo.title .. "]|r") or ""
+                            local tierStr = (tierInfo and tierInfo.title) and
+                            (" |cff" .. (tierInfo.tierColorHex or "b4e634") .. "[" .. tierInfo.title .. "]|r") or ""
                             tooltip:AddLine(" ")
                             if (tooltip.AddDoubleLine) then
-                                tooltip:AddDoubleLine("GearScore", string.format("|cffffb81c%d|r%s", gs, tierStr), 0.78, 0.80, 0.84, 1, 1, 1)
+                                tooltip:AddDoubleLine("GearScore", string.format("|cffffb81c%d|r%s", gs, tierStr), 0.78,
+                                    0.80, 0.84, 1, 1, 1)
                                 if (ilvl > 0) then
-                                    tooltip:AddDoubleLine("Avg Item Level", string.format("%.1f", ilvl), 0.78, 0.80, 0.84, 0.85, 0.92, 0.98)
+                                    tooltip:AddDoubleLine("Avg Item Level", string.format("%.1f", ilvl), 0.78, 0.80, 0.84,
+                                        0.85, 0.92, 0.98)
                                 end
                             else
                                 tooltip:AddLine(string.format("GearScore: %d (iLvl %.1f)", gs, ilvl))
