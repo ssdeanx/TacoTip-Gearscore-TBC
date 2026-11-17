@@ -150,6 +150,15 @@ local REMOTE_CONTEXT_TTL_CLASSIC = 8
 local SEED_SLICE_LIMIT = 4
 local ASYNC_CAPTURE_SLICE = 2
 local ASYNC_CAPTURE_INTERVAL = 0.05
+-- The async drain ticks at 20 Hz; carrying the stale-context prune on every
+-- tick re-walks up to Cache.MAX_ENTRIES (128) contexts ~2560 times/s in a hub.
+-- Gate that one call site to a bounded interval well under the shortest remote
+-- TTL (5s modern / 8s classic), so eviction is late by at most this interval
+-- while the per-second pairs() work drops by an order of magnitude. The
+-- event-driven prune callers stay direct and keep their exact TTL/generation
+-- semantics (and the OPT-4 pins) untouched.
+local REMOTE_PRUNE_INTERVAL = 0.5
+local lastRemotePruneAt = 0
 local asyncCaptureQueue = {}
 local asyncQueueHead = 1
 local asyncCaptureQueued = {}
@@ -239,6 +248,22 @@ local function pruneStaleRemoteContexts(now)
         end
     end
     return removed
+end
+
+-- Throttle wrapper used ONLY by the 20 Hz async drain. getScannerClock() is the
+-- same clock the prune uses for TTL, so a skipped tick only defers eviction by
+-- at most REMOTE_PRUNE_INTERVAL seconds and can never leave a context past the
+-- point where the next drain would have pruned it anyway. The other two callers
+-- (HandleInventoryReady, SeedFromInspectorCache) call pruneStaleRemoteContexts
+-- directly: they are event-driven, not periodic, and the OPT-4 characterization
+-- pins drive the prune through HandleInventoryReady at a stepped clock.
+local function maybePruneStaleRemoteContexts()
+    local now = getScannerClock()
+    if now <= 0 or (now - lastRemotePruneAt) < REMOTE_PRUNE_INTERVAL then
+        return 0
+    end
+    lastRemotePruneAt = now
+    return pruneStaleRemoteContexts(now)
 end
 
 local function complete(value)
@@ -2021,7 +2046,7 @@ local function drainAsyncCaptureQueue()
         asyncCaptureQueued = {}
         return
     end
-    pruneStaleRemoteContexts(getScannerClock())
+    maybePruneStaleRemoteContexts()
     local processed = 0
     while processed < ASYNC_CAPTURE_SLICE and asyncQueueHead <= #asyncCaptureQueue do
         local guid = asyncCaptureQueue[asyncQueueHead]

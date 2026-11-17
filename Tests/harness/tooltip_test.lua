@@ -1157,9 +1157,14 @@ local function mockGetUnit(unitToken)
 end
 
 --------------------------------------------------------------------------
+-- TACOTIP_LIB_OVERRIDE points at a throwaway inspector copy for red/green
+-- proofs; gates always load the shipped tree. Same convention as the Forever
+-- and contract-pins harnesses.
+local LIB_PATH = STD.os.getenv("TACOTIP_LIB_OVERRIDE")
+    or (ROOT .. "Libs/LibForeverInspector/LibForeverInspector.lua")
 local order = {
     "Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
-    "Libs/LibDetours-1.0/LibDetours-1.0.lua", "Libs/LibForeverInspector/LibForeverInspector.lua",
+    "Libs/LibDetours-1.0/LibDetours-1.0.lua", "__LIB__",
     "Locale/deDE.lua", "Locale/esES.lua", "Locale/esMX.lua", "Locale/frFR.lua",
     "Locale/itIT.lua", "Locale/koKR.lua", "Locale/ptBR.lua", "Locale/ruRU.lua",
     "Locale/zhCN.lua", "Locale/zhTW.lua", "Locale/enUS.lua",
@@ -1167,7 +1172,8 @@ local order = {
 }
 local loadFail
 for _, rel in ipairs(order) do
-    local ok, err = pcall(function() assert(loadfile(ROOT .. rel))("TacoTip_Forever") end)
+    local path = (rel == "__LIB__") and LIB_PATH or (ROOT .. rel)
+    local ok, err = pcall(function() assert(loadfile(path))("TacoTip_Forever") end)
     if (not ok) then
         loadFail = rel .. " -> " .. tostring(err); break
     end
@@ -4822,6 +4828,88 @@ do
             REALG.__testClock = savedClock
             REALG.__pendingRetry = nil
         end
+    end
+end
+
+-- ==================================================================
+-- t6 OPT pins: the eviction ceiling check is O(1) on the cached entry count,
+-- and the inspect tick measures each unit's distance once. The COST pin is red
+-- on the unoptimised baseline (a full pairs() walk per fresh inspect); the
+-- BEHAVIOUR pin must hold on both sides (exact eviction set/order preserved).
+-- No production file outside LibForeverInspector.lua is changed by this task.
+-- ==================================================================
+do
+    local okCI, CI = pcall(REALG.LibStub, "LibForeverInspector", true)
+    check("OPT t6: inspector reachable", okCI and CI ~= nil)
+    if (okCI and CI and CI.frame and CI.frame.__scripts) then
+        local handler = CI.frame.__scripts.OnEvent
+        local guid = UNITS.mouseover.guid
+        local savedCache = CI.cache
+        local savedPairs = REALG.pairs
+        local savedLink = REALG.GetInventoryItemLink
+        local savedTexture = REALG.GetInventoryItemTexture
+        local savedAfter = REALG.C_Timer.After
+        local savedClock = REALG.__testClock
+        local savedPending = REALG.__pendingRetry
+
+        REALG.GetInventoryItemLink = function(_, slot) return slot == 1 and "item:t6" or nil end
+        REALG.GetInventoryItemTexture = function() return nil end
+        REALG.C_Timer.After = function() end
+        REALG.__testClock = 1000
+        REALG.__pendingRetry = nil
+
+        -- COST: a fresh INSPECT_READY over a small cache must never walk the
+        -- cache to count it. Baseline evictCacheEntries ran pairs(lib.cache)
+        -- once per fresh inspect just to decide count <= CACHE_MAX_ENTRIES.
+        CI.cache = {}
+        for i = 1, 20 do
+            CI.cache["Player-t6-small-" .. string.format("%04d", i)] =
+                { items = { [1] = "item:1" }, time = 900 + i }
+        end
+        -- Prime this cache table once (production never swaps it). The weak-key
+        -- count does one lazy recount on a table's first mutation; measure a
+        -- SECOND fresh inspect, which is the steady state every real INSPECT_READY
+        -- runs in. Reusing the guid makes it an overwrite, so the measurement
+        -- isolates the eviction ceiling check alone.
+        pcall(handler, CI.frame, "INSPECT_READY", guid)
+        local countPairs = 0
+        REALG.pairs = function(t, ...)
+            if (t == CI.cache) then countPairs = countPairs + 1 end
+            return savedPairs(t, ...)
+        end
+        pcall(handler, CI.frame, "INSPECT_READY", guid)
+        REALG.pairs = savedPairs
+        check("OPT t6: fresh INSPECT_READY does not scan the cache to count it",
+            countPairs == 0, "pairs(cache) calls=" .. tostring(countPairs))
+
+        -- BEHAVIOUR: exact eviction set/order. 513 recent completed non-live
+        -- entries + one fresh inspect = 514 -> exactly two evictions, the two
+        -- OLDEST by stamp. An off-by-one cache count changes the survivor set.
+        CI.cache = {}
+        for i = 1, 513 do
+            CI.cache["Player-t6-" .. string.format("%04d", i)] =
+                { items = { [1] = "item:1" }, time = 400 + i }
+        end
+        pcall(handler, CI.frame, "INSPECT_READY", guid)
+        local n = 0
+        for _ in STD.pairs(CI.cache) do n = n + 1 end
+        check("OPT t6: cached count evicts exactly the oldest two down to 512",
+            n == 512 and CI.cache["Player-t6-0001"] == nil
+                and CI.cache["Player-t6-0002"] == nil
+                and CI.cache["Player-t6-0003"] ~= nil
+                and CI.cache[guid] ~= nil,
+            "count=" .. tostring(n)
+                .. " oldest1=" .. tostring(CI.cache["Player-t6-0001"] ~= nil)
+                .. " oldest2=" .. tostring(CI.cache["Player-t6-0002"] ~= nil)
+                .. " third=" .. tostring(CI.cache["Player-t6-0003"] ~= nil)
+                .. " fresh=" .. tostring(CI.cache[guid] ~= nil))
+
+        CI.cache = savedCache
+        REALG.GetInventoryItemLink = savedLink
+        REALG.GetInventoryItemTexture = savedTexture
+        REALG.C_Timer.After = savedAfter
+        REALG.__testClock = savedClock
+        REALG.__pendingRetry = savedPending
     end
 end
 

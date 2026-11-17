@@ -5,6 +5,11 @@ local _hp = ((arg and arg[0]) or "Tests/harness/detect_test.lua"):gsub("\\", "/"
 local _hd = _hp:match("^(.*)/[^/]*$") or "."
 local ROOT = dofile(_hd .. "/root.lua") .. "/"
 local LIB = ROOT .. "Libs/"
+-- TACOTIP_LIB_OVERRIDE points at a throwaway inspector copy for red/green
+-- proofs; gates always load the shipped tree. Same convention as the Forever
+-- and contract-pins harnesses. Captured at load, before run() wipes _G.
+local LIB_INSPECTOR = os.getenv("TACOTIP_LIB_OVERRIDE")
+    or (LIB .. "LibForeverInspector/LibForeverInspector.lua")
 
 local results, allok = {}, true
 -- NB: in Lua 5.1 assigning `_G = {}` only rebinds the variable, it does not
@@ -146,7 +151,7 @@ local function run(projectId, iface, layout, projectConsts, patches, opts)
         -- it absent asks for that explicitly.
         assert(loadfile(LIB .. "LibDetours-1.0/LibDetours-1.0.lua"))()
     end
-    local chunk = assert(loadfile(LIB .. "LibForeverInspector/LibForeverInspector.lua"))
+    local chunk = assert(loadfile(LIB_INSPECTOR))
     chunk("TacoTip")
     return LibStub("LibForeverInspector")
 end
@@ -856,6 +861,25 @@ do
         probes.can == 0 and probes.dist == 0 and probes.distSq == 0,
         "can=" .. tostring(probes.can) .. " dist=" .. tostring(probes.dist)
             .. " distSq=" .. tostring(probes.distSq))
+
+    -- t6 OPT: an UNCACHED 40-man raid walks the whole gate chain. Each unit's
+    -- squared distance is needed by exceedsLearnedRange (gate chain AND again
+    -- inside CanInspect) and by isCloseEnoughToAsk -- ~82 UnitDistanceSquared
+    -- reads per tick before. The per-tick memo measures each unit once (~41).
+    -- The COST pin is red on the unoptimised baseline; the BEHAVIOUR pin must
+    -- hold on both sides: a learned 30yd limit with a 10yd reported distance
+    -- still passes every unit and serves the same first candidate.
+    local optCiG, optTickG = build({ inRaid = true })
+    optCiG.inspectRangeLimit = { [optCiG.family] = 30 }
+    local optServedG = {}
+    _G.NotifyInspect = function(u) optServedG[#optServedG + 1] = u return true end
+    probes = { can = 0, dist = 0, distSq = 0 }
+    optTickG.cb()
+    check("OPT t6: an uncached 40-man raid measures each distance once per tick",
+        probes.distSq <= 45, "distSq=" .. tostring(probes.distSq))
+    check("OPT t6: the memo keeps the range gate and the served candidate",
+        optServedG[1] == "raid1" and probes.can == 1,
+        "served=" .. tostring(optServedG[1]) .. " can=" .. tostring(probes.can))
 
     -- 2. The watchdog window. Stepped in 0.5s ticks -- which is how it runs in
     --    the client -- a stalled request must survive to the 3s window and be
@@ -3478,6 +3502,88 @@ do
             tostring(ciRC:IsCacheFresh(string.format("Player-5555-%06X", 69))),
             tostring(olderCacheTime)))
     local _ = rcEvents
+end
+
+-- ==================================================================
+-- t7 OPT pins. (3)/(4): on a client whose suppressor family gate refuses,
+-- a probe must neither retry the install nor arm the dead attribution window
+-- -- both are pure no-ops there. (5): a 25-entry queue drain must reuse each
+-- item's unit hint instead of scanning up to 45 tokens. The COST pins for
+-- (3)/(4) are red on the unoptimised tree; the (5) pin characterises a reuse
+-- already present in the shipped baseline and guards against regression.
+-- ==================================================================
+do
+    local t7Clock = 5000
+    local oneArgPcalls, getTimeCalls, guidCalls = 0, 0, 0
+    local t7Tickers = {}
+    local t7Pcall = function(fn, ...)
+        if (select("#", ...) == 0 and type(fn) == "function") then
+            oneArgPcalls = oneArgPcalls + 1
+        end
+        return STD.pcall(fn, ...)
+    end
+    local t7GetTime = function()
+        getTimeCalls = getTimeCalls + 1
+        return t7Clock
+    end
+    local t7UnitGUID = function(u)
+        guidCalls = guidCalls + 1
+        if (u == "player") then return "Player-self" end
+        return "Player-" .. tostring(u)
+    end
+    local t7ci = run(P.WOW_PROJECT_MAINLINE, 16001, "slot4", CONSTS, {
+        UnitExists = function(u)
+            return u == nil or u == "player" or (type(u) == "string" and u:match("^n%d+$") ~= nil)
+        end,
+        UnitIsConnected = function() return true end,
+        UnitIsDeadOrGhost = function() return false end,
+        UnitIsPlayer = function() return true end,
+        UnitIsUnit = function() return false end,
+        UnitGUID = t7UnitGUID,
+        CanInspect = function() return true end,
+        CheckInteractDistance = function() return true end,
+        NotifyInspect = function() return true end,
+        GetTime = t7GetTime,
+        pcall = t7Pcall,
+        IsInGroup = function() return false end,
+        C_Timer = {
+            After = function() end,
+            NewTicker = function(interval, fn)
+                local h = { interval = interval, cb = fn }
+                t7Tickers[#t7Tickers + 1] = h
+                return h
+            end,
+        },
+    })
+    local t7QueueT
+    for _, h in STD.ipairs(t7Tickers) do
+        if (h.interval == 0.5) then t7QueueT = h end
+    end
+    check("OPT t7: unsupported-family suppressor stays uninstalled",
+        not t7ci.inspectSuppressorInstalled,
+        "installed=" .. tostring(t7ci.inspectSuppressorInstalled))
+
+    oneArgPcalls, getTimeCalls = 0, 0
+    local t7Allowed = t7ci:CanInspect("n1")
+    check("OPT t7: unsupported-family probe does not retry install on every call",
+        oneArgPcalls == 0, "1-arg pcall calls=" .. tostring(oneArgPcalls))
+    check("OPT t7: unsupported-family probe does not arm the dead window",
+        getTimeCalls <= 1, "GetTime calls=" .. tostring(getTimeCalls))
+    check("OPT t7: probe gate answer unchanged on the unsupported family",
+        t7Allowed == true, "allowed=" .. tostring(t7Allowed))
+
+    -- (5) Fill the queue with 25 distinct hinted units, then drain one tick.
+    -- A full PlayerGUIDToUnitToken scan per entry would cost ~1125 UnitGUID
+    -- reads; the hint path costs one GUID read per entry plus the gates.
+    if (t7ci and t7QueueT and t7QueueT.cb) then
+        t7ci:DoInspect("n0")
+        for k = 1, 26 do t7ci:DoInspect("n" .. k) end
+        t7Clock = t7Clock + 10          -- clear the throttle and the watchdog
+        guidCalls = 0
+        t7QueueT.cb()
+        check("OPT t7: 25-entry queue drain reuses unit hints, not 45-token scans",
+            guidCalls <= 80, "UnitGUID calls=" .. tostring(guidCalls))
+    end
 end
 
 STD.io.write(table.concat(results, "\n") .. "\n")

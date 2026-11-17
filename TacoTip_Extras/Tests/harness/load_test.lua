@@ -5116,6 +5116,163 @@ REALG.InspectFrame.unit = nil
 end
 
 -- ---------------------------------------------------------------------------
+-- Team t1 optimization characterization pins for Scanner.pruneStaleRemoteContexts
+-- (the t5 throttle backlog item). Every pin here is GREEN on the committed
+-- baseline 67efbb8. A context stays in the prune's table only while its item
+-- data is pending: an inventory ID with no loaded link keeps it pending, which
+-- is the exact population the TTL prune exists to evict. TTL is exercised with
+-- an age (100s) far beyond both the modern (5s) and classic (8s) TTLs, so these
+-- pins are client-independent. Generation staleness is driven by advancing a
+-- cache entry's generation without touching the context's age.
+-- ---------------------------------------------------------------------------
+out(("\n-- optimization guards: Scanner.pruneStaleRemoteContexts TTL/generation --\n"))
+
+do
+    local S = namespace.Scanner
+    local C = namespace.Cache
+    local savedGetTime = REALG.GetTime
+    local fakeNow = 1000
+    REALG.GetTime = function() return fakeNow end
+
+    local savedUnitExists = REALG.UnitExists
+    local savedUnitIsPlayer = REALG.UnitIsPlayer
+    local savedUnitGUID = REALG.UnitGUID
+    local savedGUIDIsPlayer = REALG.GUIDIsPlayer
+    local savedUnitClass = REALG.UnitClass
+    local savedUnitLevel = REALG.UnitLevel
+    local savedGetItemID = REALG.GetInventoryItemID
+    local savedGetItemLink = REALG.GetInventoryItemLink
+    local savedInspectUnit = REALG.InspectFrame.unit
+
+    local G_A = "Player-8888-00000001"
+    local G_B = "Player-8888-00000002"
+    local G_C = "Player-8888-00000003"
+    local unitFor = { target = G_A, party1 = G_B, party2 = G_C }
+    local PENDING_ITEM_ID = 50003
+
+    REALG.UnitExists = function(u) return unitFor[u] ~= nil or u == "player" end
+    REALG.UnitIsPlayer = function(u) return unitFor[u] ~= nil or u == "player" end
+    REALG.UnitGUID = function(u)
+        if u == "player" then return HARNESS_PLAYER_GUID end
+        return unitFor[u]
+    end
+    REALG.GUIDIsPlayer = function(g)
+        return g == G_A or g == G_B or g == G_C or g == HARNESS_PLAYER_GUID
+    end
+    REALG.UnitClass = MOCKC.unitClassMock(function() return "Warrior", "WARRIOR" end,
+        function() return 1 end)
+    REALG.UnitLevel = function() return 70 end
+    -- An ID with NO loaded link keeps captureRemoteBody pending (Scanner.lua:
+    -- 1473-1476), so the context survives in remoteContexts for the prune.
+    REALG.GetInventoryItemID = function(u, slot)
+        if slot == 1 and unitFor[u] then return PENDING_ITEM_ID end
+        return nil
+    end
+    REALG.GetInventoryItemLink = function() return nil end
+
+    local savedIsCurrent = C.IsCurrentGeneration
+    local genCalls = {}
+    C.IsCurrentGeneration = function(g, gen)
+        genCalls[#genCalls + 1] = { guid = g, generation = gen }
+        return savedIsCurrent(g, gen)
+    end
+    local savedPublish = C.PublishUnavailable
+    local publishes = {}
+    C.PublishUnavailable = function(g, gen, why)
+        publishes[#publishes + 1] = { guid = g, generation = gen, reason = why }
+        return savedPublish(g, gen, why)
+    end
+
+    local function prunedNow()
+        return S.GetDebugState().staleContextsPruned or 0
+    end
+    local function callsFor(guid)
+        local n = 0
+        for _, c in ipairs(genCalls) do if c.guid == guid then n = n + 1 end end
+        return n
+    end
+    local function publishFor(guid)
+        for _, p in ipairs(publishes) do if p.guid == guid then return p end end
+        return nil
+    end
+
+    -- 1. First HandleInventoryReady: no contexts exist yet, so the prune walk
+    -- cannot touch any GUID. Context A is created and stays pending.
+    S.InvalidateSeedQueue()
+    local okA = S.HandleInventoryReady("INVENTORY_READY", G_A, true, "target")
+    check(okA == true, "OPT-4 setup: HandleInventoryReady primes pending context A", tostring(okA))
+    local genA = C.Get(G_A) and C.Get(G_A).generation or nil
+    check(type(genA) == "number" and genA > 0,
+        "OPT-4 prune: context A was created with a positive generation", "genA=" .. tostring(genA))
+    check(C.Get(G_A) and C.Get(G_A).state == "pending",
+        "OPT-4 setup: context A stays pending (unloaded item data)",
+        "state=" .. tostring(C.Get(G_A) and C.Get(G_A).state))
+
+    -- 2. TTL: age A by 100s (beyond both TTLs) and trigger another prune. The
+    -- stale context is evicted and its cached generation is published as
+    -- item-data-timeout. Cost pin: the prune walk checks A's generation exactly
+    -- once -- the per-context pairs() iteration the throttle will skip.
+    fakeNow = fakeNow + 100
+    local prunedBeforeB = prunedNow()
+    local callsABeforeB = callsFor(G_A)
+    local okB = S.HandleInventoryReady("INVENTORY_READY", G_B, true, "party1")
+    check(okB == true, "OPT-4 setup: HandleInventoryReady primes pending context B", tostring(okB))
+    local genB = C.Get(G_B) and C.Get(G_B).generation or nil
+    check(prunedNow() == prunedBeforeB + 1,
+        "OPT-4 prune TTL: a context aged past TTL is evicted",
+        "pruned " .. tostring(prunedBeforeB) .. " -> " .. tostring(prunedNow()))
+    local foundA = publishFor(G_A)
+    check(foundA ~= nil and foundA.reason == "item-data-timeout" and foundA.generation == genA,
+        "OPT-4 prune TTL: eviction publishes item-data-timeout for A's generation",
+        "found=" .. tostring(foundA and foundA.reason) .. "/" .. tostring(foundA and foundA.generation)
+            .. " genA=" .. tostring(genA))
+    check(callsFor(G_A) == callsABeforeB + 1,
+        "OPT-4 prune: cost pin - one generation check for the one walked stale context",
+        "delta=" .. tostring(callsFor(G_A) - callsABeforeB))
+
+    -- 3. Generation semantics: advance B's cache generation so the stored
+    -- context generation is stale while the context is still young. The prune
+    -- must evict on the generation mismatch, not on age.
+    local bumped = genB + 10
+    local okBump = C.Begin(G_B, bumped, "generation-bump")
+    check(okBump == true, "OPT-4 setup: cache generation for B advanced", tostring(okBump))
+    local prunedBeforeC = prunedNow()
+    local okC = S.HandleInventoryReady("INVENTORY_READY", G_C, true, "party2")
+    check(okC == true, "OPT-4 setup: HandleInventoryReady primes pending context C", tostring(okC))
+    check(prunedNow() == prunedBeforeC + 1,
+        "OPT-4 prune generation: a young context with a stale generation is evicted",
+        "pruned " .. tostring(prunedBeforeC) .. " -> " .. tostring(prunedNow()))
+    local foundB = publishFor(G_B)
+    check(foundB ~= nil and foundB.reason == "item-data-timeout" and foundB.generation == genB
+            and foundB.generation ~= bumped,
+        "OPT-4 prune generation: eviction publishes B's STORED generation, not the bumped one",
+        "found gen=" .. tostring(foundB and foundB.generation) .. " stored=" .. tostring(genB)
+            .. " bumped=" .. tostring(bumped))
+
+    -- 4. Fresh context survives: C was just created at the current clock with
+    -- the current generation. A subsequent prune must not evict it.
+    local prunedBeforeFresh = prunedNow()
+    local freshOK = S.HandleInventoryReady("INVENTORY_READY", G_A, true, "target")
+    check(freshOK == true, "OPT-4 setup: a fresh prune trigger succeeds", tostring(freshOK))
+    check(prunedNow() == prunedBeforeFresh,
+        "OPT-4 prune: a fresh, current-generation context is NOT evicted",
+        "pruned " .. tostring(prunedBeforeFresh) .. " -> " .. tostring(prunedNow()))
+
+    C.IsCurrentGeneration = savedIsCurrent
+    C.PublishUnavailable = savedPublish
+    REALG.GetTime = savedGetTime
+    REALG.UnitExists = savedUnitExists
+    REALG.UnitIsPlayer = savedUnitIsPlayer
+    REALG.UnitGUID = savedUnitGUID
+    REALG.GUIDIsPlayer = savedGUIDIsPlayer
+    REALG.UnitClass = savedUnitClass
+    REALG.UnitLevel = savedUnitLevel
+    REALG.GetInventoryItemID = savedGetItemID
+    REALG.GetInventoryItemLink = savedGetItemLink
+    REALG.InspectFrame.unit = savedInspectUnit
+end
+
+-- ---------------------------------------------------------------------------
 -- GearScore Server RankDB, P2P Sync & Leaderboard Browser
 -- ---------------------------------------------------------------------------
 

@@ -177,6 +177,21 @@ local function applyTooltipMaxWidth(tooltip)
 
     local leftCap = (type(maxWidth) == "number" and maxWidth > 0) and maxWidth or nil
 
+    -- Stale-cap-safe early-out. With the feature off, the whole ~20-line walk
+    -- exists only to clear caps left on pooled lines by a previous non-zero
+    -- width setting. This function always installs caps from line 1 upward, so
+    -- line 1's memo is a faithful O(1) sentinel for the entire pooled set: if
+    -- it carries no cap, no line can, and no right-line marker can be stale
+    -- either (this function never installs a cap on a right line). Reading one
+    -- cached line replaces ~20 left + ~20 right cached lookups per hover while
+    -- still running the full clear walk whenever a stale cap is present.
+    if (maxWidth == 0) then
+        local firstLine = getTooltipLeftLine(tooltip, 1)
+        if (not firstLine or not firstLine._tacoTipMaxWidth) then
+            return
+        end
+    end
+
     -- Walk a little past the current line count: the pooled lines are reused
     -- across hovers, so a line left over from a longer previous tooltip still
     -- carries the old cap and would keep the tooltip wide.
@@ -1466,14 +1481,19 @@ local function unitLineScriptMasks(guid)
     return nil
 end
 
+-- Returns (face, readableMask). readableMask is the mask just measured from a
+-- readable line; the caller threads it into the fallback font pick so that path
+-- never reads or scans the same text a second time. It stays nil on the secret
+-- and no-text paths, which therefore keep their existing bundled-locale
+-- fallback behaviour (no mask was measured from text we could not read).
 local function lineTooltipFont(basePath, line, index, tooltip)
     if (type(basePath) ~= "string" or basePath == "" or not line
             or type(line.GetText) ~= "function" or not TT.GetScriptFontPath) then
-        return basePath
+        return basePath, nil
     end
     local text = line:GetText()
     if (type(text) ~= "string") then
-        return basePath
+        return basePath, nil
     end
     local state = getTooltipState(tooltip)
     local guid = state and state.currentUnitGUID
@@ -1483,13 +1503,13 @@ local function lineTooltipFont(basePath, line, index, tooltip)
         -- here reads or compares the secret: only a cached number and a path
         -- from the addon's own table.
         local masks = unitLineScriptMasks(guid)
-        return TT.PickScriptFont(basePath, masks and masks[index] or 0)
+        return TT.PickScriptFont(basePath, masks and masks[index] or 0), nil
     end
     local mask = TT.DetectScripts(text)
     if (mask ~= 0) then
         rememberUnitLineScript(guid, index, mask)
     end
-    return TT.PickScriptFont(basePath, mask)
+    return TT.PickScriptFont(basePath, mask), mask
 end
 
 local applyTooltipFonts
@@ -1511,12 +1531,23 @@ do
         if (not line or type(wantFont) ~= "string" or wantFont == "") then
             return false
         end
+        -- wantNorm is shared by the live-GetFont check and the fallback check,
+        -- but computed lazily: most lines take the SetFont path and need neither.
+        local wantNorm
         local needsSet = (line._tacoTipFont ~= wantFont or line._tacoTipFontSize ~= lineSize)
         if (not needsSet and type(line.GetFont) == "function") then
             local okCur, curFont, curSize = pcall(line.GetFont, line)
             if (okCur and type(curFont) == "string" and curFont ~= "" and not isSecretValue(curFont)) then
-                if (normalizeFontPath(curFont) ~= normalizeFontPath(wantFont)
-                        or math.abs((tonumber(curSize) or 0) - lineSize) > 0.5) then
+                -- Exact equality short-circuits the normalized compare: equal
+                -- strings always normalize equal. This is the common case for
+                -- pooled lines and avoids two transient strings per check.
+                if (curFont ~= wantFont) then
+                    wantNorm = normalizeFontPath(wantFont)
+                    if (normalizeFontPath(curFont) ~= wantNorm) then
+                        needsSet = true
+                    end
+                end
+                if (math.abs((tonumber(curSize) or 0) - lineSize) > 0.5) then
                     needsSet = true
                 end
             end
@@ -1531,13 +1562,15 @@ do
         else
             okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize)
         end
-        if (okFont == false and type(fallbackFont) == "string" and fallbackFont ~= ""
-                and normalizeFontPath(fallbackFont) ~= normalizeFontPath(appliedFont)) then
-            appliedFont = fallbackFont
-            if (wantFlags ~= nil) then
-                okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize, wantFlags)
-            else
-                okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize)
+        if (okFont == false and type(fallbackFont) == "string" and fallbackFont ~= "") then
+            if (not wantNorm) then wantNorm = normalizeFontPath(appliedFont) end
+            if (normalizeFontPath(fallbackFont) ~= wantNorm) then
+                appliedFont = fallbackFont
+                if (wantFlags ~= nil) then
+                    okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize, wantFlags)
+                else
+                    okFont = callLabeled(label, line, "SetFont", appliedFont, lineSize)
+                end
             end
         end
         if (okFont ~= false) then
@@ -1594,19 +1627,32 @@ do
             local right = getTooltipRightLine(tooltip, i)
             local lineSize = (i == 1) and nameSize or fontSize
             local maskOverride = rememberedMasks and (rememberedMasks[i] or 0) or nil
+            -- The remembered face depends only on the index mask, so resolve it
+            -- once and share it across both columns. This path reads no text.
+            local rememberedFont = rememberedMasks and TT.PickScriptFont(fontPath, maskOverride) or nil
             if (left) then
-                local wantFont = rememberedMasks
-                    and TT.PickScriptFont(fontPath, maskOverride)
-                    or lineTooltipFont(fontPath, left, i, tooltip)
-                if (applyLineFont(left, wantFont, lineSize, maskOverride)) then
+                local wantFont, readableMask
+                if (rememberedMasks) then
+                    wantFont = rememberedFont
+                else
+                    wantFont, readableMask = lineTooltipFont(fontPath, left, i, tooltip)
+                end
+                if (applyLineFont(left, wantFont, lineSize,
+                        rememberedMasks and maskOverride or readableMask)) then
                     changed = true
                 end
             end
             if (right) then
-                local wantFont = rememberedMasks
-                    and TT.PickScriptFont(fontPath, maskOverride)
-                    or lineTooltipFont(fontPath, right, i, tooltip)
-                if (applyLineFont(right, wantFont, lineSize, maskOverride)) then
+                local wantFont, readableMask
+                if (rememberedMasks) then
+                    wantFont = rememberedFont
+                else
+                    -- Detected independently: the right column can carry a
+                    -- different script from the left on the same double line.
+                    wantFont, readableMask = lineTooltipFont(fontPath, right, i, tooltip)
+                end
+                if (applyLineFont(right, wantFont, lineSize,
+                        rememberedMasks and maskOverride or readableMask)) then
                     changed = true
                 end
             end

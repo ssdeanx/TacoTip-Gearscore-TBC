@@ -4405,16 +4405,36 @@ local function buildLiveGUIDSet(currentGuid)
     return live
 end
 
+-- Live entry count for lib.cache, maintained incrementally at every key
+-- insertion/removal so the per-inspect ceiling check below is O(1) instead of
+-- an O(N) pairs() walk over a cache that holds up to CACHE_MAX_ENTRIES (512)
+-- records. The old code recounted the whole cache on every fresh INSPECT_READY.
+--
+-- Keyed by the cache TABLE, not a bare local: a harness that swaps in a fresh
+-- lib.cache gets an O(N) recount exactly once (on its first mutation) instead
+-- of inheriting a stale count, so eviction decisions stay identical to a live
+-- pairs() count under both normal play and test table replacement.
+local cacheEntryCounts = setmetatable({}, { __mode = "k" })
+local function getCacheEntryCount()
+    local n = cacheEntryCounts[lib.cache]
+    if (type(n) ~= "number") then
+        n = 0
+        for _ in pairs(lib.cache) do n = n + 1 end
+        cacheEntryCounts[lib.cache] = n
+    end
+    return n
+end
+local function addCacheEntryCount(delta)
+    cacheEntryCounts[lib.cache] = getCacheEntryCount() + delta
+end
+
 -- Evicts non-live, non-retrying cache entries when over CACHE_MAX_ENTRIES.
 -- Prefers entries older than CACHE_EVICT_AGE (10 minutes); if a crowded city
 -- pushed the cache above CACHE_MAX_ENTRIES before 10 minutes elapsed, evicts
 -- oldest completed/non-live entries down to the cap so scans never grow
 -- unbounded or stall every frame.
 local function evictCacheEntries(currentGuid, now)
-    local count = 0
-    for _ in pairs(lib.cache) do
-        count = count + 1
-    end
+    local count = getCacheEntryCount()
     if (count <= CACHE_MAX_ENTRIES) then return end
 
     local live = buildLiveGUIDSet(currentGuid)
@@ -4440,6 +4460,7 @@ local function evictCacheEntries(currentGuid, now)
             if (count <= CACHE_MAX_ENTRIES) then break end
             lib.cache[expired[i].guid] = nil
             count = count - 1
+            addCacheEntryCount(-1)
         end
     end
     if (count > CACHE_MAX_ENTRIES and candidates) then
@@ -4448,6 +4469,7 @@ local function evictCacheEntries(currentGuid, now)
             if (count <= CACHE_MAX_ENTRIES) then break end
             lib.cache[candidates[i].guid] = nil
             count = count - 1
+            addCacheEntryCount(-1)
         end
     end
 end
@@ -4720,6 +4742,9 @@ local function cacheUnitData(unit, guid, isRetry)
     end
 
     if (not isSecretValue(guid)) then
+        -- Only a genuinely new key grows the cache; overwriting an existing
+        -- record (including every retry) must not inflate the count.
+        if (lib.cache[guid] == nil) then addCacheEntryCount(1) end
         lib.cache[guid] = data
         if (not isRetry) then
             evictCacheEntries(guid, now)
@@ -5314,6 +5339,30 @@ local function inspectDistanceSquared(unit)
     return yards and (yards * yards) or nil
 end
 
+-- Per-tick distance memo. A 40-man inspect tick asks for a unit's distance up to
+-- three times (exceedsLearnedRange in the gate chain and again inside
+-- CanInspect, plus isCloseEnoughToAsk) -- ~120 UnitDistanceSquared reads per
+-- tick. A tick runs synchronously with no yields, so the client's answer cannot
+-- change between those reads: measure once per unit token and reuse it. The
+-- memo is only consulted while a tick is active and is cleared at its start, so
+-- every other caller (OnEvent handlers, scanCandidate, DoInspect) still reads a
+-- fresh distance exactly as before. `false` is the "measured, unmeasurable"
+-- sentinel so a nil result is cached too instead of being reread.
+local tickActive = false
+local tickDistCache = {}
+local function tickedDistanceSquared(unit)
+    if (not tickActive or not unit or isSecretValue(unit)) then
+        return inspectDistanceSquared(unit)
+    end
+    local v = tickDistCache[unit]
+    if (v == nil) then
+        v = inspectDistanceSquared(unit)
+        tickDistCache[unit] = (v == nil) and false or v
+    end
+    if (v == false) then return nil end
+    return v
+end
+
 -- NotifyInspect is a request to the server. What the mirror shows about it: the
 -- generated docs declare one argument and no returns, and no Lua on any branch
 -- wraps it in a pcall -- so nothing in the mirror establishes how a refusal is
@@ -5505,7 +5554,7 @@ local function exceedsLearnedRangeImpl(unit)
     if (not lib.family or not lib.inspectRangeLimit) then return false end
     local limit = lib.inspectRangeLimit[lib.family]
     if (not limit) then return false end
-    local distSq = inspectDistanceSquared(unit)
+    local distSq = tickedDistanceSquared(unit)
     if (not distSq) then return false end
     return distSq >= (limit * limit)
 end
@@ -5941,8 +5990,17 @@ local function inspectGameMessageInfoSink(messageType, ...)
     return errorName, nil, voiceID
 end
 
+-- One-way latch for the family gate below. That gate is a constant of the
+-- loaded client -- isClassic/isTBC are fixed at load -- so once it has refused,
+-- retrying the installer from every probe can never change the answer. The
+-- OTHER refusal reasons (Detours / UIErrorsFrame not present yet) stay retryable:
+-- a client that creates them later must still get the guard. This flag is set
+-- ONLY by the family gate, never by those transient conditions.
+local suppressorFamilyUnsupported = false
+
 local function installInspectErrorSuppressor()
     if (lib.inspectSuppressorInstalled) then return true end
+    if (suppressorFamilyUnsupported) then return false end
     -- CLASSIC ERA AND TBC ANNIVERSARY -- WOW_PROJECT_CLASSIC (2), the
     -- `classicEra` family key, and the TBC Anniversary project matched by
     -- `isTBC` (the `tbc` family key).
@@ -5955,7 +6013,10 @@ local function installInspectErrorSuppressor()
     -- a refused query speaks -- lives in the engine, not in any Lua the mirror
     -- can show. If another client build shows the same refusal-as-message
     -- behaviour, this is the single condition to widen.
-    if (not (isClassic or isTBC)) then return false end
+    if (not (isClassic or isTBC)) then
+        suppressorFamilyUnsupported = true
+        return false
+    end
     if (type(Detours) ~= "table" or type(Detours.DetourHook) ~= "function") then return false end
     local errors = rawget(_G, "UIErrorsFrame")
     if (type(errors) ~= "table" or type(errors.AddMessage) ~= "function") then return false end
@@ -5992,13 +6053,16 @@ pcall(installInspectErrorSuppressor)
 -- one-argument discipline for CanInspect is enforced in one place instead of
 -- being a rule that five call sites have to remember.
 --
--- Each arms the attribution window once its engine call returns, and each retries
--- the install first: UIErrorsFrame exists on every supported client at addon-load
--- time, but a client that created it later would otherwise leave the guard off for
--- the session with nothing to say so.
+-- Each retries the install first while that is still possible, and each arms the
+-- attribution window once its engine call returns ONLY where the sink was
+-- actually installed -- on the other clients the window has no reader.
+-- UIErrorsFrame exists on every supported client at addon-load time, but a client
+-- that created it later would otherwise leave the guard off for the session
+-- with nothing to say so; transient install failures therefore stay retryable,
+-- while a family-gate refusal is latched one-way (see above).
 probeCanInspect = function(unit)
     if (not unit or isSecretValue(unit)) then return false, false end
-    if (not lib.inspectSuppressorInstalled) then
+    if (not lib.inspectSuppressorInstalled and not suppressorFamilyUnsupported) then
         pcall(installInspectErrorSuppressor)
     end
     local api = _G.CanInspect
@@ -6010,7 +6074,9 @@ probeCanInspect = function(unit)
     local ok, allowed = pcall(api, unit)
     probeDepth = probeDepth - 1
     probeUnit = prevUnit
-    armGuardWindow(unit)
+    -- The window has a reader only where the sink was actually detoured. On
+    -- the other three clients it would be a dead store on every probe.
+    if (lib.inspectSuppressorInstalled) then armGuardWindow(unit) end
     if (not ok) then return false, false end
     if (isSecretValue(allowed)) then return true, true end
     return ok, allowed
@@ -6018,7 +6084,7 @@ end
 
 probeInteractDistance = function(unit)
     if (not unit or isSecretValue(unit)) then return nil end
-    if (not lib.inspectSuppressorInstalled) then
+    if (not lib.inspectSuppressorInstalled and not suppressorFamilyUnsupported) then
         pcall(installInspectErrorSuppressor)
     end
     local api = _G.CheckInteractDistance
@@ -6030,7 +6096,7 @@ probeInteractDistance = function(unit)
     local ok, allowed = pcall(api, unit, INSPECT_INTERACT_DISTANCE_INDEX)
     probeDepth = probeDepth - 1
     probeUnit = prevUnit
-    armGuardWindow(unit)
+    if (lib.inspectSuppressorInstalled) then armGuardWindow(unit) end
     if (not ok) then return nil end
     if (isSecretValue(allowed)) then return true end
     return allowed
@@ -6038,7 +6104,7 @@ end
 
 requestNotifyInspect = function(unit)
     if (not unit or isSecretValue(unit)) then return false, nil end
-    if (not lib.inspectSuppressorInstalled) then
+    if (not lib.inspectSuppressorInstalled and not suppressorFamilyUnsupported) then
         pcall(installInspectErrorSuppressor)
     end
     local api = _G.NotifyInspect
@@ -6054,7 +6120,7 @@ requestNotifyInspect = function(unit)
     local ok, err = pcall(api, unit)
     probeDepth = probeDepth - 1
     probeUnit = prevUnit
-    armGuardWindow(unit)
+    if (lib.inspectSuppressorInstalled) then armGuardWindow(unit) end
     if (not ok) then
         pendingRefusal = nil
     end
@@ -6074,7 +6140,7 @@ end
 -- to lib:CanInspect and the real decision. This can only remove work -- it can
 -- never approve a request that lib:CanInspect would have refused.
 isCloseEnoughToAsk = function(unit)
-    local distSq = inspectDistanceSquared(unit)
+    local distSq = tickedDistanceSquared(unit)
     if (not distSq) then return true end
     return distSq <= (NEARBY_ASK_YARDS * NEARBY_ASK_YARDS)
 end
@@ -6178,7 +6244,7 @@ local function getGroupUnitRolePriority(unit)
     return 4
 end
 
-inspectQueueTick = function()
+local function inspectQueueTickImpl()
     if (type(InCombatLockdown) == "function" and InCombatLockdown()) then return end
     if (type(UnitExists) == "function" and (not UnitExists("player") or not UnitIsConnected("player") or UnitIsDeadOrGhost("player"))) then
         return
@@ -6313,6 +6379,20 @@ inspectQueueTick = function()
             end
         end
     end
+end
+
+-- Arm the per-tick distance memo for exactly one synchronous tick. The body's
+-- early returns are ordinary returns from inspectQueueTickImpl, so the flag is
+-- always cleared here: no distance read outside a tick can ever see a cached
+-- value, and each tick starts with an empty memo.
+inspectQueueTick = function()
+    tickActive = true
+    tickDistCache = {}
+    -- pcall guarantees the flag is cleared even if a client mock raises mid-tick;
+    -- a stuck flag would make later non-tick callers read a stale distance.
+    local ok, err = pcall(inspectQueueTickImpl)
+    tickActive = false
+    if (not ok) then error(err, 0) end
 end
 
 -- Proactive proximity scan: discover players in view via nameplates and enqueue
@@ -6806,6 +6886,10 @@ function lib:RestoreRecentCache(recentTable, maxAgeSeconds)
                             end
                         end
                     end
+                    -- A restored record only grows the cache when it occupies
+                    -- a key that was not already present; replacing an older
+                    -- or incomplete live entry leaves the count unchanged.
+                    if (existing == nil) then addCacheEntryCount(1) end
                     lib.cache[guid] = {
                         items = cleanItems,
                         _itemsRev = clonePlainNum(rec.ir) or 1,

@@ -3881,6 +3881,189 @@ do
 end
 
 --------------------------------------------------------------------------
+-- Team t1 optimization characterization pins: lock the CURRENT behaviour of
+-- the three main.lua sites queued for the t9 backlog optimizations. Every pin
+-- here is GREEN on the committed baseline 67efbb8; a pass is the "before" half
+-- of a before/after gate, NOT a pre-existing-defect hunt. The cost pins assert
+-- zero/short call counts the baseline already meets, so a naive optimization
+-- that drops the protective work fails them.
+--------------------------------------------------------------------------
+do
+    local bundled = TT.bundledTooltipFonts or {}
+    local savedTooltipFont = C.tooltip_font
+    local savedResolved = TT.GetResolvedTooltipFont
+    local savedLocaleFont = TT.GetLocaleFontPath
+    local savedTipStyle = C.tip_style
+    local savedMaxWidth = C.tooltip_max_width
+
+    -- Deterministic base face: the roman face (coverage=0). A Cyrillic line must
+    -- switch to the bundled Cyrillic face; a Latin line must stay on the roman
+    -- face. Clearing both resolvers removes the cached-config wildcard.
+    TT["GetResolvedTooltipFont"] = nil
+    TT["GetLocaleFontPath"] = nil
+    C.tooltip_font = "Fonts\\FRIZQT__.TTF"
+
+    -- (1a) applyTooltipFonts: a Cyrillic LEFT line and a Latin RIGHT line on the
+    -- same double line get DIFFERENT faces. A future "left and right share one
+    -- script" hoist would collapse them to a single face and fail this pin.
+    GT:ClearLines()
+    GT:AddDoubleLine("Иван", "PlayerName")
+    local cylLeft = GT:GetLeftLine(1)
+    local latRight = GT:GetRightLine(1)
+    cylLeft.__font = "Fonts\\FRIZQT__.TTF"
+    cylLeft._tacoTipFont = nil
+    cylLeft._tacoTipFontSize = nil
+    latRight.__font = "Fonts\\FRIZQT__.TTF"
+    latRight._tacoTipFont = nil
+    latRight._tacoTipFontSize = nil
+    TT.ApplyTooltipFonts(GT)
+    check("OPT-1 applyTooltipFonts: Cyrillic left line gets the bundled Cyrillic face",
+        cylLeft.__font == bundled.ruRU,
+        "left=" .. STD.tostring(cylLeft.__font))
+    check("OPT-1 applyTooltipFonts: Latin right line keeps the roman face (differs from left)",
+        latRight.__font == "Fonts\\FRIZQT__.TTF" and latRight.__font ~= cylLeft.__font,
+        "right=" .. STD.tostring(latRight.__font) .. " left=" .. STD.tostring(cylLeft.__font))
+
+    -- (1b) applyTooltipFonts(rememberedMasks): reads NO line text. A GetText
+    -- that raises is the exact guard for a possibly-secret line; the mask path
+    -- must pick the face from the cached mask only. Cost pin: zero DetectScripts
+    -- scans on the restricted path.
+    GT:ClearLines()
+    GT:AddDoubleLine("Иван", "PlayerName")
+    local maskedLeft = GT:GetLeftLine(1)
+    local maskedRight = GT:GetRightLine(1)
+    local textReads = 0
+    local function forbidTextRead(line)
+        line.__savedGetText = line.GetText
+        line.GetText = function()
+            textReads = textReads + 1
+            error("OPT-1: GetText called on a remembered/possibly-secret line")
+        end
+    end
+    forbidTextRead(maskedLeft)
+    forbidTextRead(maskedRight)
+    local savedDetect = TT.DetectScripts
+    local detectCalls = 0
+    TT["DetectScripts"] = function(t)
+        detectCalls = detectCalls + 1
+        return savedDetect(t)
+    end
+    local okMasked = STD.pcall(TT.ApplyTooltipFonts, GT, { [1] = TT.SCRIPT_MASKS.CYRILLIC })
+    TT["DetectScripts"] = savedDetect
+    maskedLeft.GetText = maskedLeft.__savedGetText
+    maskedRight.GetText = maskedRight.__savedGetText
+    check("OPT-1 applyTooltipFonts(rememberedMasks): reads no line text",
+        okMasked and textReads == 0,
+        "ok=" .. STD.tostring(okMasked) .. " reads=" .. STD.tostring(textReads))
+    check("OPT-1 applyTooltipFonts(rememberedMasks): cost pin - zero DetectScripts scans",
+        detectCalls == 0, "scans=" .. STD.tostring(detectCalls))
+    check("OPT-1 applyTooltipFonts(rememberedMasks): still applies the masked face",
+        maskedLeft.__font == bundled.ruRU, "left=" .. STD.tostring(maskedLeft.__font))
+
+    -- OPT-1 cost pin (t3): the non-remembered path must measure each readable
+    -- line's script ONCE. The baseline measured it twice -- lineTooltipFont
+    -- detected the mask, then bundledFallbackForLine re-read the same text and
+    -- detected it again -- so threading the already-measured mask halves the
+    -- scans. Three readable text lines are set up below (a double line and a
+    -- single line), so this expects three scans, never six. This does not assume
+    -- the two columns share a script: the Cyrillic-left/Latin-right pin above
+    -- proves they are detected independently.
+    GT:ClearLines()
+    GT:AddDoubleLine("Иван", "PlayerName")
+    GT:AddLine("Second row")
+    local savedDetectPlain = TT.DetectScripts
+    local plainDetectCalls = 0
+    TT["DetectScripts"] = function(t)
+        plainDetectCalls = plainDetectCalls + 1
+        return savedDetectPlain(t)
+    end
+    local okPlain = STD.pcall(TT.ApplyTooltipFonts, GT)
+    TT["DetectScripts"] = savedDetectPlain
+    check("OPT-1 applyTooltipFonts(non-remembered): cost pin - one DetectScripts scan per readable line",
+        okPlain and plainDetectCalls == 3,
+        "ok=" .. STD.tostring(okPlain) .. " scans=" .. STD.tostring(plainDetectCalls))
+
+    -- (2) applyTooltipMaxWidth: a stale _tacoTipMaxWidth on a pooled left line
+    -- is CLEARED when maxWidth==0. This is the key regression guard for the
+    -- planned early-out -- skipping the walk when the option is off would leave
+    -- the cap and keep the tooltip wide. A right-line marker is also cleared.
+    C.tooltip_max_width = 0
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("<Testguild> Member")
+    GT:AddLine("Level 60 Warrior")
+    GT:AddDoubleLine("Stale left", "Stale right")
+    local staleLeft = GT:GetLeftLine(1)
+    local staleRight = GT:GetRightLine(4)
+    staleLeft._tacoTipMaxWidth = 320
+    staleRight._tacoTipMaxWidth = 320
+    local clearSetWidthCalls = 0
+    local savedSetWidth = staleLeft.SetWidth
+    staleLeft.SetWidth = function(_, w)
+        clearSetWidthCalls = clearSetWidthCalls + 1
+        return savedSetWidth(staleLeft, w)
+    end
+    drive("player")
+    staleLeft.SetWidth = savedSetWidth
+    check("OPT-2 applyTooltipMaxWidth: stale left cap cleared when maxWidth==0",
+        staleLeft._tacoTipMaxWidth == nil,
+        "memo=" .. STD.tostring(staleLeft._tacoTipMaxWidth))
+    check("OPT-2 applyTooltipMaxWidth: stale right marker cleared when maxWidth==0",
+        staleRight._tacoTipMaxWidth == nil,
+        "memo=" .. STD.tostring(staleRight._tacoTipMaxWidth))
+    check("OPT-2 applyTooltipMaxWidth: cost pin - one SetWidth(0) clears the stale cap",
+        clearSetWidthCalls == 1, "calls=" .. STD.tostring(clearSetWidthCalls))
+    -- Second render with no stale cap: setting width 0 on every line would be a
+    -- regression, so the walk must issue zero SetWidth calls here.
+    local idleSetWidthCalls = 0
+    staleLeft.SetWidth = function(_, w)
+        idleSetWidthCalls = idleSetWidthCalls + 1
+        return savedSetWidth(staleLeft, w)
+    end
+    drive("player")
+    staleLeft.SetWidth = savedSetWidth
+    check("OPT-2 applyTooltipMaxWidth: cost pin - zero SetWidth calls when already clean",
+        idleSetWidthCalls == 0, "calls=" .. STD.tostring(idleSetWidthCalls))
+
+    -- (3) leftover-line clearing: in wide style, pooled lines beyond the last
+    -- written text line are blanked (no text, hidden, and no wide anchor marker)
+    -- on BOTH the left and right FontStrings. An early-out that skips the clear
+    -- would leak the previous render's text/anchor into the next hover.
+    C.tip_style = 1
+    GT:ClearLines()
+    GT:AddLine("Testplayer")
+    GT:AddLine("<Testguild> Member")
+    GT:AddLine("Level 60 Warrior")
+    GT:AddDoubleLine("Stale left 4", "Stale right 4")
+    GT:AddDoubleLine("Stale left 5", "Stale right 5")
+    local poolL4, poolL5 = GT:GetLeftLine(4), GT:GetLeftLine(5)
+    local poolR4, poolR5 = GT:GetRightLine(4), GT:GetRightLine(5)
+    poolL4._tacoTipWideAnchor = "stale-anchor-4"
+    poolL5._tacoTipWideAnchor = "stale-anchor-5"
+    drive("player")
+    check("OPT-3 leftover clearing: blanked left lines have no text",
+        poolL4:GetText() == nil and poolL5:GetText() == nil,
+        "l4=" .. STD.tostring(poolL4:GetText()) .. " l5=" .. STD.tostring(poolL5:GetText()))
+    check("OPT-3 leftover clearing: blanked left lines are hidden",
+        poolL4:IsShown() == false and poolL5:IsShown() == false,
+        "l4=" .. STD.tostring(poolL4:IsShown()) .. " l5=" .. STD.tostring(poolL5:IsShown()))
+    check("OPT-3 leftover clearing: blanked left lines lose their wide anchor marker",
+        poolL4._tacoTipWideAnchor == nil and poolL5._tacoTipWideAnchor == nil,
+        "l4=" .. STD.tostring(poolL4._tacoTipWideAnchor) .. " l5=" .. STD.tostring(poolL5._tacoTipWideAnchor))
+    check("OPT-3 leftover clearing: blanked right lines have no text and are hidden",
+        poolR4:GetText() == nil and poolR5:GetText() == nil
+            and poolR4:IsShown() == false and poolR5:IsShown() == false,
+        "r4=" .. STD.tostring(poolR4:GetText()) .. "/" .. STD.tostring(poolR4:IsShown())
+            .. " r5=" .. STD.tostring(poolR5:GetText()) .. "/" .. STD.tostring(poolR5:IsShown()))
+
+    C.tooltip_font = savedTooltipFont
+    TT["GetResolvedTooltipFont"] = savedResolved
+    TT["GetLocaleFontPath"] = savedLocaleFont
+    C.tip_style = savedTipStyle
+    C.tooltip_max_width = savedMaxWidth
+end
+
+--------------------------------------------------------------------------
 -- Report.
 --------------------------------------------------------------------------
 local fails = 0
