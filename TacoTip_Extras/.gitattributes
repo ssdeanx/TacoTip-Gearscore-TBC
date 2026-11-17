@@ -26,6 +26,9 @@
 # The attributes file itself -- packaging metadata, not runtime.
 /.gitattributes export-ignore
 
+# Documentation/memory notes for workshop use, not runtime.
+/MEMORY.md export-ignore
+
 # The offline harness. Not shipped, opt-in, and it needs a game-free Lua.
 /Tests/** export-ignore
 

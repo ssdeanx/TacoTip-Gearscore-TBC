@@ -1103,11 +1103,11 @@ renderRemote = function(snapshot)
     return true
 end
 
--- Align inspect panel pending expiry closely with LibForeverInspector's
--- INSPECT_PENDING_TIMEOUT (1.2s Forever/Retail, 3.0s Classic) so stalled city
--- item lookups do not block the UI for 8s.
-local INSPECT_PENDING_TIMEOUT_MODERN = 3
-local INSPECT_PENDING_TIMEOUT_CLASSIC = 4
+-- Align inspect panel pending expiry with Scanner's REMOTE_CONTEXT_TTL
+-- (5s Modern, 8s Classic) + bounded item retry window so pending tooltips do not
+-- prematurely flash "unavailable" while item data is still arriving.
+local INSPECT_PENDING_TIMEOUT_MODERN = 6
+local INSPECT_PENDING_TIMEOUT_CLASSIC = 8
 
 local function inspectPendingTimeout()
     if type(Core) == "table" then

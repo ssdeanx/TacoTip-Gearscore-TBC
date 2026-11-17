@@ -700,6 +700,20 @@ end
 -- payload whose first character is not R/Q/S/T/G/D is ignored by
 -- handlePayload. It never evicts queued real traffic, and it is skipped
 -- while a queue cap is already full.
+local onQueueUpdate
+
+local function disarmQueueDriver()
+    if syncFrame and type(syncFrame.SetScript) == "function" then
+        syncFrame:SetScript("OnUpdate", nil)
+    end
+end
+
+local function armQueueDriver()
+    if syncFrame and #sendQueue > 0 and type(syncFrame.SetScript) == "function" then
+        syncFrame:SetScript("OnUpdate", onQueueUpdate)
+    end
+end
+
 local function enqueueChannelProbe()
     probeCounter = probeCounter + 1
     countOutcome("probes")
@@ -710,6 +724,7 @@ local function enqueueChannelProbe()
         target = tostring(channel.id),
         isProbe = true,
     }
+    armQueueDriver()
 end
 
 local function armChannelProbe()
@@ -751,6 +766,20 @@ local function processQueue()
             -- A real send also learns the channel is dead; react like a probe.
             markChannelDead(now)
         end
+    end
+
+    if #sendQueue == 0 then
+        disarmQueueDriver()
+    else
+        armQueueDriver()
+    end
+end
+
+onQueueUpdate = function()
+    if #sendQueue > 0 then
+        processQueue()
+    else
+        disarmQueueDriver()
     end
 end
 
@@ -911,8 +940,80 @@ end
 
 local INSPECT_BROADCAST_DEDUP_SECONDS = 30
 local INSPECT_BROADCAST_DEDUP_MAX = 500
+local LIVE_REFRESH_COALESCE_SECONDS = 0.20
 local recentInspectBroadcasts = {}
 local recentInspectBroadcastCount = 0
+local liveRefreshPending = false
+
+local function refreshAllLeaderboardUI()
+    local browser = namespace.RankBrowser
+    if type(browser) == "table" and type(browser.UpdateUI) == "function" then
+        pcall(browser.UpdateUI)
+    end
+    local dashRefresh = rawget(_G, "TacoTip_RefreshExtrasLeaderboardUI")
+    if type(dashRefresh) == "function" then
+        pcall(dashRefresh)
+    end
+end
+
+local function hasVisibleLeaderboardUI()
+    local browser = namespace.RankBrowser
+    if type(browser) == "table"
+        and type(browser.IsShown) == "function"
+        and browser.IsShown() then
+        return true
+    end
+    -- When /tt dashboard is closed, refreshLeaderboardData() returns immediately
+    -- without rebuilding rows, but skip even scheduling a timer if no browser
+    -- and no registered dashboard refresh exists.
+    if type(rawget(_G, "TacoTip_RefreshExtrasLeaderboardUI")) == "function" then
+        return true
+    end
+    return false
+end
+
+local function scheduleLiveLeaderboardRefresh()
+    if not hasVisibleLeaderboardUI() then
+        return
+    end
+    local cTimer = rawget(_G, "C_Timer")
+    if type(cTimer) == "table" and type(cTimer.After) == "function" then
+        if liveRefreshPending then
+            return
+        end
+        liveRefreshPending = true
+        pcall(cTimer.After, LIVE_REFRESH_COALESCE_SECONDS, function()
+            liveRefreshPending = false
+            refreshAllLeaderboardUI()
+        end)
+    else
+        refreshAllLeaderboardUI()
+    end
+end
+
+local function pruneRecentInspectBroadcasts(now)
+    for k, entry in pairs(recentInspectBroadcasts) do
+        if type(entry) ~= "table" or (now > 0 and (now - (entry.at or 0)) >= INSPECT_BROADCAST_DEDUP_SECONDS) then
+            recentInspectBroadcasts[k] = nil
+            recentInspectBroadcastCount = math.max(recentInspectBroadcastCount - 1, 0)
+        end
+    end
+    if recentInspectBroadcastCount >= INSPECT_BROADCAST_DEDUP_MAX then
+        local ordered = {}
+        for k, entry in pairs(recentInspectBroadcasts) do
+            ordered[#ordered + 1] = { key = k, at = (type(entry) == "table" and entry.at) or 0 }
+        end
+        table.sort(ordered, function(a, b) return a.at < b.at end)
+        local target = math.floor(INSPECT_BROADCAST_DEDUP_MAX / 2)
+        for i = 1, #ordered do
+            if recentInspectBroadcastCount <= target then
+                break
+            end
+            recentInspectBroadcasts[ordered[i].key] = nil
+            recentInspectBroadcastCount = math.max(recentInspectBroadcastCount - 1, 0)
+        end
+    end
+end
 
 function RankSync.QueueInspectRecord(record)
     if type(record) ~= "table" then return end
@@ -925,14 +1026,18 @@ function RankSync.QueueInspectRecord(record)
     if namespace.RankDB and type(namespace.RankDB.StoreRecord) == "function" then
         local ok, status = namespace.RankDB.StoreRecord(record)
         if ok and status ~= "up-to-date" then
+            scheduleLiveLeaderboardRefresh()
             local guid = type(record.guid) == "string" and not Core.IsSecretValue(record.guid) and record.guid or nil
             if guid then
                 local now = type(_G.GetTime) == "function" and _G.GetTime() or 0
-                local sig = string.format("%s|%s|%s|%s|%s|%s|%s|%s",
+                local sig = string.format("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
                     tostring(math.floor((tonumber(record.gs) or 0) + 0.5)),
                     tostring(math.floor(((tonumber(record.ilvl) or 0) * 10) + 0.5)),
+                    tostring(record.name or ""),
+                    tostring(record.faction or ""),
                     tostring(tonumber(record.classID) or 0),
                     tostring(tonumber(record.specID) or 0),
+                    tostring(record.specName or ""),
                     tostring(record.guild or ""),
                     tostring(tonumber(record.level) or 0),
                     tostring(tonumber(record.pvpRank) or 0),
@@ -943,8 +1048,7 @@ function RankSync.QueueInspectRecord(record)
                 end
                 if not prev then
                     if recentInspectBroadcastCount >= INSPECT_BROADCAST_DEDUP_MAX then
-                        recentInspectBroadcasts = {}
-                        recentInspectBroadcastCount = 0
+                        pruneRecentInspectBroadcasts(now)
                     end
                     recentInspectBroadcastCount = recentInspectBroadcastCount + 1
                 end
@@ -1687,10 +1791,8 @@ local function ingestRecords(payload)
         recordSessionReceive(validSeen, stored)
     end
     if stored > 0 then
+        refreshAllLeaderboardUI()
         local browser = namespace.RankBrowser
-        if browser and type(browser.UpdateUI) == "function" then
-            pcall(browser.UpdateUI)
-        end
         if browser and type(browser.AnnounceSyncReceived) == "function" then
             pcall(browser.AnnounceSyncReceived, stored)
         end
@@ -1718,10 +1820,8 @@ local function handlePayload(payload, chatType, sender)
             local storedOK, storeReason = namespace.RankDB.StoreRecord(rec)
             recordSessionReceive(1, storedOK and 1 or 0)
             if storedOK then
+                refreshAllLeaderboardUI()
                 local browser = namespace.RankBrowser
-                if browser and type(browser.UpdateUI) == "function" then
-                    pcall(browser.UpdateUI)
-                end
                 if browser and type(browser.AnnounceSyncReceived) == "function" then
                     pcall(browser.AnnounceSyncReceived, 1)
                 end
@@ -2046,6 +2146,8 @@ end
 -- (chat type), arg4 sender. The pre-Stage-1 handler read only arg1/arg2 -- the
 -- reason every answer could be channel-only -- so arg3 and arg4 are threaded
 -- into the payload dispatch now.
+local lastKnownGroupSize = 0
+
 local function onEvent(_, event, arg1, arg2, arg3, arg4)
     if event == "CHAT_MSG_ADDON" then
         if arg1 == PREFIX and type(arg2) == "string" then
@@ -2059,6 +2161,25 @@ local function onEvent(_, event, arg1, arg2, arg3, arg4)
         removeSyncChannelIfMade()
         suppressChannelFromChat(CHANNEL_NAME)
         syncNow()
+    elseif event == "GROUP_ROSTER_UPDATE" then
+        local inGroup = type(_G.IsInGroup) == "function" and _G.IsInGroup()
+        local groupCount = 0
+        if inGroup and type(_G.GetNumGroupMembers) == "function" then
+            local okCount, count = pcall(_G.GetNumGroupMembers)
+            if okCount and type(count) == "number" then
+                groupCount = count
+            end
+        elseif inGroup then
+            groupCount = 1
+        end
+        if groupCount > lastKnownGroupSize then
+            syncNow()
+        end
+        lastKnownGroupSize = groupCount
+    elseif event == "PLAYER_GUILD_UPDATE" then
+        if type(_G.IsInGuild) == "function" and _G.IsInGuild() then
+            syncNow()
+        end
     elseif event == "CHAT_MSG_CHANNEL_NOTICE" or event == "CHANNEL_UI_UPDATE" then
         removeSyncChannelIfMade()
         suppressChannelFromChat(CHANNEL_NAME)
@@ -2070,14 +2191,16 @@ if syncFrame then
     syncFrame:RegisterEvent("PLAYER_LOGIN")
     syncFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     syncFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    syncFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    pcall(function()
+        syncFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
+    end)
     syncFrame:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
     syncFrame:RegisterEvent("CHANNEL_UI_UPDATE")
     syncFrame:SetScript("OnEvent", onEvent)
-    syncFrame:SetScript("OnUpdate", function()
-        if #sendQueue > 0 then
-            processQueue()
-        end
-    end)
+    if #sendQueue > 0 then
+        armQueueDriver()
+    end
 end
 
 local function syncNowGlobal(manual)

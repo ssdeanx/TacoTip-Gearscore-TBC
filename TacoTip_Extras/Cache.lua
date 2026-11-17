@@ -120,8 +120,19 @@ local listenerErrors = 0
 local lastListenerError = nil
 
 local function notify(guid, snapshot)
+    local lastListener
     for listener in pairs(listeners) do
-        local ok, err = pcall(listener, guid, clone(snapshot))
+        if lastListener ~= nil then
+            local ok, err = pcall(lastListener, guid, clone(snapshot))
+            if not ok then
+                listenerErrors = listenerErrors + 1
+                lastListenerError = tostring(err)
+            end
+        end
+        lastListener = listener
+    end
+    if lastListener ~= nil then
+        local ok, err = pcall(lastListener, guid, snapshot)
         if not ok then
             listenerErrors = listenerErrors + 1
             lastListenerError = tostring(err)
@@ -134,20 +145,32 @@ local function publishState(guid, entry)
     notify(guid, makeSnapshot(entry))
 end
 
+local function findOldestEvictionCandidate(pendingOnly)
+    local evictedGUID
+    local evictedOrder
+    for guid, entry in pairs(entries) do
+        if pendingOnly or entry.state ~= "pending" then
+            if evictedOrder == nil
+                or entry.accessOrder < evictedOrder
+                or (entry.accessOrder == evictedOrder and guid < evictedGUID) then
+                evictedGUID = guid
+                evictedOrder = entry.accessOrder
+            end
+        end
+    end
+    return evictedGUID
+end
+
 local function evictIfNeeded()
     if entryCount <= MAX_ENTRIES then
         return nil
     end
 
-    local evictedGUID
-    local evictedOrder
-    for guid, entry in pairs(entries) do
-        if evictedOrder == nil
-            or entry.accessOrder < evictedOrder
-            or (entry.accessOrder == evictedOrder and guid < evictedGUID) then
-            evictedGUID = guid
-            evictedOrder = entry.accessOrder
-        end
+    -- Never evict an active "pending" inspection ahead of idle/complete/stale/unavailable
+    -- entries when dense hubs churn past MAX_ENTRIES.
+    local evictedGUID = findOldestEvictionCandidate(false)
+    if not evictedGUID then
+        evictedGUID = findOldestEvictionCandidate(true)
     end
 
     if evictedGUID then
@@ -292,6 +315,19 @@ function Cache.Get(guid)
     expireIfNeeded(guid, entry)
     touch(entry)
     return makeSnapshot(entry)
+end
+
+-- Zero-allocation metadata lookup for hot per-frame change gates (Tooltips.lua
+-- OnUpdate poll on Mainline) and SeedFromInspectorCache scans. Returns scalars:
+-- state, generation, revisionID, reason (all nil if missing).
+function Cache.GetMeta(guid)
+    local entry = entries[guid]
+    if not entry then
+        return nil, nil, nil, nil
+    end
+    expireIfNeeded(guid, entry)
+    local revisionID = entry.state == "complete" and entry.revisionID or nil
+    return entry.state, entry.generation or 0, revisionID, entry.reason
 end
 
 function Cache.GetFresh(guid)

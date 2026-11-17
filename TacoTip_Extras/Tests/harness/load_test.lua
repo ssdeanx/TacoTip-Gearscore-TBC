@@ -1795,8 +1795,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.3.1",
-    "TOC ## Version is 1.3.1", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.3.2",
+    "TOC ## Version is 1.3.2", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -10869,6 +10869,124 @@ do
         REALG.GetPlayerInfoByGUID = savedGetPlayerInfoByGUID
     end
     runV130Pins()
+
+    -- =======================================================================
+    -- v1.3.2 upgrades: Cache pending protection, RetryUnavailableRemote
+    -- breaking 300s item-data-timeout deadlock, GET_ITEM_INFO_RECEIVED hook
+    -- =======================================================================
+    local runV132Pins = function()
+        out(("\n-- v1.3.2 pending eviction guard & timeout recovery --\n"))
+        local CacheV132 = namespace and namespace.Cache
+        local ScannerV132 = namespace and namespace.Scanner
+        if not (CacheV132 and ScannerV132) then
+            return
+        end
+
+        local pendingGuid = "Player-1320-0000P001"
+        CacheV132.Begin(pendingGuid, 9001, "v132-pending-guard")
+        for idx = 1, 130 do
+            local filler = ("Player-1320-%08X"):format(idx)
+            CacheV132.Begin(filler, 9100 + idx, "v132-filler")
+            CacheV132.PublishComplete(filler, 9100 + idx,
+                { classToken = { status = "complete", value = "MAGE" }, level = { status = "complete", value = 70 }, slots = {} },
+                { currentGS = 1000, unenhancedGS = 1000, averageItemLevel = 100, metrics = {}, warnings = {} })
+        end
+        local pendingAfterOverflow = CacheV132.Get(pendingGuid)
+        check(type(pendingAfterOverflow) == "table" and pendingAfterOverflow.state == "pending",
+            "v1.3.2 Cache eviction skips active 'pending' entry ahead of completed churn",
+            "state=" .. tostring(pendingAfterOverflow and pendingAfterOverflow.state))
+
+        local insp132 = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+        if insp132 and type(insp132.cache) == "table" then
+            local savedGetUnitData = insp132.GetUnitData
+            local savedGetInvID = REALG.GetInventoryItemID
+            local savedGetInvLink = REALG.GetInventoryItemLink
+            local savedGetItemInfo = REALG.C_Item and REALG.C_Item.GetItemInfo or REALG.GetItemInfo
+            local savedGetDetailedIlvl = REALG.C_Item and REALG.C_Item.GetDetailedItemLevelInfo or REALG.GetDetailedItemLevelInfo
+            local savedGetPlayerInfo = REALG.GetPlayerInfoByGUID
+            local savedUnitExists = REALG.UnitExists
+            local savedUnitIsPlayer = REALG.UnitIsPlayer
+            local savedUnitGUID = REALG.UnitGUID
+
+            local recGuid = "Player-1320-0000R001"
+            local RETRY_LINK = "|cffa335ee|Hitem:28773::::::::70|h[Gorehowl]|h|r"
+            insp132.cache[recGuid] = {
+                items = { [1] = RETRY_LINK, [16] = RETRY_LINK },
+                _itemsRev = 2,
+                time = 950,
+                savedAt = 2000550,
+                name = "Recovered",
+                class = "WARRIOR",
+                level = 70,
+                faction = "Alliance",
+            }
+            insp132.GetUnitData = function(_, uOrG)
+                return insp132.cache[uOrG]
+            end
+            REALG.GetInventoryItemID = function() return nil end
+            REALG.GetInventoryItemLink = function() return nil end
+            REALG.GetPlayerInfoByGUID = function(g)
+                if g == recGuid then return "WARRIOR", "WARRIOR", nil, nil, nil, "Recovered" end
+            end
+            if REALG.C_Item then
+                REALG.C_Item.GetItemInfo = function() return "Gorehowl", RETRY_LINK, 4, 115, 70 end
+                REALG.C_Item.GetDetailedItemLevelInfo = function() return 115 end
+            end
+
+            CacheV132.Begin(recGuid, 9500, "v132-timeout-seed")
+            CacheV132.PublishUnavailable(recGuid, 9500, "item-data-timeout")
+            local retried = type(ScannerV132.RetryUnavailableRemote) == "function"
+                and ScannerV132.RetryUnavailableRemote(recGuid, recGuid)
+            local recovered = CacheV132.Get(recGuid)
+            local throttledSecond = ScannerV132.RetryUnavailableRemote(recGuid, recGuid)
+            check(retried == true and type(recovered) == "table" and recovered.state == "complete",
+                "v1.3.2 Scanner.RetryUnavailableRemote recovers from 'item-data-timeout' using inspector cache",
+                ("retried=%s state=%s"):format(tostring(retried), tostring(recovered and recovered.state)))
+            check(throttledSecond == false,
+                "v1.3.2 Scanner.RetryUnavailableRemote enforces per-GUID cooldown against hover flood",
+                "second=" .. tostring(throttledSecond))
+
+            -- TALENTS_READY automatically enriches existing RankDB row spec without gear rescan
+            local RankDBV132 = namespace.RankDB
+            local recBeforeSpec = RankDBV132 and RankDBV132.GetRecord(recGuid)
+            insp132.cache[recGuid].specName = "Arms"
+            insp132.cache[recGuid].specID = 71
+            insp132.cache[recGuid].guild = "Ironforge"
+            local talentsHandled = type(ScannerV132.HandleTalentsReady) == "function"
+                and ScannerV132.HandleTalentsReady("TALENTS_READY", recGuid, recGuid)
+            local recAfterSpec = RankDBV132 and RankDBV132.GetRecord(recGuid)
+            check(type(recBeforeSpec) == "table" and talentsHandled == true
+                and type(recAfterSpec) == "table" and recAfterSpec.specName == "Arms"
+                and recAfterSpec.specID == 71 and recAfterSpec.guild == "Ironforge",
+                "v1.3.2 Scanner.HandleTalentsReady updates RankDB spec/guild metadata automatically",
+                ("handled=%s spec=%s guild=%s"):format(tostring(talentsHandled),
+                    tostring(recAfterSpec and recAfterSpec.specName), tostring(recAfterSpec and recAfterSpec.guild)))
+
+            check(type(namespace.RankBrowser and namespace.RankBrowser.IsShown) == "function",
+                "v1.3.2 RankBrowser.IsShown helper is exposed for debounced live leaderboard refreshes",
+                "type=" .. tostring(type(namespace.RankBrowser and namespace.RankBrowser.IsShown)))
+
+            local metaState, metaGen, metaRevID = CacheV132.GetMeta(recGuid)
+            check(metaState == "complete" and type(metaGen) == "number" and type(metaRevID) == "number",
+                "v1.3.2 Cache.GetMeta exposes zero-allocation scalar metadata for hover/seed gates",
+                ("state=%s gen=%s rev=%s"):format(tostring(metaState), tostring(metaGen), tostring(metaRevID)))
+
+            insp132.cache[recGuid] = nil
+            insp132.GetUnitData = savedGetUnitData
+            REALG.GetInventoryItemID = savedGetInvID
+            REALG.GetInventoryItemLink = savedGetInvLink
+            if REALG.C_Item then
+                REALG.C_Item.GetItemInfo = savedGetItemInfo
+                REALG.C_Item.GetDetailedItemLevelInfo = savedGetDetailedIlvl
+            end
+            REALG.GetPlayerInfoByGUID = savedGetPlayerInfo
+            REALG.UnitExists = savedUnitExists
+            REALG.UnitIsPlayer = savedUnitIsPlayer
+            REALG.UnitGUID = savedUnitGUID
+        end
+    end
+    runV132Pins()
 end
 
 out(("\n-------------------------------------------------------------\n"))

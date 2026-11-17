@@ -375,7 +375,7 @@ local sourceState = {
     result = nil,
 }
 
-local function readSource(guid)
+local function readSourceMeta(guid, unit)
     if isLocalGUID(guid) then
         local entry = Scanner.GetCurrent()
         if type(entry) ~= "table" then
@@ -399,6 +399,28 @@ local function readSource(guid)
         return sourceState
     end
 
+    if type(Cache.GetMeta) == "function" then
+        local state, gen, revID, reason = Cache.GetMeta(guid)
+        if state == "unavailable"
+            and type(Scanner.RetryUnavailableRemote) == "function" then
+            if reason == "item-data-timeout"
+                or reason == "item-data-load-failed"
+                or reason == "capture-failed"
+                or reason == "remote-identity-changed"
+                or reason == "cache-entry-evicted" then
+                Scanner.RetryUnavailableRemote(guid, unit)
+                state, gen, revID = Cache.GetMeta(guid)
+            end
+        end
+        sourceState.source = "remote"
+        sourceState.state = state or "unavailable"
+        sourceState.generation = gen or 0
+        sourceState.revisionID = (state == "complete") and revID or nil
+        sourceState.revision = nil
+        sourceState.result = nil
+        return sourceState
+    end
+
     local entry = Cache.Get(guid)
     if type(entry) ~= "table" then
         sourceState.source = "remote"
@@ -419,6 +441,28 @@ local function readSource(guid)
     sourceState.revision = complete and entry.revision or nil
     sourceState.result = complete and entry.result or nil
     return sourceState
+end
+
+local function readSource(guid, unit)
+    local meta = readSourceMeta(guid, unit)
+    if meta.source == "remote" and meta.state == "complete" and meta.revision == nil then
+        local entry = Cache.Get(guid)
+        if type(entry) == "table"
+            and entry.state == "complete"
+            and type(entry.revision) == "table"
+            and type(entry.result) == "table" then
+            meta.generation = entry.generation or 0
+            meta.revisionID = entry.revisionID
+            meta.revision = entry.revision
+            meta.result = entry.result
+        else
+            meta.state = (type(entry) == "table" and entry.state) or "unavailable"
+            meta.revisionID = nil
+            meta.revision = nil
+            meta.result = nil
+        end
+    end
+    return meta
 end
 
 local function completeMetric(metrics, name)
@@ -920,24 +964,23 @@ local function formatRankAge(timestamp, now)
     return string.format(L["TIME_DAY_AGO"] or "%d d ago", days)
 end
 
-local function rankLineInputs(guid)
-    local inputs = { timestamp = 0 }
+local function rankLineTimestamp(guid)
     if type(guid) ~= "string" or guid == "" then
-        return inputs
+        return 0
     end
     local ranks = namespace.RankDB
     if type(ranks) ~= "table" then
-        return inputs
+        return 0
     end
     if type(ranks.GetRecord) == "function" then
         local okRec, record = pcall(ranks.GetRecord, guid)
         if okRec and type(record) == "table" then
-            inputs.timestamp = tonumber(record.timestamp) or 0
+            return tonumber(record.timestamp) or 0
         elseif not okRec then
             noteRankRecordError(record)
         end
     end
-    return inputs
+    return 0
 end
 
 -- Debug accessor for the Adapter M-NEW1 score-colour fallback counters
@@ -1372,8 +1415,7 @@ local function captureRenderInputs(into, guid, source, mode, unit)
     -- Stage 5 trailing line: the rank timestamp.
     -- Same input the line renders from, so a repaint only happens when the
     -- line itself could have changed.
-    local lineInputs = rankLineInputs(guid)
-    into.rankTimestamp = lineInputs.timestamp
+    into.rankTimestamp = rankLineTimestamp(guid)
 end
 
 local function renderInputsUnchanged(current, target, guid, source, mode, unit)
@@ -1389,7 +1431,6 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
     end
 
     local classRed, classGreen, classBlue, classToken = playerClassColor(unit)
-    local fresh = rankLineInputs(guid)
     return current.shiftDown == shiftIsDown()
         and Core.SafeEquals(current.classToken, classToken)
         and current.classRed == classRed
@@ -1404,7 +1445,7 @@ local function renderInputsUnchanged(current, target, guid, source, mode, unit)
         and current.warningColors == (settings.tooltip.warningColors == true)
         and current.restrictToLevel70 == level70RestrictionEnabled()
         and current.showServerRank == serverRankEnabled()
-        and current.rankTimestamp == fresh.timestamp
+        and current.rankTimestamp == rankLineTimestamp(guid)
 end
 
 -- The render BODY. It owns no latch: the wrapper below owns that, so the
@@ -1416,19 +1457,20 @@ local function renderPlayerTooltipBody(target)
         return false
     end
 
-    local source = readSource(guid)
+    local metaSource = readSourceMeta(guid, unit)
     local mode = effectiveMode()
 
-    -- The change gate. Every comparison below is a read of a stored scalar, so
-    -- a tick on which nothing happened costs nothing: no allocation, no string
-    -- building, no tooltip mutation. This is what makes driving the render from
-    -- a per-frame script safe rather than a per-frame rewrite.
-    if binding and renderInputsUnchanged(binding, target, guid, source, mode, unit) then
+    -- Zero-allocation change gate: compare scalar cache metadata first so
+    -- stationary Mainline OnUpdate ticks never deep-clone the 17-slot snapshot
+    -- unless a render actually needs to rebuild the tooltip lines.
+    if binding and renderInputsUnchanged(binding, target, guid, metaSource, mode, unit) then
         local currentLines = numberOfLines(target)
         if currentLines ~= nil and currentLines == binding.lineCountAfter then
             return true
         end
     end
+
+    local source = readSource(guid, unit)
 
     renderAttempts = renderAttempts + 1
     resetEnhancementStatus()
@@ -1474,14 +1516,20 @@ end
 -- would stay blank for a DIFFERENT reason. The poll is deliberately NOT
 -- disarmed -- the tooltip is still on screen, and the point of the boundary
 -- is that the surface can render again on the very next tick.
+local activeRenderTarget
+
+local function invokeRenderPlayerTooltipBody()
+    return renderPlayerTooltipBody(activeRenderTarget)
+end
+
 local function renderPlayerTooltip(target)
     if not initialized or rendering then
         return false
     end
     rendering = true
-    local ok, rendered = xpcall(function()
-        return renderPlayerTooltipBody(target)
-    end, noteRenderError)
+    activeRenderTarget = target
+    local ok, rendered = xpcall(invokeRenderPlayerTooltipBody, noteRenderError)
+    activeRenderTarget = nil
     rendering = false
     if not ok then
         binding = nil

@@ -638,6 +638,10 @@ local function scheduleSeedFromInspector(initialDelay)
 end
 
 function Core.RequestInspectorSeed(delay)
+    local scanner = namespace.Scanner
+    if type(scanner) == "table" and type(scanner.InvalidateSeedQueue) == "function" then
+        scanner.InvalidateSeedQueue()
+    end
     return scheduleSeedFromInspector(delay or 0)
 end
 
@@ -1209,6 +1213,23 @@ local function onInventoryReady(event, guid, isInspect, unit)
     end
 end
 
+local function onTalentsReady(event, guid, unit)
+    if namespace.Scanner
+        and type(namespace.Scanner.HandleTalentsReady) == "function" then
+        local ok, result = pcall(
+            namespace.Scanner.HandleTalentsReady,
+            event,
+            guid,
+            unit
+        )
+        if not ok then
+            recordConsumerError(result)
+            return false
+        end
+        return result
+    end
+end
+
 local function addChatLine(message)
     if DEFAULT_CHAT_FRAME and type(DEFAULT_CHAT_FRAME.AddMessage) == "function" then
         DEFAULT_CHAT_FRAME:AddMessage(DEBUG_PREFIX .. " " .. message)
@@ -1764,13 +1785,29 @@ local function initialize(self)
             onInventoryReady
         ) == true
     end
+    if adapter and type(adapter.RegisterTalentsReady) == "function" then
+        pcall(adapter.RegisterTalentsReady, onTalentsReady)
+    end
     guarded("DebugSnapshot", publishDebugSnapshot)
     guarded("EventRegistration", function()
         self:RegisterEvent("PLAYER_ENTERING_WORLD")
         self:RegisterEvent("PLAYER_REGEN_ENABLED")
         self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
         self:RegisterEvent("UNIT_INVENTORY_CHANGED")
+        self:RegisterEvent("PLAYER_LEVEL_UP")
         self:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+        pcall(function()
+            self:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+        end)
+        pcall(function()
+            self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+        end)
+        pcall(function()
+            self:RegisterEvent("PLAYER_TALENT_UPDATE")
+        end)
+        pcall(function()
+            self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+        end)
         self:RegisterEvent("MODIFIER_STATE_CHANGED")
         self:RegisterEvent("PLAYER_LOGOUT")
         -- SAVED_VARIABLES_TOO_LARGE carries the failing add-on's name as its
@@ -1856,7 +1893,16 @@ local function onEvent(self, event, ...)
         if unit == "player" then
             scheduleLocalScan("inventory-changed")
         end
-    elseif event == "ITEM_DATA_LOAD_RESULT" and namespace.Scanner then
+    elseif event == "PLAYER_LEVEL_UP"
+        or event == "ACTIVE_TALENT_GROUP_CHANGED"
+        or event == "PLAYER_TALENT_UPDATE" then
+        scheduleLocalScan("spec-or-level-changed")
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        local unit = ...
+        if unit == "player" or unit == nil then
+            scheduleLocalScan("spec-changed")
+        end
+    elseif (event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED") and namespace.Scanner then
         namespace.Scanner.HandleItemDataLoad(...)
     elseif event == "MODIFIER_STATE_CHANGED"
         and namespace.Tooltips

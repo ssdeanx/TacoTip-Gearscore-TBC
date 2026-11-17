@@ -1,0 +1,40 @@
+# TacoTip Extras — Project Memory
+
+> **Version:** `1.3.2` | **License:** MIT (`AcidBomb` & `NS`) | **Required Dependency:** `TacoTip`  
+> **Supported Interfaces:** `11509` (Classic Era / SoD), `20506` (TBC Anniversary), `38002` (WotLK Titanforge), `16001` (WoW Forever / Camelot), `120105`, `120107` (Retail)  
+> **Upstream Lineage:** Based on *TacoTip GearScore Enhancer* (`https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer`) by NS
+
+---
+
+## 1. Architecture & Runtime Load Order (`TacoTip_Extras.toc`)
+
+Strictly decoupled standalone companion addon (`TacoTip_Extras/`). Shares a workspace repo with Core TacoTip, ships in its own release package (`Tools/verify_release_extras.sh --worktree`), and persists independently in `_G.TacoTipExtrasDB`.
+
+1. **Localization (`Locale/`):** `deDE`, `esES`, `esMX`, `frFR`, `itIT`, `koKR`, `ptBR`, `ruRU`, `zhCN`, `zhTW`, followed **last** by `Locale/enUS.lua` (**154 base keys** in `_G.TACOEXTRAS_LOCALES`, resolved in-place into `_G.TACOEXTRAS_LOCALE` via `TacoExtrasApplyLocale()`, following Core `TacoTipConfig.locale_override` when set).
+2. **Runtime Modules (Strict TOC Order):**
+   - `Core.lua` — Namespace bootstrap (`Core`), settings schema (`TacoTipExtrasDB.settings`), secrecy helpers (`RunUntainted`, `IsSecretValue`, `SafeEquals`), capability-probed client helpers (`IsClassicFamilyClient`, `IsClassicEraClient`, `IsForeverClient`, `IsRetailClient`, `ClientHasSockets`, `UsesModernPvPSurface`), Shaman Blue coordination, automatic local/remote triggers (`PLAYER_EQUIPMENT_CHANGED`, `PLAYER_LEVEL_UP`, `ACTIVE_TALENT_GROUP_CHANGED`, `PLAYER_TALENT_UPDATE`, `PLAYER_SPECIALIZATION_CHANGED`, `GET_ITEM_INFO_RECEIVED`, `TALENTS_READY`), and lifecycle errors (`GetInitializeFailures`).
+   - `Scoring.lua` — Enhancement-aware evaluation (`ParseEquippedLink`, `Evaluate`, `QualityColor`, `ScoreFraction`, `RankFraction`, `RankColor`). Delegates base GearScore to Core `TT_GS`, computes unenhanced/current/potential/delta/completion scores, and gates gem sockets cleanly (`Core.ClientHasSockets()` = TBC/Titanforge/Retail only; Forever & Classic Era evaluate enchants/scopes only).
+   - `Cache.lua` — Session evaluation state cache (`Begin`, `SetPending`, `PublishComplete`, `PublishUnavailable`, `Get`, `GetMeta` zero-clone scalar probe, `GetFresh`, `ReevaluateAll`), capacity **`MAX_ENTRIES = 128`**, evicting completed/stale/unavailable rows before active `"pending"` entries and skipping redundant `notify` re-clones on the final listener.
+   - `RankDB.lua` — Realm leaderboard & gear persistence (`TacoTipExtrasDB.ranks[realmKey]`, `TacoTipExtrasDB.gear[realmKey]`) with `ValidateRecord`, `StoreRecord` (preserves richer existing metadata & updates in place when rank state is unchanged), sorted index caches (`BuildSortedIndices`), `GetLeaderboard`, `StoreGear` / `GetGear`, 60-day / 20,000-entry pruning (`PruneAllRealms`, `PruneAggressive`), and `PurgeDatabase`.
+   - `RankSync.lua` — Peer-to-peer protocol over hidden passworded channel `ttgssync` (kept out of chat slots `1..4`, hidden from `ChannelListMixin`/`CHAT_CONFIG_CHANNEL_LIST`) plus immediate `PARTY`/`RAID`/`INSTANCE_CHAT`/`GUILD` fan-out. Supports `R;2` / `G` / `D` / `Q` / `S` / `T` wire messages, `QueueInspectRecord` dedup (with `name`/`faction`/`specName` + oldest prune and debounced `0.20s` live leaderboard refresh), `RequestSync` (triggered on zone, `GROUP_ROSTER_UPDATE` growth, and `PLAYER_GUILD_UPDATE`), server-time timestamps, and `GetSyncProgress` (`TacoTipExtrasGetSyncProgress` + `TacoTip_RefreshExtrasLeaderboardUI`).
+   - `Scanner.lua` — Inspect queue consumer (`Initialize`, `HandleInventoryReady`, `HandleTalentsReady`, `SeedFromInspectorCache` via O(1) cursor + `InvalidateSeedQueue`, `RetryUnavailableRemote` breaking `item-data-timeout` with 4s cooldown, `HandleItemDataLoad`, `_itemsRev` fast reuse promoting `"recent-restore"`/incomplete rows via `remoteCacheSkips`, remote metadata fallback when `"mouseover"` leaves, `>= 1` GS floor when `ilvl > 0`, WoW Forever 2-unit `0.05s` async background capture slices with O(1) `asyncQueueHead` for `nameplate*`/`raid*`/`party*`, execution-anchored short TTLs `REMOTE_CONTEXT_TTL` `5s` Forever/Retail / `8s` Classic + `0.75s->2.0s` item retries).
+   - `TacoTipAdapter.lua` — Dynamic integration bridge locating TacoTip even under renamed dev folders, resolving `LibForeverInspector` via capability checks (`GetInventoryItemMixin`), leasing PaperDoll/Inspect text regions (including `foreverCharStatsBadge` & `CharacterModelScene` fallback), with nil-firewall diagnostics.
+   - `Tooltips.lua` — Unit & compare/item tooltip post-calls: Classic XML `OnTooltipSetUnit`/`OnTooltipSetItem` vs Forever/Retail `TooltipUtil.GetDisplayedUnit` + `TooltipDataProcessor.AddTooltipPostCall` + portable `OnUpdate` driver, rendering `GS Rank: #X ([icon/#Y Class])` across `Detailed`/`Compact`/`Minimal`/`Basic` modes (fresh installs default to `Detailed`) and triggering throttled `Scanner.RetryUnavailableRemote` on timed-out remote hovers.
+   - `Frames.lua` — Personal & Inspect frame equipment summaries (`6s` Forever/Retail, `8s` Classic pending expiry aligned with `Scanner` TTLs).
+   - `RankBrowser.lua` — `900px`-wide banded `TacoTipRankFrame` showing 16 rows (`All Realm`/`Alliance`/`Horde`, class filter, live substring search, sort columns, podium/rank colors via `Scoring.RankColor`, sync progress bar, and opaque click-to-inspect Gear Panel). **Realm Auto-Scan stays permanently disabled** (`IsScanAvailable() == false`, button reads **Scan disabled** and never touches `DoInspect`/`NotifyInspect`); replaced by responsive **Sync Now**.
+   - `Minimap.lua` — LibDBIcon minimap button (left-click leaderboard, right-click options).
+   - `Options.lua` — `/ex` (`SLASH_TACOTIPEXTRAS1..3`: `/ex`, `/extras`, `/tte`) command router, Blizzard Settings subcategories, Shaman Blue toggle (Classic Era gated), Reset Settings (preserves `TacoTipExtrasDB.ranks`/`gear`), and lazy-open integration with Core TacoTip's `/tt` Dashboard.
+
+---
+
+## 2. Critical Invariants & Constraints
+
+1. **Client Identity Delegation (Never `WOW_PROJECT_MAINLINE` Alone):** `Core.IsForeverClient()` and `Core.IsRetailClient()` delegate to `LibForeverInspector` first and `GetBuildInfo()` interface bands second so WoW Forever (`WOW_PROJECT_CAMELOT = 18`) is never misclassified as Retail.
+2. **Secrecy & Restricted Context Immunity (`Core.IsSecretValue` / `SafeEquals`):** Forever & Retail combat/encounter restrictions can deliver secret `UnitClass`, `UnitLevel`, guild/spec strings, and GUIDs. Test `Core.IsSecretValue` **before** comparisons (`~= ""`), `%` math, or caching as table keys (`pcall` guards where needed).
+3. **Never Re-enable Realm Scanning in `RankBrowser`:** Background auto-scanning crashes the shared inspect engine. Keep scanning locked off and drive peer discovery through `RankSync` (`Sync Now`).
+4. **Preserve Wire & SavedVariables Compatibility:** Maintain `TacoTipExtrasDB` (`settings`, `ranks`, `gear`) and `ttgssync` protocol (`<= 255` byte payloads, `20s` per-peer response cooldown, token-bucket throttling). Never answer on Core TacoTip's `/tt` slash prefix directly.
+5. **Nil-Firewall & `GetBuildInfo` Arity:** Equipment leases/scorers return explicit reason strings or `false` on unloaded frames/missing specs (`GetBuildInfo` read as 4 returns in `Core`/`Scanner`/`Scoring`, 6 in `Tooltips`).
+6. **Zero-Warning Static Analysis & Multi-Interpreter Harness:**
+   - `luacheck .` cleanly passes from both repo root (`70` files) and inside `TacoTip_Extras/` (`TacoTip_Extras/.luacheckrc`).
+   - `bash TacoTip_Extras/Tests/harness/run_all.sh` — Runs **all 3 interpreters** (`lua5.1`, `lua5.4`, `luajit`) across 12 client/driver/edge-case scenarios + classic/retail leaderboard behavior suites (**42 invocations total**).
+   - `bash Tools/verify_release_extras.sh --worktree` — Validates the Extras-only archive (single `TacoTip_Extras.toc`, `154`-key locales, `tt-2.tga`, `README`/`CHANGELOG`/`LICENSE`/`THIRD_PARTY_NOTICES`, excluding `Tests/`, `.luacheckrc`, `.gitattributes`, `MEMORY.md`, `*.png`).

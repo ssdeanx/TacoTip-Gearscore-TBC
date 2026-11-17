@@ -151,11 +151,19 @@ local SEED_SLICE_LIMIT = 4
 local ASYNC_CAPTURE_SLICE = 2
 local ASYNC_CAPTURE_INTERVAL = 0.05
 local asyncCaptureQueue = {}
+local asyncQueueHead = 1
 local asyncCaptureQueued = {}
 local asyncCaptureScheduled = false
 local asyncQueuedCount = 0
 local asyncProcessedCount = 0
 local seedDirty = false
+local seedQueue = {}
+local seedCursor = 1
+local seedActive = false
+local seededRecordGUIDs = {}
+local retryCooldownAt = {}
+local RETRY_UNAVAILABLE_COOLDOWN = 4.0
+local RETRY_COOLDOWN_CAP = 128
 
 local function getRemoteContextTTL()
     local core = namespace.Core
@@ -202,9 +210,14 @@ local function pruneStaleRemoteContexts(now)
     local removed = 0
     local toRemove
     for guid, ctx in pairs(remoteContexts) do
+        local startedAt = type(ctx) == "table" and tonumber(ctx.startedAt) or nil
         local createdAt = type(ctx) == "table" and tonumber(ctx.createdAt) or nil
+        -- Contexts sitting in the async capture queue have not started their active
+        -- item-load window yet; grant them a 2x queue grace window before TTL fires.
+        local anchor = (startedAt and startedAt > 0) and startedAt or createdAt
+        local limit = (not startedAt and asyncCaptureQueued[guid]) and (ttl * 2) or ttl
         if not Cache.IsCurrentGeneration(guid, ctx and ctx.generation)
-            or (createdAt and createdAt > 0 and (current - createdAt) > ttl) then
+            or (anchor and anchor > 0 and (current - anchor) > limit) then
             toRemove = toRemove or {}
             toRemove[#toRemove + 1] = {
                 guid = guid,
@@ -1724,9 +1737,53 @@ local function captureRemote(context)
     return published
 end
 
+local REMOTE_ITEM_RETRY_DELAYS = { 0.75, 2.0 }
+
+local function scheduleRemoteItemRetry(context)
+    if type(context) ~= "table"
+        or context.itemRetryTimerActive
+        or not canScheduleAsyncTimer() then
+        return false
+    end
+    local nextStep = (context.itemRetryStep or 0) + 1
+    local delay = REMOTE_ITEM_RETRY_DELAYS[nextStep]
+    if not delay then
+        return false
+    end
+    context.itemRetryStep = nextStep
+    context.itemRetryTimerActive = true
+    local gen = context.generation
+    local guid = context.guid
+    local ok = pcall(_G.C_Timer.After, delay, function()
+        context.itemRetryTimerActive = false
+        if remoteContexts[guid] ~= context or context.generation ~= gen then
+            return
+        end
+        if type(C_Item) == "table" and type(C_Item.RequestLoadItemDataByID) == "function" then
+            for itemID, itemGen in pairs(context.pendingItems or {}) do
+                if itemGen == gen then
+                    pcall(C_Item.RequestLoadItemDataByID, itemID)
+                end
+            end
+        end
+        captureRemote(context)
+    end)
+    if not ok then
+        context.itemRetryTimerActive = false
+        return false
+    end
+    return true
+end
+
 captureRemoteBody = function(context)
     if not remoteContextIsCurrent(context) then
         return false
+    end
+    if not context.startedAt then
+        local started = getScannerClock()
+        if started > 0 then
+            context.startedAt = started
+        end
     end
     if type(GetInventoryItemID) ~= "function"
         or type(GetInventoryItemLink) ~= "function" then
@@ -1804,6 +1861,7 @@ captureRemoteBody = function(context)
             nextPending,
             "item-data-pending"
         )
+        scheduleRemoteItemRetry(context)
         return true
     end
 
@@ -1828,6 +1886,9 @@ captureRemoteBody = function(context)
     )
     if published then
         remoteContexts[context.guid] = nil
+        if context.sourceTag ~= "recent-restore" then
+            seededRecordGUIDs[context.guid] = nil
+        end
         if type(context.itemsRev) == "number" and context.itemsRev > 0 then
             remoteItemRevs[context.guid] = context.itemsRev
         end
@@ -1931,13 +1992,16 @@ local function drainAsyncCaptureQueue()
     asyncCaptureScheduled = false
     if not initialized then
         asyncCaptureQueue = {}
+        asyncQueueHead = 1
         asyncCaptureQueued = {}
         return
     end
     pruneStaleRemoteContexts(getScannerClock())
     local processed = 0
-    while processed < ASYNC_CAPTURE_SLICE and #asyncCaptureQueue > 0 do
-        local guid = table.remove(asyncCaptureQueue, 1)
+    while processed < ASYNC_CAPTURE_SLICE and asyncQueueHead <= #asyncCaptureQueue do
+        local guid = asyncCaptureQueue[asyncQueueHead]
+        asyncCaptureQueue[asyncQueueHead] = nil
+        asyncQueueHead = asyncQueueHead + 1
         if guid and asyncCaptureQueued[guid] then
             asyncCaptureQueued[guid] = nil
             local context = remoteContexts[guid]
@@ -1948,7 +2012,10 @@ local function drainAsyncCaptureQueue()
             processed = processed + 1
         end
     end
-    if #asyncCaptureQueue > 0 then
+    if asyncQueueHead > #asyncCaptureQueue then
+        asyncCaptureQueue = {}
+        asyncQueueHead = 1
+    else
         scheduleAsyncCaptureDrain()
     end
 end
@@ -2009,11 +2076,20 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
             if (curClass == nil or existingClass == curClass)
                 and (curLevel == nil or existingLevel == curLevel) then
                 remoteCacheSkips = remoteCacheSkips + 1
-                if namespace.RankDB
+                local skipMeta = {}
+                snapshotRemoteMeta(skipMeta, resolved, guid)
+                local existingRec = namespace.RankDB
                     and type(namespace.RankDB.GetRecord) == "function"
-                    and namespace.RankDB.GetRecord(guid) == nil then
-                    local skipMeta = {}
-                    snapshotRemoteMeta(skipMeta, resolved, guid)
+                    and namespace.RankDB.GetRecord(guid) or nil
+                local needsUpgrade = (existingRec == nil)
+                    or (seededRecordGUIDs[guid] == true)
+                    or (type(skipMeta.guild) == "string" and skipMeta.guild ~= "" and (existingRec.guild or "") == "")
+                    or (type(skipMeta.specName) == "string" and skipMeta.specName ~= "" and (existingRec.specName or "") == "")
+                    or (type(skipMeta.specID) == "number" and skipMeta.specID > 0 and (tonumber(existingRec.specID) or 0) == 0)
+                    or (type(skipMeta.pvpRank) == "number" and skipMeta.pvpRank > 0 and (tonumber(existingRec.pvpRank) or 0) == 0)
+                    or (type(skipMeta.arena) == "number" and skipMeta.arena > 0 and (tonumber(existingRec.arena) or 0) == 0)
+                if needsUpgrade then
+                    seededRecordGUIDs[guid] = nil
                     queueRankSync(guid, resolved, freshEntry.revision.classToken, freshEntry.result, "inspect", freshEntry.revision.level, skipMeta)
                 end
                 return true
@@ -2063,6 +2139,44 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
     clearQueuedAsync(guid)
     captureRemote(context)
     return true
+end
+
+-- Automatically enriches a player's leaderboard row if talent/spec data
+-- settles right after INVENTORY_READY (or on a live target respec) without
+-- re-scanning all 17 equipped item slots.
+function Scanner.HandleTalentsReady(_, guid, unit)
+    if not initialized or not isRemotePlayerGUID(guid) then
+        return false
+    end
+    local resolved = resolveRemoteUnit(guid, unit)
+    if not resolved then
+        return false
+    end
+    local freshEntry = Cache.GetFresh(guid)
+    if type(freshEntry) ~= "table" then
+        return false
+    end
+    local revision = freshEntry.revision
+    local result = freshEntry.result
+    if freshEntry.state ~= "complete"
+        or type(revision) ~= "table"
+        or type(result) ~= "table" then
+        return false
+    end
+    local meta = {}
+    snapshotRemoteMeta(meta, resolved, guid)
+    local db = namespace.RankDB
+    local existing = type(db) == "table" and type(db.GetRecord) == "function" and db.GetRecord(guid) or nil
+    local hasNewSpec = (type(meta.specName) == "string" and meta.specName ~= ""
+        and (not existing or (existing.specName or "") ~= meta.specName))
+        or (type(meta.specID) == "number" and meta.specID > 0
+        and (not existing or (tonumber(existing.specID) or 0) ~= meta.specID))
+    if not existing or seededRecordGUIDs[guid] == true or hasNewSpec then
+        seededRecordGUIDs[guid] = nil
+        queueRankSync(guid, resolved, revision.classToken, result, "inspect", revision.level, meta)
+        return true
+    end
+    return false
 end
 
 function Scanner.BeginGeneration(reason)
@@ -2291,20 +2405,30 @@ function Scanner.GetDebugState()
         remoteCacheSkips = remoteCacheSkips,
         remoteSeededCount = remoteSeededCount,
         staleContextsPruned = staleContextsPruned,
-        asyncQueueDepth = #asyncCaptureQueue,
+        asyncQueueDepth = math.max(0, #asyncCaptureQueue - asyncQueueHead + 1),
         asyncQueuedCount = asyncQueuedCount,
         asyncProcessedCount = asyncProcessedCount,
     }
 end
 
+function Scanner.InvalidateSeedQueue()
+    seedQueue = {}
+    seedCursor = 1
+    seedActive = false
+end
+
 -- Asynchronously seeds Extras' session Cache + RankDB leaderboard from
 -- LibForeverInspector.cache (including snapshots restored across /reload from
--- Core TacoTip's TacoTipConfig.recentCache). Runs bounded slices without blocking
--- frames and skips P2P broadcasting so reloads never flood addon chat.
+-- Core TacoTip's TacoTipConfig.recentCache). Builds the sorted worklist once
+-- per sweep and advances an O(1) cursor per slice, skipping P2P broadcasting so
+-- reloads never stall frames or flood addon chat.
 function Scanner.SeedFromInspectorCache(maxSlice)
     if not initialized
         or type(inspector) ~= "table"
         or type(inspector.cache) ~= "table" then
+        seedQueue = {}
+        seedCursor = 1
+        seedActive = false
         return 0, 0
     end
     pruneStaleRemoteContexts(getScannerClock())
@@ -2313,135 +2437,208 @@ function Scanner.SeedFromInspectorCache(maxSlice)
         and math.floor(maxSlice)
         or SEED_SLICE_LIMIT
 
-    local playerOK, selfGUID = pcall(function()
-        return type(UnitGUID) == "function" and UnitGUID("player") or nil
-    end)
-    if not playerOK or isSecretValue(selfGUID) then
-        selfGUID = nil
-    end
-
     local db = namespace.RankDB
     local hasRankDB = type(db) == "table" and type(db.GetRecord) == "function"
-    local eligible = {}
 
-    for guid, cached in pairs(inspector.cache) do
-        if isRemotePlayerGUID(guid)
-            and (not selfGUID or not Core.SafeEquals(guid, selfGUID))
-            and type(cached) == "table"
-            and not isSecretValue(cached)
-            and not cached.incomplete
-            and type(cached.items) == "table"
-            and type(cached.time) == "number"
-            and cached.time ~= 0
-            and remoteContexts[guid] == nil then
-            local curRev = (type(cached._itemsRev) == "number" and cached._itemsRev > 0) and cached._itemsRev or 1
-            local cacheEntry = Cache.GetFresh(guid)
-            local cacheHasRev = type(cacheEntry) == "table"
-                and cacheEntry.state == "complete"
-                and remoteItemRevs[guid] == curRev
-            local savedAt = (type(cached.savedAt) == "number" and cached.savedAt > 0) and cached.savedAt or 0
-            local existingRec = hasRankDB and db.GetRecord(guid) or nil
-            local dbMissingOrOlder = (existingRec == nil)
-                or (savedAt > 0 and type(existingRec.timestamp) == "number" and existingRec.timestamp < savedAt)
+    local queue = seedQueue
+    if not seedActive or seedCursor > #queue then
+        local playerOK, selfGUID = pcall(function()
+            return type(UnitGUID) == "function" and UnitGUID("player") or nil
+        end)
+        if not playerOK or isSecretValue(selfGUID) then
+            selfGUID = nil
+        end
 
-            if (not cacheHasRev) or dbMissingOrOlder then
-                eligible[#eligible + 1] = {
-                    guid = guid,
-                    cached = cached,
-                    itemsRev = curRev,
-                    savedAt = savedAt,
-                    freshCacheEntry = cacheHasRev and cacheEntry or nil,
-                }
+        local eligible = {}
+        for guid, cached in pairs(inspector.cache) do
+            if isRemotePlayerGUID(guid)
+                and (not selfGUID or not Core.SafeEquals(guid, selfGUID))
+                and type(cached) == "table"
+                and not isSecretValue(cached)
+                and not cached.incomplete
+                and type(cached.items) == "table"
+                and type(cached.time) == "number"
+                and cached.time ~= 0
+                and remoteContexts[guid] == nil then
+                local curRev = (type(cached._itemsRev) == "number" and cached._itemsRev > 0) and cached._itemsRev or 1
+                local cacheState = type(Cache.GetMeta) == "function" and Cache.GetMeta(guid) or nil
+                local cacheHasRev = (cacheState == "complete") and remoteItemRevs[guid] == curRev
+                local savedAt = (type(cached.savedAt) == "number" and cached.savedAt > 0) and cached.savedAt or 0
+                local existingRec = hasRankDB and db.GetRecord(guid) or nil
+                local dbMissingOrOlder = (existingRec == nil)
+                    or (savedAt > 0 and type(existingRec.timestamp) == "number" and existingRec.timestamp < savedAt)
+
+                if (not cacheHasRev) or dbMissingOrOlder then
+                    eligible[#eligible + 1] = {
+                        guid = guid,
+                        cached = cached,
+                        itemsRev = curRev,
+                        savedAt = savedAt,
+                        needsCachedRevision = cacheHasRev,
+                    }
+                end
             end
         end
+
+        table.sort(eligible, function(a, b)
+            if a.savedAt ~= b.savedAt then
+                return a.savedAt > b.savedAt
+            end
+            return a.guid < b.guid
+        end)
+        queue = eligible
+        seedQueue = queue
+        seedCursor = 1
+        seedActive = (#queue > 0)
     end
 
-    if #eligible == 0 then
-        if seedDirty
-            and namespace.RankBrowser
-            and type(namespace.RankBrowser.UpdateUI) == "function" then
+    if #queue == 0 or seedCursor > #queue then
+        seedQueue = {}
+        seedCursor = 1
+        seedActive = false
+        if seedDirty then
             seedDirty = false
-            pcall(namespace.RankBrowser.UpdateUI)
+            if namespace.RankBrowser
+                and type(namespace.RankBrowser.UpdateUI) == "function" then
+                pcall(namespace.RankBrowser.UpdateUI)
+            end
+            local dashRefresh = rawget(_G, "TacoTip_RefreshExtrasLeaderboardUI")
+            if type(dashRefresh) == "function" then
+                pcall(dashRefresh)
+            end
         end
         return 0, 0
     end
-    table.sort(eligible, function(a, b)
-        if a.savedAt ~= b.savedAt then
-            return a.savedAt > b.savedAt
-        end
-        return a.guid < b.guid
-    end)
 
     local processed = 0
     local seeded = 0
-    for i = 1, #eligible do
-        if processed >= limit then
-            break
-        end
+    while processed < limit and seedCursor <= #queue do
+        local entry = queue[seedCursor]
+        queue[seedCursor] = nil
+        seedCursor = seedCursor + 1
         processed = processed + 1
-        local entry = eligible[i]
-        local meta = {
-            skipBroadcast = true,
-            savedAt = entry.savedAt,
-        }
-        snapshotRemoteMeta(meta, entry.guid, entry.guid)
 
-        if entry.freshCacheEntry and type(entry.freshCacheEntry.revision) == "table" then
-            queueRankSync(
-                entry.guid,
-                entry.guid,
-                entry.freshCacheEntry.revision.classToken,
-                entry.freshCacheEntry.result,
-                "recent-restore",
-                entry.freshCacheEntry.revision.level,
-                meta
-            )
-            seeded = seeded + 1
-            remoteSeededCount = remoteSeededCount + 1
-        else
-            remoteGeneration = remoteGeneration + 1
-            local context = {
-                guid = entry.guid,
-                generation = remoteGeneration,
-                unit = entry.guid,
-                pendingItems = {},
-                itemsRev = entry.itemsRev,
-                createdAt = getScannerClock(),
-                sourceTag = "recent-restore",
-                meta = meta,
-                capturedSlots = {},
+        if type(entry) == "table"
+            and remoteContexts[entry.guid] == nil
+            and type(inspector.cache[entry.guid]) == "table" then
+            local meta = {
+                skipBroadcast = true,
+                savedAt = entry.savedAt,
             }
-            remoteContexts[entry.guid] = context
-            remoteItemRevs[entry.guid] = nil
-            local began, evictedGUID = Cache.Begin(entry.guid, context.generation, "recent-restore")
-            if evictedGUID then
-                remoteContexts[evictedGUID] = nil
-                remoteItemRevs[evictedGUID] = nil
-            end
-            if began then
-                clearQueuedAsync(entry.guid)
-                captureRemote(context)
+            snapshotRemoteMeta(meta, entry.guid, entry.guid)
+
+            local freshEntry = entry.needsCachedRevision and Cache.GetFresh(entry.guid) or nil
+            if type(freshEntry) == "table" and type(freshEntry.revision) == "table" then
+                seededRecordGUIDs[entry.guid] = true
+                queueRankSync(
+                    entry.guid,
+                    entry.guid,
+                    freshEntry.revision.classToken,
+                    freshEntry.result,
+                    "recent-restore",
+                    freshEntry.revision.level,
+                    meta
+                )
                 seeded = seeded + 1
                 remoteSeededCount = remoteSeededCount + 1
             else
-                remoteContexts[entry.guid] = nil
+                seededRecordGUIDs[entry.guid] = true
+                remoteGeneration = remoteGeneration + 1
+                local context = {
+                    guid = entry.guid,
+                    generation = remoteGeneration,
+                    unit = entry.guid,
+                    pendingItems = {},
+                    itemsRev = entry.itemsRev,
+                    createdAt = getScannerClock(),
+                    sourceTag = "recent-restore",
+                    meta = meta,
+                    capturedSlots = {},
+                }
+                remoteContexts[entry.guid] = context
+                remoteItemRevs[entry.guid] = nil
+                local began, evictedGUID = Cache.Begin(entry.guid, context.generation, "recent-restore")
+                if evictedGUID then
+                    remoteContexts[evictedGUID] = nil
+                    remoteItemRevs[evictedGUID] = nil
+                end
+                if began then
+                    clearQueuedAsync(entry.guid)
+                    captureRemote(context)
+                    seeded = seeded + 1
+                    remoteSeededCount = remoteSeededCount + 1
+                else
+                    remoteContexts[entry.guid] = nil
+                end
             end
         end
     end
 
-    local remaining = math.max(0, #eligible - processed)
+    local remaining = math.max(0, #queue - seedCursor + 1)
+    if remaining == 0 then
+        seedQueue = {}
+        seedCursor = 1
+        seedActive = false
+    end
     if seeded > 0 then
         seedDirty = true
     end
-    if remaining == 0
-        and seedDirty
-        and namespace.RankBrowser
-        and type(namespace.RankBrowser.UpdateUI) == "function" then
+    if remaining == 0 and seedDirty then
         seedDirty = false
-        pcall(namespace.RankBrowser.UpdateUI)
+        if namespace.RankBrowser
+            and type(namespace.RankBrowser.UpdateUI) == "function" then
+            pcall(namespace.RankBrowser.UpdateUI)
+        end
+        local dashRefresh = rawget(_G, "TacoTip_RefreshExtrasLeaderboardUI")
+        if type(dashRefresh) == "function" then
+            pcall(dashRefresh)
+        end
     end
 
     return seeded, remaining
+end
+
+-- Breaks the 300s "item-data-timeout" / unavailable deadlock when hovering a
+-- player whose gear items later arrive in the client cache.
+function Scanner.RetryUnavailableRemote(guid, unit)
+    if not initialized
+        or not isRemotePlayerGUID(guid)
+        or remoteContexts[guid] ~= nil
+        or type(inspector) ~= "table"
+        or type(inspector.GetUnitData) ~= "function" then
+        return false
+    end
+    local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
+    if not okData or type(cached) ~= "table"
+        or cached.incomplete
+        or type(cached.items) ~= "table" then
+        return false
+    end
+    local now = getScannerClock()
+    local nextAllowed = retryCooldownAt[guid]
+    if type(nextAllowed) == "number" and now > 0 and now < nextAllowed then
+        return false
+    end
+    local count = 0
+    for k, ts in pairs(retryCooldownAt) do
+        if type(ts) == "number" and now > 0 and now >= ts then
+            retryCooldownAt[k] = nil
+        else
+            count = count + 1
+        end
+    end
+    if count >= RETRY_COOLDOWN_CAP then
+        local ordered = {}
+        for k, ts in pairs(retryCooldownAt) do
+            ordered[#ordered + 1] = { key = k, ts = type(ts) == "number" and ts or 0 }
+        end
+        table.sort(ordered, function(a, b) return a.ts < b.ts end)
+        for i = 1, math.floor(#ordered / 2) do
+            retryCooldownAt[ordered[i].key] = nil
+        end
+    end
+    retryCooldownAt[guid] = (now > 0) and (now + RETRY_UNAVAILABLE_COOLDOWN) or 0
+    return Scanner.HandleInventoryReady("INVENTORY_READY", guid, true, unit or guid)
 end
 
 function Scanner.GetRemote(guid)

@@ -2235,6 +2235,10 @@ local function publishEmptyState(text)
     return true
 end
 
+function RankBrowser.IsShown()
+    return (rankFrame and type(rankFrame.IsShown) == "function" and rankFrame:IsShown()) == true
+end
+
 function RankBrowser.UpdateUI()
     if not rankFrame or not rankFrame:IsShown() then return end
 

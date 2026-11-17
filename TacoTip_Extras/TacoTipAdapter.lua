@@ -159,6 +159,7 @@ local surfaceRequested = false
 local conflictLocked = false
 local internalReason
 local callbackRegistered = false
+local talentsCallbackRegistered = false
 local equipmentCompatibility = {}
 local equipmentHookCallbacks = {}
 local equipmentDeferredFrame
@@ -2184,6 +2185,42 @@ function Adapter.RegisterInventoryReady(callback)
         return true
     end
     internalReason = "inspector-callback-registration-failed"
+    return false
+end
+
+--- Register a callback to be invoked when talent/spec inspect data settles.
+--- @param callback function
+function Adapter.RegisterTalentsReady(callback)
+    if talentsCallbackRegistered then
+        return true
+    end
+    if type(callback) ~= "function" then
+        return false
+    end
+    local activeInspector = inspector
+    if type(activeInspector) ~= "table" then
+        return false
+    end
+    if type(activeInspector.RegisterCallback) ~= "function" then
+        return false
+    end
+    local legacyOwners = LEGACY_CALLBACK_OWNERS
+    for index = 1, legacyOwners and #legacyOwners or 0 do
+        local legacy = legacyOwners[index]
+        if legacy ~= addonName and type(activeInspector.UnregisterCallback) == "function" then
+            pcall(activeInspector.UnregisterCallback, legacy, "TALENTS_READY")
+        end
+    end
+    local ok, registered = pcall(
+        activeInspector.RegisterCallback,
+        addonName,
+        "TALENTS_READY",
+        callback
+    )
+    if ok and registered ~= false then
+        talentsCallbackRegistered = true
+        return true
+    end
     return false
 end
 
