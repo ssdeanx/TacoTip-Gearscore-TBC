@@ -2511,7 +2511,27 @@ do
     end
 
     function TT.getGearScoreMemo(guid, items)
-        if (not guid or TT.isSecretValue(guid) or not items) then
+        if (not guid or TT.isSecretValue(guid)) then
+            return nil
+        end
+        -- WoW Forever unit-frame self has no inspect-cache record, so the
+        -- items-keyed memo below can never answer for the player: CI:GetUnitData
+        -- ("player") is nil and `items` is always nil here. Keep the last positive
+        -- live score under a self-scoped record instead (the same shape as
+        -- TT._selfPawnMemo at :2564/:2603). It is a single record, never keyed by
+        -- GUID, and the identity test goes through safe* helpers, so no secret
+        -- token reaches a comparison. Other clients keep the original
+        -- items-keyed-only path unchanged.
+        if (isForever and TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
+            local selfMemo = TT._selfGSMemo
+            if (selfMemo and type(selfMemo.score) == "number" and selfMemo.score > 0
+                    and not TT.isSecretValue(selfMemo.score)
+                    and not TT.isSecretValue(selfMemo.ilvl)) then
+                return selfMemo.score, selfMemo.ilvl
+            end
+            return nil
+        end
+        if (not items) then
             return nil
         end
         local memo = TT._gsMemo
@@ -2524,9 +2544,21 @@ do
     end
 
     function TT.setGearScoreMemo(guid, items, score, ilvl)
-        if (not guid or TT.isSecretValue(guid) or not items or type(score) ~= "number"
+        if (not guid or TT.isSecretValue(guid) or type(score) ~= "number"
                 or TT.isSecretValue(score) or score <= 0
                 or (ilvl ~= nil and TT.isSecretValue(ilvl))) then
+            return
+        end
+        -- Self has no inspect items, so it cannot use the items-keyed memo. On
+        -- Forever keep the last positive live score in the self-scoped record so
+        -- a transient zero live read cannot drop the row (VEX-1). Non-self units,
+        -- including party1..4, and every other client keep the item-requiring
+        -- path below unchanged.
+        if (isForever and TT.safeEquals(guid, TT.safeUnitGUID("player"))) then
+            TT._selfGSMemo = { score = score, ilvl = ilvl }
+            return
+        end
+        if (not items) then
             return
         end
         local memo = TT._gsMemo
@@ -4212,7 +4244,11 @@ local function onTooltipSetUnit(tooltip, data)
                         gearscore, avg_ilvl = GearScore:GetScore(guid, retryDue)
                         if (gearscore > 0) then
                             TT.clearGearScoreRetry(guid)
-                            if (not isSelf) then
+                            -- Forever self is memoized too: setGearScoreMemo
+                            -- routes it to TT._selfGSMemo (no items needed).
+                            -- Non-Forever self is left exactly as before: its
+                            -- items are nil, so the guarded write is a no-op.
+                            if (not isSelf or isForever) then
                                 TT.setGearScoreMemo(guid, items, gearscore, avg_ilvl)
                             end
                         else
@@ -4625,6 +4661,20 @@ local function onTooltipSetUnit(tooltip, data)
     if (wide_style) then
         local fontSize = (TacoTipConfig and TacoTipConfig.tooltip_font_size) or 12
         wideBottomPad = 4 + math.max(0, math.floor((fontSize - 12) * 0.5))
+        -- v1.0.7 HIGH (wide style, Forever only): keep appended stat rows inside
+        -- the border. On Forever the data pipeline runs ProcessLines ->
+        -- ProcessTooltipPostCalls -> Show (TooltipDataHandler.lua
+        -- InternalProcessInfo), so the client measures the tooltip from the
+        -- C_TooltipInfo lines BEFORE our post-call appends the Pawn/iLvl rows.
+        -- Those appended rows are therefore not in the client's measured content
+        -- height and overflow the bottom border by their stacked height. Reserve
+        -- that height in the bottom pad, which onTooltipShow re-applies after
+        -- Blizzard's GameTooltip_CalculatePadding <OnShow> reset. One appended row
+        -- occupies fontSize pixels plus the -2 continuation gap; count them all.
+        -- Gated on isForever so every other client family stays byte-identical.
+        if (isForever and linesToAddCount > 0) then
+            wideBottomPad = wideBottomPad + (linesToAddCount * (fontSize + 2))
+        end
     end
     local tipState = getTooltipState(tooltip)
     tipState.wideBottomPadding = (wideBottomPad > 0) and wideBottomPad or nil
@@ -8458,9 +8508,10 @@ end
 
 local function onEvent(self, event, ...)
     if (event == "PLAYER_EQUIPMENT_CHANGED") then
-        -- Self Pawn is cached live (no inspect record); a gear change makes the
-        -- last score stale, so drop it before the next render.
+        -- Self Pawn and GearScore are cached live (no inspect record); a gear
+        -- change makes the last scores stale, so drop both before the next render.
         TT._selfPawnMemo = nil
+        TT._selfGSMemo = nil
         if (PaperDollFrame and PaperDollFrame:IsShown()) then
             TT:RefreshCharacterFrame()
         end

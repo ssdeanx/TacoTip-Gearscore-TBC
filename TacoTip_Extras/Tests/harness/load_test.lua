@@ -5593,6 +5593,23 @@ do
         "once the channel is proven live, the local record re-broadcasts onto it",
         table.concat(first, " | "))
 
+    -- F3 RED-FIRST PIN: a channel probe ("P;...") is transport bookkeeping that
+    -- peers ignore; it is not a query, so it must not inflate the session
+    -- 'sent' counter that drives the terminal "Sync complete: N query sent"
+    -- message. The current code funnels EVERY successful rawSend through
+    -- recordSessionSendOutcome, including the probe, so 'sent' counts one more
+    -- than the real (non-probe) messages captured in this drain. This pin is
+    -- expected to FAIL on unfixed code and pass once probes are excluded.
+    local firstProgress = RankSync.GetSyncProgress()
+    local firstProbes = countPrefix(first, "P;")
+    local firstCountable = #first - firstProbes
+    check(firstProbes >= 1 and type(firstProgress) == "table"
+            and firstProgress.sent == firstCountable,
+        "a channel probe does not count toward the session 'sent' total",
+        ("sent=%s sends=%d probes=%d countable=%d"):format(
+            tostring(firstProgress and firstProgress.sent), #first,
+            firstProbes, firstCountable))
+
     -- A query from someone else must produce our own record plus a digest.
     -- Stage 1: the query names a transport and the answer travels the SAME way
     -- -- the pre-Stage-1 code answered every Q on CHANNEL, which guild- and
@@ -5830,6 +5847,33 @@ do
     check(throttleRequeued ~= nil and throttleNewest ~= nil,
         "a throttled send is re-queued and delivered on the next tick",
         table.concat(throttleRetry, " | "))
+
+    -- F1 RED-FIRST PIN: a client-refused (throttled) head item carries a
+    -- retryAfter deadline. Re-triggering processQueue at the SAME uptime must
+    -- NOT re-send it: on a live client the OnUpdate driver fires ~60 Hz, and
+    -- the current code re-attempts the throttled item on every tick. With no
+    -- clock advance below, unfixed code re-sends "Q;backoff1" immediately (and
+    -- also sends the flush item behind it), so this pin is expected to FAIL;
+    -- once the backoff deadline gates the head, nothing goes out.
+    isolationSweep()
+    setSendResult(3)
+    RankSync.Enqueue("Q;backoff1", "GUILD")
+    drainSends()  -- the one refused attempt; item stays at the head
+    setSendResult(0)
+    RankSync.Enqueue(";-backoffprobe", "GUILD")  -- SAME clock: no tick()
+    local backoffImmediate = drain()
+    check(#backoffImmediate == 0,
+        "a throttled send is not retried before its backoff deadline (no 60 Hz busy-retry)",
+        "immediate=" .. table.concat(backoffImmediate, " | "))
+    -- Restore a clean queue for the following pins (deadline is due after a
+    -- tick; drain every leftover at the now-successful send result).
+    for _ = 1, 30 do
+        if (RankSync.GetDebugState().queueDepth or 0) == 0 then break end
+        tick()
+        RankSync.Enqueue(";-flush", "GUILD")
+        drain()
+    end
+    tick()
 
     -- Item 2: the channel state machine. A channel-flagged send answered by
     -- the client with InvalidChannel=7 proves the channel does not carry
@@ -10987,6 +11031,157 @@ do
         end
     end
     runV132Pins()
+
+    -- =======================================================================
+    -- v1.0.7 deep-audit pins: (1) GetSpecialization's index must be converted
+    -- to a real specID, never stored as 1..3; (2) a remote scan whose item data
+    -- never loads must terminate on retry exhaustion, not sit 'pending' forever.
+    -- Both are RED on the pre-fix Scanner.lua and GREEN after the fix.
+    -- =======================================================================
+    local runV107Pins = function()
+        out(("\n-- v1.0.7 specID-as-index & remote item-data-timeout --\n"))
+        local CacheV107 = namespace and namespace.Cache
+        local ScannerV107 = namespace and namespace.Scanner
+        local RankDBV107 = namespace and namespace.RankDB
+        if not (CacheV107 and ScannerV107 and RankDBV107) then
+            return
+        end
+
+        -- (1) captureSpecID: GetSpecialization returns a 1-based INDEX on
+        -- Forever (SpecializationInfoDocumentation.lua:237-251) and live
+        -- (:213-227). The real specID is GetSpecializationInfo's first return.
+        -- HandleTalentsReady runs snapshotRemoteMeta + queueRankSync with a
+        -- live unit token, which is where captureSpecID is consumed; the row
+        -- must carry 71, never the index 2.
+        local savedCSI = REALG.C_SpecializationInfo
+        REALG.C_SpecializationInfo = {
+            GetSpecialization = function(_, _, _, _)
+                return 2  -- a spec INDEX, not an ID
+            end,
+            GetSpecializationInfo = function(index, _, _, _)
+                if index == 2 then return 71, "Fury" end
+                return nil
+            end,
+        }
+        local specGuid = "Player-1407-0000A101"
+        CacheV107.Begin(specGuid, 9600, "v107-spec-seed")
+        CacheV107.PublishComplete(specGuid, 9600,
+            { classToken = { status = "complete", value = "WARRIOR" },
+              level = { status = "complete", value = 70 }, slots = {} },
+            { currentGS = 1000, unenhancedGS = 1000, averageItemLevel = 100,
+              metrics = { gearScore = { status = "complete", value = 1000 } },
+              warnings = {} })
+        local savedExistsS = REALG.UnitExists
+        local savedIsPlayerS = REALG.UnitIsPlayer
+        local savedGUIDS = REALG.UnitGUID
+        local savedGIPlayerS = REALG.GUIDIsPlayer
+        local savedPInfoS = REALG.GetPlayerInfoByGUID
+        REALG.UnitExists = function(u) return u == "target" or u == "player" end
+        REALG.UnitIsPlayer = function(u) return u == "target" or u == "player" end
+        REALG.UnitGUID = function(u)
+            if u == "target" then return specGuid end
+            if u == "player" then return "Player-1407-00000001" end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g) return g == specGuid end
+        REALG.GetPlayerInfoByGUID = function(g)
+            if g == specGuid then return "WARRIOR", "Warrior", nil, "Alliance" end
+            return nil
+        end
+        local talentsOK = ScannerV107.HandleTalentsReady("TALENTS_READY", specGuid, "target")
+        local specRec = RankDBV107.GetRecord(specGuid)
+        check(talentsOK == true and type(specRec) == "table"
+                and specRec.specID == 71 and specRec.specID ~= 2,
+            "v1.0.7 captureSpecID converts Forever's GetSpecialization index (2) to a real specID (71)",
+            ("handled=%s specID=%s"):format(tostring(talentsOK),
+                tostring(specRec and specRec.specID)))
+
+        REALG.C_SpecializationInfo = savedCSI
+        REALG.UnitExists = savedExistsS
+        REALG.UnitIsPlayer = savedIsPlayerS
+        REALG.UnitGUID = savedGUIDS
+        REALG.GUIDIsPlayer = savedGIPlayerS
+        REALG.GetPlayerInfoByGUID = savedPInfoS
+
+        -- (2) A remote scan whose item data never loads must terminate. With
+        -- GetInventoryItemID returning an ID and GetInventoryItemLink nil, the
+        -- slot stays pending; the two REMOTE_ITEM_RETRY_DELAYS timers exhaust.
+        -- Pre-fix code just returns false at the exhausted-delay branch and the
+        -- cache entry stays 'pending' for the session. Post-fix it is published
+        -- 'unavailable' with reason 'item-data-timeout'.
+        local timeoutGuid = "Player-1407-0000B101"
+        local insp107 = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+        local savedGetUnitDataT = insp107 and insp107.GetUnitData
+        local savedInvIDT = REALG.GetInventoryItemID
+        local savedInvLinkT = REALG.GetInventoryItemLink
+        local savedExistsT = REALG.UnitExists
+        local savedIsPlayerT = REALG.UnitIsPlayer
+        local savedGUIDT = REALG.UnitGUID
+        local savedGIPlayerT = REALG.GUIDIsPlayer
+        local savedAfterT = REALG.C_Timer and REALG.C_Timer.After
+
+        local timeoutTimers = {}
+        REALG.C_Timer = REALG.C_Timer or {}
+        REALG.C_Timer.After = function(delay, cb)
+            if type(cb) == "function" then
+                timeoutTimers[#timeoutTimers + 1] = { delay = delay, cb = cb }
+            end
+            return true
+        end
+        REALG.UnitExists = function(u) return u == "target" or u == "player" end
+        REALG.UnitIsPlayer = function(u) return u == "target" or u == "player" end
+        REALG.UnitGUID = function(u)
+            if u == "target" then return timeoutGuid end
+            if u == "player" then return "Player-1407-00000001" end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g) return g == timeoutGuid end
+        REALG.GetInventoryItemID = function(u, slot)
+            if u == "target" and slot == 1 then return 50003 end
+            return nil
+        end
+        REALG.GetInventoryItemLink = function() return nil end
+        if insp107 then
+            insp107.GetUnitData = function() return nil end
+        end
+
+        timeoutTimers = {}
+        local started = ScannerV107.HandleInventoryReady("INVENTORY_READY", timeoutGuid, true, "target")
+        local pendingEntry = CacheV107.Get(timeoutGuid)
+        -- Pump the two retry timers; item data never loads, so the scan must
+        -- fail closed once the retry schedule is exhausted.
+        local guard = 0
+        while #timeoutTimers > 0 and guard < 6 do
+            local batch = timeoutTimers
+            timeoutTimers = {}
+            guard = guard + 1
+            for _, t in ipairs(batch) do t.cb() end
+        end
+        local finalEntry = CacheV107.Get(timeoutGuid)
+        check(started == true and type(pendingEntry) == "table" and pendingEntry.state == "pending"
+                and type(finalEntry) == "table" and finalEntry.state == "unavailable"
+                and finalEntry.reason == "item-data-timeout",
+            "v1.0.7 a remote scan with never-loading item data terminates on retry exhaustion instead of staying pending",
+            ("started=%s initial=%s final=%s reason=%s"):format(
+                tostring(started), tostring(pendingEntry and pendingEntry.state),
+                tostring(finalEntry and finalEntry.state), tostring(finalEntry and finalEntry.reason)))
+
+        -- Restore every mocked global (state isolation across pins/clients).
+        REALG.GetInventoryItemID = savedInvIDT
+        REALG.GetInventoryItemLink = savedInvLinkT
+        REALG.UnitExists = savedExistsT
+        REALG.UnitIsPlayer = savedIsPlayerT
+        REALG.UnitGUID = savedGUIDT
+        REALG.GUIDIsPlayer = savedGIPlayerT
+        if insp107 then
+            insp107.GetUnitData = savedGetUnitDataT
+        end
+        if REALG.C_Timer then
+            REALG.C_Timer.After = savedAfterT
+        end
+    end
+    runV107Pins()
 end
 
 out(("\n-------------------------------------------------------------\n"))

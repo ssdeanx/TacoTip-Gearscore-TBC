@@ -229,6 +229,7 @@ local function pruneStaleRemoteContexts(now)
         for i = 1, #toRemove do
             local entry = toRemove[i]
             remoteContexts[entry.guid] = nil
+            remoteItemRevs[entry.guid] = nil
             clearQueuedAsync(entry.guid)
             if entry.generation then
                 pcall(Cache.PublishUnavailable, entry.guid, entry.generation, "item-data-timeout")
@@ -482,11 +483,29 @@ local function captureSpecID(unit)
         return 0
     end
     local CSI = rawget(_G, "C_SpecializationInfo")
-    if type(CSI) == "table" and type(CSI.GetSpecialization) == "function" then
+    if type(CSI) == "table"
+        and type(CSI.GetSpecialization) == "function"
+        and type(CSI.GetSpecializationInfo) == "function" then
         local isSelf = (unit == "player")
-        local ok, id = pcall(CSI.GetSpecialization, not isSelf, false, 1, 1)
-        if ok and not Core.IsSecretValue(id) and type(id) == "number" and id > 0 then
-            return math.floor(id)
+        -- GetSpecialization answers a 1-based specialization INDEX, not a specID
+        -- (SpecializationInfoDocumentation.lua:237-251 forever / :213-227 live).
+        -- Storing that index put 1..3 on the wire where a real specID belongs.
+        -- Convert through GetSpecializationInfo's FIRST return -- the same
+        -- resolution the vendored library uses (getModernSpecData). Both the
+        -- call and its numeric validation are guarded: the arguments are
+        -- SecretArguments="AllowedWhenUntainted" and the returned specID can
+        -- be secret under identity restriction, so no comparison runs outside.
+        local ok, index = pcall(CSI.GetSpecialization, not isSelf, false, 1, 1)
+        if ok and not Core.IsSecretValue(index)
+            and type(index) == "number" and index >= 1 and index % 1 == 0 then
+            local inspectTarget = nil
+            if not isSelf then inspectTarget = unit end
+            local okInfo, specID = pcall(CSI.GetSpecializationInfo, index,
+                not isSelf, false, inspectTarget)
+            if okInfo and not Core.IsSecretValue(specID)
+                and type(specID) == "number" and specID >= 1 then
+                return math.floor(specID)
+            end
         end
     end
     if type(CSI) == "table" and type(CSI.GetInspectSpecialization) == "function" then
@@ -1748,7 +1767,13 @@ local function scheduleRemoteItemRetry(context)
     local nextStep = (context.itemRetryStep or 0) + 1
     local delay = REMOTE_ITEM_RETRY_DELAYS[nextStep]
     if not delay then
-        return false
+        -- The retry schedule is exhausted and the item data still never
+        -- arrived. Returning false here used to leave the cache entry pinned
+        -- in "pending" for the whole session (no further timer, and the TTL
+        -- prune only runs on the next scan/capture drain). Fail the remote
+        -- explicitly so it publishes "item-data-timeout" now; RetryUnavailable
+        -- Remote can still recover it later when the data does load.
+        return failRemote(context, "item-data-timeout")
     end
     context.itemRetryStep = nextStep
     context.itemRetryTimerActive = true
@@ -2561,6 +2586,7 @@ function Scanner.SeedFromInspectorCache(maxSlice)
                 if evictedGUID then
                     remoteContexts[evictedGUID] = nil
                     remoteItemRevs[evictedGUID] = nil
+                    clearQueuedAsync(evictedGUID)
                 end
                 if began then
                     clearQueuedAsync(entry.guid)

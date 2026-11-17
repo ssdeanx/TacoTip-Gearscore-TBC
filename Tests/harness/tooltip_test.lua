@@ -2619,6 +2619,21 @@ do
                 end
             end
 
+            -- The base padding is identical on every client; on Forever only,
+            -- v1.0.7 adds a per-appended-row reserve so the border closes below
+            -- the last Pawn/iLvl row (see the geometry pin below). Other client
+            -- families must stay byte-identical, so they still assert the exact
+            -- base; Forever asserts at least the base and the geometry pin pins
+            -- the reserve itself.
+            local function padOkForFamily(bottom, fontSize)
+                if (type(bottom) ~= "number") then return false end
+                local base = 4 + math.max(0, math.floor(((fontSize or 12) - 12) * 0.5))
+                if (label == "FOREVER") then
+                    return bottom >= base
+                end
+                return bottom == base
+            end
+
             -- 1. Same-unit refresh after C++ ClearLines() resets nextLeft anchor back
             --    to a hidden line (the 31px phantom-gap / bottom-cutoff trap).
             -- Stock has lines 1..4; Name (1), <Guild> (2), Level (3) stay visible (n=3),
@@ -2647,8 +2662,8 @@ do
 
             -- 2. Bottom padding applies for wide_style, scales with font size, is
             --    idempotent on settled refreshes, and survives OnShow padding resets.
-            check("v1.0.4 wide_style: default 12pt applies 4px bottom padding",
-                GT.__padding ~= nil and GT.__padding[2] == 4,
+            check("v1.0.4 wide_style: default 12pt applies base bottom padding",
+                GT.__padding ~= nil and padOkForFamily(GT.__padding[2], 12),
                 "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
 
             local padBase = GT.__paddingCalls or 0
@@ -2659,8 +2674,8 @@ do
 
             CFG.tooltip_font_size = 16
             renderWideStock(4)
-            check("v1.0.4 wide_style: 16pt font scales bottom padding to 6px",
-                GT.__padding ~= nil and GT.__padding[2] == 6,
+            check("v1.0.4 wide_style: 16pt font scales bottom padding to base",
+                GT.__padding ~= nil and padOkForFamily(GT.__padding[2], 16),
                 "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
 
             GT:ClearPadding()
@@ -2668,8 +2683,31 @@ do
                 GT.__hooks.OnShow(GT)
             end
             check("v1.0.4 wide_style: OnShow restores bottom padding after Blizzard ClearPadding",
-                GT.__padding ~= nil and GT.__padding[2] == 6,
+                GT.__padding ~= nil and padOkForFamily(GT.__padding[2], 16),
                 "bottom=" .. tostring(GT.__padding and GT.__padding[2]))
+
+            -- v1.0.7 HIGH (FOREVER only): appended Pawn/iLvl rows must sit INSIDE
+            -- the tooltip border. On Forever the data pipeline lays the tooltip
+            -- out from C_TooltipInfo lines in ProcessLines BEFORE the unit
+            -- post-call appends our rows, so those rows are not part of the
+            -- client's measured content height. The bottom pad has to reserve
+            -- their stacked height or they render below the border. This is a
+            -- box-height-vs-content GEOMETRY assertion -- the pins above only
+            -- check the SetPadding call shape/value.
+            if (label == "FOREVER") then
+                CFG.tooltip_font_size = 12
+                local addBeforeGeo = ADDLINE_CALLS or 0
+                renderWideStock(4)
+                local appended = (ADDLINE_CALLS or 0) - addBeforeGeo - 4
+                local bottom = (GT.__padding and GT.__padding[2]) or 0
+                local rowH = (CFG.tooltip_font_size or 12) + 2
+                local clientBoxH = 4 * rowH + bottom            -- stock lines + bottom pad
+                local contentBottom = (4 + appended) * rowH    -- last appended row bottom
+                check("v1.0.7 FOREVER wide_style: appended rows fit inside the tooltip border",
+                    appended > 0 and contentBottom <= clientBoxH,
+                    string.format("appended=%d bottom=%g rowH=%d boxH=%d contentBottom=%d",
+                        appended, bottom, rowH, clientBoxH, contentBottom))
+            end
 
             local savedGetPad = GT.GetPadding
             GT.GetPadding = function() return "secR", "secB", "secL", "secT" end

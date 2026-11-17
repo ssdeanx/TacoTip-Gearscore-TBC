@@ -512,6 +512,14 @@ function RankSync.DeserializeRecord(payload)
         countOutcome("versionReject")
         return nil
     end
+    -- F6: the R;2 stride is EXACTLY thirteen fields. A longer payload is not a
+    -- record with harmless trailing data -- it is a different (or corrupt)
+    -- wire shape, and accepting it would silently ignore the extra fields.
+    -- Refuse it. Placed AFTER the version gate so foreign-version strides
+    -- still land in the versionReject bucket the /ex debug contract pins.
+    if #parts ~= RECORD_FIELDS then
+        return nil
+    end
     local classID = safeNumber(parts[5], 0)
     return {
         guid = safeString(parts[3]),
@@ -562,11 +570,20 @@ end
 -- sendNoInfo rather than an error, because a nil result usually means "sent".
 -- The pre-Stage-1 code pcall'd and ignored the result entirely, so a throttled
 -- or refused send was indistinguishable from a delivered one.
-local function recordSessionSendOutcome(outcome)
+local function recordSessionSendOutcome(outcome, countable)
     if not syncSession.active then
         return
     end
     syncSession.dispatched = (syncSession.dispatched or 0) + 1
+    -- F3: a channel probe ("P;...") or a gear D chunk is transport/detail
+    -- traffic that peers ignore as rank data. Counting a successful probe here
+    -- let a probe alone drive the terminal "Sync complete: N query sent" --
+    -- a false success when no query ever went out. 'dispatched' still counts
+    -- every raw send (it drives the throttled/send_failed branches); only the
+    -- 'sent' tally that feeds "query sent" excludes non-query items.
+    if countable == false then
+        return
+    end
     if outcome == "sendSuccess" or outcome == "sendNoInfo" then
         syncSession.sent = (syncSession.sent or 0) + 1
     elseif outcome == "sendError" or outcome == "sendInvalidChannel" then
@@ -574,7 +591,9 @@ local function recordSessionSendOutcome(outcome)
     end
 end
 
-local function rawSend(msg, chatType, target)
+-- `countsAsQuery` is false for probes and gear chunks; the item metadata is
+-- passed through the queue so rawSend never has to re-derive it from the wire.
+local function rawSend(msg, chatType, target, countsAsQuery)
     local g = _G
     local result
     local cChat = rawget(g, "C_ChatInfo")
@@ -582,7 +601,7 @@ local function rawSend(msg, chatType, target)
         local ok, r = pcall(cChat.SendAddonMessage, PREFIX, msg, chatType, target)
         if not ok then
             countOutcome("sendError")
-            recordSessionSendOutcome("sendError")
+            recordSessionSendOutcome("sendError", countsAsQuery)
             return "sendError"
         end
         result = r
@@ -590,13 +609,13 @@ local function rawSend(msg, chatType, target)
         local ok = pcall(g["SendAddonMessage"], PREFIX, msg, chatType, target)
         if not ok then
             countOutcome("sendError")
-            recordSessionSendOutcome("sendError")
+            recordSessionSendOutcome("sendError", countsAsQuery)
             return "sendError"
         end
         result = nil
     else
         countOutcome("sendError")
-        recordSessionSendOutcome("sendError")
+        recordSessionSendOutcome("sendError", countsAsQuery)
         return "sendError"
     end
 
@@ -614,7 +633,7 @@ local function rawSend(msg, chatType, target)
     else
         outcome = "sendOther"
     end
-    recordSessionSendOutcome(outcome)
+    recordSessionSendOutcome(outcome, countsAsQuery)
     countOutcome(outcome)
     return outcome
 end
@@ -747,13 +766,25 @@ local function processQueue()
 
     while tokens > 0 and #sendQueue > 0 do
         local item = sendQueue[1]
-        local outcome = rawSend(item.msg, item.chatType, item.target)
+        -- F1: a client-refused head carries a retryAfter deadline. The OnUpdate
+        -- driver fires ~60 Hz, so re-attempting on every tick is a busy-retry
+        -- that hammers the client throttle and floods the outcome counters.
+        -- Wait one full THROTTLE_INTERVAL before trying this item again. The
+        -- head stays head (S before D, probe proof before detail), so a not-yet-
+        -- due item blocks the queue rather than being re-sent or reordered.
+        if item.retryAfter and now < item.retryAfter then
+            break
+        end
+        local countsAsQuery = not (item.isProbe or item.isGear)
+        local outcome = rawSend(item.msg, item.chatType, item.target, countsAsQuery)
         if outcome == "sendThrottle" or outcome == "sendChannelThrottle" then
             -- The client refused to put this message on the wire, so it lives
             -- on in the queue: the pre-Stage-1 code popped the item and lost it
             -- (a permanent, silent send loss -- audit §6.2, "a throttled send
-            -- is counted and re-queued"). No token is spent, and the next
-            -- processQueue tick -- with its refilled bucket -- retries it.
+            -- is counted and re-queued"). No token is spent; arm a full
+            -- interval of backoff so the ~60 Hz queue driver cannot retry it
+            -- until the deadline, then break (head-of-line preserved).
+            item.retryAfter = now + THROTTLE_INTERVAL
             countOutcome("requeued")
             break
         end
@@ -1294,8 +1325,10 @@ local function respondToQuery(requestId, chatType, _sender)
     if lastRespondAt > 0 and (now - lastRespondAt) < RESPOND_INTERVAL then
         return false
     end
-    lastRespondAt = now
-
+    -- F2: do NOT arm the respond gate here. A query with no RankDB (or one that
+    -- produces no answer) must not burn the 20-second window, or the next
+    -- genuinely answerable query inside it is silently suppressed. The gate is
+    -- advanced below, only after an answer has actually been enqueued.
     local db = namespace.RankDB
     if type(db) ~= "table" then
         return false
@@ -1344,6 +1377,12 @@ local function respondToQuery(requestId, chatType, _sender)
                 end
             end
         end
+    end
+    -- F2: the answer was produced -- arm the respond gate now, so a burst of
+    -- concurrent queries still gets exactly one answer per RESPOND_INTERVAL,
+    -- but a query that could not be answered did not consume the window.
+    if answerType then
+        lastRespondAt = now
     end
     return true
 end
@@ -1545,6 +1584,9 @@ local function enqueueGearChunk(msg, chatType, target, senderKey)
         chatType = chatType,
         target = target,
         gearSender = senderKey,
+        -- F3: gear detail is not a rank query; do not advance the session's
+        -- "query sent" tally when a D chunk goes out.
+        isGear = true,
     }
     processQueue()
     return true
@@ -1902,8 +1944,12 @@ local function handlePayload(payload, chatType, sender)
     if kind == "D" then
         local parsed = parseGearMessage(payload)
         if parsed then
+            -- F4: a D chunk is gear DETAIL, not a rank record. Routing it through
+            -- recordSessionReceive inflated 'received' and produced a false
+            -- "Sync complete: N peer records up to date". Gear ingestion has
+            -- its own outcome buckets (gearStored/gearStale/gearRefused); do
+            -- not fold it into the rank-record session tally.
             ingestGearMessage(parsed)
-            recordSessionReceive(1, 0)
         end
         return
     end
@@ -2008,6 +2054,12 @@ local function joinThenQuery(retries, token, isManual)
                 notifySyncProgress(false)
             end
             cTimer.After(isManual and 2.5 or 5.0, function()
+                -- F5: a newer SyncNow may have advanced the token (or ended the
+                -- session) while this timer was pending. A stale retry must
+                -- never re-drive the join/query path on the new session's behalf.
+                if token ~= syncSession.token or not syncSession.active then
+                    return
+                end
                 joinThenQuery(retries + 1, token, isManual)
             end)
             return
@@ -2037,6 +2089,12 @@ local function joinThenQuery(retries, token, isManual)
             notifySyncProgress(false)
         end
         cTimer.After(isManual and 1.5 or 4.0, function()
+            -- F5: same stale-callback guard -- a superseded session's deferred
+            -- channel join must not send a query or schedule a finish window
+            -- onto the current session.
+            if token ~= syncSession.token or not syncSession.active then
+                return
+            end
             joinSyncChannel()
             armChannelProbe()
             RankSync.RequestSync()

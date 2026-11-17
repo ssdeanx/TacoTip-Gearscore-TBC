@@ -1857,6 +1857,114 @@ do
 end
 
 --------------------------------------------------------------------------
+-- VEX-1 companion / REGRESSION GUARD (not a defect pin): a party-member unit
+-- frame (party1) must keep resolving GearScore through the SHARED items-keyed
+-- memo after the self-memo change. Party is a non-self unit: main.lua:4211
+-- forces the live GetScore only for isSelf, and main.lua:4215 already writes
+-- TT._gsMemo for every non-self unit. This pin proves the new self-scoped memo
+-- is NOT consulted for party and the ordinary memo path is unchanged. It is
+-- GREEN on both the shipped and the fixed tree; VEX-1 above is the red-first
+-- proof. If a future edit routes party through the self memo, this fails.
+--------------------------------------------------------------------------
+do
+    local savedTipStyle = C.tip_style
+    local savedGearMode = GEAR_MODE
+    local savedParty = UNITS.party1
+    local savedInspectUnit = REALG.InspectFrame.unit
+    local savedOwner = GT.GetOwner
+    local savedGetUnit = GT.GetUnit
+    local savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
+    local savedCurrent = currentUnit
+    local savedSelfMemo = TT._selfGSMemo
+
+    C.tip_style = 1 -- FULL, same rendered shape as the VEX-1 self pin
+    GEAR_MODE = "full"
+    local partyGuid = "Player-9-000009"
+    UNITS.party1 = {
+        guid = partyGuid, name = "Partymate", level = 60,
+        race = "Human", class = "MAGE", className = "Mage", classID = 8,
+        isPlayer = true, pvp = false,
+    }
+    -- On Forever the INSPECT_READY handler resolves the unit from
+    -- InspectFrame.unit (LibForeverInspector.lua:4783) and cacheUnitData stages
+    -- the 17-slot item set from GetInventoryItemLink, so CI:GetUnitData(party1)
+    -- supplies the items identity the shared memo is keyed on.
+    REALG.InspectFrame.unit = "party1"
+    local okPrime = primeInspect("party1", "full")
+
+    local memoWrites, memoHits = 0, 0
+    local savedSetGS, savedGetGS = TT.setGearScoreMemo, TT.getGearScoreMemo
+    TT.setGearScoreMemo = function(guid, items, score, ilvl)
+        if (guid == partyGuid) then memoWrites = memoWrites + 1 end
+        return savedSetGS(guid, items, score, ilvl)
+    end
+    TT.getGearScoreMemo = function(guid, items)
+        local s, i = savedGetGS(guid, items)
+        if (guid == partyGuid and type(s) == "number" and s > 0) then
+            memoHits = memoHits + 1
+        end
+        return s, i
+    end
+
+    local function renderParty()
+        currentUnit = "party1"
+        GT.__unit = "party1"
+        GT.__shown = true
+        GT.GetOwner = function() return { unit = "party1" } end
+        GT.GetUnit = function() return "n", "party1" end
+        REALG.TooltipUtil.GetDisplayedUnit = function()
+            return "n", "party1", partyGuid
+        end
+        GT:ClearLines()
+        GT:AddLine("Partymate")
+        GT:AddLine("<Testguild>")
+        GT:AddLine("Level 60 Mage")
+        if (POSTCALLS.unit) then POSTCALLS.unit(GT, { guid = partyGuid }) end
+        return allText()
+    end
+
+    local first = renderParty()
+    check("VEX-1 party: party1 hover writes the shared items-keyed memo",
+        okPrime == true and memoWrites >= 1 and TT._gsMemo ~= nil
+            and type(TT._gsMemo[partyGuid]) == "table"
+            and type(TT._gsMemo[partyGuid].score) == "number"
+            and TT._gsMemo[partyGuid].score > 0,
+        "prime=" .. STD.tostring(okPrime) .. " writes=" .. STD.tostring(memoWrites)
+            .. " first=" .. STD.string.gsub(first, "\n", " | "))
+
+    -- Same transient-zero tick as VEX-1: an in-flight item read makes a LIVE
+    -- GetScore answer 0. The non-self memo must still answer -- this is the
+    -- ordinary party path, which the self-memo fix must not alter.
+    local savedGetItemInfo = REALG.GetItemInfo
+    REALG.GetItemInfo = function() return nil end
+    REALG.C_Item.GetItemInfo = REALG.GetItemInfo
+    local second = renderParty()
+    REALG.GetItemInfo = savedGetItemInfo
+    REALG.C_Item.GetItemInfo = savedGetItemInfo
+
+    check("VEX-1 party: party1 GearScore survives via the non-self memo",
+        STD.string.find(second, "GearScore:", 1, true) ~= nil,
+        STD.string.gsub(second, "\n", " | "))
+    check("VEX-1 party: party1 never touches the self-scoped memo",
+        memoHits >= 1 and TT._selfGSMemo == savedSelfMemo,
+        "hits=" .. STD.tostring(memoHits)
+            .. " selfMemoChanged=" .. STD.tostring(TT._selfGSMemo ~= savedSelfMemo))
+
+    TT.getGearScoreMemo = savedGetGS
+    TT.setGearScoreMemo = savedSetGS
+    TT.clearGearScoreMemo(partyGuid)
+    TT._selfGSMemo = savedSelfMemo
+    UNITS.party1 = savedParty
+    REALG.InspectFrame.unit = savedInspectUnit
+    GT.GetOwner = savedOwner
+    GT.GetUnit = savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = savedDisplayed
+    currentUnit = savedCurrent
+    C.tip_style = savedTipStyle
+    GEAR_MODE = savedGearMode
+end
+
+--------------------------------------------------------------------------
 -- P9: coloring is preserved -- class-colored name, green guild tag, level line.
 --------------------------------------------------------------------------
 do
@@ -3515,6 +3623,261 @@ do
 
     C.tip_style = savedStyle
     REALG.GetGuildInfo = savedGI
+end
+
+--------------------------------------------------------------------------
+-- T8 adversary pins: party1..party4 faithful unit-frame hovers (red-first
+-- hunt that RULED OUT the four suspected party-frame defects; all GREEN on
+-- current code). Faithful shape per t1 + TooltipUtil.lua:34 GetDisplayedUnit
+-- -> UnitTokenFromGUID: owner frame unit == resolved unit == partyN, and the
+-- post-call payload guid == partyN guid. Mutation proof: forcing the zone
+-- query to "mouseover" fails 5 pins, forcing the talent read to "mouseover"
+-- fails 3, and disabling the non-self GearScore memo write fails 4.
+--------------------------------------------------------------------------
+do
+    local t8_savedTipStyle = C.tip_style
+    local t8_savedGearMode = GEAR_MODE
+    local t8_savedOwner = GT.GetOwner
+    local t8_savedGetUnit = GT.GetUnit
+    local t8_savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
+    local t8_savedCurrent = currentUnit
+    local t8_savedInspectUnit = REALG.InspectFrame.unit
+    local t8_savedBestMap = REALG.__bestMapForUnit
+    local t8_savedMapInfo = REALG.__mapInfo
+    local t8_savedZone = REALG.ZONE
+    local t8_savedIsInGroup = REALG.IsInGroup
+    local t8_savedSpecGroups = REALG.__foreverSpecGroups
+    local t8_savedInspectGroups = REALG.__foreverInspectGroups
+    local t8_savedSelfMemo = TT._selfGSMemo
+
+    C.tip_style = 1 -- FULL / wide
+    GEAR_MODE = "full"
+    REALG.ZONE = "Zone"
+    REALG.IsInGroup = function() return true end
+    REALG.__foreverSpecGroups = 2 -- dual spec ON for self (2 talent lines)
+    REALG.__foreverInspectGroups = 2
+    TT._selfGSMemo = nil
+    CI.foreverPlayerTalentMemo = nil
+
+    -- Fresh map IDs (190..194) avoid mapZoneCache entries left by earlier pins.
+    local T8_MAPS = { [190] = "T8ZoneOne", [191] = "T8ZoneTwo", [192] = "T8ZoneThree", [193] = "T8ZoneFour" }
+    local T8_PARTY_MAP = { party1 = 190, party2 = 191, party3 = 192, party4 = 193 }
+    REALG.__bestMapForUnit = function(u)
+        if (u == "player" or u == "mouseover") then return 190 end
+        return T8_PARTY_MAP[u]
+    end
+    REALG.__mapInfo = function(id)
+        local n = T8_MAPS[id]
+        if (n) then return { name = n } end
+        return nil
+    end
+
+    local T8_PARTY = {
+        { tok = "party1", guid = "Player-20-000001", name = "MateOne", class = "WARRIOR", className = "Warrior", classID = 1 },
+        { tok = "party2", guid = "Player-20-000002", name = "MateTwo", class = "MAGE", className = "Mage", classID = 8 },
+        { tok = "party3", guid = "Player-20-000003", name = "MateThree", class = "PRIEST", className = "Priest", classID = 5 },
+        { tok = "party4", guid = "Player-20-000004", name = "MateFour", class = "ROGUE", className = "Rogue", classID = 4 },
+    }
+    local t8_savedUnits = {}
+    for _, p in STD.ipairs(T8_PARTY) do
+        t8_savedUnits[p.tok] = UNITS[p.tok]
+        UNITS[p.tok] = {
+            guid = p.guid, name = p.name, level = 60, race = "Human",
+            class = p.class, className = p.className, classID = p.classID,
+            isPlayer = true, pvp = false,
+        }
+    end
+
+    local function t8_render(unitToken, ownerUnit, seed)
+        currentUnit = unitToken
+        GT.__unit = unitToken
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", unitToken, UNITS[unitToken].guid end
+        GT.GetOwner = function() return { unit = ownerUnit } end
+        GT:ClearLines()
+        for _, line in STD.ipairs(seed) do GT:AddLine(line) end
+        if (POSTCALLS.unit) then POSTCALLS.unit(GT, { guid = UNITS[unitToken].guid }) end
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i)
+            local lt = l and l:GetText()
+            if (lt ~= nil and lt ~= "") then out[#out + 1] = tostring(lt) end
+            local r = (type(GT.GetRightLine) == "function") and GT:GetRightLine(i) or nil
+            local rt = r and r:GetText()
+            if (rt ~= nil and rt ~= "") then out[#out + 1] = tostring(rt) end
+        end
+        return STD.table.concat(out, "\n"), out
+    end
+
+    for _, p in STD.ipairs(T8_PARTY) do
+        REALG.InspectFrame.unit = p.tok
+        local okPrime = primeInspect(p.tok, "full")
+        check("T8 setup: " .. p.tok .. " inspect primes", okPrime == true, STD.tostring(okPrime))
+        local seed = { p.name, "<Testguild>", "Level 60 Human" }
+        local txt, lines = t8_render(p.tok, p.tok, seed)
+        local wantZone = T8_MAPS[T8_PARTY_MAP[p.tok]]
+        check("T8 " .. p.tok .. ": GearScore row on party hover",
+            STD.string.find(txt, "GearScore:", 1, true) ~= nil, txt)
+        check("T8 " .. p.tok .. ": Talents row on party hover",
+            STD.string.find(txt, "Talents:", 1, true) ~= nil, txt)
+        -- In wide style only the first talent line carries the "Talents:" label;
+        -- count the spec-text payloads (icon + [p1/p2/p3]) instead.
+        local hasFury = STD.string.find(txt, "Fury", 1, true) ~= nil
+            and STD.string.find(txt, "0/21/0", 1, true) ~= nil
+        local hasArms = STD.string.find(txt, "33/28/0", 1, true) ~= nil
+        check("T8 " .. p.tok .. ": exactly ONE inspect talent payload (active group only)",
+            hasFury and not hasArms, txt)
+        check("T8 " .. p.tok .. ": Zone row uses owner party token (" .. wantZone .. ")",
+            STD.string.find(txt, wantZone, 1, true) ~= nil, txt)
+        local savedGetItemInfo = REALG.GetItemInfo
+        REALG.GetItemInfo = function() return nil end
+        REALG.C_Item.GetItemInfo = REALG.GetItemInfo
+        local zeroTxt = t8_render(p.tok, p.tok, seed)
+        REALG.GetItemInfo = savedGetItemInfo
+        REALG.C_Item.GetItemInfo = savedGetItemInfo
+        check("T8 " .. p.tok .. ": GearScore survives transient zero live read",
+            STD.string.find(zeroTxt, "GearScore:", 1, true) ~= nil, zeroTxt)
+        local zoneAt = STD.string.find(txt, "Zone:", 1, true)
+        local gsAt = STD.string.find(txt, "GearScore:", 1, true)
+        check("T8 " .. p.tok .. ": Zone row sits below GearScore",
+            zoneAt ~= nil and gsAt ~= nil and zoneAt > gsAt,
+            STD.table.concat(lines, " | "))
+    end
+
+    REALG.TooltipUtil.GetDisplayedUnit = function() return "n", "player", UNITS.player.guid end
+    GT.GetUnit = function() return "n", "player" end
+    local selfTxt, selfLines = t8_render("player", "player", { "Testplayer", "<Testguild>", "Level 60 Human" })
+    local p1Txt, p1Lines = t8_render("party1", "party1", { "MateOne", "<Testguild>", "Level 60 Human" })
+    check("T8 wide: self has no Target line", STD.string.find(selfTxt, "Target:", 1, true) == nil, selfTxt)
+    check("T8 wide: party has a Target line", STD.string.find(p1Txt, "Target:", 1, true) ~= nil, p1Txt)
+    local selfFury = STD.string.find(selfTxt, "Fury|r [0/21/0]", 1, true) ~= nil
+    local selfArms = STD.string.find(selfTxt, "Arms|r [33/28/0]", 1, true) ~= nil
+    check("T8 wide: self renders two talent payloads under dual spec",
+        selfFury and selfArms, selfTxt)
+    check("T8 wide: self and party row counts are equal (2 vs 1 talents, 0 vs 1 target)",
+        #selfLines == #p1Lines, "self=" .. STD.tostring(#selfLines) .. " party=" .. STD.tostring(#p1Lines)
+            .. " :: self=[" .. STD.table.concat(selfLines, " | ") .. "] party=[" .. STD.table.concat(p1Lines, " | ") .. "]")
+
+    C.tip_style = t8_savedTipStyle
+    GEAR_MODE = t8_savedGearMode
+    GT.GetOwner = t8_savedOwner
+    GT.GetUnit = t8_savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = t8_savedDisplayed
+    currentUnit = t8_savedCurrent
+    REALG.InspectFrame.unit = t8_savedInspectUnit
+    REALG.__bestMapForUnit = t8_savedBestMap
+    REALG.__mapInfo = t8_savedMapInfo
+    REALG.ZONE = t8_savedZone
+    REALG.IsInGroup = t8_savedIsInGroup
+    REALG.__foreverSpecGroups = t8_savedSpecGroups
+    REALG.__foreverInspectGroups = t8_savedInspectGroups
+    TT._selfGSMemo = t8_savedSelfMemo
+    for _, p in STD.ipairs(T8_PARTY) do UNITS[p.tok] = t8_savedUnits[p.tok] end
+end
+
+--------------------------------------------------------------------------
+-- T8b adversary pins: cold-cache hovers, cross-unit cache bleed, and the
+-- owner-token zone query when the resolved unit is "mouseover" (P16 covered
+-- party1; these cover party3/party4). Self-contained fixtures with teardown.
+--------------------------------------------------------------------------
+do
+    local t8b_savedTipStyle = C.tip_style
+    local t8b_savedOwner = GT.GetOwner
+    local t8b_savedGetUnit = GT.GetUnit
+    local t8b_savedDisplayed = REALG.TooltipUtil.GetDisplayedUnit
+    local t8b_savedCurrent = currentUnit
+    local t8b_savedInspectUnit = REALG.InspectFrame.unit
+    local t8b_savedBestMap = REALG.__bestMapForUnit
+    local t8b_savedMapInfo = REALG.__mapInfo
+    local t8b_savedUnits = {}
+    local T8B_FIXTURES = {
+        { tok = "party1", guid = "Player-30-000001" },
+        { tok = "party2", guid = "Player-30-000002" },
+        { tok = "party3", guid = "Player-30-000003" },
+        { tok = "party4", guid = "Player-30-000004" },
+    }
+    for _, f in STD.ipairs(T8B_FIXTURES) do
+        t8b_savedUnits[f.tok] = UNITS[f.tok]
+        UNITS[f.tok] = {
+            guid = f.guid, name = "B" .. f.tok, level = 60, race = "Human",
+            class = "WARRIOR", className = "Warrior", classID = 1,
+            isPlayer = true, pvp = false,
+        }
+    end
+    C.tip_style = 1
+
+    local t8b_maps = { [200] = "T8bOne", [201] = "T8bTwo", [202] = "T8bThree", [203] = "T8bFour" }
+    local t8b_pmap = { party1 = 200, party2 = 201, party3 = 202, party4 = 203 }
+    REALG.__bestMapForUnit = function(u)
+        if (u == "mouseover" or u == "player") then return 200 end
+        return t8b_pmap[u]
+    end
+    REALG.__mapInfo = function(id) local n = t8b_maps[id]; if n then return { name = n } end end
+
+    local function t8b_render(unitToken, ownerUnit, seed)
+        currentUnit = unitToken
+        GT.__unit = unitToken
+        GT.GetUnit = function() return "n", unitToken end
+        REALG.TooltipUtil.GetDisplayedUnit = function() return "n", unitToken, UNITS[unitToken].guid end
+        GT.GetOwner = function() return { unit = ownerUnit } end
+        GT:ClearLines()
+        for _, line in STD.ipairs(seed) do GT:AddLine(line) end
+        if POSTCALLS.unit then POSTCALLS.unit(GT, { guid = UNITS[unitToken].guid }) end
+        local out = {}
+        for i = 1, GT:NumLines() do
+            local l = GT:GetLeftLine(i); local lt = l and l:GetText()
+            if lt and lt ~= "" then out[#out+1] = tostring(lt) end
+            local r = (type(GT.GetRightLine)=="function") and GT:GetRightLine(i) or nil
+            local rt = r and r:GetText()
+            if rt and rt ~= "" then out[#out+1] = tostring(rt) end
+        end
+        return STD.table.concat(out, "\n")
+    end
+
+    local function t8b_prime(tok)
+        REALG.InspectFrame.unit = tok
+        local ok = primeInspect(tok, "full")
+        check("T8b setup: " .. tok .. " cold->primed", ok == true, STD.tostring(ok))
+    end
+
+    -- Cross-unit bleed: prime party1 fully, then hover an un-primed party2 with
+    -- a distinct GUID. No GearScore and no talent payload may bleed over.
+    t8b_prime("party1")
+    local cold2 = t8b_render("party2", "party2", { "MateTwo", "<Testguild>", "Level 60 Human" })
+    check("T8b cold party2: no GearScore row from party1's cached gear",
+        STD.string.find(cold2, "GearScore:", 1, true) == nil, cold2)
+    check("T8b cold party2: no talent payload from party1's cache",
+        STD.string.find(cold2, "0/21/0", 1, true) == nil, cold2)
+    -- After its own inspect, both rows appear.
+    t8b_prime("party2")
+    local warm2 = t8b_render("party2", "party2", { "MateTwo", "<Testguild>", "Level 60 Human" })
+    check("T8b warm party2: GearScore row appears after its own INSPECT_READY",
+        STD.string.find(warm2, "GearScore:", 1, true) ~= nil, warm2)
+    check("T8b warm party2: talent payload appears after its own INSPECT_READY",
+        STD.string.find(warm2, "0/21/0", 1, true) ~= nil, warm2)
+
+    -- Mouseover-resolved zone token for party3/4: owner is the party frame, the
+    -- resolved unit is mouseover (mapped to a DIFFERENT zone). Zone must use owner.
+    t8b_prime("party3")
+    t8b_prime("party4")
+    local mo3 = t8b_render("mouseover", "party3", { "Enemyplayer", "<Testguild>", "Level 59 Mage" })
+    check("T8b party3 owner-token Zone with resolved=mouseover",
+        STD.string.find(mo3, "T8bThree", 1, true) ~= nil
+            and STD.string.find(mo3, "T8bOne", 1, true) == nil, mo3)
+    local mo4 = t8b_render("mouseover", "party4", { "Enemyplayer", "<Testguild>", "Level 59 Mage" })
+    check("T8b party4 owner-token Zone with resolved=mouseover",
+        STD.string.find(mo4, "T8bFour", 1, true) ~= nil
+            and STD.string.find(mo4, "T8bOne", 1, true) == nil, mo4)
+
+    C.tip_style = t8b_savedTipStyle
+    GT.GetOwner = t8b_savedOwner
+    GT.GetUnit = t8b_savedGetUnit
+    REALG.TooltipUtil.GetDisplayedUnit = t8b_savedDisplayed
+    currentUnit = t8b_savedCurrent
+    REALG.InspectFrame.unit = t8b_savedInspectUnit
+    REALG.__bestMapForUnit = t8b_savedBestMap
+    REALG.__mapInfo = t8b_savedMapInfo
+    for _, f in STD.ipairs(T8B_FIXTURES) do UNITS[f.tok] = t8b_savedUnits[f.tok] end
 end
 
 --------------------------------------------------------------------------
