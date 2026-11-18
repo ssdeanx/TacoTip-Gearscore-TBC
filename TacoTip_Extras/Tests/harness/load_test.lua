@@ -1807,8 +1807,8 @@ end
 check(REALG.io.open(ROOT .. "/" .. ADDON_NAME .. ".toc", "r") ~= nil,
     "TOC filename equals add-on folder name",
     "WoW requires it; a mismatch means the add-on never loads at all")
-check(tocMeta.Version == "1.3.2",
-    "TOC ## Version is 1.3.2", "got " .. tostring(tocMeta.Version))
+check(tocMeta.Version == "1.3.3",
+    "TOC ## Version is 1.3.3", "got " .. tostring(tocMeta.Version))
 check(tocMeta.Dependencies == "TacoTip",
     "TOC ## Dependencies is TacoTip", "got " .. tostring(tocMeta.Dependencies))
 check(tocMeta.SavedVariables == "TacoTipExtrasDB",
@@ -10689,6 +10689,32 @@ do
         local savedIsInGroup = REALG.IsInGroup
         local savedIsInRaid = REALG.IsInRaid
         local savedGetChan = REALG.GetChannelName
+        local savedJoinTemp = REALG.JoinTemporaryChannel
+        local savedJoinChan = REALG.JoinChannelByName
+        local savedCTimer = REALG.C_Timer
+        if type(RAWL.TacoTipRankFrame) ~= "table" and type(RankBrowserV129.Show) == "function" then
+            RankBrowserV129.Show()
+        end
+        local rf = RAWL.TacoTipRankFrame
+        REALG.IsInGuild = function()
+            return true
+        end
+        REALG.GetChannelName = function(arg)
+            if arg == 1 then
+                return 1, "General"
+            end
+            return 7, "ttgssync"
+        end
+        REALG.C_Timer = {
+            After = function(_, fn)
+                if type(fn) == "function" then
+                    fn()
+                end
+            end,
+        }
+        local startedOk = RankSyncV129.SyncNow(true)
+        local progOk = RankSyncV129.GetSyncProgress()
+        RankBrowserV129.RefreshProgress()
         local barTextOk = rf and rf.progressBar and rf.progressBar.text and rf.progressBar.text:GetText() or ""
         local statusTextOk = rf and rf.scanStatus and rf.scanStatus:GetText() or ""
         check(startedOk == true
@@ -11541,6 +11567,417 @@ do
         end
     end
     runV107Pins()
+
+    local runFirstHoverAuditPins = (function()
+        out(("\n-- v1.3.2 first-hover GS Rank, cache, retry & inspect-buffer audit pins --\n"))
+        local ScannerFH = namespace and namespace.Scanner
+        local CacheFH = namespace and namespace.Cache
+        local RankDBFH = namespace and namespace.RankDB
+        local RankSyncFH = namespace and namespace.RankSync
+        local TooltipsFH = namespace and namespace.Tooltips
+        local inspFH = REALG.LibStub and REALG.LibStub.libs
+            and (REALG.LibStub.libs["LibForeverInspector"] or REALG.LibStub.libs["LibClassicInspector"])
+        if type(ScannerFH) ~= "table"
+            or type(CacheFH) ~= "table"
+            or type(RankDBFH) ~= "table"
+            or type(RankSyncFH) ~= "table" then
+            return
+        end
+
+        local savedUnitExists = REALG.UnitExists
+        local savedUnitIsPlayer = REALG.UnitIsPlayer
+        local savedUnitGUID = REALG.UnitGUID
+        local savedGUIDIsPlayer = REALG.GUIDIsPlayer
+        local savedUnitClass = REALG.UnitClass
+        local savedUnitLevel = REALG.UnitLevel
+        local savedUnitName = REALG.UnitName
+        local savedUnitFaction = REALG.UnitFactionGroup
+        local savedUnitTokenFromGUID = REALG.UnitTokenFromGUID
+        local savedUnitIsSameServer = REALG.UnitIsSameServer
+        local savedCPlayerInfo = REALG.C_PlayerInfo
+        local savedPlayerLocation = REALG.PlayerLocation
+        local savedGetInvID = REALG.GetInventoryItemID
+        local savedGetInvLink = REALG.GetInventoryItemLink
+        local savedCItem = REALG.C_Item
+        local savedGetItemInfo = REALG.GetItemInfo
+        local savedGetDetailedIlvl = REALG.GetDetailedItemLevelInfo
+        local savedGetPlayerInfo = REALG.GetPlayerInfoByGUID
+        local savedGetServerTime = REALG.GetServerTime
+        local savedGetTime = REALG.GetTime
+        local savedGetNumSockets = REALG.GetNumSockets
+        local savedGetItemNumSockets = REALG.C_Item and REALG.C_Item.GetItemNumSockets or nil
+        local savedInspCache = inspFH and inspFH.cache or nil
+        local savedLastInspectGUID = inspFH and inspFH.lastInspectGUID or nil
+        local savedGetUnitData = inspFH and inspFH.GetUnitData or nil
+
+        local FH_LINK = "|cffa335ee|Hitem:28773::::::::70|h[Gorehowl]|h|r"
+        local FH_NOW_SERVER = 2000900
+        local fhClock = 1500
+        REALG.GetTime = function() return fhClock end
+        REALG.GetServerTime = function() return FH_NOW_SERVER end
+
+        -- 1. RankDB is populated BEFORE Cache.PublishComplete synchronously notifies tooltip listeners,
+        --    and UnitIsSameServer receives unit token before character name.
+        local FH_G1 = "Player-1325-0000FA01"
+        local FH_G2 = "Player-1325-0000FA02"
+        local FH_G3 = "Player-1325-0000FA03"
+        local FH_G4 = "Player-1325-0000FA04"
+        local FH_G5 = "Player-1325-0000FA05"
+        local FH_G6 = "Player-1325-0000FA06"
+        local FH_G7 = "Player-1325-0000FA07"
+        local activeTargetGUID = FH_G1
+        local activeMouseGUID = nil
+        local activePlateGUID = nil
+        local activeName = "FirstHover"
+        local sameServerArgs = {}
+
+        REALG.C_PlayerInfo = nil
+        REALG.PlayerLocation = nil
+        REALG.UnitExists = function(u)
+            return u == "player" or u == "target"
+                or (u == "mouseover" and activeMouseGUID ~= nil)
+                or (u == "nameplate4" and activePlateGUID ~= nil)
+        end
+        REALG.UnitIsPlayer = function(u)
+            return u == "player" or u == "target"
+                or (u == "mouseover" and activeMouseGUID ~= nil)
+                or (u == "nameplate4" and activePlateGUID ~= nil)
+        end
+        REALG.UnitGUID = function(u)
+            if u == "player" then return HARNESS_PLAYER_GUID end
+            if u == "target" then return activeTargetGUID end
+            if u == "mouseover" then return activeMouseGUID end
+            if u == "nameplate4" then return activePlateGUID end
+            return nil
+        end
+        REALG.GUIDIsPlayer = function(g)
+            return g == FH_G1 or g == FH_G2 or g == FH_G3 or g == FH_G4 or g == FH_G5 or g == FH_G6 or g == FH_G7 or g == HARNESS_PLAYER_GUID
+        end
+        REALG.UnitClass = MOCKC.unitClassMock(function() return "Warrior", "WARRIOR" end, function() return 1 end)
+        REALG.UnitLevel = function() return 70 end
+        REALG.UnitFactionGroup = function() return "Alliance" end
+        REALG.UnitName = function(u)
+            if u == "player" then return "SelfPlayer", "TestRealm" end
+            return activeName, ""
+        end
+        REALG.UnitTokenFromGUID = function(g)
+            if g == activeTargetGUID then return "target" end
+            if g == activeMouseGUID then return "mouseover" end
+            if g == activePlateGUID then return "nameplate4" end
+            return nil
+        end
+        REALG.UnitIsSameServer = function(arg)
+            sameServerArgs[#sameServerArgs + 1] = arg
+            return arg == "target" or arg == "mouseover" or arg == "nameplate4"
+        end
+        REALG.GetPlayerInfoByGUID = function(g)
+            return "WARRIOR", "WARRIOR", "Human", "Human", nil, g
+        end
+        local fhItemCached = true
+        if REALG.C_Item then
+            REALG.C_Item = {
+                IsItemDataCachedByID = function() return fhItemCached end,
+                RequestLoadItemDataByID = function() return true end,
+                GetItemInfo = function() return "Gorehowl", FH_LINK, 4, 115, 70, "Weapon", "Two-Handed Axes", 1, "INVTYPE_2HWEAPON", 132394, 0, 2, 1 end,
+                GetDetailedItemLevelInfo = function() return 115 end,
+                GetItemNumSockets = function() return 0 end,
+            }
+        end
+        REALG.GetItemInfo = REALG.C_Item and REALG.C_Item.GetItemInfo or savedGetItemInfo
+        REALG.GetDetailedItemLevelInfo = REALG.C_Item and REALG.C_Item.GetDetailedItemLevelInfo or savedGetDetailedIlvl
+        local function defaultGetInvID(u, slot)
+            if (u == "target" or u == "nameplate4" or u == "mouseover") and (slot == 1 or slot == 16) then return 28773 end
+            return nil
+        end
+        local function defaultGetInvLink(u, slot)
+            if (u == "target" or u == "nameplate4" or u == "mouseover") and (slot == 1 or slot == 16) then return FH_LINK end
+            return nil
+        end
+        REALG.GetInventoryItemID = defaultGetInvID
+        REALG.GetInventoryItemLink = defaultGetInvLink
+        if type(inspFH) == "table" then
+            inspFH.cache = savedInspCache or {}
+            inspFH.cache[FH_G1] = {
+                items = { [1] = FH_LINK, [16] = FH_LINK },
+                _itemsRev = 1,
+                time = fhClock,
+                name = "FirstHover",
+                class = "WARRIOR",
+                level = 70,
+                faction = "Alliance",
+            }
+            inspFH.GetUnitData = function(_, uOrG)
+                if type(uOrG) == "string" then
+                    if inspFH.cache[uOrG] then return inspFH.cache[uOrG] end
+                    local resolvedG = REALG.UnitGUID and REALG.UnitGUID(uOrG) or nil
+                    return resolvedG and inspFH.cache[resolvedG] or nil
+                end
+                return nil
+            end
+            inspFH.lastInspectGUID = FH_G1
+        end
+
+        local rankInsidePublish = nil
+        local unsubPublish = CacheFH.Subscribe(function(g, st)
+            if g == FH_G1 and type(st) == "table" and st.state == "complete" then
+                rankInsidePublish = RankDBFH.GetPlayerRank(FH_G1)
+            end
+        end)
+        local ok1 = ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G1, true, "target")
+        if type(unsubPublish) == "function" then unsubPublish() end
+        local c1 = CacheFH.Get(FH_G1)
+        local c1Slot1 = type(c1) == "table" and type(c1.revision) == "table"
+            and type(c1.revision.slots) == "table" and c1.revision.slots[1] or nil
+        check(ok1 == true
+                and type(c1Slot1) == "table" and type(c1Slot1.slotID) == "table" and c1Slot1.slotID.value == 1
+                and rankInsidePublish ~= nil
+                and sameServerArgs[1] == "target"
+                and RankDBFH.GetRecord(FH_G1) ~= nil,
+            "v1.3.2 audit: RankDB updates before Cache.PublishComplete notify, preserves occupied slotID, and UnitIsSameServer receives unit token",
+            ("ok=%s slotID=%s rankInCB=%s arg1=%s rec=%s"):format(
+                tostring(ok1), tostring(c1Slot1 and c1Slot1.slotID and c1Slot1.slotID.value),
+                tostring(rankInsidePublish), tostring(sameServerArgs[1]),
+                tostring(RankDBFH.GetRecord(FH_G1) ~= nil)))
+
+        -- 1b. RankSync ignores self-echoed Q queries without consuming RESPOND_INTERVAL
+        local savedIsInGuildFH = REALG.IsInGuild
+        REALG.IsInGuild = function() return true end
+        local selfSkipBefore = ((RankSyncFH.GetDebugState().outcomes or {}).querySelfSkipped) or 0
+        RankSyncFH.HandlePayload("Q;selfq01", "GUILD", "SelfPlayer")
+        local selfSkipAfter = ((RankSyncFH.GetDebugState().outcomes or {}).querySelfSkipped) or 0
+        check(selfSkipAfter == selfSkipBefore + 1,
+            "v1.3.2 audit: respondToQuery/HandlePayload ignores self-echoed Q query via sender check",
+            ("before=%s after=%s"):format(tostring(selfSkipBefore), tostring(selfSkipAfter)))
+        REALG.IsInGuild = savedIsInGuildFH
+
+        -- 2.recordIsSameRealm standalone pin: passing name would fail, unit token succeeds
+        sameServerArgs = {}
+        activeTargetGUID = nil
+        activeMouseGUID = FH_G2
+        activeName = "HoverOnly"
+        RankSyncFH.QueueInspectRecord({
+            guid = FH_G2,
+            name = "HoverOnly",
+            faction = "Alliance",
+            class = "WARRIOR",
+            gs = 2400,
+            timestamp = FH_NOW_SERVER - 1,
+        })
+        check(sameServerArgs[1] == "mouseover" and RankDBFH.GetRecord(FH_G2) ~= nil,
+            "v1.3.2 audit: recordIsSameRealm passes unit token before character name to UnitIsSameServer",
+            ("arg1=%s filed=%s"):format(tostring(sameServerArgs[1]), tostring(RankDBFH.GetRecord(FH_G2) ~= nil)))
+
+        if inspFH and type(inspFH.cache) == "table" then
+            -- 3. Exhausted empty LibForeverInspector snapshot (incomplete=true, retryPending=false, items={}) is skipped
+            activeMouseGUID = nil
+            activeTargetGUID = FH_G3
+            inspFH.cache[FH_G3] = { incomplete = true, retryPending = false, items = {} }
+            inspFH.lastInspectGUID = FH_G3
+            local ok3 = ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G3, true, "target")
+            check(ok3 == false and CacheFH.Get(FH_G3) == nil,
+                "v1.3.2 audit: exhausted empty incomplete LibForeverInspector snapshot does not lock 0-GS complete cache",
+                ("ok=%s cache=%s"):format(tostring(ok3), tostring(CacheFH.Get(FH_G3))))
+
+            -- 4. Displaced inspector.lastInspectGUID never reads another unit's GetInventoryItemID
+            activeTargetGUID = FH_G4
+            inspFH.cache[FH_G4] = {
+                items = { [1] = FH_LINK, [16] = FH_LINK },
+                _itemsRev = 2,
+                time = fhClock,
+                name = "BufferSafe",
+                class = "WARRIOR",
+                level = 70,
+                faction = "Alliance",
+            }
+            inspFH.lastInspectGUID = "Player-9999-DISPLACED"
+            local liveBufferTouched = false
+            REALG.GetInventoryItemID = function()
+                liveBufferTouched = true
+                return 999999
+            end
+            REALG.GetInventoryItemLink = function()
+                return nil
+            end
+            local ok4 = ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G4, true, "target")
+            local c4 = CacheFH.Get(FH_G4)
+            REALG.GetInventoryItemID = defaultGetInvID
+            REALG.GetInventoryItemLink = defaultGetInvLink
+            check(ok4 == true and liveBufferTouched == false and type(c4) == "table" and c4.state == "complete",
+                "v1.3.2 audit: displaced inspector.lastInspectGUID uses GetUnitData cache instead of shared live buffer",
+                ("ok=%s live=%s state=%s"):format(tostring(ok4), tostring(liveBufferTouched), tostring(c4 and c4.state)))
+
+            -- 5. Duplicate INVENTORY_READY for same _itemsRev while pending keeps active generation intact
+            local savedAfterFH = REALG.C_Timer and REALG.C_Timer.After
+            local fhTimers = {}
+            REALG.C_Timer = REALG.C_Timer or {}
+            REALG.C_Timer.After = function(delay, cb)
+                if type(cb) == "function" then
+                    fhTimers[#fhTimers + 1] = { delay = delay, cb = cb }
+                end
+                return true
+            end
+            activeTargetGUID = FH_G5
+            fhItemCached = false
+            inspFH.cache[FH_G5] = {
+                items = { [1] = FH_LINK, [16] = FH_LINK },
+                _itemsRev = 7,
+                time = fhClock,
+                name = "PendingDedup",
+                class = "WARRIOR",
+                level = 70,
+                faction = "Alliance",
+            }
+            inspFH.lastInspectGUID = FH_G5
+            ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G5, true, "target")
+            local st5a, gen5a = CacheFH.GetMeta(FH_G5)
+            ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G5, true, "target")
+            local st5b, gen5b = CacheFH.GetMeta(FH_G5)
+            check(st5a == "pending" and st5b == "pending" and gen5a == gen5b and gen5a > 0,
+                "v1.3.2 audit: duplicate INVENTORY_READY with identical _itemsRev preserves active pending generation",
+                ("st=%s/%s gen=%s/%s"):format(tostring(st5a), tostring(st5b), tostring(gen5a), tostring(gen5b)))
+            fhItemCached = true
+            ScannerFH.HandleItemDataLoad(28773, true)
+
+            -- Forever only: active hover promotes a queued background nameplate inspect immediately
+            if CLIENT == "forever" and type(ScannerFH.PromotePendingRemote) == "function" then
+                fhTimers = {}
+                activeTargetGUID = nil
+                activeMouseGUID = nil
+                activePlateGUID = FH_G7
+                inspFH.cache[FH_G7] = {
+                    items = { [1] = FH_LINK, [16] = FH_LINK },
+                    _itemsRev = 8,
+                    time = fhClock,
+                    name = "PromotedPlate",
+                    class = "WARRIOR",
+                    level = 70,
+                    faction = "Alliance",
+                }
+                inspFH.lastInspectGUID = FH_G7
+                ScannerFH.HandleInventoryReady("INVENTORY_READY", FH_G7, true, "nameplate4")
+                local beforePromote = CacheFH.Get(FH_G7)
+                activeMouseGUID = FH_G7
+                local promoted = ScannerFH.PromotePendingRemote(FH_G7, "mouseover")
+                local afterPromote = CacheFH.Get(FH_G7)
+                check(type(beforePromote) == "table" and beforePromote.state == "pending"
+                        and promoted == true
+                        and type(afterPromote) == "table" and afterPromote.state == "complete",
+                    "v1.3.2 audit: Scanner.PromotePendingRemote captures queued Forever background unit immediately on hover",
+                    ("before=%s promoted=%s after=%s"):format(
+                        tostring(beforePromote and beforePromote.state), tostring(promoted),
+                        tostring(afterPromote and afterPromote.state)))
+                activePlateGUID = nil
+                activeMouseGUID = nil
+                for _, t in ipairs(fhTimers) do t.cb() end
+            end
+            REALG.C_Timer.After = savedAfterFH
+        end
+
+        -- 6. Tooltips shows GS Rank from RankDB even when Scanner is unavailable, and recovers when Cache.GetMeta is nil
+        if SURFACE_ACTIVE and type(TooltipsFH) == "table" and type(GameTooltipFrame) == "table" then
+            activeMouseGUID = nil
+            activeTargetGUID = FH_G6
+            activeName = "RankFallback"
+            if inspFH and type(inspFH.cache) == "table" then
+                inspFH.cache[FH_G6] = nil
+            end
+            RankSyncFH.QueueInspectRecord({
+                guid = FH_G6,
+                name = "RankFallback",
+                faction = "Alliance",
+                class = "WARRIOR",
+                gs = 2600,
+                timestamp = FH_NOW_SERVER - 1,
+            })
+            local linesBeforeFB = #GAME_TOOLTIP_ADDED
+            GameTooltipFrame:SetUnit("target")
+            GameTooltipFrame:AddLine("RankFallback")
+            GameTooltipFrame:Show()
+            fireScript(GameTooltipFrame, "OnShow")
+            local driveScriptFH = (EXPECTED_DRIVER == "unit-hook") and "OnTooltipSetUnit" or "OnUpdate"
+            fireScript(GameTooltipFrame, driveScriptFH)
+            local sawFallbackRank = false
+            for i = linesBeforeFB + 1, #GAME_TOOLTIP_ADDED do
+                if tostring(GAME_TOOLTIP_ADDED[i]):find("GS Rank:", 1, true) then
+                    sawFallbackRank = true
+                    break
+                end
+            end
+            fireScript(GameTooltipFrame, "OnHide")
+            fireScript(GameTooltipFrame, "OnTooltipCleared")
+
+            local recoveredFromNil = false
+            if inspFH and type(inspFH.cache) == "table" then
+                inspFH.cache[FH_G6] = {
+                    items = { [1] = FH_LINK, [16] = FH_LINK },
+                    _itemsRev = 3,
+                    time = fhClock,
+                    name = "RankFallback",
+                    class = "WARRIOR",
+                    level = 70,
+                    faction = "Alliance",
+                }
+                inspFH.lastInspectGUID = FH_G6
+                fhClock = fhClock + 10
+                GameTooltipFrame:SetUnit("target")
+                GameTooltipFrame:AddLine("RankFallback")
+                GameTooltipFrame:Show()
+                fireScript(GameTooltipFrame, "OnShow")
+                fireScript(GameTooltipFrame, driveScriptFH)
+                local stRecovered = CacheFH.Get(FH_G6)
+                recoveredFromNil = type(stRecovered) == "table" and stRecovered.state == "complete"
+                fireScript(GameTooltipFrame, "OnHide")
+                fireScript(GameTooltipFrame, "OnTooltipCleared")
+            end
+            check(sawFallbackRank == true,
+                "v1.3.2 audit: Tooltips renders GS Rank from RankDB even while Scanner cache is unavailable",
+                "sawFallbackRank=" .. tostring(sawFallbackRank))
+            if inspFH and type(inspFH.cache) == "table" then
+                check(recoveredFromNil == true,
+                    "v1.3.2 audit: Tooltips readSourceMeta recovers from nil Extras cache when inspector has complete snapshot",
+                    "recoveredFromNil=" .. tostring(recoveredFromNil))
+            end
+        end
+
+        if inspFH then
+            inspFH.lastInspectGUID = savedLastInspectGUID
+            inspFH.GetUnitData = savedGetUnitData
+            if type(inspFH.cache) == "table" then
+                for _, g in ipairs({ FH_G1, FH_G2, FH_G3, FH_G4, FH_G5, FH_G6, FH_G7 }) do
+                    inspFH.cache[g] = nil
+                end
+            end
+            inspFH.cache = savedInspCache
+        end
+        REALG.UnitExists = savedUnitExists
+        REALG.UnitIsPlayer = savedUnitIsPlayer
+        REALG.UnitGUID = savedUnitGUID
+        REALG.GUIDIsPlayer = savedGUIDIsPlayer
+        REALG.UnitClass = savedUnitClass
+        REALG.UnitLevel = savedUnitLevel
+        REALG.UnitName = savedUnitName
+        REALG.UnitFactionGroup = savedUnitFaction
+        REALG.UnitTokenFromGUID = savedUnitTokenFromGUID
+        REALG.UnitIsSameServer = savedUnitIsSameServer
+        REALG.C_PlayerInfo = savedCPlayerInfo
+        REALG.PlayerLocation = savedPlayerLocation
+        REALG.GetInventoryItemID = savedGetInvID
+        REALG.GetInventoryItemLink = savedGetInvLink
+        if savedCItem then
+            REALG.C_Item = savedCItem
+        end
+        if REALG.C_Item and savedGetItemNumSockets ~= nil then
+            REALG.C_Item.GetItemNumSockets = savedGetItemNumSockets
+        end
+        REALG.GetItemInfo = savedGetItemInfo
+        REALG.GetDetailedItemLevelInfo = savedGetDetailedIlvl
+        REALG.GetPlayerInfoByGUID = savedGetPlayerInfo
+        REALG.GetServerTime = savedGetServerTime
+        REALG.GetTime = savedGetTime
+        REALG.GetNumSockets = savedGetNumSockets
+        pcall(RankDBFH.PurgeDatabase)
+    end)
+    runFirstHoverAuditPins()
 end
 
 out(("\n-------------------------------------------------------------\n"))

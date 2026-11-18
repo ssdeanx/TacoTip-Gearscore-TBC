@@ -11,7 +11,7 @@
 
 ```yaml
 name: TacoTip Extras
-version: 1.3.2
+version: 1.3.3
 author: AcidBomb
 maintainer: AcidBomb (Pilsung)
 reference_upstream: TacoTip GearScore Enhancer (NS, MIT License)
@@ -24,9 +24,9 @@ requires: [TacoTip]
 clients: [Classic Era / SoD, TBC Anniversary, WotLK Titanforge, WoW Forever, Retail]
 interfaces: ["11509", "20506", "38002", "16001", "120105", "120107"]
 tags: [tacotip, gearscore, leaderboard, ranking, p2p, audit, inspect, enhancements, companion]
-status: pending in-game verification (2026-11-17)
-linter: wowlua_ls check — 0 errors, 0 secret-value findings; luacheck clean (2026-11-17)
-updated: 2026-11-17
+status: pending in-game verification (2026-11-18)
+linter: luacheck clean (2026-11-18)
+updated: 2026-11-18
 ```
 
 
@@ -40,7 +40,7 @@ updated: 2026-11-17
 
 TacoTip Extras is a **separate project from TacoTip**. It has its own repository and its own CurseForge listing. It is not a fork of TacoTip, and it implies no endorsement by either.
 
-**Version:** 1.3.2
+**Version:** 1.3.3
 **Author:** AcidBomb (Pilsung)
 **Original Enhancer Credit:** NS ([TacoTip GearScore Enhancer](https://www.curseforge.com/wow/addons/tacotip-gearscore-enhancer), MIT License)
 
@@ -209,7 +209,7 @@ Per-slot equipment detail renders live while a fresh scanner revision exists; pe
 
 ## Known limitations
 
-- **Release status.** Version **1.3.2** is the current build in this repository (ready for in-game verification); version 1.2.6 is the published CurseForge build, and the listing is the distribution channel for the add-on. Version **1.3.2** eliminates per-frame/per-slice CPU & GC spikes (`Cache.GetMeta` zero-clone change gate in `Tooltips.lua` + pre-allocated `xpcall` runner, O(1) `SeedFromInspectorCache` cursor + `asyncQueueHead`, `RankSync` on-demand `OnUpdate` disarm), automates live leaderboard updates (`RankBrowser.UpdateUI` + `/tt` dashboard coalesced refresh on live inspects/syncs/seeds, `TALENTS_READY`/spec-swap/level-up tracking, promoted `"recent-restore"` rows, and throttled group/guild join auto-sync), protects `"pending"` cache entries from eviction, breaks the 300s `"item-data-timeout"` deadlock via cooled-down hover recovery (`Scanner.RetryUnavailableRemote` + `GET_ITEM_INFO_RECEIVED`), adds bounded `0.75s -> 2.0s` async item retries, and aligns `Frames.lua` pending UI timeouts (`6s`/`8s`). Building on v1.3.0–v1.3.1: asynchronously seeds Extras' 128-entry cache and `RankDB` leaderboard from `TacoTip`'s `LibForeverInspector` cross-reload cache without flooding `RankSync`, runs WoW Forever background `nameplate*`/`raid*`/`party*` captures in `C_Timer.After(0.05)` slices, and includes full MIT attribution for TacoTip GearScore Enhancer (`Copyright (c) 2026 NS`).
+- **Release status.** Version **1.3.3** is the current build in this repository (pending in-game verification); version 1.2.6 is the published CurseForge build, and the listing is the distribution channel for the add-on. Version **1.3.3** fixes first-hover `GS Rank:` delivery (`queueRankSync` ahead of `Cache.PublishComplete`/`transition`, immediate `RankDB` tooltip fallback while inspect/item loads settle, and `Tooltips.RefreshIfBound`), fixes `recordIsSameRealm` to pass the unit token to `UnitIsSameServer(unit)` first, protects `captureSlot` from displaced `inspector.lastInspectGUID` buffers, skips exhausted empty `incomplete` snapshots, keeps multi-unit Forever `enqueueAsyncCapture` background slices queued with immediate `PromotePendingRemote` hover promotion, widens `Tooltips.readSourceMeta` recovery to `nil`/`fresh`-backed `stale`/non-blocked `unavailable` states with `{ 0.25, 0.75, 2.0 }` item retries, implements `slotID` validation/stamping in `buildOccupiedSlot`, and ignores self-echoed/duplicate `"Q"` queries in `respondToQuery`. Building on v1.3.0–v1.3.2: zero-allocation `Cache.GetMeta` hover gates, live automatic leaderboard updates, O(1) `SeedFromInspectorCache` & `asyncQueueHead`, `pending` eviction protection, and full MIT attribution for TacoTip GearScore Enhancer (`Copyright (c) 2026 NS`).
 - **The Options page's integration and enhancement status lines, and the gear panel's "Last synced" note, are still English only.** The three status lines under the Options page — "TacoTip integration: …", "Remote enhancement analysis: …" and "Remote enhancement blocker: Slot …" — and the forty-seven sentences they can expand into (the compatible / incompatible / not-loaded reasons and the remote complete / unavailable / pending / suppressed / not-observed reasons) are written in English in the source, as are the **Reset summary positions** button label, the **How these scores work** heading, the equipment windows' **Drag** handle label and the gear panel's **Last synced …** and **Synced gear (item IDs only)** notes. Everything else on those surfaces is translated. Localizing them is a separate translation pass, not a code change: the strings are hardcoded English today, and the locale keys that once existed for them were never read by any code path, so they have been removed rather than left as dead weight.
 - **The level-70 restriction is a display rule.** While **Restrict Potential, Completion, and warnings to level 70** is on (the default), Potential GS, Delta, and Completion are not shown for a character below level 70 and the related warnings are held back; Current GS, Unenhanced GS, and Average iLvl still show. Turning the setting off shows the same three values at any level. On Classic Era, TBC Anniversary, and Titanforge those three metrics stay unavailable regardless of the setting, because the client does not expose the socket data they need (see the `GetItemStats` note below).
 - **The socket count comes from the documented API, and a count that contradicts the item's own gems is withheld rather than published.** On Retail and WoW Forever the number of socket slots is read from `C_Item.GetItemNumSockets` — the socket-count API Blizzard's own character frame uses, which passes the raw item link straight into it (`PaperDollFrame.lua:2775`, fed by `GetInventoryItemLink` at `:1728`; documented at `Blizzard_APIDocumentationGenerated/ItemDocumentation.lua:854` on `origin/live`, `:876` on `origin/forever`). The add-on still cross-checks that count against the item's own gem list, parsed from the item link, and now in **both** directions: a count that is too small for the item's gems and a count that is too large for them both leave the socket-based metrics **unavailable rather than guessed** on that item.

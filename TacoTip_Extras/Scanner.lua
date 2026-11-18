@@ -1363,7 +1363,7 @@ local function temporaryCellForSlot(slotID, mainTemporary, offTemporary)
 end
 
 local function buildOccupiedSlot(
-    _slotID,
+    slotID,
     itemID,
     nativeLink,
     parsed,
@@ -1372,6 +1372,10 @@ local function buildOccupiedSlot(
     priorPending,
     nextPending
 )
+    if not isPositiveInteger(slotID) or slotID > 19 then
+        return nil, false, "invalid-slot-id"
+    end
+
     local quality, scoringItemLevel, effectiveItemLevel, equipLoc,
         itemClassID, itemSubclassID, isPending, itemInfo =
         readMetadata(
@@ -1386,8 +1390,13 @@ local function buildOccupiedSlot(
         return nil, true
     end
 
+    local effectiveTempEffect = (slotID == 16 or slotID == 17)
+        and temporaryWeaponEffect
+        or blocked("unavailable", "temporary-weapon-slot-not-applicable")
+
     return {
         state = "occupied",
+        slotID = complete(slotID),
         itemID = complete(itemID),
         nativeLink = complete(nativeLink),
         quality = quality,
@@ -1402,7 +1411,7 @@ local function buildOccupiedSlot(
             parsed.gemIDs[1], parsed.gemIDs[2], parsed.gemIDs[3],
         }),
         sockets = buildSocketCell(nativeLink, parsed),
-        temporaryWeaponEffect = temporaryWeaponEffect,
+        temporaryWeaponEffect = effectiveTempEffect,
         scopeCapablePhysicalRanged = scopeCapabilityCell(
             equipLoc,
             itemClassID,
@@ -1418,7 +1427,8 @@ local function captureSlot(
     targetGeneration,
     priorPending,
     nextPending,
-    slotCache
+    slotCache,
+    targetGUID
 )
     -- The two inventory reads are pcall-guarded for the same reason as every
     -- other client read in this file: this function runs inside the library's
@@ -1429,31 +1439,52 @@ local function captureSlot(
     -- A raising read degrades to "no item in this slot": the slot reads as
     -- confirmed-empty, which is the same shape the client's own "no item
     -- there" answer produces.
+    local allowLiveRead = (unit == "player")
+    if not allowLiveRead then
+        -- Never read Blizzard's shared live inspect buffer once it has moved on to
+        -- another player (lastInspectGUID ~= targetGUID) or when resolved to a raw GUID.
+        allowLiveRead = (unit ~= targetGUID)
+        if allowLiveRead
+            and type(inspector) == "table"
+            and type(inspector.lastInspectGUID) == "string"
+            and not isSecretValue(inspector.lastInspectGUID)
+            and inspector.lastInspectGUID ~= ""
+            and type(targetGUID) == "string"
+            and not isSecretValue(targetGUID)
+            and targetGUID ~= "" then
+            allowLiveRead = Core.SafeEquals(inspector.lastInspectGUID, targetGUID)
+        end
+    end
+
     local rawItemID
-    if type(GetInventoryItemID) == "function" then
-        local ok, value = pcall(GetInventoryItemID, unit, slotID)
-        if ok and not isSecretValue(value) then
-            rawItemID = value
-        end
-    end
     local nativeLink
-    if type(GetInventoryItemLink) == "function" then
-        local ok, value = pcall(GetInventoryItemLink, unit, slotID)
-        if ok and not isSecretValue(value) and value then
-            nativeLink = value
+    if allowLiveRead then
+        if type(GetInventoryItemID) == "function" then
+            local ok, value = pcall(GetInventoryItemID, unit, slotID)
+            if ok and not isSecretValue(value) then
+                rawItemID = value
+            end
         end
-    end
-    if nativeLink == nil and inspector and type(inspector.GetInventoryItemMixin) == "function" then
-        local okMixin, mixin = pcall(inspector.GetInventoryItemMixin, inspector, unit, slotID)
-        if okMixin and type(mixin) == "table" and type(mixin.GetItemLink) == "function" then
-            local okLink, link = pcall(mixin.GetItemLink, mixin)
-            if okLink and not isSecretValue(link) and type(link) == "string" and link ~= "" then
-                nativeLink = link
+        if type(GetInventoryItemLink) == "function" then
+            local ok, value = pcall(GetInventoryItemLink, unit, slotID)
+            if ok and not isSecretValue(value) and value then
+                nativeLink = value
+            end
+        end
+        if nativeLink == nil and inspector and type(inspector.GetInventoryItemMixin) == "function" then
+            local okMixin, mixin = pcall(inspector.GetInventoryItemMixin, inspector, unit, slotID)
+            if okMixin and type(mixin) == "table" and type(mixin.GetItemLink) == "function" then
+                local okLink, link = pcall(mixin.GetItemLink, mixin)
+                if okLink and not isSecretValue(link) and type(link) == "string" and link ~= "" then
+                    nativeLink = link
+                end
             end
         end
     end
     if nativeLink == nil and inspector and type(inspector.GetUnitData) == "function" then
-        local okData, cached = pcall(inspector.GetUnitData, inspector, unit)
+        local lookupUnit = (type(targetGUID) == "string" and not isSecretValue(targetGUID) and targetGUID ~= "")
+            and targetGUID or unit
+        local okData, cached = pcall(inspector.GetUnitData, inspector, lookupUnit)
         if okData and type(cached) == "table" and type(cached.items) == "table" then
             local link = cached.items[slotID]
             if not isSecretValue(link) and type(link) == "string" and link ~= "" then
@@ -1508,7 +1539,7 @@ local function captureSlot(
         return nil, false, parseReason or "invalid-native-link"
     end
 
-    local occupied, isPending = buildOccupiedSlot(
+    local occupied, isPending, slotReason = buildOccupiedSlot(
         slotID,
         effectiveItemID,
         nativeLink,
@@ -1518,7 +1549,7 @@ local function captureSlot(
         priorPending,
         nextPending
     )
-    return occupied, isPending
+    return occupied, isPending, slotReason
 end
 
 local function capture(targetGeneration)
@@ -1623,15 +1654,19 @@ local function capture(targetGeneration)
     end
 
     pendingItems = {}
+    local playerGUID = capturePlayerIdentity()
+    if playerGUID then
+        -- File the owner's RankDB record BEFORE transition() notifies tooltip subscribers
+        -- so first render immediately resolves GS Rank without waiting for a refresh.
+        queueRankSync(playerGUID, "player", classToken, result, "self", level)
+    end
     transition({
         status = "complete",
         generation = targetGeneration,
         revision = revision,
         result = result,
     })
-    local playerGUID = capturePlayerIdentity()
     if playerGUID then
-        queueRankSync(playerGUID, "player", classToken, result, "self", level)
         -- Stage 4: re-persist the owner's own gear into the bounded RankDB
         -- gear table on every own scan, so the local row survives the
         -- count-eviction the age prune still applies to. Guarded end to end:
@@ -1714,6 +1749,13 @@ local function unitMatchesRemoteGUID(unit, guid)
     return not localOK or not Core.SafeEquals(localGUID, guid)
 end
 
+local function hasCompleteInspectorSnapshot(cached)
+    return type(cached) == "table"
+        and not cached.incomplete
+        and type(cached.items) == "table"
+        and next(cached.items) ~= nil
+end
+
 local function resolveRemoteUnit(guid, callbackUnit)
     if unitMatchesRemoteGUID(callbackUnit, guid) then
         return callbackUnit
@@ -1739,7 +1781,7 @@ local function resolveRemoteUnit(guid, callbackUnit)
 
     if type(inspector) == "table" and type(inspector.GetUnitData) == "function" then
         local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
-        if okData and type(cached) == "table" and type(cached.items) == "table" then
+        if okData and hasCompleteInspectorSnapshot(cached) then
             return guid
         end
     end
@@ -1781,7 +1823,7 @@ local function captureRemote(context)
     return published
 end
 
-local REMOTE_ITEM_RETRY_DELAYS = { 0.75, 2.0 }
+local REMOTE_ITEM_RETRY_DELAYS = { 0.25, 0.75, 2.0 }
 
 local function scheduleRemoteItemRetry(context)
     if type(context) ~= "table"
@@ -1847,7 +1889,7 @@ captureRemoteBody = function(context)
     if not unit then
         if inspector and type(inspector.GetUnitData) == "function" then
             local okData, cached = pcall(inspector.GetUnitData, inspector, context.guid)
-            if okData and type(cached) == "table" and type(cached.items) == "table" then
+            if okData and hasCompleteInspectorSnapshot(cached) then
                 unit = context.guid
             end
         end
@@ -1880,7 +1922,8 @@ captureRemoteBody = function(context)
             context.generation,
             priorPending,
             nextPending,
-            context.capturedSlots
+            context.capturedSlots,
+            context.guid
         )
         if not callOK then
             return failRemote(context, "inventory-read-failed")
@@ -1928,6 +1971,23 @@ captureRemoteBody = function(context)
         return failRemote(context, "remote-identity-changed")
     end
 
+    local curState, curGen = Cache.GetMeta(context.guid)
+    if curState ~= "pending" or curGen ~= context.generation then
+        return false
+    end
+
+    -- File the RankDB record BEFORE Cache.PublishComplete() notifies Tooltips synchronously,
+    -- so the immediate tooltip render finds GS Rank on the very first hover.
+    queueRankSync(
+        context.guid,
+        unit,
+        classToken,
+        result,
+        context.sourceTag or "inspect",
+        level,
+        context.meta
+    )
+
     local published = Cache.PublishComplete(
         context.guid,
         context.generation,
@@ -1942,15 +2002,6 @@ captureRemoteBody = function(context)
         if type(context.itemsRev) == "number" and context.itemsRev > 0 then
             remoteItemRevs[context.guid] = context.itemsRev
         end
-        queueRankSync(
-            context.guid,
-            unit,
-            classToken,
-            result,
-            context.sourceTag or "inspect",
-            level,
-            context.meta
-        )
     end
     return published
 end
@@ -2084,10 +2135,16 @@ scheduleAsyncCaptureDrain = function()
 end
 
 local function enqueueAsyncCapture(guid)
+    if not canScheduleAsyncTimer() then
+        return false
+    end
     if not asyncCaptureQueued[guid] then
         asyncCaptureQueued[guid] = true
         asyncCaptureQueue[#asyncCaptureQueue + 1] = guid
         asyncQueuedCount = asyncQueuedCount + 1
+    end
+    if asyncCaptureScheduled then
+        return true
     end
     return scheduleAsyncCaptureDrain()
 end
@@ -2110,10 +2167,10 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
         local okData, cachedData = pcall(inspector.GetUnitData, inspector, guid)
         if okData and type(cachedData) == "table" then
             -- LibForeverInspector fires INVENTORY_READY even on incomplete reads while its
-            -- 0.15s retry timer is actively in flight; wait for the populated (or final)
-            -- callback instead of churning Cache.Begin + async item retries on an empty snapshot.
+            -- 0.15s retry timer is actively in flight -- and again with retryPending=false
+            -- when retries are exhausted without items. Never score an empty incomplete
+            -- snapshot into a "complete" 0-GS cache entry.
             if cachedData.incomplete == true
-                and cachedData.retryPending == true
                 and (type(cachedData.items) ~= "table" or next(cachedData.items) == nil) then
                 return false
             end
@@ -2121,6 +2178,19 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
                 curItemsRev = cachedData._itemsRev
             end
         end
+    end
+
+    local activeContext = remoteContexts[guid]
+    if curItemsRev and activeContext and activeContext.itemsRev == curItemsRev
+        and remoteContextIsCurrent(activeContext) then
+        if unitMatchesRemoteGUID(resolved, guid) then
+            activeContext.unit = resolved
+        end
+        if asyncCaptureQueued[guid] and isInteractiveGUID(guid) then
+            clearQueuedAsync(guid)
+            captureRemote(activeContext)
+        end
+        return true
     end
 
     if curItemsRev and remoteItemRevs[guid] == curItemsRev then
@@ -2151,6 +2221,9 @@ function Scanner.HandleInventoryReady(event, guid, isInspect, unit)
                 if needsUpgrade then
                     seededRecordGUIDs[guid] = nil
                     queueRankSync(guid, resolved, freshEntry.revision.classToken, freshEntry.result, "inspect", freshEntry.revision.level, skipMeta)
+                    if namespace.Tooltips and type(namespace.Tooltips.RefreshIfBound) == "function" then
+                        pcall(namespace.Tooltips.RefreshIfBound, guid)
+                    end
                 end
                 return true
             end
@@ -2234,6 +2307,9 @@ function Scanner.HandleTalentsReady(_, guid, unit)
     if not existing or seededRecordGUIDs[guid] == true or hasNewSpec then
         seededRecordGUIDs[guid] = nil
         queueRankSync(guid, resolved, revision.classToken, result, "inspect", revision.level, meta)
+        if namespace.Tooltips and type(namespace.Tooltips.RefreshIfBound) == "function" then
+            pcall(namespace.Tooltips.RefreshIfBound, guid)
+        end
         return true
     end
     return false
@@ -2517,6 +2593,7 @@ function Scanner.SeedFromInspectorCache(maxSlice)
                 and not isSecretValue(cached)
                 and not cached.incomplete
                 and type(cached.items) == "table"
+                and next(cached.items) ~= nil
                 and type(cached.time) == "number"
                 and cached.time ~= 0
                 and remoteContexts[guid] == nil then
@@ -2661,7 +2738,31 @@ end
 
 -- Breaks the 300s "item-data-timeout" / unavailable deadlock when hovering a
 -- player whose gear items later arrive in the client cache.
-function Scanner.RetryUnavailableRemote(guid, unit)
+function Scanner.PromotePendingRemote(guid, unit)
+    if not initialized
+        or not isRemotePlayerGUID(guid)
+        or not asyncCaptureQueued[guid] then
+        return false
+    end
+    local context = remoteContexts[guid]
+    if not context or not remoteContextIsCurrent(context) then
+        clearQueuedAsync(guid)
+        return false
+    end
+    if unitMatchesRemoteGUID(unit, guid) then
+        context.unit = unit
+    else
+        local resolved = resolveRemoteUnit(guid, unit)
+        if resolved then
+            context.unit = resolved
+        end
+    end
+    clearQueuedAsync(guid)
+    captureRemote(context)
+    return true
+end
+
+function Scanner.RetryUnavailableRemote(guid, unit, requireFresh)
     if not initialized
         or not isRemotePlayerGUID(guid)
         or remoteContexts[guid] ~= nil
@@ -2670,10 +2771,14 @@ function Scanner.RetryUnavailableRemote(guid, unit)
         return false
     end
     local okData, cached = pcall(inspector.GetUnitData, inspector, guid)
-    if not okData or type(cached) ~= "table"
-        or cached.incomplete
-        or type(cached.items) ~= "table" then
+    if not okData or not hasCompleteInspectorSnapshot(cached) then
         return false
+    end
+    if requireFresh and type(inspector.GetCacheStatus) == "function" then
+        local okSt, cacheStatus = pcall(inspector.GetCacheStatus, inspector, guid)
+        if not okSt or cacheStatus ~= "fresh" then
+            return false
+        end
     end
     local now = getScannerClock()
     local nextAllowed = retryCooldownAt[guid]

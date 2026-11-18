@@ -417,14 +417,15 @@ local function readSourceMeta(guid, unit)
 
     if type(Cache.GetMeta) == "function" then
         local state, gen, revID, reason = Cache.GetMeta(guid)
-        if state == "unavailable"
-            and type(Scanner.RetryUnavailableRemote) == "function" then
-            if reason == "item-data-timeout"
-                or reason == "item-data-load-failed"
-                or reason == "capture-failed"
-                or reason == "remote-identity-changed"
-                or reason == "cache-entry-evicted" then
-                Scanner.RetryUnavailableRemote(guid, unit)
+        if state == "pending" and type(Scanner.PromotePendingRemote) == "function" then
+            if Scanner.PromotePendingRemote(guid, unit) then
+                state, gen, revID = Cache.GetMeta(guid)
+            end
+        elseif type(Scanner.RetryUnavailableRemote) == "function"
+            and (state == nil
+                or state == "stale"
+                or (state == "unavailable" and reason ~= "blocked")) then
+            if Scanner.RetryUnavailableRemote(guid, unit, state == "stale") then
                 state, gen, revID = Cache.GetMeta(guid)
             end
         end
@@ -1514,6 +1515,17 @@ local function renderPlayerTooltipBody(target)
             reason = "source-not-complete",
             scope = source.source,
         })
+        local confirmOK, currentGUID = pcall(_G.UnitGUID, unit)
+        if confirmOK and Core.SafeEquals(currentGUID, guid) then
+            local rankRow = getRankRow(guid, unit, mode)
+            if rankRow then
+                local fallbackRows = { rankRow }
+                for _, extraLine in ipairs(Tooltips.GetRankExtraLines(guid)) do
+                    fallbackRows[#fallbackRows + 1] = extraLine
+                end
+                rendered = addRows(target, fallbackRows)
+            end
+        end
     end
     binding.lineCountAfter = numberOfLines(target)
     if rendered then
@@ -1567,7 +1579,7 @@ local function visibleBindingIsCurrent(candidate)
         end
     end
     local unit, guid = validatePlayerUnit(tooltip)
-    return unit == candidate.unit and guid == candidate.guid
+    return unit ~= nil and Core.SafeEquals(guid, candidate.guid)
 end
 
 local function refreshBinding()
@@ -1575,18 +1587,37 @@ local function refreshBinding()
     if not current then
         return false
     end
-    if refreshing or rendering or not visibleBindingIsCurrent(current) then
-        if current and not visibleBindingIsCurrent(current) then
+    if refreshing or rendering then
+        return false
+    end
+    if current.tooltip ~= tooltip then
+        clearBinding()
+        return false
+    end
+    if type(tooltip.IsShown) == "function" then
+        local okShown, shown = pcall(tooltip.IsShown, tooltip)
+        if not okShown or not shown then
             clearBinding()
+            return false
         end
+    end
+    local liveUnit, liveGUID = validatePlayerUnit(tooltip)
+    if not liveUnit or not Core.SafeEquals(liveGUID, current.guid) then
+        clearBinding()
         return false
     end
-    if type(tooltip.SetUnit) ~= "function" then
-        return false
-    end
+    current.unit = liveUnit
 
     refreshing = true
-    local ok = pcall(tooltip.SetUnit, tooltip, current.unit)
+    local ok = false
+    local owner = type(tooltip.GetOwner) == "function" and tooltip:GetOwner() or nil
+    local unitUpdater = rawget(_G, "UnitFrame_UpdateTooltip")
+    if owner and Core.SafeEquals(owner.unit, current.unit)
+        and type(unitUpdater) == "function" and owner.UpdateTooltip == unitUpdater then
+        ok = pcall(unitUpdater, owner)
+    elseif type(tooltip.SetUnit) == "function" then
+        ok = pcall(tooltip.SetUnit, tooltip, current.unit)
+    end
     refreshing = false
     if not ok then
         clearBinding()
@@ -1946,6 +1977,16 @@ function Tooltips.HandleModifierStateChanged(key)
 end
 
 function Tooltips.RefreshVisible()
+    return refreshBinding()
+end
+
+function Tooltips.RefreshIfBound(guid)
+    if not initialized or refreshing or rendering or not binding or not guid then
+        return false
+    end
+    if not Core.SafeEquals(binding.guid, guid) then
+        return false
+    end
     return refreshBinding()
 end
 

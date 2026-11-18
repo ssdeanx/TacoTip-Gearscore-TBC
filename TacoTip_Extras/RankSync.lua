@@ -933,6 +933,7 @@ local function recordIsSameRealm(record)
         if ok and not Core.IsSecretValue(unit) and type(unit) == "string" and unit ~= "" then
             local uName = rawget(_G, "UnitName")
             local targetName = nil
+            local targetRealm = nil
             if type(uName) == "function" then
                 local okName, name, realm = pcall(uName, unit)
                 -- UnitName is SecretWhenUnitNameIdentityRestricted: same trap on
@@ -940,12 +941,7 @@ local function recordIsSameRealm(record)
                 -- not be read as "different server" either -- fall through to
                 -- the client's same-server verdict below.
                 if okName and not Core.IsSecretValue(realm) and type(realm) == "string" and realm ~= "" then
-                    local getNormRealm = rawget(_G, "GetNormalizedRealmName")
-                    local localRealm = (type(getNormRealm) == "function" and getNormRealm())
-                        or (rawget(_G, "GetRealmName") and _G.GetRealmName()) or nil
-                    if localRealm and localRealm ~= "" and realm ~= localRealm then
-                        return false
-                    end
+                    targetRealm = realm
                 end
                 if okName and not Core.IsSecretValue(name) and type(name) == "string" and name ~= "" then
                     targetName = name
@@ -955,13 +951,24 @@ local function recordIsSameRealm(record)
                 targetName = record.name
             end
 
-            -- Pass actual character name if known (PlayerScriptDocumentation on Forever), fallback to unit token
-            local okSame, verdict = pcall(sameServer, targetName or unit)
+            -- UnitIsSameServer takes a unit token (matching main.lua / Blizzard FrameXML);
+            -- passing a character name outside the player's group returns false, which
+            -- would drop valid local-realm hovers as foreign. Fall back to character
+            -- name or normalized realm comparison only if the unit-token query returns nil.
+            local okSame, verdict = pcall(sameServer, unit)
             if (not okSame or verdict == nil) and targetName then
-                okSame, verdict = pcall(sameServer, unit)
+                okSame, verdict = pcall(sameServer, targetName)
             end
             if okSame and type(verdict) == "boolean" and not Core.IsSecretValue(verdict) then
                 return verdict == true
+            end
+            if targetRealm then
+                local getNormRealm = rawget(_G, "GetNormalizedRealmName")
+                local localRealm = (type(getNormRealm) == "function" and getNormRealm())
+                    or (rawget(_G, "GetRealmName") and _G.GetRealmName()) or nil
+                if localRealm and localRealm ~= "" and targetRealm ~= localRealm then
+                    return false
+                end
             end
         end
     end
@@ -1320,9 +1327,86 @@ local function inboundWindowAllows()
     return true
 end
 
-local function respondToQuery(requestId, chatType, _sender)
+local function isOwnSender(sender)
+    if type(sender) ~= "string" or sender == "" or Core.IsSecretValue(sender) then
+        return false
+    end
+    local uName = rawget(_G, "UnitName")
+    if type(uName) ~= "function" then
+        return false
+    end
+    local okName, myName, myRealm = pcall(uName, "player")
+    if not okName or type(myName) ~= "string" or myName == "" or Core.IsSecretValue(myName) then
+        return false
+    end
+    local shortSender = sender:match("^([^%-]+)%-?") or sender
+    if shortSender ~= myName then
+        return false
+    end
+    local senderRealm = sender:match("^[^%-]+%-(.+)$")
+    if not senderRealm or senderRealm == "" then
+        return true
+    end
+    if type(myRealm) == "string" and myRealm ~= "" and not Core.IsSecretValue(myRealm) then
+        return senderRealm == myRealm
+    end
+    local getNormRealm = rawget(_G, "GetNormalizedRealmName")
+    local localRealm = (type(getNormRealm) == "function" and getNormRealm()) or nil
+    if type(localRealm) == "string" and localRealm ~= "" and not Core.IsSecretValue(localRealm) then
+        return senderRealm == localRealm
+    end
+    return true
+end
+
+local recentQueryKeys = {}
+local recentQueryOrder = {}
+local RECENT_QUERY_CAP = 32
+
+local function hasAnsweredQuery(sender, requestId, now)
+    if type(sender) ~= "string" or sender == "" or type(requestId) ~= "string" or requestId == "" then
+        return false
+    end
+    local prevAt = recentQueryKeys[sender .. "|" .. requestId]
+    return prevAt ~= nil and now > 0 and (now - prevAt) < RESPOND_INTERVAL
+end
+
+local function noteQueryAnswered(sender, requestId, now)
+    if type(sender) ~= "string" or sender == "" or type(requestId) ~= "string" or requestId == "" then
+        return
+    end
+    local key = sender .. "|" .. requestId
+    if not recentQueryKeys[key] then
+        recentQueryOrder[#recentQueryOrder + 1] = key
+        if #recentQueryOrder > RECENT_QUERY_CAP then
+            local evict = table.remove(recentQueryOrder, 1)
+            local stillListed = false
+            for _, item in ipairs(recentQueryOrder) do
+                if item == evict then
+                    stillListed = true
+                    break
+                end
+            end
+            if not stillListed then
+                recentQueryKeys[evict] = nil
+            end
+        end
+    end
+    recentQueryKeys[key] = now
+end
+
+local function respondToQuery(requestId, chatType, sender)
+    if isOwnSender(sender) then
+        countOutcome("querySelfSkipped")
+        return false
+    end
     local now = getClock()
     if lastRespondAt > 0 and (now - lastRespondAt) < RESPOND_INTERVAL then
+        return false
+    end
+    -- Inbound ids are clamped at the door; this is the second gate for any
+    -- path that hands us a request id directly.
+    requestId = (type(requestId) == "string" and requestId or ""):sub(1, 8)
+    if hasAnsweredQuery(sender, requestId, now) then
         return false
     end
     -- F2: do NOT arm the respond gate here. A query with no RankDB (or one that
@@ -1333,10 +1417,6 @@ local function respondToQuery(requestId, chatType, _sender)
     if type(db) ~= "table" then
         return false
     end
-
-    -- Inbound ids are clamped at the door; this is the second gate for any
-    -- path that hands us a request id directly.
-    requestId = (type(requestId) == "string" and requestId or ""):sub(1, 8)
 
     local answerType, answerTarget = answerForQuery(chatType)
 
@@ -1383,6 +1463,7 @@ local function respondToQuery(requestId, chatType, _sender)
     -- but a query that could not be answered did not consume the window.
     if answerType then
         lastRespondAt = now
+        noteQueryAnswered(sender, requestId, now)
     end
     return true
 end
@@ -1879,6 +1960,12 @@ local function handlePayload(payload, chatType, sender)
     end
 
     if kind == "Q" then
+        -- Ignore self-echoed queries returned by CHAT_MSG_ADDON before consuming
+        -- inbound rate budget, spawning a timer, or arming the 20s respond cooldown.
+        if isOwnSender(sender) then
+            countOutcome("querySelfSkipped")
+            return
+        end
         -- The inbound flood door: past the window the payload is refused
         -- BEFORE any timer is scheduled, so a burst cannot spawn a timer
         -- per payload.
@@ -1896,10 +1983,10 @@ local function handlePayload(payload, chatType, sender)
         local cTimer = rawget(_G, "C_Timer")
         if type(cTimer) == "table" and type(cTimer.After) == "function" then
             cTimer.After(delay, function()
-                respondToQuery(requestId, chatType)
+                respondToQuery(requestId, chatType, sender)
             end)
         else
-            respondToQuery(requestId, chatType)
+            respondToQuery(requestId, chatType, sender)
         end
         return
     end
